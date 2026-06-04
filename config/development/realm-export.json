@@ -1,0 +1,187 @@
+{
+  "realm": "encryption",
+  "enabled": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "sslRequired": "external",
+  "accessTokenLifespan": 300,
+  "authenticationFlows": [
+    {
+      "alias": "encryption-2fa-browser",
+      "description": "Browser flow with required OTP for the encryption client",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 10
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "flowAlias": "encryption-2fa-browser forms"
+        }
+      ]
+    },
+    {
+      "alias": "encryption-2fa-browser forms",
+      "description": "Username/password + OTP sub-flow",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10
+        },
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "demo-product-a",
+      "name": "Demo Product A",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "secret": "encryption-dev-secret",
+      "redirectUris": ["http://localhost:7201/*", "http://a.product.localhost:7201/*", "http://b.product.localhost:7201/*"],
+      "webOrigins": ["http://localhost:7201", "http://a.product.localhost:7201", "http://b.product.localhost:7201"],
+      "protocolMappers": [
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"]
+    },
+    {
+      "clientId": "demo-product-b",
+      "name": "Demo Product B",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "secret": "demo-product-b-secret",
+      "redirectUris": ["http://localhost:7202/*", "http://a.product.localhost:7202/*", "http://b.product.localhost:7202/*"],
+      "webOrigins": ["http://localhost:7202", "http://a.product.localhost:7202", "http://b.product.localhost:7202"],
+      "protocolMappers": [
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"]
+    },
+    {
+      "clientId": "encryption",
+      "name": "Encryption",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "redirectUris": ["http://encryption.localhost:7200/auth/callback"],
+      "webOrigins": ["http://encryption.localhost:7200"],
+      "protocolMappers": [
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"],
+      "authenticationFlowBindingOverrides": {}
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Martin",
+      "email": "alice.martin@numerique.gouv.fr",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "requiredActions": []
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Dupont",
+      "email": "bob.dupont@numerique.gouv.fr",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "requiredActions": []
+    },
+    {
+      "username": "charlie",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Charlie",
+      "lastName": "Leroy",
+      "email": "charlie.leroy@numerique.gouv.fr",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "requiredActions": []
+    },
+    {
+      "username": "diane",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Diane",
+      "lastName": "Moreau",
+      "email": "diane.moreau@numerique.gouv.fr",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "requiredActions": []
+    },
+    {
+      "username": "emile",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Emile",
+      "lastName": "Petit",
+      "email": "emile.petit@numerique.gouv.fr",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "requiredActions": []
+    }
+  ]
+}

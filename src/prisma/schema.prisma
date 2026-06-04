@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Public keys for users. A user can have multiple keys over time (key rotation).
+/// Only the most recent key without a disabledAt is the active one.
+/// When a new key is created, all previous keys for the user are disabled in a transaction.
+/// The encoding scheme of `publicKey` is encoded in its leading version byte
+/// (CRYPTO_VERSION in src/shared/constants.ts) — no separate algorithm column.
+model PublicKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") /// This is not UUID in all cases because it depends on the identity provider (we do not consider here scoped product user ids, only the one unique for a user across products)
+  publicKey  String    @map("public_key")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
+  disabledAt DateTime? @map("disabled_at")
+
+  @@index([userId, disabledAt])
+  @@index([userId, createdAt])
+  @@map("public_keys")
+}
+
+/// Pending proof-of-possession challenges for public-key registration.
+/// The server encapsulates a fresh shared secret to the candidate `publicKey`
+/// (X-Wing) and stores `expectedHmac = HMAC_SHA256(sharedSecret, id)`.
+/// On `/api/keys/complete` the client returns the same HMAC (computed from
+/// its own decapsulation of the ciphertext) and the server constant-time
+/// compares before persisting the key. Rows expire and are cleaned up.
+model KeyPossessionChallenge {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id")
+  publicKey    String   @map("public_key") /// base64-encoded [version:1][xwingPubkey:1216] — replayed verbatim into PublicKey on success
+  expectedHmac Bytes    @map("expected_hmac") /// 32-byte HMAC-SHA256 tag the client must echo back
+  createdAt    DateTime @default(now()) @map("created_at")
+  expiresAt    DateTime @map("expires_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("key_possession_challenges")
+}
+
+/// Pending device transfer sessions for key recovery between devices.
+model DeviceTransferSession {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id")
+  code             String   @unique
+  encryptedPayload String?  @map("encrypted_payload")
+  expiresAt        DateTime @map("expires_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([code])
+  @@map("device_transfer_sessions")
+}

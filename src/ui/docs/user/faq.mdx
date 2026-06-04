@@ -1,0 +1,87 @@
+import { Alert } from '@encryption/src/ui/docs/components/Alert';
+
+# Foire aux questions — Chiffrement
+
+## Qu'est-ce que le chiffrement de bout en bout ?
+
+Le chiffrement de bout en bout (E2EE) garantit que **seuls vous et les personnes avec qui vous partagez un document** peuvent en lire le contenu. Ni les administrateurs, ni les serveurs ne peuvent accéder aux données en clair.
+
+Vos clés de chiffrement sont générées et stockées **uniquement sur votre appareil**. Elles ne quittent jamais votre navigateur.
+
+---
+
+## Comment activer le chiffrement ?
+
+1. Ouvrez n'importe quel produit de la Suite (Docs, Fichier, Drive, Visio)
+2. Cliquez sur **Activer le chiffrement** quand le système vous le propose
+3. Une paire de clés (publique et privée) est générée localement
+4. **Sauvegardez votre phrase de récupération** — c'est la seule façon de restaurer vos clés si vous changez d'appareil ou effacez vos données
+
+<Alert severity="warning" title="Important">
+  Si vous perdez votre phrase de récupération et que vos données de navigateur sont effacées, vos documents chiffrés seront **définitivement
+  inaccessibles**. Conservez-la dans un gestionnaire de mots de passe avec authentification à deux facteurs (2FA).
+</Alert>
+
+---
+
+## Que se passe-t-il si je change d'appareil ?
+
+Vous avez deux options :
+
+### Option 1 : Transfert entre appareils
+
+Si vous avez accès à votre ancien appareil :
+
+1. Sur l'ancien appareil, déclenchez le **transfert de clés**
+2. Un code à 6 chiffres s'affiche
+3. Sur le nouvel appareil, connectez-vous avec le même compte et saisissez ce code
+4. Vos clés sont transférées en toute sécurité via le serveur (le serveur ne peut pas lire les clés)
+
+### Option 2 : Restauration depuis une sauvegarde
+
+Si vous n'avez plus accès à l'ancien appareil :
+
+1. Collez votre phrase de récupération lors de la configuration du chiffrement
+2. Vos clés sont restaurées localement
+
+<Alert severity="info" title="Bon à savoir">
+  Le transfert entre appareils utilise un code temporaire valide **5 minutes**. Le serveur ne fait que relayer les données chiffrées entre vos deux
+  appareils — il ne peut pas les lire.
+</Alert>
+
+---
+
+## Comment le chiffrement protège-t-il mes documents ?
+
+Chaque document chiffré utilise une **clé symétrique unique** (XChaCha20-Poly1305). Cette clé est elle-même protégée par un **échange de clé hybride** (X25519 + algorithme post-quantique) avec votre clé publique. Seule votre clé privée peut la déchiffrer.
+
+Concrètement :
+
+- **Personne ne peut lire vos documents** sans votre clé privée
+- **Le serveur stocke uniquement des données chiffrées** — il ne possède pas la clé pour les lire
+- **Chaque document a sa propre clé** — compromettre un document ne compromet pas les autres
+
+---
+
+## Puis-je désactiver le chiffrement ?
+
+Le chiffrement est activé **par document** ou **par conférence**. Vous pouvez choisir de ne pas chiffrer un contenu si la confidentialité n'est pas nécessaire.
+
+<Alert severity="info">
+  Les documents déjà chiffrés ne peuvent pas être « déchiffrés définitivement ». Ils restent chiffrés et nécessitent vos clés pour être lus.
+</Alert>
+
+---
+
+## Que se passe-t-il si je supprime mes clés ?
+
+Si vous supprimez vos clés de chiffrement sans les avoir sauvegardées :
+
+- Les documents dont **vous êtes le seul membre** deviennent **définitivement illisibles**
+- Les documents partagés restent accessibles par les autres membres qui possèdent leurs propres clés
+
+---
+
+## Mon employeur ou l'administrateur peut-il lire mes documents chiffrés ?
+
+**Non.** Le chiffrement de bout en bout signifie que seuls les détenteurs des clés peuvent accéder au contenu. Les administrateurs n'ont accès qu'aux métadonnées (titre, date de création, liste des collaborateurs) mais pas au contenu chiffré.

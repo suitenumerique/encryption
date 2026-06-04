@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "christian-kohler.npm-intellisense",
+    "dbaeumer.vscode-eslint",
+    "EditorConfig.EditorConfig",
+    "esbenp.prettier-vscode",
+    "formulahendry.auto-rename-tag",
+    "ms-vsliveshare.vsliveshare",
+    "Orta.vscode-jest",
+    "Prisma.prisma"
+  ]
+}

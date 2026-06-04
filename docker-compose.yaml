@@ -1,0 +1,74 @@
+#
+# [IMPORTANT] `container_name` properties are prefixed by the project name to avoid conflicting with other project volumes
+#
+
+services:
+  postgres:
+    container_name: encryption_postgres_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      PGDATA: /data/postgres
+    volumes:
+      - postgres:/data/postgres
+    ports:
+      - '${DOCKER_COMPOSE_POSTGRES_PORT_BINDING:-7205:5432}'
+    networks:
+      - encryption
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'psql -h localhost -U $${POSTGRES_USER} -c select 1 -d $${POSTGRES_DB}']
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  keycloak-db:
+    container_name: encryption_keycloak_db_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: keycloak
+    volumes:
+      - keycloak-db:/var/lib/postgresql/data
+    ports:
+      - '7206:5432'
+    networks:
+      - encryption
+    restart: unless-stopped
+
+  keycloak:
+    container_name: encryption_keycloak_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
+    image: quay.io/keycloak/keycloak:26.4
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_HOSTNAME_STRICT: 'false'
+      KC_HOSTNAME_STRICT_HTTPS: 'false'
+      KC_HTTP_ENABLED: 'true'
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 7203
+    volumes:
+      - ./config/development/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - '7203:8080'
+    networks:
+      - encryption
+    depends_on:
+      - keycloak-db
+    restart: unless-stopped
+
+networks:
+  encryption:
+    driver: bridge
+
+volumes:
+  postgres:
+  keycloak-db:
