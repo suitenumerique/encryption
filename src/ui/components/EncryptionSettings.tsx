@@ -37,8 +37,11 @@ export function EncryptionSettings({ userInfo = null, getToken, onClose, onKeysD
         setKeysExist(exists);
 
         if (exists) {
-          getPublicKey().then(({ publicKey: pk }) => {
-            computeKeyFingerprint(pk).then(setFingerprint);
+          getPublicKey().then(({ publicKey: pk, signaturePublicKey }) => {
+            // The fingerprint users verify is the IDENTITY (signature) key;
+            // fall back to the encryption key only for legacy pairs that
+            // predate the signature identity.
+            computeKeyFingerprint(signaturePublicKey ?? pk).then(setFingerprint);
           });
         }
       })

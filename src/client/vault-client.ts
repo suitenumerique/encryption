@@ -46,6 +46,29 @@ export interface AuthContext {
   suiteUserId: string;
 }
 
+/**
+ * A registered identity as verified by the vault: both public keys plus the
+ * identity (signature-key) fingerprint and the verification verdict.
+ */
+export interface RegisteredIdentity {
+  /** Encryption public key (X-Wing), for wrapping symmetric keys. */
+  encryptionPublicKey: ArrayBuffer;
+  /** Signature public key (Ed25519) — the identity verified out-of-band. */
+  signaturePublicKey: ArrayBuffer;
+  /** 16-hex fingerprint of the identity (signature) key. */
+  identityFingerprint: string;
+  /** Monotonic per-user key version. */
+  version: number;
+  /** Signed creation time (ms since epoch). */
+  createdAtMillis: number;
+  /**
+   * Whether the binding signature verified against the identity key. When
+   * `false`, the directory record is forged / tampered / incoherent — refuse
+   * to trust or share with it and warn the user.
+   */
+  verified: boolean;
+}
+
 export interface EncryptionClientEventMap {
   /** Fired when the hidden vault iframe is ready for encrypt/decrypt operations */
   [MSG_VAULT_READY]: void;
@@ -509,11 +532,26 @@ export class VaultClient {
   /**
    * Fetch public keys for a list of user IDs from the encryption server.
    * The vault makes the API call internally — products don't need direct
-   * access to the encryption server.
-   * @returns publicKeys - Record of userId → public key (ArrayBuffer)
+   * access to the encryption server — AND verifies each record's identity
+   * binding signature before returning it.
+   *
+   * @returns
+   *   - `publicKeys`: userId → encryption public key (ArrayBuffer), containing
+   *     ONLY records whose binding signature verified. Use this to encrypt /
+   *     wrap keys for recipients; an incoherent directory entry is omitted.
+   *   - `identities`: userId → richer record, INCLUDING entries that failed
+   *     verification (`verified: false`). Use `identityFingerprint` for the
+   *     out-of-band check, and surface a clear warning (do NOT share) whenever
+   *     `verified` is false.
    */
-  async fetchPublicKeys(userIds: string[]): Promise<{ publicKeys: Record<string, ArrayBuffer> }> {
-    return (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds })) as { publicKeys: Record<string, ArrayBuffer> };
+  async fetchPublicKeys(userIds: string[]): Promise<{
+    publicKeys: Record<string, ArrayBuffer>;
+    identities: Record<string, RegisteredIdentity>;
+  }> {
+    return (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds })) as {
+      publicKeys: Record<string, ArrayBuffer>;
+      identities: Record<string, RegisteredIdentity>;
+    };
   }
 
   // =========================================================================

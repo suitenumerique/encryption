@@ -14,7 +14,12 @@
       "transfer_code_expired": "Le code de transfert a expiré.",
       "transfer_code_wrong_user": "Ce code de transfert a soit expiré ou ne correspond pas à votre compte.",
       "transfer_code_already_used": "Ce code de transfert a déjà été utilisé.",
-      "no_active_key": "Aucune clé publique active n'a été trouvée pour ce compte."
+      "no_active_key": "Aucune clé publique active n'a été trouvée pour ce compte.",
+      "invalid_key_binding": "La signature liant votre clé de chiffrement à votre identité est invalide. Veuillez réessayer.",
+      "invalid_challenge_signature": "La preuve de possession de votre clé de signature a échoué. Veuillez réessayer.",
+      "key_version_conflict": "Une autre opération a modifié vos clés au même moment. Veuillez réessayer.",
+      "invalid_timestamp": "L'horodatage fourni est trop éloigné de l'heure du serveur. Vérifiez l'horloge de votre appareil et réessayez.",
+      "invalid_public_key": "Une clé publique fournie est mal formée."
     },
     "vault": {
       "no_keys": "Aucune paire de clés trouvée. Veuillez d'abord générer vos clés.",

@@ -20,6 +20,7 @@ import {
   MSG_VAULT_RESULT,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
+  MSG_VAULT_SIGN_KEY_REGISTRATION,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 import { PRIVILEGED_OPERATIONS, type VaultResponse } from '@encryption/src/shared/schemas/post-message';
@@ -44,6 +45,7 @@ import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-ke
 import { handleGetPublicKey, handleHasKeys } from '@encryption/src/vault/operations/key-management';
 import { handleRespondToKeyChallenge } from '@encryption/src/vault/operations/respond-to-key-challenge';
 import { handleRewrapNestedKey } from '@encryption/src/vault/operations/rewrap-nested-key';
+import { handleSignKeyRegistration } from '@encryption/src/vault/operations/sign-key-registration';
 import { handleShareKeys } from '@encryption/src/vault/operations/share-keys';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
@@ -113,6 +115,8 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     // Privileged operations (encryption only)
     case MSG_VAULT_GENERATE_KEYS:
       return handleGenerateKeys(userId);
+    case MSG_VAULT_SIGN_KEY_REGISTRATION:
+      return handleSignKeyRegistration(userId, payload as { version: number; createdAtMillis: number });
     case MSG_VAULT_RESPOND_TO_KEY_CHALLENGE:
       return handleRespondToKeyChallenge(userId, payload as { challengeId: string; ciphertext: string });
     case MSG_VAULT_EXPORT_BACKUP:

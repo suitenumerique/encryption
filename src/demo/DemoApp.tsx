@@ -25,6 +25,8 @@ interface SharedAccess {
   fullName: string;
   email: string;
   publicKey: string | null;
+  /** Identity (signature) public key — the fingerprint is computed over this. */
+  signaturePublicKey: string | null;
   role: string;
 }
 

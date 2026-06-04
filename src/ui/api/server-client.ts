@@ -52,15 +52,34 @@ async function request<T>(path: string, options: RequestInit & { token?: string 
 
 // --- Public keys ---
 
+/**
+ * A registered identity as returned by the directory: both public keys plus
+ * the binding signature and signed metadata. Consumers should verify the
+ * binding (via `verifyKeyRegistration`) before trusting any field.
+ */
 export interface PublicKeyEntry {
   user_id: string;
-  public_key: string;
+  encryption_public_key: string;
+  signature_public_key: string;
+  key_binding_signature: string;
+  version: number;
+  created_at_millis: number;
 }
 
 export async function fetchPublicKeys(userIds: string[]): Promise<PublicKeyEntry[]> {
   const result = await request<{ keys: PublicKeyEntry[] }>(`/api/public-keys?user_ids=${userIds.join(',')}`);
 
   return result.keys;
+}
+
+/**
+ * Fetch the current active registered identity for a single user, or null if
+ * none exists. Used to determine the next key version before registering.
+ */
+export async function fetchActivePublicKey(userId: string): Promise<PublicKeyEntry | null> {
+  const keys = await fetchPublicKeys([userId]);
+
+  return keys[0] ?? null;
 }
 
 export async function disablePublicKey(token: string): Promise<void> {
@@ -70,33 +89,55 @@ export async function disablePublicKey(token: string): Promise<void> {
   });
 }
 
-// Two-phase proof-of-possession registration. The caller orchestrates
-// the round-trip:
-//   1. initKeyPossession(token, userId, publicKey)       → { challengeId, ciphertext }
-//   2. (vault) respondToKeyChallenge(challengeId, ct)    → response
-//   3. completeKeyPossession(token, challengeId, response) → registered key
-// See src/crypto/key-possession-challenge.ts for the protocol details.
+// Two-phase proof-of-possession registration. The caller orchestrates the
+// round-trip, proving possession of BOTH the encryption and signature keys:
+//   1. (vault) signKeyRegistration(version, createdAtMillis)  → signed bundle
+//   2. initKeyPossession(token, submission)                   → { challengeId, ciphertext }
+//   3. (vault) respondToKeyChallenge(challengeId, ciphertext) → { response, challengeSignature }
+//   4. completeKeyPossession(token, challengeId, response, challengeSignature) → registered identity
+// See src/crypto/key-possession-challenge.ts and src/crypto/key-registration.ts.
 
 export interface InitKeyPossessionResult {
   challengeId: string;
   ciphertext: string;
 }
 
-export async function initKeyPossession(token: string, userId: string, publicKey: string): Promise<InitKeyPossessionResult> {
+export interface KeyRegistrationSubmission {
+  userId: string;
+  encryptionPublicKey: string;
+  signaturePublicKey: string;
+  version: number;
+  createdAtMillis: number;
+  keyBindingSignature: string;
+}
+
+export async function initKeyPossession(token: string, submission: KeyRegistrationSubmission): Promise<InitKeyPossessionResult> {
   const body = await request<{ challenge_id: string; ciphertext: string }>('/api/public-keys/register/init', {
     method: 'POST',
     token,
-    body: JSON.stringify({ user_id: userId, public_key: publicKey }),
+    body: JSON.stringify({
+      user_id: submission.userId,
+      encryption_public_key: submission.encryptionPublicKey,
+      signature_public_key: submission.signaturePublicKey,
+      version: submission.version,
+      created_at_millis: submission.createdAtMillis,
+      key_binding_signature: submission.keyBindingSignature,
+    }),
   });
 
   return { challengeId: body.challenge_id, ciphertext: body.ciphertext };
 }
 
-export async function completeKeyPossession(token: string, challengeId: string, response: string): Promise<PublicKeyEntry> {
+export async function completeKeyPossession(
+  token: string,
+  challengeId: string,
+  response: string,
+  challengeSignature: string
+): Promise<PublicKeyEntry> {
   return request<PublicKeyEntry>('/api/public-keys/register/complete', {
     method: 'POST',
     token,
-    body: JSON.stringify({ challenge_id: challengeId, response }),
+    body: JSON.stringify({ challenge_id: challengeId, response, challenge_signature: challengeSignature }),
   });
 }
 

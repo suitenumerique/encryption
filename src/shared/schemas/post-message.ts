@@ -22,6 +22,7 @@ import {
   MSG_VAULT_RESULT,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
+  MSG_VAULT_SIGN_KEY_REGISTRATION,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 
@@ -169,6 +170,15 @@ export const VaultGenerateKeysRequest = z.object({
   requestId: z.string(),
 });
 
+export const VaultSignKeyRegistrationRequest = z.object({
+  type: z.literal(MSG_VAULT_SIGN_KEY_REGISTRATION),
+  requestId: z.string(),
+  payload: z.object({
+    version: z.number().int().positive(), // monotonic per-user key version (>= 1)
+    createdAtMillis: z.number().int().nonnegative(), // signed creation timestamp (ms since epoch)
+  }),
+});
+
 export const VaultRespondToKeyChallengeRequest = z.object({
   type: z.literal(MSG_VAULT_RESPOND_TO_KEY_CHALLENGE),
   requestId: z.string(),
@@ -218,6 +228,7 @@ export const VaultClaimTransferImportRequest = z.object({
 /** Privileged operations only encryption can call */
 export const VaultPrivilegedRequestSchema = z.discriminatedUnion('type', [
   VaultGenerateKeysRequest,
+  VaultSignKeyRegistrationRequest,
   VaultRespondToKeyChallengeRequest,
   VaultExportBackupRequest,
   VaultImportBackupRequest,
@@ -247,6 +258,7 @@ export const VaultRequestSchema = z.discriminatedUnion('type', [
   VaultGetKnownFingerprintsRequest,
   // Privileged operations
   VaultGenerateKeysRequest,
+  VaultSignKeyRegistrationRequest,
   VaultRespondToKeyChallengeRequest,
   VaultExportBackupRequest,
   VaultImportBackupRequest,
@@ -260,6 +272,7 @@ export type VaultRequest = z.infer<typeof VaultRequestSchema>;
 /** Set of operation types that require encryption origin */
 export const PRIVILEGED_OPERATIONS = new Set<string>([
   MSG_VAULT_GENERATE_KEYS,
+  MSG_VAULT_SIGN_KEY_REGISTRATION,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_EXPORT_BACKUP,
   MSG_VAULT_IMPORT_BACKUP,
