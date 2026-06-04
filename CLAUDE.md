@@ -48,11 +48,16 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 
 ## Cryptography architecture
 
-**Asymmetric (user keys)**: Hybrid scheme with two slots:
+**Two key pairs per user**, each one holds:
 
-- Slot 1: X25519 (classical, permanent)
-- Slot 2: X25519 placeholder (same `KeyEncapsulation` interface as ML-KEM, will be swapped when libsodium.js exposes ML-KEM bindings)
-- Shared secret: `HKDF(slot1_shared || slot2_shared)`
+- **Encryption key pair** — X-Wing hybrid KEM (X25519 + ML-KEM-768), wraps symmetric keys.
+- **Signature key pair** — Ed25519 (`crypto_sign_*`). This is the **identity**: its public-key fingerprint is what users verify out-of-band (QR code / transmitted digits). It signs identity bindings and proof-of-possession challenges; it never wraps content.
+
+They are minted, backed up, and transferred together (`UserKeyBundle`). One identity has for now one encryption key but it allows having more depending on needs for specific products.
+
+**The registry (`public_keys` table)** stores, per user and per monotonic `version`: the encryption public key, the signature public key, and a **binding signature**. Because `version` and `createdAt` are inside the signature, a database attacker cannot reorder, splice, or backdate rows without breaking the signature; any verifier holding the out-of-band-verified identity key detects it. Consumers verify the binding before using this data, an incoherent record triggers a warning.
+
+**Proof of possession at registration** proves both private keys: the encryption key resolves a challenge from the server, and the identity key uses a signature over the server's challenge id. The server also re-verifies the binding signature and enforces strictly-increasing version before committing. Fingerprint verification (out-of-band) + binding verification together form the trust decision.
 
 **Symmetric (documents)**: XChaCha20-Poly1305 via `crypto_secretbox`. Quantum-safe.
 
@@ -65,7 +70,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 Two categories of operations:
 
 - **Product operations** (any allowed origin): `has-keys`, `get-public-key`, `encrypt-without-key`, `encrypt-with-key`, `decrypt-with-key`, `share-keys`, fingerprint checks
-- **Privileged operations** (only `encryption`): `generate-keys`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
+- **Privileged operations** (only `encryption`): `generate-keys`, `sign-key-registration`, `respond-to-key-challenge`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
 
 The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
 
