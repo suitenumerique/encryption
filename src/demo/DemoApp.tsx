@@ -25,6 +25,7 @@ interface SharedAccess {
   fullName: string;
   email: string;
   publicKey: string | null;
+  signaturePublicKey: string | null;
   role: string;
 }
 

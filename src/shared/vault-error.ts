@@ -36,6 +36,14 @@ export const VaultErrorCode = {
   CIPHERTEXT_TOO_SHORT: 'CIPHERTEXT_TOO_SHORT',
   /** Blob's leading version byte doesn't match a format this build can decode. */
   UNSUPPORTED_CRYPTO_VERSION: 'UNSUPPORTED_CRYPTO_VERSION',
+  /** A signature public key didn't have the expected Ed25519 length. */
+  INVALID_SIGNATURE_KEY: 'INVALID_SIGNATURE_KEY',
+  /**
+   * A registry entry's binding signature did not verify against its claimed
+   * identity (signature) key — the directory record is forged, tampered, or
+   * incoherent. Consumers MUST refuse to trust / share with such an entry.
+   */
+  INVALID_KEY_BINDING: 'INVALID_KEY_BINDING',
   /**
    * Catch-all for situations the SDK couldn't classify into a more
    * specific code — present so consumers always have something to switch
@@ -84,5 +92,6 @@ export const classifyVaultError = (err: unknown): VaultErrorCode => {
   if (/invalid mnemonic|checksum mismatch/i.test(msg)) return VaultErrorCode.INVALID_MNEMONIC;
   if (/too short to be valid/i.test(msg)) return VaultErrorCode.CIPHERTEXT_TOO_SHORT;
   if (/unsupported crypto version/i.test(msg)) return VaultErrorCode.UNSUPPORTED_CRYPTO_VERSION;
+  if (/signature public key/i.test(msg)) return VaultErrorCode.INVALID_SIGNATURE_KEY;
   return VaultErrorCode.UNKNOWN;
 };

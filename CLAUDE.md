@@ -48,11 +48,21 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 
 ## Cryptography architecture
 
-**Asymmetric (user keys)**: Hybrid scheme with two slots:
+**Two key pairs per user**, each one holds:
 
-- Slot 1: X25519 (classical, permanent)
-- Slot 2: X25519 placeholder (same `KeyEncapsulation` interface as ML-KEM, will be swapped when libsodium.js exposes ML-KEM bindings)
-- Shared secret: `HKDF(slot1_shared || slot2_shared)`
+- **Encryption key pair** — X-Wing hybrid KEM (X25519 + ML-KEM-768), wraps symmetric keys.
+- **Signature key pair** — Ed25519 (`crypto_sign_*`). This is the **identity**: its public-key fingerprint is what users verify out-of-band (QR code / transmitted digits). It signs identity bindings and proof-of-possession challenges; it never wraps content.
+
+They are minted, backed up, and transferred together (`UserKeyBundle`). The identity (signature key) is long-lived and stable; the encryption key can rotate independently and repeatedly under that same identity, so contacts who verified the identity out-of-band never have to re-verify when only the encryption key changes.
+
+**The registry is two tables** (`src/prisma/schema.prisma`):
+
+- **`identities`** — one row per identity (signature) key: the Ed25519 public key (globally unique = anti-impersonation), a per-user `generation`, and future-only continuity columns (`previousIdentityId` + `continuitySignature`) that let a new identity be cross-signed by the previous one, so verifiers who trust the old identity transitively trust the new (reserved for an Ed25519 → post-quantum signature migration; the flow is not wired yet).
+- **`key_registrations`** — one row per encryption key, referencing `identityId`, with a monotonic per-user `version`, `createdAt`, and the **binding signature** (Ed25519 by the identity key over version + createdAt + userId + both public keys). Rotating the encryption key inserts a new row referencing the SAME identity; the directory joins the active row to its identity.
+
+Because `version` and `createdAt` are inside the signature, a database attacker cannot reorder, splice, or backdate rows without breaking it; any verifier holding the out-of-band-verified identity key detects tampering. Consumers verify the binding before using the data; an incoherent record triggers a warning. Registration records are immutable — restoring an already-registered key **reactivates** its existing row (preserving version/createdAt/signature), never mints a new version.
+
+**Proof of possession at registration** proves both private keys: the encryption key resolves a challenge from the server, and the identity key signs the server's challenge id. The server re-verifies the binding signature, enforces strictly-increasing version (for genuinely new keys), reuses the identity when its signature key already belongs to the user, and rejects a signature/encryption key already claimed by another user. Fingerprint verification (out-of-band) + binding verification together form the trust decision.
 
 **Symmetric (documents)**: XChaCha20-Poly1305 via `crypto_secretbox`. Quantum-safe.
 
@@ -65,7 +75,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 Two categories of operations:
 
 - **Product operations** (any allowed origin): `has-keys`, `get-public-key`, `encrypt-without-key`, `encrypt-with-key`, `decrypt-with-key`, `share-keys`, fingerprint checks
-- **Privileged operations** (only `encryption`): `generate-keys`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
+- **Privileged operations** (only `encryption`): `generate-keys`, `sign-key-registration`, `respond-to-key-challenge`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
 
 The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
 

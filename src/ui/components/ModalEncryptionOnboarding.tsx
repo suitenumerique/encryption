@@ -5,7 +5,14 @@ import { useTranslation } from 'react-i18next';
 
 import { formatFingerprint } from '@encryption/src/crypto/fingerprint';
 import type { UserInfo } from '@encryption/src/ui/App';
-import { completeKeyPossession, disablePublicKey, initKeyPossession } from '@encryption/src/ui/api/server-client';
+import {
+  ApiError,
+  completeKeyPossession,
+  disablePublicKey,
+  fetchActivePublicKey,
+  initKeyPossession,
+} from '@encryption/src/ui/api/server-client';
+import { API_ERROR_CONCURRENT_REGISTRATION, API_ERROR_KEY_VERSION_CONFLICT } from '@encryption/src/shared/error-codes';
 import {
   SessionExpiredError,
   withFreshToken,
@@ -142,7 +149,8 @@ export function ModalEncryptionOnboarding({
   currentAccessToken = null,
 }: ModalEncryptionOnboardingProps) {
   const { t } = useTranslation('common');
-  const { generateKeys, getPublicKey, exportBackup, importBackup, request, respondToKeyChallenge } = useEncryptionContext();
+  const { generateKeys, getPublicKey, exportBackup, importBackup, request, respondToKeyChallenge, signKeyRegistration } =
+    useEncryptionContext();
 
   const [step, setStep] = useState<OnboardingStep>(hasExistingBackendKey ? 'existing-key-choice' : 'explanation');
   const [isPending, setIsPending] = useState(false);
@@ -192,20 +200,69 @@ export function ModalEncryptionOnboarding({
   }, [currentAccessToken]);
 
   // Two-phase proof-of-possession registration, used by both the fresh
-  // generate flow and the backup-restore flow. The vault decapsulates
-  // the server's challenge ciphertext using the just-stored secret key,
-  // so we know the user holds the matching private key before the
-  // server commits the new public key.
+  // generate flow and the backup-restore flow. Proves possession of BOTH the
+  // encryption key (KEM decapsulation → HMAC) and the identity/signature key
+  // (signature over the server challenge), and registers a record whose
+  // binding signature the vault produced over a monotonic `version`.
+  //
+  // For a genuinely new key the `version` must be exactly (current active
+  // version + 1). Two devices can race for the same next version, so on a
+  // version/concurrency conflict we refetch and retry with a freshly signed
+  // record. Restoring a backup of an already-registered key is NOT a new
+  // version: the shortcut below skips registration when the key is already
+  // active, and the server reactivates it (rather than minting a new version)
+  // in every other case.
   const registerKeyWithPoP = useCallback(
-    async (publicKeyToRegister: string): Promise<void> => {
+    async (): Promise<void> => {
       if (!userId) return;
-      await withFreshToken(getToken, async (token) => {
-        const { challengeId, ciphertext } = await initKeyPossession(token, userId, publicKeyToRegister);
-        const { response } = await respondToKeyChallenge(challengeId, ciphertext);
-        await completeKeyPossession(token, challengeId, response);
-      });
+
+      const MAX_ATTEMPTS = 3;
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        // Determine the next version from the user's current active key.
+        const active = await fetchActivePublicKey(userId);
+        const version = (active?.version ?? 0) + 1;
+        const createdAtMillis = Date.now();
+
+        // The vault signs the registration record (it is the only holder of
+        // the signature secret key) over this version + timestamp.
+        const reg = await signKeyRegistration(version, createdAtMillis);
+
+        // Nothing to do when the key we hold is already the active registered
+        // key (the common restore-on-current-device case): re-registering it
+        // would only bump a version the server will refuse and then reactivate.
+        if (active && active.encryption_public_key === reg.encryptionPublicKey) {
+          return;
+        }
+
+        try {
+          await withFreshToken(getToken, async (token) => {
+            const { challengeId, ciphertext } = await initKeyPossession(token, {
+              userId,
+              encryptionPublicKey: reg.encryptionPublicKey,
+              signaturePublicKey: reg.signaturePublicKey,
+              version: reg.version,
+              createdAtMillis: reg.createdAtMillis,
+              keyBindingSignature: reg.keyBindingSignature,
+            });
+            const { response, challengeSignature } = await respondToKeyChallenge(challengeId, ciphertext);
+            await completeKeyPossession(token, challengeId, response, challengeSignature);
+          });
+
+          return;
+        } catch (err) {
+          const conflict =
+            err instanceof ApiError && (err.code === API_ERROR_KEY_VERSION_CONFLICT || err.code === API_ERROR_CONCURRENT_REGISTRATION);
+
+          // Retry only the version/concurrency race; rethrow everything else
+          // (and the conflict too once attempts are exhausted).
+          if (!conflict || attempt === MAX_ATTEMPTS) {
+            throw err;
+          }
+        }
+      }
     },
-    [getToken, userId, respondToKeyChallenge],
+    [getToken, userId, respondToKeyChallenge, signKeyRegistration],
   );
 
   const handleGenerateKeys = useCallback(async () => {
@@ -214,7 +271,8 @@ export function ModalEncryptionOnboarding({
     setSessionExpired(false);
 
     try {
-      const { publicKey } = await generateKeys();
+      // Mint both key pairs (encryption + identity/signature) locally.
+      await generateKeys();
 
       // Register the public key on the encryption server through the
       // proof-of-possession flow (the central authority requires the user
@@ -224,7 +282,7 @@ export function ModalEncryptionOnboarding({
       // to prevent an inconsistent state.
       if (userId) {
         try {
-          await registerKeyWithPoP(publicKey);
+          await registerKeyWithPoP();
         } catch (regError) {
           // Clean up local keys regardless of the specific failure mode —
           // a key that doesn't exist on the server is useless and would
@@ -295,7 +353,7 @@ export function ModalEncryptionOnboarding({
 
       if (userId) {
         try {
-          await registerKeyWithPoP(publicKey);
+          await registerKeyWithPoP();
         } catch (regError) {
           // Clean up local keys — they're useless without server
           // registration, whether the cause is an expired session or a

@@ -37,8 +37,12 @@ export function EncryptionSettings({ userInfo = null, getToken, onClose, onKeysD
         setKeysExist(exists);
 
         if (exists) {
-          getPublicKey().then(({ publicKey: pk }) => {
-            computeKeyFingerprint(pk).then(setFingerprint);
+          getPublicKey().then(({ signaturePublicKey }) => {
+            if (signaturePublicKey) {
+              computeKeyFingerprint(signaturePublicKey).then(setFingerprint);
+            } else {
+              setFingerprint(null);
+            }
           });
         }
       })

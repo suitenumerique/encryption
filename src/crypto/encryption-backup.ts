@@ -23,24 +23,43 @@
  *   ephemeral symmetric key it encodes stays short.
  */
 import type { HybridKeyPair, HybridPublicKey } from '@encryption/src/crypto/encryption';
+import type { SignatureKeyPair } from '@encryption/src/crypto/signature';
 import { CRYPTO_VERSION } from '@encryption/src/shared/constants';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 // ============================================================================
-// Serialization: key pair → JSON → passphrase
+// Serialization: key bundle → JSON → passphrase
 // ============================================================================
 
-interface SerializedKeyPair {
-  version: number;
-  publicKey: string; // base64 of the X-Wing public key bytes
-  secretKey: string; // base64 of the X-Wing secret key bytes
+/**
+ * Everything a device needs to BE a given identity: the encryption key pair
+ * (X-Wing) plus the signature key pair (Ed25519, the identity). They travel
+ * together everywhere — backup and device transfer — because losing one means
+ * losing the other (same IndexedDB), and a restored device must reproduce the
+ * SAME identity fingerprint that contacts verified out-of-band. Splitting them
+ * would let the encryption key rotate while the verified identity stayed put,
+ * which is exactly the inconsistency we want to make impossible.
+ */
+export interface UserKeyBundle {
+  encryption: HybridKeyPair;
+  signature: SignatureKeyPair;
 }
 
-export function keyPairToPassphrase(keyPair: HybridKeyPair): string {
-  const serialized: SerializedKeyPair = {
+interface SerializedKeyBundle {
+  version: number;
+  publicKey: string; // base64 of the X-Wing (encryption) public key bytes
+  secretKey: string; // base64 of the X-Wing (encryption) secret key bytes
+  signaturePublicKey: string; // base64 of the Ed25519 (identity) public key bytes
+  signatureSecretKey: string; // base64 of the Ed25519 (identity) secret key bytes
+}
+
+export function keyPairToPassphrase(bundle: UserKeyBundle): string {
+  const serialized: SerializedKeyBundle = {
     version: CRYPTO_VERSION,
-    publicKey: uint8ToBase64(keyPair.publicKey),
-    secretKey: uint8ToBase64(keyPair.secretKey),
+    publicKey: uint8ToBase64(bundle.encryption.publicKey),
+    secretKey: uint8ToBase64(bundle.encryption.secretKey),
+    signaturePublicKey: uint8ToBase64(bundle.signature.publicKey),
+    signatureSecretKey: uint8ToBase64(bundle.signature.secretKey),
   };
 
   const json = JSON.stringify(serialized);
@@ -48,7 +67,7 @@ export function keyPairToPassphrase(keyPair: HybridKeyPair): string {
   return uint8ToBase64Url(new TextEncoder().encode(json));
 }
 
-export function passphraseToKeyPair(passphrase: string): HybridKeyPair {
+export function passphraseToKeyPair(passphrase: string): UserKeyBundle {
   const json = new TextDecoder().decode(base64UrlToUint8(passphrase));
 
   let parsed: unknown;
@@ -65,7 +84,12 @@ export function passphraseToKeyPair(passphrase: string): HybridKeyPair {
 
   const serialized = parsed as Record<string, unknown>;
 
-  if (typeof serialized.publicKey !== 'string' || typeof serialized.secretKey !== 'string') {
+  if (
+    typeof serialized.publicKey !== 'string' ||
+    typeof serialized.secretKey !== 'string' ||
+    typeof serialized.signaturePublicKey !== 'string' ||
+    typeof serialized.signatureSecretKey !== 'string'
+  ) {
     throw new VaultError(VaultErrorCode.INVALID_BACKUP, 'Invalid backup: corrupted or incompatible key format');
   }
 
@@ -75,12 +99,15 @@ export function passphraseToKeyPair(passphrase: string): HybridKeyPair {
     throw new VaultError(VaultErrorCode.UNSUPPORTED_CRYPTO_VERSION, `Unsupported crypto version ${String(serialized.version)} in backup`);
   }
 
-  const publicKey = base64ToUint8(serialized.publicKey);
-  const secretKey = base64ToUint8(serialized.secretKey);
-
   return {
-    publicKey,
-    secretKey,
+    encryption: {
+      publicKey: base64ToUint8(serialized.publicKey),
+      secretKey: base64ToUint8(serialized.secretKey),
+    },
+    signature: {
+      publicKey: base64ToUint8(serialized.signaturePublicKey),
+      secretKey: base64ToUint8(serialized.signatureSecretKey),
+    },
   };
 }
 

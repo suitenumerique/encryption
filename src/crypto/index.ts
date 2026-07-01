@@ -18,6 +18,7 @@ export {
 } from '@encryption/src/crypto/encryption';
 
 export {
+  type UserKeyBundle,
   keyPairToPassphrase,
   passphraseToKeyPair,
   exportPublicKeyAsBase64,
@@ -29,3 +30,24 @@ export {
 export { getEncryptionDB } from '@encryption/src/crypto/encryption-db';
 
 export { computeKeyFingerprint, formatFingerprint } from '@encryption/src/crypto/fingerprint';
+
+export {
+  type SignaturePublicKey,
+  type SignatureSecretKey,
+  type SignatureKeyPair,
+  generateSignatureKeyPair,
+  signDetached,
+  verifyDetached,
+  assertValidSignaturePublicKey,
+} from '@encryption/src/crypto/signature';
+
+export {
+  type KeyRegistrationRecord,
+  type SerializedKeyRegistration,
+  type IdentityContinuityRecord,
+  encodeKeyRegistrationPayload,
+  encodePopChallengeMessage,
+  encodeIdentityContinuityPayload,
+  verifyKeyRegistration,
+  verifyIdentityContinuity,
+} from '@encryption/src/crypto/key-registration';

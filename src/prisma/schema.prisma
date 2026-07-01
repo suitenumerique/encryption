@@ -7,37 +7,109 @@ datasource db {
   provider = "postgresql"
 }
 
-/// Public keys for users. A user can have multiple keys over time (key rotation).
-/// Only the most recent key without a disabledAt is the active one.
-/// When a new key is created, all previous keys for the user are disabled in a transaction.
-/// The encoding scheme of `publicKey` is encoded in its leading version byte
-/// (CRYPTO_VERSION in src/shared/constants.ts) — no separate algorithm column.
-model PublicKey {
-  id         String    @id @default(uuid()) @db.Uuid
-  userId     String    @map("user_id") /// This is not UUID in all cases because it depends on the identity provider (we do not consider here scoped product user ids, only the one unique for a user across products)
-  publicKey  String    @map("public_key")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
-  disabledAt DateTime? @map("disabled_at")
+/// A user's IDENTITY: the Ed25519 signature key contacts verify out-of-band
+/// via fingerprint / QR code. Split from the encryption key (KeyRegistration
+/// below) on purpose — the identity is long-lived and stable, while encryption
+/// keys can rotate independently (a stronger KEM, a system-driven upgrade)
+/// WITHOUT contacts having to re-verify anything. That separation is the whole
+/// point of the signature identity: one identity vouches for many encryption
+/// keys over time.
+///
+/// `signaturePublicKey` is globally unique — the anti-impersonation property:
+/// two users can never claim the same identity, even if a private key leaked.
+/// The same key is NOT duplicated across the user's encryption-key rotations,
+/// because those live in KeyRegistration and only reference `identityId`.
+///
+/// Identity rotation (a DIFFERENT identity key — e.g. migrating Ed25519 → a
+/// post-quantum signature once one is standardized) is modelled by the
+/// continuity chain: a new identity carries `previousIdentityId` +
+/// `continuitySignature` = Sign(previousIdentitySecret, canonical(newIdentity)),
+/// so a verifier who already trusts the old identity transitively trusts the
+/// new one with no fresh out-of-band check. The rotation *flow* is future work;
+/// the columns exist now so the model never has to be migrated for it.
+model Identity {
+  id                  String     @id @default(uuid()) @db.Uuid
+  userId              String     @map("user_id") /// Not always a UUID — depends on the identity provider (suite-wide `sub`, not product-scoped ids)
+  signaturePublicKey  String     @unique @map("signature_public_key") /// base64 [version:1][ed25519Pubkey:32] — the identity; globally unique so two users can't claim the same identity even if a private key leaked
+  algo                String     @default("ed25519") @map("algo") /// identity signature algorithm; future values: ml-dsa / slh-dsa
+  generation          Int        @map("generation") /// monotonic per user, starting at 1; bumps only on a genuine identity rotation
+  createdAt           DateTime   @default(now()) @map("created_at")
+  disabledAt          DateTime?  @map("disabled_at")
 
+  /// Cross-signing chain for a FUTURE identity migration. Null for a first or
+  /// standalone identity. When set, `continuitySignature` is a signature by the
+  /// PREVIOUS identity key over this identity's canonical bytes.
+  previousIdentityId  String?    @map("previous_identity_id") @db.Uuid
+  previousIdentity    Identity?  @relation("IdentityChain", fields: [previousIdentityId], references: [id])
+  nextIdentities      Identity[] @relation("IdentityChain")
+  continuitySignature String?    @map("continuity_signature") /// base64 Sign(previousIdentitySecret, canonical(this identity))
+
+  encryptionKeys      EncryptionKey[]
+
+  @@unique([userId, generation])
   @@index([userId, disabledAt])
-  @@index([userId, createdAt])
-  @@map("public_keys")
+  @@map("identities")
 }
 
-/// Pending proof-of-possession challenges for public-key registration.
-/// The server encapsulates a fresh shared secret to the candidate `publicKey`
-/// (X-Wing) and stores `expectedHmac = HMAC_SHA256(sharedSecret, id)`.
-/// On `/api/keys/complete` the client returns the same HMAC (computed from
-/// its own decapsulation of the ciphertext) and the server constant-time
-/// compares before persisting the key. Rows expire and are cleaned up.
+/// One encryption public key (X-Wing wire blob) bound to an Identity for one
+/// monotonic per-user `version`. `keyBindingSignature` is an Ed25519 signature,
+/// made by the bound identity key, over the canonical payload (domain, version,
+/// createdAt, userId, encryptionPublicKey, signaturePublicKey) — see
+/// src/crypto/key-registration.ts. Because `version` and `createdAt` are inside
+/// that signature, a database attacker cannot reorder, splice, or backdate rows
+/// without invalidating it; any verifier holding the out-of-band-verified
+/// identity key detects the tampering.
+///
+/// Rotating the encryption key (keeping the identity) inserts a new row with
+/// `version` = previous max + 1 referencing the SAME `identityId`, and disables
+/// the previous active rows in a transaction — so only the most recent row
+/// without a `disabledAt` is active. `encryptionPublicKey` is globally unique:
+/// a key is never reused. Restoring an already-registered key REACTIVATES its
+/// existing row (same version, same signed createdAt) rather than inserting a
+/// duplicate — the signed metadata is immutable, so re-dating it is impossible.
+model EncryptionKey {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @map("user_id")
+  identityId          String    @map("identity_id") @db.Uuid
+  identity            Identity  @relation(fields: [identityId], references: [id])
+  encryptionPublicKey String    @unique @map("encryption_public_key") /// base64 [version:1][xwingPubkey:1216]; globally unique — a key is never reused, by this user or anyone
+  algo                String    @default("x-wing") @map("algo") /// encryption KEM algorithm; future values dispatch on the wire version byte too
+  keyBindingSignature String    @map("key_binding_signature") /// base64 Ed25519 signature over the canonical registration payload
+  version             Int       @map("version") /// monotonic per user, starting at 1; part of the signed payload
+  createdAt           DateTime  @default(now()) @map("created_at") /// client-asserted creation time (inside the signature; server validates skew)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+  disabledAt          DateTime? @map("disabled_at")
+
+  @@unique([userId, version])
+  @@index([userId, disabledAt])
+  @@index([userId, createdAt])
+  @@index([identityId])
+  @@map("encryption_keys")
+}
+
+/// Pending proof-of-possession challenges for identity registration.
+///
+/// The candidate identity (both public keys + the binding signature + the
+/// version/timestamp it intends to register) is stashed here between `init`
+/// and `complete`. The server encapsulates a fresh X-Wing shared secret to the
+/// candidate ENCRYPTION key and stores `expectedHmac = HMAC_SHA256(ss, id)`.
+///
+/// On `complete` the client proves possession of BOTH private keys:
+///   - encryption key: echoes the HMAC (from its own decapsulation),
+///   - signature key: returns an Ed25519 signature over `id`.
+/// Only then is the candidate promoted into a PublicKey row. Rows expire and
+/// are cleaned up.
 model KeyPossessionChallenge {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @map("user_id")
-  publicKey    String   @map("public_key") /// base64-encoded [version:1][xwingPubkey:1216] — replayed verbatim into PublicKey on success
-  expectedHmac Bytes    @map("expected_hmac") /// 32-byte HMAC-SHA256 tag the client must echo back
-  createdAt    DateTime @default(now()) @map("created_at")
-  expiresAt    DateTime @map("expires_at")
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @map("user_id")
+  encryptionPublicKey String   @map("encryption_public_key") /// base64 [version:1][xwingPubkey:1216] — replayed verbatim into PublicKey on success
+  signaturePublicKey  String   @map("signature_public_key") /// base64 [version:1][ed25519Pubkey:32]
+  keyBindingSignature String   @map("key_binding_signature") /// base64 Ed25519 binding signature, verified at init and persisted on success
+  version             Int      @map("version") /// candidate key version (validated for monotonicity inside the complete transaction)
+  signedCreatedAt     DateTime @map("signed_created_at") /// client-asserted creation time covered by the binding signature
+  expectedHmac        Bytes    @map("expected_hmac") /// 32-byte HMAC-SHA256 tag the client must echo back (encryption-key PoP)
+  createdAt           DateTime @default(now()) @map("created_at")
+  expiresAt           DateTime @map("expires_at")
 
   @@index([userId])
   @@index([expiresAt])

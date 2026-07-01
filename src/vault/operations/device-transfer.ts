@@ -3,9 +3,8 @@ import { keyPairToPassphrase, passphraseToKeyPair } from '@encryption/src/crypto
 import { getEncryptionDB } from '@encryption/src/crypto/encryption-db';
 import { detectMnemonicLanguage, keyToMnemonic, mnemonicToKey } from '@encryption/src/crypto/mnemonic';
 import { BROADCAST_KEYS_CHANGED, STORE_KEY_PAIRS, STORE_KNOWN_PUBLIC_KEYS } from '@encryption/src/shared/constants';
-import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
-import { getStoredKeyPair, serialized } from '@encryption/src/vault/operations/key-management';
+import { getStoredKeyBundle, getStoredKeyPair, serialized } from '@encryption/src/vault/operations/key-management';
 
 /**
  * Prepare encrypted payload for device transfer (called on the OLD device).
@@ -21,14 +20,12 @@ export async function handlePrepareTransferExport(
   userId: string,
   options?: { language?: 'french' | 'english' }
 ): Promise<{ encryptedPayload: string; transferPassphrase: string }> {
-  const pair = await getStoredKeyPair(userId);
+  // Throws MISSING_KEYS if there is no pair (or a legacy pair without an
+  // identity key) — a transfer must carry the full identity, both keys.
+  const bundle = await getStoredKeyBundle(userId);
 
-  if (!pair) {
-    throw new VaultError(VaultErrorCode.MISSING_KEYS, 'No key pair found. Cannot export.');
-  }
-
-  // Serialize the key pair as a passphrase string (base64url-encoded JSON of raw key bytes)
-  const keyPairPassphrase = keyPairToPassphrase({ publicKey: pair.publicKey, secretKey: pair.secretKey });
+  // Serialize both key pairs as a passphrase string (base64url-encoded JSON of raw key bytes)
+  const keyPairPassphrase = keyPairToPassphrase(bundle);
 
   // Export known public keys registry for this user
   const db = await getEncryptionDB();
@@ -81,7 +78,7 @@ export async function handlePrepareTransferExport(
 export async function handleClaimTransferImport(
   userId: string,
   payload: { encryptedPayload: string; transferPassphrase: string }
-): Promise<{ publicKey: string; previousKeyExists: boolean }> {
+): Promise<{ publicKey: string; signaturePublicKey: string; previousKeyExists: boolean }> {
   return serialized(async () => {
     // Convert mnemonic back to symmetric key bytes
     const transferKey = mnemonicToKey(payload.transferPassphrase);
@@ -102,8 +99,8 @@ export async function handleClaimTransferImport(
       knownPublicKeys: Record<string, unknown>;
     };
 
-    // Restore the key pair from its passphrase serialization
-    const keyPair = passphraseToKeyPair(data.keyPairPassphrase);
+    // Restore both key pairs from the passphrase serialization
+    const bundle = passphraseToKeyPair(data.keyPairPassphrase);
 
     // Check if keys already exist before overwriting
     const existingPair = await getStoredKeyPair(userId);
@@ -112,7 +109,16 @@ export async function handleClaimTransferImport(
     // Store in IndexedDB scoped by userId
     const db = await getEncryptionDB();
 
-    await db.put(STORE_KEY_PAIRS, { publicKey: keyPair.publicKey, secretKey: keyPair.secretKey }, userId);
+    await db.put(
+      STORE_KEY_PAIRS,
+      {
+        publicKey: bundle.encryption.publicKey,
+        secretKey: bundle.encryption.secretKey,
+        signaturePublicKey: bundle.signature.publicKey,
+        signatureSecretKey: bundle.signature.secretKey,
+      },
+      userId
+    );
 
     // Restore known public keys, scoped by this userId
     const tx = db.transaction(STORE_KNOWN_PUBLIC_KEYS, 'readwrite');
@@ -126,7 +132,11 @@ export async function handleClaimTransferImport(
     // Notify other tabs/iframes that keys changed
     getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
 
-    // Return the public key as base64
-    return { publicKey: exportPublicKeyAsBase64(keyPair.publicKey), previousKeyExists };
+    // Return both public keys as base64
+    return {
+      publicKey: exportPublicKeyAsBase64(bundle.encryption.publicKey),
+      signaturePublicKey: exportPublicKeyAsBase64(bundle.signature.publicKey),
+      previousKeyExists,
+    };
   });
 }

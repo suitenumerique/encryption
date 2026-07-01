@@ -19,11 +19,12 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 
 import type { VaultClient } from '@encryption/src/client/vault-client';
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
+import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
 import { ModalKeyMismatch } from '@encryption/src/demo/ModalKeyMismatch';
 import { ModalNoKey } from '@encryption/src/demo/ModalNoKey';
 import { DEMO_USERS } from '@encryption/src/demo/auth';
 import { useKeyFingerprint } from '@encryption/src/demo/useKeyFingerprint';
-import { fetchPublicKeys } from '@encryption/src/ui/api/server-client';
+import { fetchPublicKeys, type PublicKeyEntry } from '@encryption/src/ui/api/server-client';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ interface SharedAccess {
   fullName: string;
   email: string;
   publicKey: string | null;
+  signaturePublicKey: string | null;
   role: string;
 }
 
@@ -51,6 +53,8 @@ interface DemoUser {
   full_name: string;
   email: string;
   encryption_public_key: string | null;
+  signature_public_key: string | null;
+  binding_verified: boolean;
 }
 
 interface KeyMismatch {
@@ -164,7 +168,7 @@ function InviteUserRow({
       user={user}
       suffix={suffix}
       onSuffixClick={onSuffixClick}
-      fingerprintKey={fingerprintKey}
+      fingerprintKey={fingerprintKey ?? user.signature_public_key}
       right={
         <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400, #000091)', fontSize: 13 }}>
           Add{' '}
@@ -180,12 +184,19 @@ function InviteUserRow({
 // ─── MemberRow — shared user with role dropdown + delete ─────────
 
 function MemberRow({ access, onUpdateRole, onDelete }: { access: SharedAccess; onUpdateRole: (role: string) => void; onDelete: () => void }) {
-  const user: DemoUser = { id: access.userId, full_name: access.fullName, email: access.email, encryption_public_key: access.publicKey };
+  const user: DemoUser = {
+    id: access.userId,
+    full_name: access.fullName,
+    email: access.email,
+    encryption_public_key: access.publicKey,
+    signature_public_key: access.signaturePublicKey,
+    binding_verified: true,
+  };
 
   return (
     <SearchUserRow
       user={user}
-      fingerprintKey={access.publicKey}
+      fingerprintKey={access.signaturePublicKey}
       right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <select
@@ -249,14 +260,21 @@ function QuickSearchInviteInputSection({
   refuseKey: (userId: string) => Promise<void>;
   clearRefused: (userId: string) => void;
 }) {
-  const [showNoKeyModal, setShowNoKeyModal] = useState(false);
+  const [noKeyUser, setNoKeyUser] = useState<DemoUser | null>(null);
   const [mismatchUser, setMismatchUser] = useState<DemoUser | null>(null);
 
   const handleSelect = useCallback(
     (user: DemoUser) => {
       if (!user.encryption_public_key) {
-        setShowNoKeyModal(true);
+        setNoKeyUser(user);
 
+        return;
+      }
+
+      if (!user.binding_verified) {
+        // The directory record's identity binding did not verify — the backend
+        // record is incoherent (forged / tampered). Block sharing outright; the
+        // row suffix explains why.
         return;
       }
 
@@ -277,6 +295,10 @@ function QuickSearchInviteInputSection({
 
   const getUserSuffix = useCallback(
     (user: DemoUser): { text: string; color?: string } | undefined => {
+      if (user.encryption_public_key && !user.binding_verified) {
+        return { text: 'INVALID IDENTITY SIGNATURE — DO NOT SHARE', color: 'var(--c--globals--colors--error-500, #ce0500)' };
+      }
+
       if (refusedUserIds.has(user.id)) {
         return { text: 'KEY REFUSED — DO NOT SHARE', color: 'var(--c--globals--colors--error-500, #ce0500)' };
       }
@@ -315,12 +337,12 @@ function QuickSearchInviteInputSection({
             user={user}
             suffix={getUserSuffix(user)}
             onSuffixClick={keyMismatchUserIds.has(user.id) || refusedUserIds.has(user.id) ? () => setMismatchUser(user) : undefined}
-            fingerprintKey={user.encryption_public_key}
+            fingerprintKey={user.signature_public_key}
           />
         )}
       />
 
-      {showNoKeyModal && <ModalNoKey userName="" onClose={() => setShowNoKeyModal(false)} />}
+      {noKeyUser && <ModalNoKey userName={noKeyUser.full_name || noKeyUser.email} onClose={() => setNoKeyUser(null)} />}
 
       {mismatchUser && (activeMismatch || isRefusedUser) && (
         <ModalKeyMismatch
@@ -439,42 +461,69 @@ export function ShareDocumentModal({
       }
 
       const realIds = Object.values(userIdMap);
-      const publicKeys: Record<string, string> = {};
+      const entriesById: Record<string, PublicKeyEntry> = {};
 
       if (realIds.length > 0) {
         try {
           const keys = await fetchPublicKeys(realIds);
 
-          for (const key of keys) publicKeys[key.user_id] = key.public_key;
+          for (const key of keys) entriesById[key.user_id] = key;
         } catch {
           /* server unavailable */
         }
       }
 
-      const results: DemoUser[] = matched
-        .filter((u) => userIdMap[u.username] && userIdMap[u.username] !== currentUserId)
-        .map((u) => {
-          const realId = userIdMap[u.username];
+      const results: DemoUser[] = await Promise.all(
+        matched
+          .filter((u) => userIdMap[u.username] && userIdMap[u.username] !== currentUserId)
+          .map(async (u) => {
+            const realId = userIdMap[u.username];
+            const entry = entriesById[realId];
 
-          return {
-            id: realId,
-            full_name: `${u.firstName} ${u.lastName}`,
-            email: u.email,
-            encryption_public_key: publicKeys[realId] ?? null,
-          };
-        });
+            // Verify the directory record's identity binding before trusting
+            // any of its keys. An incoherent record is the "backend tampered"
+            // signal that blocks sharing.
+            let bindingVerified = false;
+
+            if (entry) {
+              try {
+                bindingVerified = await verifyKeyRegistration({
+                  userId: entry.user_id,
+                  version: entry.version,
+                  createdAtMillis: entry.created_at_millis,
+                  encryptionPublicKeyB64: entry.encryption_public_key,
+                  signaturePublicKeyB64: entry.signature_public_key,
+                  keyBindingSignatureB64: entry.key_binding_signature,
+                });
+              } catch {
+                bindingVerified = false;
+              }
+            }
+
+            return {
+              id: realId,
+              full_name: `${u.firstName} ${u.lastName}`,
+              email: u.email,
+              encryption_public_key: entry?.encryption_public_key ?? null,
+              signature_public_key: entry?.signature_public_key ?? null,
+              binding_verified: bindingVerified,
+            };
+          })
+      );
 
       setSearchUsers(results);
       setLoading(false);
 
-      // Check fingerprints against vault registry (TOFU)
+      // Check fingerprints against vault registry (TOFU). The fingerprint is of
+      // the IDENTITY (signature) key, and only records whose binding verified
+      // are eligible — a tampered record never reaches the trust check.
       if (vaultClient && currentUserId) {
         const fps: Record<string, string> = {};
 
         for (const u of results) {
-          if (u.encryption_public_key) {
+          if (u.signature_public_key && u.binding_verified) {
             try {
-              fps[u.id] = await computeKeyFingerprint(u.encryption_public_key);
+              fps[u.id] = await computeKeyFingerprint(u.signature_public_key);
             } catch {
               /* skip */
             }
@@ -493,7 +542,7 @@ export function ShareDocumentModal({
               } else if (c.status === 'unknown' && c.knownFingerprint) {
                 const u = results.find((x) => x.id === c.userId);
 
-                if (u?.encryption_public_key) mm.push({ userId: c.userId, knownKey: c.knownFingerprint, currentKey: u.encryption_public_key });
+                if (u?.signature_public_key) mm.push({ userId: c.userId, knownKey: c.knownFingerprint, currentKey: u.signature_public_key });
               }
             }
 
@@ -636,6 +685,7 @@ export function ShareDocumentModal({
                     fullName: u.full_name,
                     email: u.email,
                     publicKey: u.encryption_public_key,
+                    signaturePublicKey: u.signature_public_key,
                     role: selectedRole,
                   })),
                 ]);

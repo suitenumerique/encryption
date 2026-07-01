@@ -1,15 +1,21 @@
 import { z } from 'zod';
 
-// Public-key directory schemas. The encoding scheme of `public_key` is
-// embedded as a leading version byte inside the blob itself (see
-// CRYPTO_VERSION in src/shared/constants.ts), so there is no algorithm
-// field on the wire. Registration goes through the proof-of-possession
-// flow at `/api/keys/init` + `/api/keys/complete` rather than a single
-// PUT — schemas for that live in `./key-possession.ts`.
+// Public-key directory schemas. Each registered identity exposes BOTH public
+// keys plus the binding signature and the signed metadata, so that any
+// consumer can independently verify the record before trusting it (see
+// src/crypto/key-registration.ts). The encoding scheme of each key blob is a
+// leading version byte (CRYPTO_VERSION in src/shared/constants.ts), so there
+// is no separate algorithm field. Registration goes through the
+// proof-of-possession flow at `/api/public-keys/register/{init,complete}`;
+// schemas for that live in `./key-possession.ts`.
 
 export const PublicKeySchema = z.object({
   user_id: z.string().min(1),
-  public_key: z.string(), // base64-encoded [version:1][xwingPublicKey:1216]
+  encryption_public_key: z.string(), // base64 [version:1][xwingPubkey:1216]
+  signature_public_key: z.string(), // base64 [version:1][ed25519Pubkey:32] — the identity
+  key_binding_signature: z.string(), // base64 Ed25519 signature over the canonical registration payload
+  version: z.number().int().positive(),
+  created_at_millis: z.number().int().nonnegative(), // signed creation time (ms since epoch)
 });
 
 export type PublicKey = z.infer<typeof PublicKeySchema>;

@@ -179,7 +179,9 @@ function InterfaceRoutes({ route }: { route: Route }) {
         setHasExistingBackendKey(keys.length > 0);
 
         if (keys.length > 0) {
-          const fp = await computeKeyFingerprint(keys[0].public_key);
+          // The fingerprint users verify out-of-band is the IDENTITY
+          // (signature) key, not the encryption key.
+          const fp = await computeKeyFingerprint(keys[0].signature_public_key);
           setExistingKeyFingerprint(fp);
         }
       })

@@ -46,6 +46,31 @@ export interface AuthContext {
   suiteUserId: string;
 }
 
+/**
+ * Union on `verified` on purpose: `encryptionPublicKey` is a usable
+ * `ArrayBuffer` only in the verified branch (`null` otherwise), so a caller
+ * cannot wrap a key for a forged / incoherent directory entry without the
+ * compiler stopping them. Identity and encryption key live in one per-user
+ * entry so the two can never disagree for a user.
+ */
+export type RegisteredUser =
+  | {
+      verified: true;
+      signaturePublicKey: ArrayBuffer;
+      identityFingerprint: string;
+      version: number;
+      createdAtMillis: number;
+      encryptionPublicKey: ArrayBuffer;
+    }
+  | {
+      verified: false;
+      signaturePublicKey: ArrayBuffer;
+      identityFingerprint: string;
+      version: number;
+      createdAtMillis: number;
+      encryptionPublicKey: null;
+    };
+
 export interface EncryptionClientEventMap {
   /** Fired when the hidden vault iframe is ready for encrypt/decrypt operations */
   [MSG_VAULT_READY]: void;
@@ -507,13 +532,17 @@ export class VaultClient {
   }
 
   /**
-   * Fetch public keys for a list of user IDs from the encryption server.
-   * The vault makes the API call internally — products don't need direct
-   * access to the encryption server.
-   * @returns publicKeys - Record of userId → public key (ArrayBuffer)
+   * Fetch registered users for a list of user IDs. The vault calls the
+   * encryption server itself (products never touch it) and verifies each
+   * record's binding signature before returning. Users with no active
+   * registration are absent from the map.
    */
-  async fetchPublicKeys(userIds: string[]): Promise<{ publicKeys: Record<string, ArrayBuffer> }> {
-    return (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds })) as { publicKeys: Record<string, ArrayBuffer> };
+  async fetchPublicKeys(userIds: string[]): Promise<Record<string, RegisteredUser>> {
+    const { users } = (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds })) as {
+      users: Record<string, RegisteredUser>;
+    };
+
+    return users;
   }
 
   // =========================================================================

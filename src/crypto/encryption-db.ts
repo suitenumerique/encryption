@@ -23,7 +23,25 @@ export function getEncryptionDB(): Promise<IDBPDatabase> {
           db.createObjectStore(STORE_KNOWN_PUBLIC_KEYS);
         }
       },
-    });
+      // Browser abnormally killed the connection — reopen on next call.
+      terminated() {
+        dbPromise = null;
+      },
+    })
+      .then((db) => {
+        // A closed connection (versionchange from another tab, HMR reload, or
+        // the browser reclaiming an idle handle) must not stay cached, or the
+        // next transaction throws "The database connection is closing".
+        db.addEventListener('close', () => {
+          dbPromise = null;
+        });
+
+        return db;
+      })
+      .catch((err: unknown) => {
+        dbPromise = null;
+        throw err;
+      });
   }
 
   return dbPromise;

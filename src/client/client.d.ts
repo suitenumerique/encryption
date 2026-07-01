@@ -45,6 +45,16 @@ export interface AuthContext {
   suiteUserId: string;
 }
 
+/**
+ * Union on `verified` on purpose: `encryptionPublicKey` is a usable
+ * `ArrayBuffer` only in the verified branch (`null` otherwise), so a caller
+ * cannot encrypt for a forged / incoherent directory entry without the compiler
+ * stopping them.
+ */
+export type RegisteredUser =
+  | { verified: true; signaturePublicKey: ArrayBuffer; identityFingerprint: string; version: number; createdAtMillis: number; encryptionPublicKey: ArrayBuffer }
+  | { verified: false; signaturePublicKey: ArrayBuffer; identityFingerprint: string; version: number; createdAtMillis: number; encryptionPublicKey: null };
+
 export interface EncryptionClientEventMap {
   'vault:ready': void;
   'onboarding:complete': { publicKey: string };
@@ -67,7 +77,7 @@ export declare class VaultClient {
   // Key management
   hasKeys(): Promise<{ hasKeys: boolean }>;
   getPublicKey(): Promise<{ publicKey: ArrayBuffer }>;
-  fetchPublicKeys(userIds: string[]): Promise<{ publicKeys: Record<string, ArrayBuffer> }>;
+  fetchPublicKeys(userIds: string[]): Promise<Record<string, RegisteredUser>>;
 
   /**
    * Memory-tuning option for the four data-handling methods below

@@ -40,6 +40,7 @@ export const MSG_VAULT_FETCH_PUBLIC_KEYS = 'vault:fetch-public-keys';
 
 // --- Vault privileged requests (encryption → data.encryption) ---
 export const MSG_VAULT_GENERATE_KEYS = 'vault:generate-keys';
+export const MSG_VAULT_SIGN_KEY_REGISTRATION = 'vault:sign-key-registration';
 export const MSG_VAULT_RESPOND_TO_KEY_CHALLENGE = 'vault:respond-to-key-challenge';
 export const MSG_VAULT_EXPORT_BACKUP = 'vault:export-private-key-backup';
 export const MSG_VAULT_IMPORT_BACKUP = 'vault:import-private-key-backup';
