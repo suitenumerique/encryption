@@ -1,13 +1,19 @@
 /// <reference lib="webworker" />
 
+// This file is a module (see the trailing `export {}`) purely so its top-level
+// declarations stay module-scoped rather than leaking into the global namespace.
+// It exports no bindings, so the bundled classic service worker stays export-free.
+
 /**
  * Service Worker for data.encryption (vault + client SDK).
  *
  * - Caches vault and client files on install
  * - Serves from cache first (works offline)
  * - Checks /api/version every 5 minutes
- * - If a new version is detected, re-fetches all files into cache
- * - Notifies all clients (vault iframes) of updates
+ * - If a new version is detected, re-fetches all files into cache atomically
+ *
+ * Updates are applied silently to the cache and take effect on the next natural
+ * page load; no message is emitted to clients.
  *
  * The known version is persisted in the Cache API (not in JS memory)
  * so it survives SW restarts by the browser.
@@ -126,16 +132,17 @@ async function checkForUpdate(): Promise<void> {
     const knownVersion = await getKnownVersion();
 
     if (knownVersion === null) {
-      // First check ever — store as baseline
+      // First check ever, store as baseline.
       await setKnownVersion(serverVersion);
     } else if (serverVersion !== knownVersion) {
-      await setKnownVersion(serverVersion);
-      await refreshCache();
+      // Refresh the cache first and only record the new version once every
+      // bundle was updated. On failure, leave knownVersion untouched so the
+      // next tick retries instead of pinning a mixed old/new bundle set that
+      // SRI would reject.
+      const refreshed = await refreshCache();
 
-      const clients = await sw.clients.matchAll();
-
-      for (const client of clients) {
-        client.postMessage({ type: 'vault:update-available', version: serverVersion });
+      if (refreshed) {
+        await setKnownVersion(serverVersion);
       }
     }
   } catch {
@@ -143,18 +150,40 @@ async function checkForUpdate(): Promise<void> {
   }
 }
 
-async function refreshCache(): Promise<void> {
-  const cache = await caches.open(CACHE_NAME);
+/**
+ * Re-fetch all precached files and write them into the cache atomically
+ * (all-or-nothing). Every URL is fetched first; only if EVERY response is ok
+ * are they written into the cache. On any failure the existing cache and the
+ * recorded version are left untouched, so the next check retries cleanly and
+ * a mid-refresh network failure can never pin a mixed old/new bundle set
+ * (e.g. new HTML with an old vault.js) that SRI would then reject.
+ *
+ * @returns true if the cache was fully refreshed, false otherwise.
+ */
+async function refreshCache(): Promise<boolean> {
+  try {
+    const responses: Response[] = [];
 
-  for (const url of PRECACHE_URLS) {
-    try {
+    for (const url of PRECACHE_URLS) {
       const response = await fetch(url, { cache: 'reload' });
 
-      if (response.ok) {
-        await cache.put(url, response);
+      if (!response.ok) {
+        return false;
       }
-    } catch {
-      // Offline
+
+      responses.push(response);
     }
+
+    const cache = await caches.open(CACHE_NAME);
+
+    await Promise.all(PRECACHE_URLS.map((url, index) => cache.put(url, responses[index])));
+
+    return true;
+  } catch {
+    // Offline or a fetch failed — leave the existing cache untouched.
+    return false;
   }
 }
+
+// Make this file a module for the type-checker without emitting any runtime export.
+export {};

@@ -26,7 +26,7 @@
  */
 import { writeUint16LE, writeUint32LE } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
-import { verifyDetached } from '@encryption/src/crypto/signature';
+import { type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
 
 // Domain-separation tags. Distinct strings keep a registration signature from
 // ever being mistaken for a PoP-challenge (or identity-continuity) signature,
@@ -173,6 +173,15 @@ export function encodeIdentityContinuityPayload(record: IdentityContinuityRecord
  * fresh out-of-band check. A `true` result means: whoever holds the PREVIOUS
  * identity key deliberately vouched for this exact NEW identity.
  */
+/**
+ * Sign a new identity with the PREVIOUS identity's secret key, so a verifier who
+ * already trusts the previous identity transitively trusts the new one. The
+ * counterpart of {@link verifyIdentityContinuity}.
+ */
+export async function signIdentityContinuity(record: IdentityContinuityRecord, previousSignatureSecretKey: SignatureSecretKey): Promise<Uint8Array> {
+  return signDetached(encodeIdentityContinuityPayload(record), previousSignatureSecretKey);
+}
+
 export async function verifyIdentityContinuity(
   record: IdentityContinuityRecord,
   previousSignaturePublicKeyB64: string,

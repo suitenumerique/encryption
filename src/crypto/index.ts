@@ -19,8 +19,6 @@ export {
 
 export {
   type UserKeyBundle,
-  keyPairToPassphrase,
-  passphraseToKeyPair,
   exportPublicKeyAsBase64,
   importPublicKeyFromBase64,
   uint8ToBase64,

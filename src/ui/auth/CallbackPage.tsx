@@ -10,12 +10,7 @@ import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-r
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import {
-  WrongUserError,
-  handleCallback,
-  notifyAuthComplete,
-  startLogin,
-} from '@encryption/src/ui/auth/oidc-client';
+import { WrongUserError, handleCallback, notifyAuthComplete, startLogin } from '@encryption/src/ui/auth/oidc-client';
 
 export function CallbackPage() {
   const { t } = useTranslation('common');
@@ -48,13 +43,9 @@ export function CallbackPage() {
   if (error === 'wrong_user') {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.WARNING}>
-          {t('auth.wrong_user')}
-        </Alert>
+        <Alert type={VariantType.WARNING}>{t('auth.wrong_user')}</Alert>
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <Button onClick={() => void startLogin(wrongUserExpectedSub ?? undefined, true)}>
-            {t('auth.sign_in_another_account')}
-          </Button>
+          <Button onClick={() => void startLogin(wrongUserExpectedSub ?? undefined, true)}>{t('auth.sign_in_another_account')}</Button>
           <Button color="neutral" onClick={() => window.close()}>
             {t('settings.close')}
           </Button>
@@ -66,13 +57,9 @@ export function CallbackPage() {
   if (error) {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>
-          {t('auth.failed', { error })}
-        </Alert>
+        <Alert type={VariantType.ERROR}>{t('auth.failed', { error })}</Alert>
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-          <Button onClick={() => window.close()}>
-            {t('settings.close')}
-          </Button>
+          <Button onClick={() => window.close()}>{t('settings.close')}</Button>
         </div>
       </div>
     );
@@ -81,9 +68,7 @@ export function CallbackPage() {
   if (success) {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.SUCCESS}>
-          {t('auth.success')}
-        </Alert>
+        <Alert type={VariantType.SUCCESS}>{t('auth.success')}</Alert>
       </div>
     );
   }

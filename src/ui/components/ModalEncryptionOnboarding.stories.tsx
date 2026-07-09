@@ -47,7 +47,7 @@ ExistingUserStory.args = {
   onClose: () => console.log('onClose'),
   onSuccess: (pk) => console.log('onSuccess', pk),
   hasExistingBackendKey: true,
-  existingKeyFingerprint: 'a1b2c3d4e5f60718',
+  existingKeyFingerprint: '0031712345678901234567890123456789012345',
   userInfo: { name: 'Alice Martin', email: 'alice.martin@numerique.gouv.fr' },
 };
 ExistingUserStory.play = async ({ canvasElement }) => {

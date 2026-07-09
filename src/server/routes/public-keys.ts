@@ -1,39 +1,38 @@
-import { randomUUID } from 'node:crypto';
-
 import type { FastifyInstance } from 'fastify';
-
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
-
-import { Prisma } from '@encryption/src/generated/prisma/client';
+import { randomUUID } from 'node:crypto';
 
 import { uint8ToBase64 } from '@encryption/src/crypto';
 import { base64ToUint8, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
-import { encodePopChallengeMessage, verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
-import { createKeyPossessionChallenge, verifyChallengeResponse } from '@encryption/src/crypto/key-possession-challenge';
-import { assertValidSignaturePublicKey, verifyDetached } from '@encryption/src/crypto/signature';
+import { createKeyPossessionChallenge } from '@encryption/src/crypto/key-possession-challenge';
+import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
+import { assertValidSignaturePublicKey } from '@encryption/src/crypto/signature';
 import { prisma } from '@encryption/src/prisma/client';
 import {
-  API_ERROR_CHALLENGE_EXPIRED,
-  API_ERROR_CHALLENGE_INVALID_RESPONSE,
-  API_ERROR_CHALLENGE_NOT_FOUND,
+  type CompleteTxResult,
+  completeRegistrationInTx,
+  completeResultToHttpError,
+  isRetryableRegistrationError,
+  loadAndVerifyPossession,
+} from '@encryption/src/server/routes/registration-core';
+import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
+import {
   API_ERROR_CONCURRENT_REGISTRATION,
-  API_ERROR_ENCRYPTION_KEY_TAKEN,
   API_ERROR_FORBIDDEN_OTHER_USER,
-  API_ERROR_IDENTITY_TAKEN,
-  API_ERROR_INVALID_CHALLENGE_SIGNATURE,
   API_ERROR_INVALID_KEY_BINDING,
   API_ERROR_INVALID_PUBLIC_KEY,
   API_ERROR_INVALID_TIMESTAMP,
-  API_ERROR_KEY_VERSION_CONFLICT,
   API_ERROR_NO_ACTIVE_KEY,
-  API_ERROR_RATE_LIMIT_KEYS,
+  API_ERROR_RATE_LIMIT_CHALLENGES,
 } from '@encryption/src/shared/error-codes';
 import { CompleteKeyPossessionBodySchema, InitKeyPossessionBodySchema } from '@encryption/src/shared/schemas/key-possession';
-import { GetPublicKeysQuerySchema } from '@encryption/src/shared/schemas/public-key';
+import { type ContinuityLinkWire, GetPublicKeysQuerySchema } from '@encryption/src/shared/schemas/public-key';
 
-const RATE_LIMIT_WINDOW_DAYS = 30;
-const RATE_LIMIT_MAX_CREATIONS = 10;
 const CHALLENGE_TTL_SECONDS = 120;
+// Bound how many LIVE (unexpired) possession challenges a user may hold at once.
+// Each init writes a challenge row before any PoP is proven, so without a cap a
+// caller could flood the table with init requests. Counting only live rows means
+// the opportunistic cleanup of expired rows can never undercount this bound.
+const MAX_OUTSTANDING_CHALLENGES = 10;
 // How far the client-asserted creation timestamp may drift from the server
 // clock. Generous enough for slow networks / mild clock skew, tight enough
 // that a row can't be meaningfully backdated. The timestamp is inside the
@@ -41,95 +40,46 @@ const CHALLENGE_TTL_SECONDS = 120;
 // security boundary on its own.
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
-// PostgreSQL serialization-failure (40001) surfaces as P2034 in Prisma, and a
-// unique-constraint violation as P2002. Either can happen when two completes
-// for the same user race for the same next version; both are safe to retry.
-const PRISMA_SERIALIZATION_FAILURE = 'P2034';
-const PRISMA_UNIQUE_VIOLATION = 'P2002';
-
-function isRetryableRegistrationError(err: unknown): boolean {
-  return (
-    err instanceof PrismaClientKnownRequestError &&
-    (err.code === PRISMA_SERIALIZATION_FAILURE || err.code === PRISMA_UNIQUE_VIOLATION)
-  );
-}
-
-// Enforce the invariant "exactly one active EncryptionKey + Identity per
-// user": disable every other active row for the user, then (re)enable the
-// chosen pair. Called by both the create and reactivate branches of the
-// complete transaction so the directory always resolves a single coherent
-// active record.
-async function activateRegistration(
-  tx: Prisma.TransactionClient,
-  userId: string,
-  encryptionKeyId: string,
-  identityId: string
-): Promise<void> {
-  await tx.encryptionKey.updateMany({
-    where: { userId, disabledAt: null, id: { not: encryptionKeyId } },
-    data: { disabledAt: new Date() },
-  });
-  await tx.encryptionKey.update({
-    where: { id: encryptionKeyId },
-    data: { disabledAt: null },
-  });
-  await tx.identity.updateMany({
-    where: { userId, disabledAt: null, id: { not: identityId } },
-    data: { disabledAt: new Date() },
-  });
-  await tx.identity.update({
-    where: { id: identityId },
-    data: { disabledAt: null },
-  });
-}
-
-// Discriminated result type from the complete-PoP transaction. Returning a
-// value (rather than throwing) lets every business-logic exit commit a
-// no-op transaction cleanly while still mapping to a stable HTTP code.
-type CompleteTxResult =
-  | {
-      kind: 'success';
-      userId: string;
-      encryptionPublicKey: string;
-      signaturePublicKey: string;
-      keyBindingSignature: string;
-      version: number;
-      createdAtMillis: number;
-    }
-  | { kind: 'consumed' }
-  | { kind: 'version_conflict' }
-  | { kind: 'rate_limit' }
-  | { kind: 'identity_taken' }
-  | { kind: 'encryption_key_taken' };
-
 export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
   // ----- Listing & disabling --------------------------------------------------
 
-  app.get('/api/public-keys', async (request) => {
-    const query = GetPublicKeysQuerySchema.parse(request.query);
-    const userIds = query.user_ids.split(',').map((id) => id.trim());
+  // Public directory data, so UNAUTHENTICATED on purpose, like the /:userId and
+  // /continuity lookups below: the registry only ever exposes public keys (never
+  // anything private), and it must be reachable without a token because the vault
+  // iframe fetches it during a product-initiated share, which carries no OIDC
+  // token (sharing is a product operation, not a privileged one). The list is
+  // capped (<= 100 ids) by the schema to bound the query and blunt bulk scraping;
+  // a public directory is inherently enumerable and that is the accepted design.
+  app.get('/api/public-keys', {
+    handler: async (request) => {
+      // Already split, trimmed, and bounded (<= 100 non-empty ids) by the schema.
+      const userIds = GetPublicKeysQuerySchema.parse(request.query).user_ids;
 
-    // The active encryption key joined to the identity that vouches for it.
-    // Exactly one active EncryptionKey exists per user (rotation disables the
-    // previous rows in a transaction), so this yields at most one row per user.
-    const keys = await prisma.encryptionKey.findMany({
-      where: {
-        userId: { in: userIds },
-        disabledAt: null,
-      },
-      include: { identity: true },
-    });
+      // The active encryption key joined to the identity that vouches for it, and
+      // ONLY when that identity is itself active: disabling an identity hides the
+      // user from the directory even though the encryption key row stays valid.
+      // Exactly one active EncryptionKey exists per user (rotation disables the
+      // previous rows in a transaction), so this yields at most one row per user.
+      const keys = await prisma.encryptionKey.findMany({
+        where: {
+          userId: { in: userIds },
+          disabledAt: null,
+          identity: { is: { disabledAt: null } },
+        },
+        include: { identity: true },
+      });
 
-    return {
-      keys: keys.map((key) => ({
-        user_id: key.userId,
-        encryption_public_key: key.encryptionPublicKey,
-        signature_public_key: key.identity.signaturePublicKey,
-        key_binding_signature: key.keyBindingSignature,
-        version: key.version,
-        created_at_millis: key.createdAt.getTime(),
-      })),
-    };
+      return {
+        keys: keys.map((key) => ({
+          user_id: key.userId,
+          encryption_public_key: uint8ToBase64(key.encryptionPublicKey),
+          signature_public_key: uint8ToBase64(key.identity.signaturePublicKey),
+          key_binding_signature: uint8ToBase64(key.keyBindingSignature),
+          version: key.version,
+          created_at_millis: key.createdAt.getTime(),
+        })),
+      };
+    },
   });
 
   // Single-user lookup with cache headers. Because `version` is monotonic and
@@ -141,7 +91,7 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
     const { userId } = request.params;
 
     const key = await prisma.encryptionKey.findFirst({
-      where: { userId, disabledAt: null },
+      where: { userId, disabledAt: null, identity: { is: { disabledAt: null } } },
       orderBy: { version: 'desc' },
       include: { identity: true },
     });
@@ -164,12 +114,56 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
 
     return {
       user_id: key.userId,
-      encryption_public_key: key.encryptionPublicKey,
-      signature_public_key: key.identity.signaturePublicKey,
-      key_binding_signature: key.keyBindingSignature,
+      encryption_public_key: uint8ToBase64(key.encryptionPublicKey),
+      signature_public_key: uint8ToBase64(key.identity.signaturePublicKey),
+      key_binding_signature: uint8ToBase64(key.keyBindingSignature),
       version: key.version,
       created_at_millis: key.createdAt.getTime(),
     };
+  });
+
+  // The identity-continuity chain for a user, walked server-side from the
+  // CURRENT identity back toward older ones (one link per rotation), bounded by
+  // the shared hop cap. A device that pinned an older identity out-of-band uses
+  // this to decide whether a NEW fingerprint it just saw legitimately descends
+  // from the pinned one, without a fresh out-of-band check. It is public
+  // directory data (public keys plus cross-signatures), so no auth is needed;
+  // the consumer verifies every link's signature, so the server cannot fabricate
+  // trust here — a compromised registry can only withhold links (fail-safe).
+  app.get<{ Params: { userId: string } }>('/api/public-keys/:userId/continuity', async (request) => {
+    const { userId } = request.params;
+
+    // Start from the identity that vouches for the active encryption key: that is
+    // exactly the identity a product presents a fingerprint for, so the head of
+    // the chain matches the fingerprint that just mismatched on a device.
+    const activeKey = await prisma.encryptionKey.findFirst({
+      where: { userId, disabledAt: null, identity: { is: { disabledAt: null } } },
+      orderBy: { version: 'desc' },
+      include: { identity: true },
+    });
+
+    const chain: ContinuityLinkWire[] = [];
+    let node = activeKey?.identity ?? null;
+
+    // Follow previousIdentity links; only identities carrying a continuity
+    // signature (a genuine rotation cross-signed by the previous key) yield a
+    // link. Bounded so a long history cannot make this walk run unbounded.
+    for (let hops = 0; node && node.previousIdentityId && node.continuitySignature && hops < MAX_CONTINUITY_HOPS; hops++) {
+      const previous = await prisma.identity.findUnique({ where: { id: node.previousIdentityId } });
+      if (!previous) break;
+
+      chain.push({
+        signature_public_key: uint8ToBase64(node.signaturePublicKey),
+        previous_signature_public_key: uint8ToBase64(previous.signaturePublicKey),
+        generation: node.generation,
+        algo: node.algo,
+        continuity_signature: uint8ToBase64(node.continuitySignature),
+      });
+
+      node = previous;
+    }
+
+    return { chain };
   });
 
   // Disable the active public key without creating a new one.
@@ -187,21 +181,49 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       const userId = request.userId!;
 
-      // Only the active encryption key is disabled. The Identity row is left
-      // intact: it is still the user's identity, and if they later restore a
-      // backup of this key it gets reactivated (see the complete handler). A
-      // "start from zero" with a fresh identity happens naturally on re-onboard,
-      // which registers a new identity generation.
-      const updated = await prisma.encryptionKey.updateMany({
-        where: { userId, disabledAt: null },
-        data: { disabledAt: new Date() },
-      });
+      // Disabling turns off the IDENTITY, not the encryption key. The identity is
+      // what makes the user discoverable (directory + TOFU); hiding it removes the
+      // user from the registry, so others can no longer pull the encryption key to
+      // share with them. The encryption key row stays ACTIVE and valid on purpose:
+      // reactivating the identity (via the VRK/phrase-authenticated
+      // /api/vault/reactivate) brings the SAME last key back live, without a
+      // rotation. The vault keyring is disabled too (identity and vault are
+      // coupled), so it stops being the sync target until reactivation. Nothing is
+      // deleted, so a backup can always recover the vault.
+      const now = new Date();
+      const [updated] = await prisma.$transaction([
+        prisma.identity.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: now } }),
+        prisma.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: now } }),
+      ]);
 
       if (updated.count === 0) {
         return reply.status(404).send({ code: API_ERROR_NO_ACTIVE_KEY });
       }
 
       return { disabled: true };
+    },
+  });
+
+  // The next monotonic numbers this user must register, counting DISABLED rows
+  // too (versions and generations are never reused). A client reads this before
+  // signing a fresh key, notably when re-onboarding after a reset where no active
+  // key remains, so it signs `max + 1` and the registration does not conflict.
+  app.get('/api/public-keys/next', {
+    preHandler: async (request) => {
+      await app.verifyJWT(request);
+    },
+    handler: async (request) => {
+      const userId = request.userId!;
+
+      const [keyAggregate, identityAggregate] = await Promise.all([
+        prisma.encryptionKey.aggregate({ where: { userId }, _max: { version: true } }),
+        prisma.identity.aggregate({ where: { userId }, _max: { generation: true } }),
+      ]);
+
+      return {
+        next_version: (keyAggregate._max.version ?? 0) + 1,
+        next_generation: (identityAggregate._max.generation ?? 0) + 1,
+      };
     },
   });
 
@@ -217,7 +239,8 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
   //              over the challenge id (signature-key PoP), enforce monotonic
   //              versioning, then promote the candidate into an active key.
   //
-  // See src/crypto/key-possession-challenge.ts and src/crypto/key-registration.ts.
+  // The complete-side write logic lives in registration-core.ts so the vault
+  // bootstrap can run the identical registration inside its own transaction.
 
   app.post('/api/public-keys/register/init', {
     preHandler: async (request) => {
@@ -231,6 +254,20 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       // a caller passing the wrong identifier (e.g. a product-scoped id).
       if (body.user_id !== userId) {
         return reply.status(403).send({ code: API_ERROR_FORBIDDEN_OTHER_USER });
+      }
+
+      // Opportunistic cleanup of this user's expired challenges, so abandoned
+      // inits don't accumulate without a cron. Mirrors the approvals pattern.
+      const now = new Date();
+      await prisma.keyPossessionChallenge.deleteMany({ where: { userId, expiresAt: { lt: now } } });
+
+      // Cap the number of LIVE challenges a user can hold, so a caller cannot
+      // flood the table with init requests before completing any. Counting only
+      // unexpired rows keeps the cleanup above from undercounting the bound.
+      const outstanding = await prisma.keyPossessionChallenge.count({ where: { userId, expiresAt: { gt: now } } });
+
+      if (outstanding >= MAX_OUTSTANDING_CHALLENGES) {
+        return reply.status(429).send({ code: API_ERROR_RATE_LIMIT_CHALLENGES });
       }
 
       // Parse both candidate public keys — surfaces malformed input early and
@@ -277,9 +314,9 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
         data: {
           id: challengeId,
           userId,
-          encryptionPublicKey: body.encryption_public_key,
-          signaturePublicKey: body.signature_public_key,
-          keyBindingSignature: body.key_binding_signature,
+          encryptionPublicKey: Buffer.from(base64ToUint8(body.encryption_public_key)),
+          signaturePublicKey: Buffer.from(base64ToUint8(body.signature_public_key)),
+          keyBindingSignature: Buffer.from(base64ToUint8(body.key_binding_signature)),
           version: body.version,
           signedCreatedAt: new Date(body.created_at_millis),
           // libsodium hands back a Uint8Array with an unconstrained buffer
@@ -305,208 +342,25 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       const body = CompleteKeyPossessionBodySchema.parse(request.body);
       const userId = request.userId!;
 
-      // Read-only checks first, outside the write transaction. Any state
-      // observed here is re-checked inside the tx to avoid TOCTOU.
-      const challenge = await prisma.keyPossessionChallenge.findUnique({
-        where: { id: body.challenge_id },
-      });
+      // Read-only proof checks first, outside the write transaction.
+      const check = await loadAndVerifyPossession(userId, body);
 
-      // Treat "not mine" the same as "not found" — never confirm to a
-      // caller that someone else has a challenge with this id.
-      if (!challenge || challenge.userId !== userId) {
-        return reply.status(404).send({ code: API_ERROR_CHALLENGE_NOT_FOUND });
-      }
-
-      if (challenge.expiresAt.getTime() < Date.now()) {
-        // Best-effort cleanup; ignore concurrent deletes.
-        await prisma.keyPossessionChallenge.deleteMany({ where: { id: challenge.id } });
-
-        return reply.status(410).send({ code: API_ERROR_CHALLENGE_EXPIRED });
-      }
-
-      // Encryption-key PoP: HMAC the client derived from decapsulating our
-      // X-Wing ciphertext must match the tag we stored at init.
-      const received = base64ToUint8(body.response);
-      const hmacOk = await verifyChallengeResponse(new Uint8Array(challenge.expectedHmac), received);
-
-      if (!hmacOk) {
-        // Don't delete on first miss — the HMAC could be a transport glitch.
-        // Keep the row until expiry; the caller can retry with the same id.
-        return reply.status(400).send({ code: API_ERROR_CHALLENGE_INVALID_RESPONSE });
-      }
-
-      // Signature-key PoP: an Ed25519 signature over the challenge id, made by
-      // the candidate identity key. Proves the caller also holds the signature
-      // private key (not just the encryption one).
-      let signaturePopOk = false;
-
-      try {
-        const signatureRawKey = importPublicKeyFromBase64(challenge.signaturePublicKey);
-        const challengeMessage = encodePopChallengeMessage(challenge.id);
-        signaturePopOk = await verifyDetached(base64ToUint8(body.challenge_signature), challengeMessage, signatureRawKey);
-      } catch {
-        signaturePopOk = false;
-      }
-
-      if (!signaturePopOk) {
-        return reply.status(400).send({ code: API_ERROR_INVALID_CHALLENGE_SIGNATURE });
+      if (!check.ok) {
+        return reply.status(check.status).send({ code: check.code });
       }
 
       // All writes go through a Serializable transaction so concurrent
-      // completes for the same user can't both create a fresh active key
-      // (PG aborts one with 40001/P2034, or the (userId,version) unique
-      // constraint trips with P2002). Re-reading + deleting the challenge row
-      // inside the tx also makes it a single-use mutex against double-spend.
+      // completes for the same user can't both create a fresh active key.
       let result: CompleteTxResult;
 
       try {
-        result = await prisma.$transaction(
-          async (tx): Promise<CompleteTxResult> => {
-            const fresh = await tx.keyPossessionChallenge.findUnique({
-              where: { id: challenge.id },
-            });
-
-            if (!fresh) {
-              return { kind: 'consumed' };
-            }
-
-            // --- Reactivate path ---------------------------------------------
-            // A registration record is IMMUTABLE (its version/createdAt/binding
-            // are signed together). So restoring an already-registered key must
-            // reactivate its existing row — re-dating it or minting a new
-            // version is impossible (the signed metadata can't change) and would
-            // collide on the unique encryption key. Keyed on the globally-unique
-            // encryption key.
-            const existing = await tx.encryptionKey.findUnique({
-              where: { encryptionPublicKey: fresh.encryptionPublicKey },
-              include: { identity: true },
-            });
-
-            if (existing) {
-              // The key belongs to someone else — astronomically unlikely for a
-              // real X-Wing key, so treat it as an attempted takeover.
-              if (existing.userId !== userId) {
-                return { kind: 'encryption_key_taken' };
-              }
-
-              await activateRegistration(tx, userId, existing.id, existing.identityId);
-              await tx.keyPossessionChallenge.delete({ where: { id: challenge.id } });
-
-              return {
-                kind: 'success',
-                userId: existing.userId,
-                encryptionPublicKey: existing.encryptionPublicKey,
-                signaturePublicKey: existing.identity.signaturePublicKey,
-                keyBindingSignature: existing.keyBindingSignature,
-                version: existing.version,
-                createdAtMillis: existing.createdAt.getTime(),
-              };
-            }
-
-            // --- New encryption key path -------------------------------------
-            // Resolve the identity the binding is signed by. The identity key is
-            // globally unique, so if a row exists it either belongs to this user
-            // (an encryption-key rotation under the SAME identity) or to someone
-            // else (impersonation → reject).
-            const existingIdentity = await tx.identity.findUnique({
-              where: { signaturePublicKey: fresh.signaturePublicKey },
-            });
-
-            if (existingIdentity && existingIdentity.userId !== userId) {
-              return { kind: 'identity_taken' };
-            }
-
-            // Rate-limit at completion only: an attacker who can't pass PoP
-            // can't burn the user's quota, while honest churners are bounded.
-            const windowStart = new Date();
-            windowStart.setDate(windowStart.getDate() - RATE_LIMIT_WINDOW_DAYS);
-            const recentCreations = await tx.encryptionKey.count({
-              where: { userId, createdAt: { gte: windowStart } },
-            });
-
-            if (recentCreations >= RATE_LIMIT_MAX_CREATIONS) {
-              return { kind: 'rate_limit' };
-            }
-
-            // Monotonic versioning: the candidate version must be exactly
-            // (current max for this user) + 1. The signature covers `version`,
-            // so the server can't silently renumber — a mismatch means the
-            // client signed against a stale view and must refetch + re-sign.
-            const aggregate = await tx.encryptionKey.aggregate({
-              where: { userId },
-              _max: { version: true },
-            });
-            const expectedVersion = (aggregate._max.version ?? 0) + 1;
-
-            if (fresh.version !== expectedVersion) {
-              return { kind: 'version_conflict' };
-            }
-
-            // Reuse the existing identity (rotation under the same identity) or
-            // mint a fresh one (first key, or a re-onboard with a new identity
-            // key — which requires contacts to re-verify, as expected).
-            let identityId: string;
-
-            if (existingIdentity) {
-              identityId = existingIdentity.id;
-
-              if (existingIdentity.disabledAt) {
-                await tx.identity.update({ where: { id: existingIdentity.id }, data: { disabledAt: null } });
-              }
-            } else {
-              const genAggregate = await tx.identity.aggregate({
-                where: { userId },
-                _max: { generation: true },
-              });
-              const generation = (genAggregate._max.generation ?? 0) + 1;
-
-              // A fresh identity is not cross-signed by any previous one here:
-              // re-onboarding is a deliberate new identity. The continuity chain
-              // (previousIdentityId / continuitySignature) is reserved for an
-              // explicit future identity-migration flow.
-              const createdIdentity = await tx.identity.create({
-                data: { userId, signaturePublicKey: fresh.signaturePublicKey, generation },
-              });
-
-              identityId = createdIdentity.id;
-            }
-
-            const created = await tx.encryptionKey.create({
-              data: {
-                userId,
-                identityId,
-                encryptionPublicKey: fresh.encryptionPublicKey,
-                keyBindingSignature: fresh.keyBindingSignature,
-                version: fresh.version,
-                // The signed timestamp becomes the row's createdAt, so later
-                // verifications (which sign over created_at) keep matching.
-                createdAt: fresh.signedCreatedAt,
-              },
-              include: { identity: true },
-            });
-
-            // Enforce the single-active-key/identity invariant.
-            await activateRegistration(tx, userId, created.id, identityId);
-
-            // PoP succeeded → the challenge has done its job and must not be
-            // replayed. Deleting inside the tx makes this row a mutex against
-            // any double-spend of the same id.
-            await tx.keyPossessionChallenge.delete({ where: { id: challenge.id } });
-
-            return {
-              kind: 'success',
-              userId: created.userId,
-              encryptionPublicKey: created.encryptionPublicKey,
-              signaturePublicKey: created.identity.signaturePublicKey,
-              keyBindingSignature: created.keyBindingSignature,
-              version: created.version,
-              createdAtMillis: created.createdAt.getTime(),
-            };
-          },
-          // Prisma's TransactionIsolationLevel type is a string-literal union,
-          // so passing 'Serializable' directly is fully type-safe.
-          { isolationLevel: 'Serializable' }
-        );
+        // completeRegistrationInTx never mints an identity, so this standalone
+        // path can only ever rotate or re-enable an EXISTING, vault-backed
+        // identity; a never-bootstrapped identity returns `no_vault`. Only the
+        // atomic bootstrap (POST /api/vault) mints, coupling identity + vault.
+        result = await prisma.$transaction((tx) => completeRegistrationInTx(tx, userId, check.challenge), {
+          isolationLevel: 'Serializable',
+        });
       } catch (err) {
         if (isRetryableRegistrationError(err)) {
           // Concurrent completes for the same user; PG aborted ours or the
@@ -517,35 +371,20 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
         throw err;
       }
 
-      switch (result.kind) {
-        case 'consumed':
-          return reply.status(404).send({ code: API_ERROR_CHALLENGE_NOT_FOUND });
-        case 'version_conflict':
-          // The client raced another device or signed against a stale view.
-          // It should refetch its active version, re-sign, and retry init.
-          return reply.status(409).send({ code: API_ERROR_KEY_VERSION_CONFLICT });
-        case 'identity_taken':
-          // The submitted identity (signature) key already belongs to another
-          // user — a fingerprint collision or an attempted impersonation.
-          return reply.status(409).send({ code: API_ERROR_IDENTITY_TAKEN });
-        case 'encryption_key_taken':
-          // The submitted encryption key already belongs to another user.
-          return reply.status(409).send({ code: API_ERROR_ENCRYPTION_KEY_TAKEN });
-        case 'rate_limit':
-          return reply.status(429).send({
-            code: API_ERROR_RATE_LIMIT_KEYS,
-            params: { max: RATE_LIMIT_MAX_CREATIONS, days: RATE_LIMIT_WINDOW_DAYS },
-          });
-        case 'success':
-          return {
-            user_id: result.userId,
-            encryption_public_key: result.encryptionPublicKey,
-            signature_public_key: result.signaturePublicKey,
-            key_binding_signature: result.keyBindingSignature,
-            version: result.version,
-            created_at_millis: result.createdAtMillis,
-          };
+      if (result.kind !== 'success') {
+        const mapped = completeResultToHttpError(result)!;
+
+        return reply.status(mapped.status).send(mapped.params ? { code: mapped.code, params: mapped.params } : { code: mapped.code });
       }
+
+      return {
+        user_id: result.userId,
+        encryption_public_key: result.encryptionPublicKey,
+        signature_public_key: result.signaturePublicKey,
+        key_binding_signature: result.keyBindingSignature,
+        version: result.version,
+        created_at_millis: result.createdAtMillis,
+      };
     },
   });
 }

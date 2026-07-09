@@ -1,12 +1,46 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from 'fastify';
+import { ZodError } from 'zod';
 
+import { corsPlugin } from '@encryption/src/server/plugins/cors';
 import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
-import { deviceTransferRoute } from '@encryption/src/server/routes/device-transfer';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
+import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { versionRoute } from '@encryption/src/server/routes/versions';
+import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/shared/error-codes';
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// atob() (used by base64ToUint8) throws a DOMException named InvalidCharacterError
+// on malformed base64. Recognizing it lets a bad base64 body field be a 400
+// rather than an opaque 500.
+function isBase64DecodeError(error: unknown): boolean {
+  // Structural check (not instanceof): atob throws a DOMException, which does not
+  // reliably satisfy `instanceof Error` across VM realms (e.g. under Jest).
+  return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'InvalidCharacterError';
+}
+
+// Central error handler. Handlers themselves return their stable error codes via
+// reply.send; this only catches THROWN errors: Zod validation, malformed base64,
+// the auth plugin's 401/403, and anything unexpected. It maps client errors to a
+// stable code and, crucially, never leaks a 5xx's message/stack to the client.
+export function errorHandler(error: FastifyError, request: FastifyRequest, reply: FastifyReply): FastifyReply {
+  if (error instanceof ZodError || isBase64DecodeError(error)) {
+    return reply.status(400).send({ code: API_ERROR_INVALID_REQUEST });
+  }
+
+  const statusCode = typeof error.statusCode === 'number' ? error.statusCode : 500;
+
+  if (statusCode >= 400 && statusCode < 500) {
+    // Auth errors already carry a stable lowercase `code`; fall back for the rest.
+    return reply.status(statusCode).send({ code: (error as { code?: string }).code ?? API_ERROR_INVALID_REQUEST });
+  }
+
+  // Server error: log the detail server-side, expose only a generic code.
+  request.log.error(error);
+
+  return reply.status(500).send({ code: API_ERROR_INTERNAL });
+}
 
 export async function createServer() {
   const app = Fastify({
@@ -15,14 +49,22 @@ export async function createServer() {
     },
   });
 
+  app.setErrorHandler(errorHandler);
+
   // Register plugins
   app.register(securityHeadersPlugin);
+  app.register(corsPlugin);
   app.register(jwtAuthPlugin);
 
   if (isDev) {
     // In development, embed Vite dev servers as middleware (vault + UI)
     const { viteDevPlugin } = await import('@encryption/src/server/plugins/vite-dev');
     app.register(viteDevPlugin);
+
+    // Shared in-memory document store for the demo products (dev only, never
+    // registered in production). Lets multiple demo instances see one list.
+    const { demoRoute } = await import('@encryption/src/server/routes/demo');
+    app.register(demoRoute);
   } else {
     // In production, serve pre-built static files
     const { staticVaultPlugin } = await import('@encryption/src/server/plugins/static-vault');
@@ -34,7 +76,7 @@ export async function createServer() {
   // Register routes
   app.register(versionRoute);
   app.register(publicKeysRoute);
-  app.register(deviceTransferRoute);
+  app.register(vaultRoute);
 
   // Health check
   app.get('/health', async () => {

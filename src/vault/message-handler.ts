@@ -1,39 +1,42 @@
 import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
+  MSG_VAULT_APPROVE_DEVICE,
+  MSG_VAULT_CHANGE_RECOVERY_PHRASE,
   MSG_VAULT_CHECK_FINGERPRINTS,
-  MSG_VAULT_CLAIM_TRANSFER_IMPORT,
+  MSG_VAULT_COMMIT_STAGED,
+  MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_DESTROY_KEYS,
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITH_KEY,
-  MSG_VAULT_EXPORT_BACKUP,
   MSG_VAULT_FETCH_PUBLIC_KEYS,
   MSG_VAULT_GENERATE_KEYS,
   MSG_VAULT_GET_KNOWN_FINGERPRINTS,
   MSG_VAULT_GET_PUBLIC_KEY,
   MSG_VAULT_HAS_KEYS,
-  MSG_VAULT_IMPORT_BACKUP,
-  MSG_VAULT_PREPARE_TRANSFER_EXPORT,
+  MSG_VAULT_PREPARE_ONBOARDING,
+  MSG_VAULT_REACTIVATE,
   MSG_VAULT_REFUSE_FINGERPRINT,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
+  MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
+  MSG_VAULT_SIGN_REQUEST,
+  MSG_VAULT_START_DEVICE_APPROVAL,
+  MSG_VAULT_SYNC,
+  MSG_VAULT_UNCOMMIT_STAGED,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 import { PRIVILEGED_OPERATIONS, type VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode, classifyVaultError } from '@encryption/src/shared/vault-error';
+import { handleCommitStagedVault, handleUncommitStagedVault } from '@encryption/src/vault/operations/commit-staged';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleDestroyKeys } from '@encryption/src/vault/operations/destroy-keys';
-import { handleClaimTransferImport, handlePrepareTransferExport } from '@encryption/src/vault/operations/device-transfer';
-import {
-  handleEncryptNestedWithoutKey,
-  handleEncryptWithoutKey,
-  handleEncryptWithKey,
-} from '@encryption/src/vault/operations/encrypt';
-import { handleExportBackup, handleImportBackup } from '@encryption/src/vault/operations/export-public-key';
+import { handleApproveDevice, handleCompleteDeviceApproval, handleStartDeviceApproval } from '@encryption/src/vault/operations/device-approval-flow';
+import { handleEncryptNestedWithoutKey, handleEncryptWithKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import {
   handleAcceptFingerprint,
@@ -43,12 +46,18 @@ import {
 } from '@encryption/src/vault/operations/fingerprint-registry';
 import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-keys';
 import { handleGetPublicKey, handleHasKeys } from '@encryption/src/vault/operations/key-management';
+import { handleChangeRecoveryPhrase, handlePrepareOnboarding } from '@encryption/src/vault/operations/onboarding';
+import { resolveTrustedRecipientKeys } from '@encryption/src/vault/operations/recipient-trust';
 import { handleRespondToKeyChallenge } from '@encryption/src/vault/operations/respond-to-key-challenge';
 import { handleRewrapNestedKey } from '@encryption/src/vault/operations/rewrap-nested-key';
-import { handleSignKeyRegistration } from '@encryption/src/vault/operations/sign-key-registration';
 import { handleShareKeys } from '@encryption/src/vault/operations/share-keys';
+import { handleSignKeyRegistration } from '@encryption/src/vault/operations/sign-key-registration';
+import { handleSignRequest } from '@encryption/src/vault/operations/sign-request';
+import { handleReactivateVault, handleRestoreFromPhrase } from '@encryption/src/vault/operations/vault-restore';
+import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
+import { ensureVaultSyncDriver } from '@encryption/src/vault/vault-sync-driver';
 
 async function dispatch(data: unknown, userId: string): Promise<unknown> {
   // Extract type and payload from the message. Payload may contain ArrayBuffer
@@ -62,11 +71,15 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       return handleHasKeys(userId);
     case MSG_VAULT_GET_PUBLIC_KEY:
       return handleGetPublicKey(userId);
-    case MSG_VAULT_ENCRYPT_WITHOUT_KEY:
-      return handleEncryptWithoutKey(
-        userId,
-        payload as { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer> },
-      );
+    case MSG_VAULT_ENCRYPT_WITHOUT_KEY: {
+      // Trust gate at the boundary: the product passes recipient userIds; the
+      // vault resolves them to encryption keys ONLY for identities whose binding
+      // verifies and that are TOFU-trusted. A product can never inject raw keys.
+      const p = payload as { data: ArrayBuffer; recipientUserIds: string[] };
+      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientUserIds ?? []);
+
+      return handleEncryptWithoutKey(userId, { data: p.data, userPublicKeys });
+    }
     case MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY:
       return handleEncryptNestedWithoutKey(
         userId,
@@ -74,12 +87,15 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
           data: ArrayBuffer;
           encryptedSymmetricKey: ArrayBuffer;
           encryptedKeyChain?: ArrayBuffer[];
-        },
+        }
       );
     case MSG_VAULT_ENCRYPT_WITH_KEY:
       return handleEncryptWithKey(userId, payload as { data: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[] });
     case MSG_VAULT_DECRYPT_WITH_KEY:
-      return handleDecryptWithKey(userId, payload as { encryptedData: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[] });
+      return handleDecryptWithKey(
+        userId,
+        payload as { encryptedData: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[] }
+      );
     case MSG_VAULT_REWRAP_NESTED_KEY:
       return handleRewrapNestedKey(
         userId,
@@ -88,7 +104,7 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
           oldEncryptedKey: ArrayBuffer;
           oldEncryptedKeyChain?: ArrayBuffer[];
           newEncryptedKeyChain?: ArrayBuffer[];
-        },
+        }
       );
     case MSG_VAULT_WRAP_NESTED_KEY:
       return handleWrapNestedKey(
@@ -97,14 +113,26 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
           userEncryptedKey: ArrayBuffer;
           newEntryEncryptedSymmetricKey: ArrayBuffer;
           newEncryptedKeyChain?: ArrayBuffer[];
-        },
+        }
       );
-    case MSG_VAULT_SHARE_KEYS:
-      return handleShareKeys(userId, payload as { encryptedSymmetricKey: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer>; encryptedKeyChain?: ArrayBuffer[] });
+    case MSG_VAULT_SHARE_KEYS: {
+      // Same trust gate as encrypt-without-key: resolve recipient userIds to
+      // verified, TOFU-trusted encryption keys before the wrap.
+      const p = payload as { encryptedSymmetricKey: ArrayBuffer; recipientUserIds: string[]; encryptedKeyChain?: ArrayBuffer[] };
+      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientUserIds ?? []);
+
+      return handleShareKeys(userId, { encryptedSymmetricKey: p.encryptedSymmetricKey, userPublicKeys, encryptedKeyChain: p.encryptedKeyChain });
+    }
     case MSG_VAULT_FETCH_PUBLIC_KEYS:
       return handleFetchPublicKeys(userId, payload as { userIds: string[] });
     case MSG_VAULT_CHECK_FINGERPRINTS:
-      return handleCheckFingerprints(userId, payload as { userFingerprints: Record<string, string>; currentUserId?: string });
+      return handleCheckFingerprints(
+        userId,
+        payload as {
+          userFingerprints: Record<string, string>;
+          currentUserId?: string;
+        }
+      );
     case MSG_VAULT_ACCEPT_FINGERPRINT:
       return handleAcceptFingerprint(userId, payload as { userId: string; fingerprint: string });
     case MSG_VAULT_REFUSE_FINGERPRINT:
@@ -115,23 +143,34 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     // Privileged operations (encryption only)
     case MSG_VAULT_GENERATE_KEYS:
       return handleGenerateKeys(userId);
+    case MSG_VAULT_COMMIT_STAGED:
+      return handleCommitStagedVault(userId);
+    case MSG_VAULT_UNCOMMIT_STAGED:
+      return handleUncommitStagedVault(userId);
     case MSG_VAULT_SIGN_KEY_REGISTRATION:
       return handleSignKeyRegistration(userId, payload as { version: number; createdAtMillis: number });
     case MSG_VAULT_RESPOND_TO_KEY_CHALLENGE:
       return handleRespondToKeyChallenge(userId, payload as { challengeId: string; ciphertext: string });
-    case MSG_VAULT_EXPORT_BACKUP:
-      return handleExportBackup(userId);
-    case MSG_VAULT_IMPORT_BACKUP:
-      return handleImportBackup(userId, payload as { passphrase: string });
     case MSG_VAULT_DESTROY_KEYS:
       return handleDestroyKeys(userId);
-    case MSG_VAULT_PREPARE_TRANSFER_EXPORT:
-      return handlePrepareTransferExport(
-        userId,
-        (Object.keys(payload).length > 0 ? payload : undefined) as { language?: 'french' | 'english' } | undefined
-      );
-    case MSG_VAULT_CLAIM_TRANSFER_IMPORT:
-      return handleClaimTransferImport(userId, payload as { encryptedPayload: string; transferPassphrase: string });
+    case MSG_VAULT_PREPARE_ONBOARDING:
+      return handlePrepareOnboarding(userId, payload as { lang?: 'french' | 'english'; version?: number; generation?: number; reusePhrase?: string });
+    case MSG_VAULT_CHANGE_RECOVERY_PHRASE:
+      return handleChangeRecoveryPhrase(userId, payload as { lang?: 'french' | 'english' });
+    case MSG_VAULT_RESTORE_FROM_PHRASE:
+      return handleRestoreFromPhrase(userId, payload as { recoveryPhrase: string; token: string });
+    case MSG_VAULT_REACTIVATE:
+      return handleReactivateVault(userId, payload as { recoveryPhrase: string; token: string });
+    case MSG_VAULT_SYNC:
+      return handleSync(userId, payload as { token?: string | null });
+    case MSG_VAULT_SIGN_REQUEST:
+      return handleSignRequest(userId, payload as { method: string; path: string; body?: string });
+    case MSG_VAULT_START_DEVICE_APPROVAL:
+      return handleStartDeviceApproval();
+    case MSG_VAULT_COMPLETE_DEVICE_APPROVAL:
+      return handleCompleteDeviceApproval(userId, payload as { wrappedDeviceBootstrap: string; token?: string | null });
+    case MSG_VAULT_APPROVE_DEVICE:
+      return handleApproveDevice(userId, payload as { devicePublicKey: string; expectedDecimal: string });
   }
 }
 
@@ -177,6 +216,11 @@ export function setupMessageHandler(): void {
 
       const userId = declaredUserId;
 
+      // Ensure the background sync driver is running for this user (idempotent):
+      // the vault keeps itself synced (identity-signed, no interface/JWT) as long
+      // as any product page is open.
+      ensureVaultSyncDriver(userId);
+
       const data = (await dispatch(event.data, userId)) as Record<string, unknown> | undefined;
 
       response = { type: MSG_VAULT_RESULT, requestId, success: true, data };
@@ -189,9 +233,7 @@ export function setupMessageHandler(): void {
       // absent or false, postMessage falls back to structured clone for
       // the response, mirroring the safe-by-default contract on input.
       const requestPayload =
-        event.data && typeof event.data === 'object' && 'payload' in event.data
-          ? (event.data as { payload?: unknown }).payload
-          : undefined;
+        event.data && typeof event.data === 'object' && 'payload' in event.data ? (event.data as { payload?: unknown }).payload : undefined;
       const optimizeMemory =
         requestPayload &&
         typeof requestPayload === 'object' &&

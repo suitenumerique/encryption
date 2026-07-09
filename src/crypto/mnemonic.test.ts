@@ -1,4 +1,4 @@
-import { englishWordlist, frenchWordlist, keyToMnemonic, mnemonicToKey } from '@encryption/src/crypto/mnemonic';
+import { englishWordlist, frenchWordlist, keyToMnemonic, mnemonicLanguageForLocale, mnemonicToKey } from '@encryption/src/crypto/mnemonic';
 
 describe('mnemonic', () => {
   it('should encode a 32-byte key as 24 words', () => {
@@ -28,6 +28,15 @@ describe('mnemonic', () => {
     expect(fr).not.toBe(en);
     expect(mnemonicToKey(fr, 'french')).toEqual(key);
     expect(mnemonicToKey(en, 'english')).toEqual(key);
+  });
+
+  it('maps interface locales to a wordlist language (regional codes included)', () => {
+    expect(mnemonicLanguageForLocale('fr')).toBe('french');
+    expect(mnemonicLanguageForLocale('fr-FR')).toBe('french'); // regional locale must NOT fall through to English
+    expect(mnemonicLanguageForLocale('FR')).toBe('french');
+    expect(mnemonicLanguageForLocale('en')).toBe('english');
+    expect(mnemonicLanguageForLocale('en-GB')).toBe('english');
+    expect(mnemonicLanguageForLocale('de')).toBe('english'); // unsupported -> default
   });
 
   it('should auto-detect language when not specified', () => {

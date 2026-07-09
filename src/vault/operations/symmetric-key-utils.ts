@@ -42,11 +42,7 @@ export async function resolveSymmetricKey(userId: string, encryptedKey: Uint8Arr
  *   Each key[i] is encrypted (wrapped) by the key resolved at step i-1.
  * @returns The final resolved symmetric key at the end of the chain
  */
-export async function resolveKeyChain(
-  userId: string,
-  encryptedSymmetricKey: Uint8Array,
-  encryptedKeyChain: Uint8Array[],
-): Promise<Uint8Array> {
+export async function resolveKeyChain(userId: string, encryptedSymmetricKey: Uint8Array, encryptedKeyChain: Uint8Array[]): Promise<Uint8Array> {
   // Step 1: Decrypt the entry-point key using the user's private key
   let currentKey = await resolveSymmetricKey(userId, encryptedSymmetricKey);
 

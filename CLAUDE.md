@@ -32,7 +32,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - **Frontend**: React, Cunningham + UI Kit, i18next, MDX docs
 - **Build**: Vite (vault, UI, client SDK, demo), esbuild (server), vite-plugin-sri-gen
 - **Tests**: Jest + ts-jest
-- **Auth**: Keycloak (local dev), ProConnect JWT (production). Local Keycloak access tokens expire after **5 minutes**, refresh tokens after **1080 seconds** (18 min). The interface refreshes tokens lazily (only when an API call needs a valid token and it expires within 1 minute), using Web Locks to prevent concurrent refreshes across tabs.
+- **Auth**: Keycloak (local dev), OIDC provider JWT (production). Local Keycloak access tokens expire after **5 minutes**, refresh tokens after **1080 seconds** (18 min). The interface refreshes tokens lazily (only when an API call needs a valid token and it expires within 1 minute), using Web Locks to prevent concurrent refreshes across tabs.
 - **Package manager**: npm with all versions pinned (no ^ or ~)
 
 ## Key conventions
@@ -95,15 +95,15 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 
 ## Port scheme (local development)
 
-| Port | Service                      | Hostname                            |
-| ---- | ---------------------------- | ----------------------------------- |
-| 7200 | Fastify (API + Vault + UI)   | `data.encryption.localhost` / `encryption.localhost` |
-| 7201 | Demo Product A               | `localhost`                         |
-| 7202 | Demo Product B               | `localhost`                         |
-| 7203 | Keycloak                     | `localhost`                         |
-| 7204 | Storybook                    | `localhost`                         |
-| 7205 | PostgreSQL (app)             | `localhost`                         |
-| 7206 | PostgreSQL (Keycloak)        | `localhost`                         |
+| Port | Service                    | Hostname                                             |
+| ---- | -------------------------- | ---------------------------------------------------- |
+| 7200 | Fastify (API + Vault + UI) | `data.encryption.localhost` / `encryption.localhost` |
+| 7201 | Demo Product A             | `localhost`                                          |
+| 7202 | Demo Product B             | `localhost`                                          |
+| 7203 | Keycloak                   | `localhost`                                          |
+| 7204 | Storybook                  | `localhost`                                          |
+| 7205 | PostgreSQL (app)           | `localhost`                                          |
+| 7206 | PostgreSQL (Keycloak)      | `localhost`                                          |
 
 In development, a single Fastify server on port 7200 embeds Vault and UI via Vite middleware mode. Host-based routing dispatches requests to the correct Vite instance. Everything works on `localhost:7200`, but for proper origin isolation (matching production), use the `.localhost` subdomains above. Modern browsers resolve `*.localhost` to `127.0.0.1` automatically and treat them as secure contexts (required for `crypto.subtle`). If your browser doesn't resolve them, add these entries to `/etc/hosts`:
 

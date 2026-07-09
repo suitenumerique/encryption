@@ -3,15 +3,14 @@
  * The frontend translates these via i18next at `errors.api.{CODE}`.
  * Never return human-readable messages from the server — only these codes.
  */
+export const API_ERROR_INVALID_REQUEST = 'invalid_request';
+export const API_ERROR_INTERNAL = 'internal_error';
+export const API_ERROR_UNAUTHORIZED = 'unauthorized';
+export const API_ERROR_FORBIDDEN = 'forbidden';
+
 export const API_ERROR_FORBIDDEN_OTHER_USER = 'forbidden_other_user';
 export const API_ERROR_RATE_LIMIT_KEYS = 'rate_limit_keys';
-export const API_ERROR_RATE_LIMIT_TRANSFERS = 'rate_limit_transfers';
-export const API_ERROR_MISSING_FIELD = 'missing_field';
-export const API_ERROR_UNAUTHORIZED = 'unauthorized';
-export const API_ERROR_TRANSFER_CODE_INVALID = 'transfer_code_invalid';
-export const API_ERROR_TRANSFER_CODE_EXPIRED = 'transfer_code_expired';
-export const API_ERROR_TRANSFER_CODE_WRONG_USER = 'transfer_code_wrong_user';
-export const API_ERROR_TRANSFER_CODE_ALREADY_USED = 'transfer_code_already_used';
+export const API_ERROR_RATE_LIMIT_CHALLENGES = 'rate_limit_challenges';
 export const API_ERROR_NO_ACTIVE_KEY = 'no_active_key';
 export const API_ERROR_CHALLENGE_NOT_FOUND = 'challenge_not_found';
 export const API_ERROR_CHALLENGE_EXPIRED = 'challenge_expired';
@@ -24,3 +23,16 @@ export const API_ERROR_INVALID_TIMESTAMP = 'invalid_timestamp';
 export const API_ERROR_INVALID_PUBLIC_KEY = 'invalid_public_key';
 export const API_ERROR_IDENTITY_TAKEN = 'identity_taken';
 export const API_ERROR_ENCRYPTION_KEY_TAKEN = 'encryption_key_taken';
+export const API_ERROR_NO_SERVER_VAULT = 'no_server_vault';
+export const API_ERROR_VAULT_NOT_FOUND = 'vault_not_found';
+export const API_ERROR_VAULT_CHALLENGE_NOT_FOUND = 'vault_challenge_not_found';
+export const API_ERROR_VAULT_CHALLENGE_EXPIRED = 'vault_challenge_expired';
+export const API_ERROR_VAULT_PROOF_INVALID = 'vault_proof_invalid';
+export const API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID = 'vault_request_signature_invalid';
+export const API_ERROR_VAULT_AUTH_BINDING_INVALID = 'vault_auth_binding_invalid';
+export const API_ERROR_VAULT_KDF_PARAMS_INVALID = 'vault_kdf_params_invalid';
+export const API_ERROR_VAULT_MANIFEST_INVALID = 'vault_manifest_invalid';
+export const API_ERROR_VAULT_ITEM_OUT_OF_DATE = 'vault_item_out_of_date';
+export const API_ERROR_VAULT_APPROVAL_NOT_FOUND = 'vault_approval_not_found';
+export const API_ERROR_VAULT_APPROVAL_NOT_READY = 'vault_approval_not_ready';
+export const API_ERROR_RATE_LIMIT_APPROVALS = 'rate_limit_approvals';

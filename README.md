@@ -113,7 +113,7 @@ npm run dev:storybook    # Start Storybook on port 7204
 - **Frontend**: React, Cunningham (French gov design system) + UI Kit, i18next, MDX docs
 - **Build**: Vite (vault, UI, client SDK, demo), esbuild (server)
 - **Tests**: Jest + ts-jest
-- **Auth**: ProConnect JWT (production), Keycloak (local dev)
+- **Auth**: OIDC provider JWT (production), Keycloak (local dev)
 
 ## Security model
 

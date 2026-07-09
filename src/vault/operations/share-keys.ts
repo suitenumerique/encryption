@@ -1,15 +1,16 @@
-import {
-  encryptSymmetricKeyForUsers,
-  importPublicKeyFromBase64,
-  uint8ToBase64,
-} from '@encryption/src/crypto';
+import { encryptSymmetricKeyForUsers, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
 
 /**
  * Share an existing document's or item's symmetric key with additional users.
  *
- * Accepts a map of user IDs → public keys (same signature as encryptWithoutKey).
- * For each user:
+ * Low-level wrap: takes already-resolved recipient public keys and re-encrypts
+ * the symmetric key for each. The RECIPIENT TRUST GATE (binding + TOFU) runs one
+ * level up, at the vault's postMessage boundary (see message-handler +
+ * resolveTrustedRecipientKeys): a product calls in with userIds, the boundary
+ * resolves them to trusted keys, and only then reaches this function. Products
+ * can never inject raw keys here.
+ *
  * 1. Decrypts the current user's copy of the symmetric key (cached)
  * 2. Re-encrypts it with each target user's public key
  * 3. Returns a map of user ID → encrypted symmetric key
@@ -26,7 +27,7 @@ export async function handleShareKeys(
     encryptedSymmetricKey: ArrayBuffer;
     userPublicKeys: Record<string, ArrayBuffer>;
     encryptedKeyChain?: ArrayBuffer[];
-  },
+  }
 ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
 

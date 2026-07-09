@@ -32,10 +32,7 @@ export class SessionExpiredError extends Error {
  * Wrap an API call that needs a fresh access token. Ensures a null token
  * becomes an explicit, recoverable error instead of a silent skip.
  */
-export async function withFreshToken<T>(
-  getToken: () => Promise<string | null>,
-  fn: (token: string) => Promise<T>,
-): Promise<T> {
+export async function withFreshToken<T>(getToken: () => Promise<string | null>, fn: (token: string) => Promise<T>): Promise<T> {
   const token = await getToken();
   if (!token) {
     throw new SessionExpiredError();

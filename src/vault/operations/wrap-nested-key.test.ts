@@ -8,18 +8,14 @@
  * parent's chain instead.
  */
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
+import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
+import { handleEncryptNestedWithoutKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
+import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
+import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 
 jest.mock('@encryption/src/vault/operations/key-management', () => {
   return { getStoredKeyPair: jest.fn() };
 });
-
-import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
-import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
-import {
-  handleEncryptNestedWithoutKey,
-  handleEncryptWithoutKey,
-} from '@encryption/src/vault/operations/encrypt';
-import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 
 const USER_ID = 'user-alice';
 
@@ -132,12 +128,6 @@ describe('handleWrapNestedKey', () => {
       encryptedSymmetricKey: destEntry,
       encryptedKeyChain: [],
     });
-    const folder2 = await handleEncryptNestedWithoutKey(USER_ID, {
-      data: new ArrayBuffer(0),
-      encryptedSymmetricKey: destEntry,
-      encryptedKeyChain: [folder1.wrappedKey],
-    });
-
     // Step 1: wrap under folder1.
     const wrapped = await handleWrapNestedKey(USER_ID, {
       userEncryptedKey: userWrap,

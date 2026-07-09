@@ -8,6 +8,7 @@ import { encodeKeyRegistrationPayload, encodePopChallengeMessage } from '@encryp
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
 import { prisma } from '@encryption/src/prisma/client';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
+import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import {
   API_ERROR_CHALLENGE_EXPIRED,
   API_ERROR_CHALLENGE_INVALID_RESPONSE,
@@ -19,6 +20,8 @@ import {
   API_ERROR_INVALID_CHALLENGE_SIGNATURE,
   API_ERROR_INVALID_KEY_BINDING,
   API_ERROR_KEY_VERSION_CONFLICT,
+  API_ERROR_NO_SERVER_VAULT,
+  API_ERROR_RATE_LIMIT_CHALLENGES,
   API_ERROR_RATE_LIMIT_KEYS,
 } from '@encryption/src/shared/error-codes';
 
@@ -33,11 +36,20 @@ jest.mock('@encryption/src/prisma/client', () => ({
       count: jest.fn(),
       aggregate: jest.fn(),
     },
+    identity: {
+      aggregate: jest.fn(),
+      findUnique: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    vaultKeyring: {
+      updateMany: jest.fn(),
+    },
     keyPossessionChallenge: {
       create: jest.fn(),
       findUnique: jest.fn(),
       delete: jest.fn(),
       deleteMany: jest.fn(),
+      count: jest.fn(),
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -57,6 +69,10 @@ function buildApp() {
 }
 
 const USER_ID = '550e8400-e29b-41d4-a716-446655440000';
+
+// `kb`: raw bytes for a mock key/sig row; `kb64`: the base64 the route re-encodes them to.
+const kb = (s: string) => Buffer.from(s);
+const kb64 = (s: string) => uint8ToBase64(Buffer.from(s));
 
 // A fully self-consistent, signed registration the way the vault would produce
 // it — real keys so the route's binding + signature-PoP checks actually run.
@@ -105,6 +121,7 @@ function makeTx(
     maxGeneration?: number | null;
     createdRegistration?: unknown;
     createdIdentity?: unknown;
+    keyring?: unknown;
   } = {}
 ) {
   return {
@@ -127,6 +144,12 @@ function makeTx(
       update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // The warm-reactivation path reactivates the identity's vault keyring.
+    vaultKeyring: {
+      findFirst: jest.fn().mockResolvedValue(opts.keyring ?? null),
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
 }
 
@@ -135,23 +158,41 @@ type MockTx = ReturnType<typeof makeTx>;
 describe('public-keys routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // clearAllMocks clears call history but NOT implementations set via
+    // mockResolvedValue / mockRejectedValue, so a value from one test would leak
+    // into the next. Reset the mocks whose leaked value changes control flow.
+    mockVerifyJWT.mockReset();
+    (mockedPrisma.keyPossessionChallenge.count as jest.Mock).mockReset();
   });
 
   // ----- GET /api/public-keys ------------------------------------------------
 
   describe('GET /api/public-keys', () => {
+    it('serves the batch listing without a JWT (public directory, fetched tokenless by the vault)', async () => {
+      const app = buildApp();
+      // Even if JWT verification would reject, this public listing is not gated by
+      // it: the vault fetches it during a product-initiated share with no token.
+      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401 }));
+      (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([]);
+
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=user-1' });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockVerifyJWT).not.toHaveBeenCalled();
+    });
+
     it('returns the full registry record for active (non-disabled) keys', async () => {
       const app = buildApp();
       const createdAt = new Date(1_700_000_000_000);
       (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([
         {
           userId: 'user-1',
-          encryptionPublicKey: 'enc1',
-          keyBindingSignature: 'bind1',
+          encryptionPublicKey: kb('enc1'),
+          keyBindingSignature: kb('bind1'),
           version: 2,
           createdAt,
           // The signature key lives on the joined identity, not the key row.
-          identity: { signaturePublicKey: 'sig1' },
+          identity: { signaturePublicKey: kb('sig1') },
         },
       ]);
 
@@ -161,15 +202,15 @@ describe('public-keys routes', () => {
       expect(JSON.parse(response.body).keys).toEqual([
         {
           user_id: 'user-1',
-          encryption_public_key: 'enc1',
-          signature_public_key: 'sig1',
-          key_binding_signature: 'bind1',
+          encryption_public_key: kb64('enc1'),
+          signature_public_key: kb64('sig1'),
+          key_binding_signature: kb64('bind1'),
           version: 2,
           created_at_millis: createdAt.getTime(),
         },
       ]);
       expect(mockedPrisma.encryptionKey.findMany).toHaveBeenCalledWith({
-        where: { userId: { in: ['user-1'] }, disabledAt: null },
+        where: { userId: { in: ['user-1'] }, disabledAt: null, identity: { is: { disabledAt: null } } },
         include: { identity: true },
       });
     });
@@ -193,11 +234,11 @@ describe('public-keys routes', () => {
       const createdAt = new Date(1_700_000_000_000);
       (mockedPrisma.encryptionKey.findFirst as jest.Mock).mockResolvedValue({
         userId: USER_ID,
-        encryptionPublicKey: 'enc',
-        keyBindingSignature: 'bind',
+        encryptionPublicKey: kb('enc'),
+        keyBindingSignature: kb('bind'),
         version: 3,
         createdAt,
-        identity: { signaturePublicKey: 'sig' },
+        identity: { signaturePublicKey: kb('sig') },
       });
 
       const first = await app.inject({ method: 'GET', url: `/api/public-keys/${USER_ID}` });
@@ -222,6 +263,104 @@ describe('public-keys routes', () => {
     });
   });
 
+  // ----- GET /api/public-keys/:userId/continuity -----------------------------
+
+  describe('GET /api/public-keys/:userId/continuity', () => {
+    it('walks the identity chain from the active key back through rotations', async () => {
+      const app = buildApp();
+
+      // Active encryption key points at gen-3, which chains gen-2 -> gen-1.
+      (mockedPrisma.encryptionKey.findFirst as jest.Mock).mockResolvedValue({
+        userId: USER_ID,
+        identity: { signaturePublicKey: kb('sig3'), generation: 3, algo: 'ed25519', previousIdentityId: 'id2', continuitySignature: kb('csig3') },
+      });
+      (mockedPrisma.identity.findUnique as jest.Mock).mockImplementation(async ({ where }: { where: { id: string } }) => {
+        if (where.id === 'id2')
+          return {
+            id: 'id2',
+            signaturePublicKey: kb('sig2'),
+            generation: 2,
+            algo: 'ed25519',
+            previousIdentityId: 'id1',
+            continuitySignature: kb('csig2'),
+          };
+        if (where.id === 'id1')
+          return { id: 'id1', signaturePublicKey: kb('sig1'), generation: 1, algo: 'ed25519', previousIdentityId: null, continuitySignature: null };
+
+        return null;
+      });
+
+      const response = await app.inject({ method: 'GET', url: `/api/public-keys/${USER_ID}/continuity` });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        chain: [
+          {
+            signature_public_key: kb64('sig3'),
+            previous_signature_public_key: kb64('sig2'),
+            generation: 3,
+            algo: 'ed25519',
+            continuity_signature: kb64('csig3'),
+          },
+          {
+            signature_public_key: kb64('sig2'),
+            previous_signature_public_key: kb64('sig1'),
+            generation: 2,
+            algo: 'ed25519',
+            continuity_signature: kb64('csig2'),
+          },
+        ],
+      });
+    });
+
+    it('returns an empty chain when the active identity has no predecessor', async () => {
+      const app = buildApp();
+      (mockedPrisma.encryptionKey.findFirst as jest.Mock).mockResolvedValue({
+        userId: USER_ID,
+        identity: { signaturePublicKey: kb('sig1'), generation: 1, algo: 'ed25519', previousIdentityId: null, continuitySignature: null },
+      });
+
+      const response = await app.inject({ method: 'GET', url: `/api/public-keys/${USER_ID}/continuity` });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ chain: [] });
+      expect(mockedPrisma.identity.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty chain when the user has no active key', async () => {
+      const app = buildApp();
+      (mockedPrisma.encryptionKey.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const response = await app.inject({ method: 'GET', url: `/api/public-keys/${USER_ID}/continuity` });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ chain: [] });
+    });
+
+    it('stops at the hop cap even if the chain is longer', async () => {
+      const app = buildApp();
+      // Every identity points at a predecessor, so the walk would never end on
+      // its own; the cap must bound it to MAX_CONTINUITY_HOPS links.
+      (mockedPrisma.encryptionKey.findFirst as jest.Mock).mockResolvedValue({
+        userId: USER_ID,
+        identity: { signaturePublicKey: kb('head'), generation: 99, algo: 'ed25519', previousIdentityId: 'prev', continuitySignature: kb('csig') },
+      });
+      (mockedPrisma.identity.findUnique as jest.Mock).mockResolvedValue({
+        id: 'prev',
+        signaturePublicKey: kb('prev'),
+        generation: 1,
+        algo: 'ed25519',
+        previousIdentityId: 'prev',
+        continuitySignature: kb('csig'),
+      });
+
+      const response = await app.inject({ method: 'GET', url: `/api/public-keys/${USER_ID}/continuity` });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().chain).toHaveLength(MAX_CONTINUITY_HOPS);
+    });
+  });
+
   // ----- DELETE /api/public-keys ---------------------------------------------
 
   describe('DELETE /api/public-keys', () => {
@@ -234,28 +373,38 @@ describe('public-keys routes', () => {
       expect(response.statusCode).toBe(401);
     });
 
-    it("disables the user's active key", async () => {
+    it("disables the user's identity and vault keyring (not the encryption key)", async () => {
       const app = buildApp();
       mockVerifyJWT.mockImplementation(async (request) => {
         request.userId = USER_ID;
       });
-      (mockedPrisma.encryptionKey.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      mockTransaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
+      (mockedPrisma.identity.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (mockedPrisma.vaultKeyring.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
       const response = await app.inject({ method: 'DELETE', url: '/api/public-keys' });
 
       expect(response.statusCode).toBe(200);
-      expect(mockedPrisma.encryptionKey.updateMany).toHaveBeenCalledWith({
+      // The identity + vault keyring are disabled; the encryption key stays valid.
+      expect(mockedPrisma.identity.updateMany).toHaveBeenCalledWith({
         where: { userId: USER_ID, disabledAt: null },
         data: { disabledAt: expect.any(Date) },
       });
+      expect(mockedPrisma.vaultKeyring.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID, disabledAt: null },
+        data: { disabledAt: expect.any(Date) },
+      });
+      expect(mockedPrisma.encryptionKey.updateMany).not.toHaveBeenCalled();
     });
 
-    it('404s when no active key exists', async () => {
+    it('404s when no active identity exists', async () => {
       const app = buildApp();
       mockVerifyJWT.mockImplementation(async (request) => {
         request.userId = USER_ID;
       });
-      (mockedPrisma.encryptionKey.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      mockTransaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
+      (mockedPrisma.identity.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (mockedPrisma.vaultKeyring.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
 
       const response = await app.inject({ method: 'DELETE', url: '/api/public-keys' });
 
@@ -274,6 +423,27 @@ describe('public-keys routes', () => {
       const response = await app.inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
 
       expect(response.statusCode).toBe(401);
+    });
+
+    it('rejects with 429 when the user already holds the max outstanding challenges', async () => {
+      const app = buildApp();
+      mockVerifyJWT.mockImplementation(async (request) => {
+        request.userId = USER_ID;
+      });
+      const reg = await buildRegistration();
+
+      (mockedPrisma.keyPossessionChallenge.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (mockedPrisma.keyPossessionChallenge.count as jest.Mock).mockResolvedValue(10);
+
+      const response = await app.inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
+
+      expect(response.statusCode).toBe(429);
+      expect(JSON.parse(response.body).code).toBe(API_ERROR_RATE_LIMIT_CHALLENGES);
+      // Expired rows are swept, but no new challenge is written when over the cap.
+      expect(mockedPrisma.keyPossessionChallenge.deleteMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID, expiresAt: { lt: expect.any(Date) } },
+      });
+      expect(mockedPrisma.keyPossessionChallenge.create).not.toHaveBeenCalled();
     });
 
     it('rejects mismatched user_id vs JWT sub', async () => {
@@ -320,7 +490,7 @@ describe('public-keys routes', () => {
         request.userId = USER_ID;
       });
 
-      let createCallArgs: { id: string; expectedHmac: Uint8Array; signaturePublicKey: string; version: number } | null = null;
+      let createCallArgs: { id: string; expectedHmac: Uint8Array; signaturePublicKey: Uint8Array; version: number } | null = null;
 
       (mockedPrisma.keyPossessionChallenge.create as jest.Mock).mockImplementation(async ({ data }) => {
         createCallArgs = {
@@ -343,7 +513,7 @@ describe('public-keys routes', () => {
       expect(mockedPrisma.keyPossessionChallenge.create).toHaveBeenCalledTimes(1);
       expect(createCallArgs).not.toBeNull();
       expect(createCallArgs!.id).toBe(body.challenge_id);
-      expect(createCallArgs!.signaturePublicKey).toBe(reg.signaturePublicKey);
+      expect(Buffer.from(createCallArgs!.signaturePublicKey).equals(Buffer.from(base64ToUint8(reg.signaturePublicKey)))).toBe(true);
       expect(createCallArgs!.version).toBe(reg.version);
 
       // The expectedHmac is what the holder of the ENCRYPTION secret key would
@@ -352,6 +522,33 @@ describe('public-keys routes', () => {
       const ss = await hybridDecapsulate(reg.encryption.secretKey, ciphertext);
       const expectedResponse = await computeChallengeResponse(ss, body.challenge_id);
       expect(Buffer.from(createCallArgs!.expectedHmac).equals(Buffer.from(expectedResponse))).toBe(true);
+    });
+  });
+
+  describe('GET /api/public-keys/next', () => {
+    it('returns version 1 / generation 1 for a first-time user', async () => {
+      mockVerifyJWT.mockImplementation(async (request) => {
+        request.userId = USER_ID;
+      });
+      (mockedPrisma.encryptionKey.aggregate as jest.Mock).mockResolvedValue({ _max: { version: null } });
+      (mockedPrisma.identity.aggregate as jest.Mock).mockResolvedValue({ _max: { generation: null } });
+
+      const res = await buildApp().inject({ method: 'GET', url: '/api/public-keys/next' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ next_version: 1, next_generation: 1 });
+    });
+
+    it('counts disabled rows so a reset never reuses a number', async () => {
+      mockVerifyJWT.mockImplementation(async (request) => {
+        request.userId = USER_ID;
+      });
+      (mockedPrisma.encryptionKey.aggregate as jest.Mock).mockResolvedValue({ _max: { version: 3 } });
+      (mockedPrisma.identity.aggregate as jest.Mock).mockResolvedValue({ _max: { generation: 2 } });
+
+      const res = await buildApp().inject({ method: 'GET', url: '/api/public-keys/next' });
+
+      expect(res.json()).toEqual({ next_version: 4, next_generation: 3 });
     });
   });
 
@@ -370,9 +567,9 @@ describe('public-keys routes', () => {
       return {
         id: FAKE_CHALLENGE_ID,
         userId: USER_ID,
-        encryptionPublicKey: reg.encryptionPublicKey,
-        signaturePublicKey: reg.signaturePublicKey,
-        keyBindingSignature: reg.keyBindingSignature,
+        encryptionPublicKey: base64ToUint8(reg.encryptionPublicKey),
+        signaturePublicKey: base64ToUint8(reg.signaturePublicKey),
+        keyBindingSignature: base64ToUint8(reg.keyBindingSignature),
         version: reg.version,
         signedCreatedAt: new Date(reg.createdAtMillis),
         expectedHmac,
@@ -480,7 +677,13 @@ describe('public-keys routes', () => {
       mockTransaction.mockImplementation(async (callback: (tx: MockTx) => Promise<unknown>, options) => {
         expect(options).toEqual({ isolationLevel: 'Serializable' });
 
-        capturedTx = makeTx({ challenge: challengeRow(reg, expectedHmac), recentCount: 10 });
+        capturedTx = makeTx({
+          challenge: challengeRow(reg, expectedHmac),
+          // Rotation under an existing vault-backed identity (so it passes the
+          // no-vault guard and reaches the rate-limit check).
+          existingIdentity: { id: 'identity-1', userId: USER_ID, signaturePublicKey: base64ToUint8(reg.signaturePublicKey), disabledAt: null },
+          recentCount: 10,
+        });
 
         return callback(capturedTx);
       });
@@ -511,8 +714,15 @@ describe('public-keys routes', () => {
       (mockedPrisma.keyPossessionChallenge.findUnique as jest.Mock).mockResolvedValue(challengeRow(reg, expectedHmac));
 
       mockTransaction.mockImplementation(async (callback: (tx: MockTx) => Promise<unknown>) =>
-        // Another device already registered version 1 → expected next is 2.
-        callback(makeTx({ challenge: challengeRow(reg, expectedHmac), maxVersion: 1 }))
+        // Rotation under an existing identity; another device already registered
+        // version 1 → expected next is 2, so the client's version 1 conflicts.
+        callback(
+          makeTx({
+            challenge: challengeRow(reg, expectedHmac),
+            existingIdentity: { id: 'identity-1', userId: USER_ID, signaturePublicKey: base64ToUint8(reg.signaturePublicKey), disabledAt: null },
+            maxVersion: 1,
+          })
+        )
       );
 
       const response = await app.inject({
@@ -568,7 +778,7 @@ describe('public-keys routes', () => {
       expect(JSON.parse(response.body).code).toBe(API_ERROR_CONCURRENT_REGISTRATION);
     });
 
-    it('mints a fresh identity + key on a first registration and consumes the challenge', async () => {
+    it('refuses to mint a fresh (never-registered) identity: first registration must go through bootstrap', async () => {
       const app = buildApp();
       setupAuth();
       const reg = await buildRegistration(1);
@@ -581,19 +791,9 @@ describe('public-keys routes', () => {
       mockTransaction.mockImplementation(async (callback: (tx: MockTx) => Promise<unknown>, options) => {
         expect(options).toEqual({ isolationLevel: 'Serializable' });
 
-        capturedTx = makeTx({
-          challenge: challengeRow(reg, expectedHmac),
-          createdIdentity: { id: 'identity-1' },
-          createdRegistration: {
-            id: 'new-id',
-            userId: USER_ID,
-            encryptionPublicKey: reg.encryptionPublicKey,
-            keyBindingSignature: reg.keyBindingSignature,
-            version: reg.version,
-            createdAt: new Date(reg.createdAtMillis),
-            identity: { signaturePublicKey: reg.signaturePublicKey },
-          },
-        });
+        // No existing identity for this signature key: a brand-new identity with
+        // no vault behind it. /register/complete must refuse (onboard via bootstrap).
+        capturedTx = makeTx({ challenge: challengeRow(reg, expectedHmac) });
 
         return callback(capturedTx);
       });
@@ -604,32 +804,12 @@ describe('public-keys routes', () => {
         payload: completePayload(uint8ToBase64(expectedHmac), await challengeSignature(reg)),
       });
 
-      expect(response.statusCode).toBe(200);
-      expect(JSON.parse(response.body)).toEqual({
-        user_id: USER_ID,
-        encryption_public_key: reg.encryptionPublicKey,
-        signature_public_key: reg.signaturePublicKey,
-        key_binding_signature: reg.keyBindingSignature,
-        version: reg.version,
-        created_at_millis: reg.createdAtMillis,
-      });
-
-      // Fresh identity (generation 1) is created and the key references it.
-      expect(capturedTx!.identity.create).toHaveBeenCalledWith({
-        data: { userId: USER_ID, signaturePublicKey: reg.signaturePublicKey, generation: 1 },
-      });
-      expect(capturedTx!.encryptionKey.create).toHaveBeenCalledWith({
-        data: {
-          userId: USER_ID,
-          identityId: 'identity-1',
-          encryptionPublicKey: reg.encryptionPublicKey,
-          keyBindingSignature: reg.keyBindingSignature,
-          version: reg.version,
-          createdAt: new Date(reg.createdAtMillis),
-        },
-        include: { identity: true },
-      });
-      expect(capturedTx!.keyPossessionChallenge.delete).toHaveBeenCalledWith({ where: { id: FAKE_CHALLENGE_ID } });
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(response.body).code).toBe(API_ERROR_NO_SERVER_VAULT);
+      // Nothing is written: not the identity, not the key, not the challenge delete.
+      expect(capturedTx!.identity.create).not.toHaveBeenCalled();
+      expect(capturedTx!.encryptionKey.create).not.toHaveBeenCalled();
+      expect(capturedTx!.keyPossessionChallenge.delete).not.toHaveBeenCalled();
     });
 
     it('rotates the encryption key under the SAME identity without minting a new identity', async () => {
@@ -646,16 +826,16 @@ describe('public-keys routes', () => {
         capturedTx = makeTx({
           challenge: challengeRow(reg, expectedHmac),
           // The identity (signature key) already exists for THIS user.
-          existingIdentity: { id: 'identity-1', userId: USER_ID, signaturePublicKey: reg.signaturePublicKey, disabledAt: null },
+          existingIdentity: { id: 'identity-1', userId: USER_ID, signaturePublicKey: base64ToUint8(reg.signaturePublicKey), disabledAt: null },
           maxVersion: 1, // current active version → expected next is 2
           createdRegistration: {
             id: 'reg-2',
             userId: USER_ID,
-            encryptionPublicKey: reg.encryptionPublicKey,
-            keyBindingSignature: reg.keyBindingSignature,
+            encryptionPublicKey: base64ToUint8(reg.encryptionPublicKey),
+            keyBindingSignature: base64ToUint8(reg.keyBindingSignature),
             version: reg.version,
             createdAt: new Date(reg.createdAtMillis),
-            identity: { signaturePublicKey: reg.signaturePublicKey },
+            identity: { signaturePublicKey: base64ToUint8(reg.signaturePublicKey) },
           },
         });
 
@@ -699,12 +879,15 @@ describe('public-keys routes', () => {
             id: 'reg-existing',
             userId: USER_ID,
             identityId: 'identity-1',
-            encryptionPublicKey: reg.encryptionPublicKey,
-            keyBindingSignature: reg.keyBindingSignature,
+            encryptionPublicKey: base64ToUint8(reg.encryptionPublicKey),
+            keyBindingSignature: base64ToUint8(reg.keyBindingSignature),
             version: 5,
             createdAt: originalCreatedAt,
-            identity: { signaturePublicKey: reg.signaturePublicKey },
+            identity: { signaturePublicKey: base64ToUint8(reg.signaturePublicKey) },
           },
+          // The identity's (previously disabled) vault keyring, so warm
+          // reactivation can flip it back active without a recovery phrase.
+          keyring: { id: 'keyring-1', userId: USER_ID, identityId: 'identity-1', disabledAt: new Date() },
         });
 
         return callback(capturedTx);
@@ -720,6 +903,14 @@ describe('public-keys routes', () => {
       const body = JSON.parse(response.body);
       expect(body.version).toBe(5); // stored version, NOT the client's 6
       expect(body.created_at_millis).toBe(originalCreatedAt.getTime());
+
+      // Warm reactivation also brings the identity's vault keyring back as the
+      // active one (demote others, enable this identity's keyring) — no phrase.
+      expect(capturedTx!.vaultKeyring.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID, disabledAt: null },
+        data: { disabledAt: expect.any(Date) },
+      });
+      expect(capturedTx!.vaultKeyring.update).toHaveBeenCalledWith({ where: { id: 'keyring-1' }, data: { disabledAt: null } });
 
       // Reactivation path: no insert, existing row re-enabled, challenge consumed.
       expect(capturedTx!.encryptionKey.create).not.toHaveBeenCalled();
@@ -747,11 +938,11 @@ describe('public-keys routes', () => {
               id: 'reg-other',
               userId: 'someone-else',
               identityId: 'identity-other',
-              encryptionPublicKey: reg.encryptionPublicKey,
-              keyBindingSignature: reg.keyBindingSignature,
+              encryptionPublicKey: base64ToUint8(reg.encryptionPublicKey),
+              keyBindingSignature: base64ToUint8(reg.keyBindingSignature),
               version: 1,
               createdAt: new Date(),
-              identity: { signaturePublicKey: reg.signaturePublicKey },
+              identity: { signaturePublicKey: base64ToUint8(reg.signaturePublicKey) },
             },
           })
         )
@@ -780,7 +971,12 @@ describe('public-keys routes', () => {
           makeTx({
             challenge: challengeRow(reg, expectedHmac),
             // Encryption key is new, but the identity key belongs to someone else.
-            existingIdentity: { id: 'identity-other', userId: 'someone-else', signaturePublicKey: reg.signaturePublicKey, disabledAt: null },
+            existingIdentity: {
+              id: 'identity-other',
+              userId: 'someone-else',
+              signaturePublicKey: base64ToUint8(reg.signaturePublicKey),
+              disabledAt: null,
+            },
           })
         )
       );

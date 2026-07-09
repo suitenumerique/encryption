@@ -1,0 +1,130 @@
+/**
+ * @jest-environment jsdom
+ */
+import type { refreshTokenWithLock as RefreshTokenWithLock, TokenSet } from '@encryption/src/ui/auth/oidc-client';
+
+// A JWT whose payload segment base64-decodes to the given claims (signature not verified).
+function makeJwt(claims: Record<string, unknown>): string {
+  return `header.${btoa(JSON.stringify(claims))}.sig`;
+}
+
+describe('refreshTokenWithLock', () => {
+  let refreshTokenWithLock: typeof RefreshTokenWithLock;
+  let fetchMock: jest.Mock;
+
+  beforeAll(async () => {
+    // The module reads OIDC config from window.__ENCRYPTION_CONFIG__ at load time.
+    (window as unknown as { __ENCRYPTION_CONFIG__: unknown }).__ENCRYPTION_CONFIG__ = {
+      oidcIssuer: 'https://keycloak.test/realms/test',
+      oidcClientId: 'encryption',
+      oidcRedirectUri: 'https://encryption.test/auth/callback',
+    };
+
+    ({ refreshTokenWithLock } = await import('@encryption/src/ui/auth/oidc-client'));
+  });
+
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+
+    // Web Locks: run the callback immediately (single-tab test).
+    (navigator as unknown as { locks: unknown }).locks = {
+      request: (_name: string, cb: () => Promise<unknown>) => cb(),
+    };
+  });
+
+  const staleToken = (): TokenSet => ({
+    accessToken: 'old-access',
+    refreshToken: 'old-refresh',
+    idToken: null,
+    expiresAt: Date.now() - 1_000, // already expired
+    sub: 'user-1',
+  });
+
+  it('persists the refreshed token INSIDE the lock, before resolving', async () => {
+    const rotatedAccess = makeJwt({ sub: 'user-1' });
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: rotatedAccess,
+        refresh_token: 'rotated-refresh',
+        id_token: null,
+        expires_in: 300,
+      }),
+    });
+
+    const events: string[] = [];
+    const persisted: TokenSet[] = [];
+    const persistToken = (t: TokenSet) => {
+      events.push('persist');
+      persisted.push(t);
+    };
+
+    const readStoredToken = async () => null;
+
+    const refreshed = await refreshTokenWithLock(staleToken(), readStoredToken, persistToken);
+    events.push('resolved');
+
+    // Persist happened, and it happened before the outer promise resolved
+    // (i.e. still under the lock).
+    expect(events).toEqual(['persist', 'resolved']);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toEqual(refreshed);
+
+    expect(refreshed.accessToken).toBe(rotatedAccess);
+    expect(refreshed.refreshToken).toBe('rotated-refresh');
+    expect(refreshed.sub).toBe('user-1');
+  });
+
+  it('returns the already-fresh stored token without refreshing or persisting', async () => {
+    const fresh: TokenSet = {
+      accessToken: 'fresh-access',
+      refreshToken: 'fresh-refresh',
+      idToken: null,
+      expiresAt: Date.now() + 10 * 60 * 1000, // well within validity
+      sub: 'user-1',
+    };
+
+    const persistToken = jest.fn();
+    const readStoredToken = async () => fresh;
+
+    const result = await refreshTokenWithLock(staleToken(), readStoredToken, persistToken);
+
+    expect(result).toEqual(fresh);
+    expect(persistToken).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the stored refresh token when a concurrent tab already rotated it', async () => {
+    const rotatedAccess = makeJwt({ sub: 'user-1' });
+
+    // Stored token is present but still expired, carrying a newer refresh token.
+    const storedExpired: TokenSet = {
+      accessToken: 'stored-access',
+      refreshToken: 'stored-refresh',
+      idToken: null,
+      expiresAt: Date.now() - 1_000,
+      sub: 'user-1',
+    };
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: rotatedAccess,
+        refresh_token: 'newest-refresh',
+        id_token: null,
+        expires_in: 300,
+      }),
+    });
+
+    const persistToken = jest.fn();
+    const readStoredToken = async () => storedExpired;
+
+    await refreshTokenWithLock(staleToken(), readStoredToken, persistToken);
+
+    const body = (fetchMock.mock.calls[0][1] as { body: URLSearchParams }).body;
+    expect(body.get('refresh_token')).toBe('stored-refresh');
+    expect(persistToken).toHaveBeenCalledTimes(1);
+  });
+});

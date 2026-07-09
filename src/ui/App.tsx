@@ -1,45 +1,34 @@
 import { Alert, Button, CunninghamProvider, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
-import { MSG_INTERFACE_CLOSED, MSG_INTERFACE_ONBOARDING_COMPLETE } from '@encryption/src/shared/constants';
+import {
+  MSG_INTERFACE_CLOSED,
+  MSG_INTERFACE_ONBOARDING_COMPLETE,
+  MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_VERIFY_COMPLETE,
+} from '@encryption/src/shared/constants';
 import { fetchPublicKeys } from '@encryption/src/ui/api/server-client';
 import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
 import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
+import { type TokenSet, decodeJwtClaims, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
+import { readToken, storeToken } from '@encryption/src/ui/auth/token-storage';
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
-import { DeviceTransfer } from '@encryption/src/ui/components/DeviceTransfer';
+import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
+import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
+import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
 import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
 import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
-import { type TokenSet, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
-import { readToken, storeToken } from '@encryption/src/ui/auth/token-storage';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
 import { useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
+import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
 
 const runtimeAppConfig = (window as unknown as { __ENCRYPTION_CONFIG__?: { docsEnabled?: boolean } }).__ENCRYPTION_CONFIG__;
 const DOCS_ENABLED = runtimeAppConfig?.docsEnabled ?? true;
-
-type Route = 'onboarding' | 'backup' | 'restore' | 'device-transfer' | 'settings' | 'docs-user' | 'docs-technical' | 'login' | 'auth-callback';
-
-function getRouteFromPath(path: string): Route | null {
-  const routes: Record<string, Route> = {
-    '/onboarding': 'onboarding',
-    '/backup': 'backup',
-    '/restore': 'restore',
-    '/device-transfer': 'device-transfer',
-    '/settings': 'settings',
-    '/docs': 'docs-user',
-    '/docs/user': 'docs-user',
-    '/docs/technical': 'docs-technical',
-    '/login': 'login',
-    '/auth/callback': 'auth-callback',
-  };
-
-  return routes[path] ?? null;
-}
 
 function getHashParams(): URLSearchParams {
   return new URLSearchParams(window.location.hash.slice(1));
@@ -72,23 +61,19 @@ export interface UserInfo {
 
 /** Decode JWT payload to extract user identity (name, email). */
 function decodeJwtUserInfo(token: string): UserInfo {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
+  const claims = decodeJwtClaims(token);
 
-    return {
-      name: payload.name || payload.preferred_username || null,
-      email: payload.email || null,
-    };
-  } catch {
-    return { name: null, email: null };
-  }
+  return {
+    name: claims?.name || claims?.preferred_username || null,
+    email: claims?.email || null,
+  };
 }
 
 /** Inner component that has access to the EncryptionContext */
-function InterfaceRoutes({ route }: { route: Route }) {
+function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Route) => void }) {
   const parentContext = useParentMessages();
   const { t } = useTranslation('common');
-  const { prepareTransferExport, claimTransferImport, setAuthInfo, request, isReady: vaultReady } = useEncryptionContext();
+  const { setAuthInfo, hasKeys } = useEncryptionContext();
 
   // Set auth info on the encryption context FIRST — the vault needs this before
   // we can make any requests (including token restoration).
@@ -97,6 +82,41 @@ function InterfaceRoutes({ route }: { route: Route }) {
       setAuthInfo(parentContext.suiteUserId);
     }
   }, [parentContext.suiteUserId, setAuthInfo]);
+
+  // Navigation guard: the setup/restore screens make no sense once this device
+  // already holds keys, so redirect to settings if we land on them with a vault
+  // present. Redirect only, no render gate: onboarding shows normally and we
+  // simply navigate away when keys are found, so a slow/hung vault call can never
+  // strand us on a loader.
+  //
+  // Evaluated ONCE per arrival (tracked by a ref) so it never re-guards a page we
+  // already entered: a fresh onboarding mints keys mid-flow, and a host context
+  // re-send must not trigger a redirect out of the backup/success step.
+  const guardedRoute = useRef<Route | null>(null);
+
+  useEffect(() => {
+    if (route !== 'onboarding' && route !== 'restore') {
+      guardedRoute.current = null;
+
+      return;
+    }
+    if (guardedRoute.current === route) return;
+    if (!parentContext.suiteUserId) return;
+
+    guardedRoute.current = route;
+    let cancelled = false;
+    hasKeys()
+      .then(({ hasKeys: has }) => {
+        if (!cancelled && has) navigate('settings');
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally NOT depending on live key state — this is an arrival guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, parentContext.suiteUserId]);
 
   // OIDC self-authentication: the interface obtains its own token.
   const oidcAuth = useOidcAuth(parentContext.suiteUserId);
@@ -142,7 +162,13 @@ function InterfaceRoutes({ route }: { route: Route }) {
         return parentContext.suiteUserId ? readToken(parentContext.suiteUserId) : null;
       };
 
-      const refreshed = await refreshTokenWithLock(currentTokenSet, readStoredToken);
+      const persistToken = (tokenSet: TokenSet) => {
+        if (parentContext.suiteUserId) {
+          storeToken(parentContext.suiteUserId, tokenSet);
+        }
+      };
+
+      const refreshed = await refreshTokenWithLock(currentTokenSet, readStoredToken, persistToken);
       oidcAuth.updateTokenSet(refreshed);
 
       return refreshed.accessToken;
@@ -157,11 +183,12 @@ function InterfaceRoutes({ route }: { route: Route }) {
   // is fresh (lazy refresh with Web Locks mutex if it expires within 1 minute).
   const oidcToken = oidcAuth.token;
 
-
   const [hasExistingBackendKey, setHasExistingBackendKey] = useState(false);
   const [existingKeyFingerprint, setExistingKeyFingerprint] = useState<string | null>(null);
+
+  // Lets a screen (e.g. settings) push into device-approval in place without a
+  // real navigation, then return to where it was.
   const [routeOverride, setRouteOverride] = useState<Route | null>(null);
-  const [deviceTransferMode, setDeviceTransferMode] = useState<'choose' | 'import' | 'export'>('choose');
   const activeRoute = routeOverride ?? route;
 
   const userInfo = useMemo<UserInfo | null>(() => {
@@ -201,84 +228,87 @@ function InterfaceRoutes({ route }: { route: Route }) {
     notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
   }, [parentContext.parentOrigin]);
 
-  const { i18n } = useTranslation('common');
-
-  const handleExportPayload = useCallback(async (): Promise<{ encryptedPayload: string; transferPassphrase: string }> => {
-    // Pass the current i18n language so the mnemonic is generated in the user's language
-    const mnemonicLanguage = i18n.language === 'en' ? 'english' : 'french';
-
-    return prepareTransferExport(mnemonicLanguage as 'french' | 'english');
-  }, [prepareTransferExport, i18n.language]);
-
-  const handleImportPayload = useCallback(
-    async (encryptedPayload: string, transferPassphrase: string): Promise<void> => {
-      const { publicKey } = await claimTransferImport(encryptedPayload, transferPassphrase);
-
-      // Notify parent that keys are available (updates hasKeys, publicKey state)
-      // but do NOT close the interface — let the DeviceTransfer component show
-      // its success screen. The user will click "Back" to close.
-      notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, { publicKey });
-    },
-    [claimTransferImport, parentContext.parentOrigin]
-  );
-
   // All hooks declared above — conditional returns are safe below this point.
   // OIDC must be configured for the interface to work.
   if (!oidcAuth.isConfigured) {
-    return <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-      <Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>
-    </div>;
+    return (
+      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
+        <Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>
+      </div>
+    );
   }
 
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
   if (!oidcAuth.token && !tokenRestoreAttempted) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
-      <Loader />
-    </div>;
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
+        <Loader />
+      </div>
+    );
   }
 
   // Wait for OIDC authentication.
   if (!oidcAuth.token) {
     // Waiting for the login tab to complete
     if (oidcAuth.isAuthenticating) {
-      return <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '200px', gap: '1rem', padding: '2rem' }}>
-        <Loader />
-        <p style={{ textAlign: 'center', margin: 0 }}>{t('auth.authenticating')}</p>
-      </div>;
+      return (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: '200px',
+            gap: '1rem',
+            padding: '2rem',
+          }}
+        >
+          <Loader />
+          <p style={{ textAlign: 'center', margin: 0 }}>{t('auth.authenticating')}</p>
+        </div>
+      );
     }
 
     // Error from a previous attempt
     if (oidcAuth.error) {
-      return <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-          <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
+      return (
+        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
+          <Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+            <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
+          </div>
         </div>
-      </div>;
+      );
     }
 
     // Auth needed — show explanation and "Continue" button
     if (oidcAuth.needsAuth) {
-      return <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.INFO}>{t('auth.required_explanation')}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>
+      return (
+        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
+          <Alert type={VariantType.INFO}>{t('auth.required_explanation')}</Alert>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem' }}>
+            <Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>
+          </div>
         </div>
-      </div>;
+      );
     }
 
     // Waiting for parentContext.suiteUserId — if token restore was already
     // attempted and we still have no userId, the parent didn't send auth context.
     if (tokenRestoreAttempted && !parentContext.suiteUserId) {
-      return <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>
-      </div>;
+      return (
+        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
+          <Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>
+        </div>
+      );
     }
 
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
-      <Loader />
-    </div>;
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
+        <Loader />
+      </div>
+    );
   }
 
   switch (activeRoute) {
@@ -293,17 +323,10 @@ function InterfaceRoutes({ route }: { route: Route }) {
           userInfo={userInfo}
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
+          onUseAnotherDevice={() => setRouteOverride('device-approval')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
-          onOpenDeviceTransfer={
-            hasExistingBackendKey
-              ? () => {
-                  setDeviceTransferMode('import');
-                  setRouteOverride('device-transfer');
-                }
-              : undefined
-          }
         />
       );
 
@@ -318,6 +341,7 @@ function InterfaceRoutes({ route }: { route: Route }) {
           userInfo={userInfo}
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
+          onUseAnotherDevice={() => setRouteOverride('device-approval')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
@@ -335,27 +359,10 @@ function InterfaceRoutes({ route }: { route: Route }) {
           userInfo={userInfo}
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
+          onUseAnotherDevice={() => setRouteOverride('device-approval')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
-        />
-      );
-
-    case 'device-transfer':
-      return (
-        <DeviceTransfer
-          getToken={getValidToken}
-          initialMode={routeOverride ? deviceTransferMode : 'choose'}
-          onExportPayload={handleExportPayload}
-          onImportPayload={handleImportPayload}
-          onClose={
-            routeOverride
-              ? () => {
-                  setRouteOverride(null);
-                  setDeviceTransferMode('choose');
-                }
-              : handleClose
-          }
         />
       );
 
@@ -363,13 +370,56 @@ function InterfaceRoutes({ route }: { route: Route }) {
       return (
         <EncryptionSettings
           userInfo={userInfo}
+          userId={parentContext.suiteUserId}
           getToken={getValidToken}
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
-          onOpenDeviceTransferExport={() => {
-            setDeviceTransferMode('export');
-            setRouteOverride('device-transfer');
+          onOpenDeviceApproval={() => setRouteOverride('device-approval')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentAccessToken={oidcAuth.token}
+        />
+      );
+
+    case 'device-approval':
+      return (
+        <DeviceApproval
+          getToken={getValidToken}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentAccessToken={oidcAuth.token}
+          onAdopted={() => {
+            notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
+
+            // Real navigation: the vault now has keys here, so the base route is
+            // settings from now on (URL included, so a refresh stays put). The
+            // approval overlay stays until the user dismisses its success screen.
+            navigate('settings');
           }}
+          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
+        />
+      );
+
+    case 'verify-recipients':
+      return (
+        <VerifyRecipients
+          recipients={parentContext.verifyRecipients ?? {}}
+          currentUserId={parentContext.suiteUserId}
+          onComplete={(outcome) => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_VERIFY_COMPLETE, { outcome })}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentAccessToken={oidcAuth.token}
+        />
+      );
+
+    case 'recipient-profile':
+      return (
+        <RecipientProfile
+          userId={parentContext.recipientProfile?.userId ?? null}
+          label={parentContext.recipientProfile?.label}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentAccessToken={oidcAuth.token}
         />
       );
 
@@ -385,6 +435,16 @@ export function App() {
   const { t, i18n } = useTranslation('common');
   const [route, setRoute] = useState<Route | null>(() => getRouteFromPath(window.location.pathname));
   const [cunninghamTheme, setCunninghamTheme] = useState<string>(getThemeFromHash);
+
+  // In-app navigation: push the route's path (keeping the hash, which carries
+  // theme/lang) so the URL reflects the screen and a refresh stays on it.
+  const navigate = useCallback((to: Route) => {
+    const path = PATH_FOR_ROUTE[to];
+
+    if (path) window.history.pushState({}, '', path + window.location.hash);
+
+    setRoute(to);
+  }, []);
 
   // Apply language from hash: /onboarding#theme=dark&lang=en
   useEffect(() => {
@@ -408,7 +468,23 @@ export function App() {
 
     window.addEventListener('hashchange', handleHashChange);
 
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    // Live theme updates from the parent product (SDK setTheme). Driven via
+    // postMessage rather than an iframe src/hash change so an internal
+    // navigation (e.g. an unsaved recovery phrase mid-backup) is preserved.
+    const handleThemeMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; theme?: string } | null;
+
+      if (data?.type === MSG_INTERFACE_SET_THEME && typeof data.theme === 'string') {
+        setCunninghamTheme(data.theme);
+      }
+    };
+
+    window.addEventListener('message', handleThemeMessage);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('message', handleThemeMessage);
+    };
   }, [i18n]);
 
   useEffect(() => {
@@ -481,7 +557,7 @@ export function App() {
           </div>
         )}
         <EncryptionProvider>
-          <InterfaceRoutes route={route} />
+          <InterfaceRoutes route={route} navigate={navigate} />
         </EncryptionProvider>
       </CunninghamProvider>
     );

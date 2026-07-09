@@ -19,7 +19,7 @@ export async function handleDecryptWithKey(
     encryptedData: ArrayBuffer;
     encryptedSymmetricKey: ArrayBuffer;
     encryptedKeyChain?: ArrayBuffer[];
-  },
+  }
 ): Promise<{ data: ArrayBuffer }> {
   const encryptedContent = new Uint8Array(payload.encryptedData);
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);

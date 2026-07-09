@@ -2,6 +2,7 @@ import { BROADCAST_KEYS_CHANGED, BROADCAST_KEYS_DESTROYED, MSG_VAULT_READY } fro
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { setupMessageHandler } from '@encryption/src/vault/message-handler';
 import { initOriginGuard, validateIframeContext } from '@encryption/src/vault/origin-guard';
+import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cache';
 
 /**
  * Runtime config injected by the server into bridge.html.
@@ -49,6 +50,10 @@ if (bc) {
   bc.onmessage = (event) => {
     const msg = event.data as { type: string };
     if (msg.type === BROADCAST_KEYS_CHANGED || msg.type === BROADCAST_KEYS_DESTROYED) {
+      // Another tab changed/destroyed the keys, so THIS vault's decrypted-key
+      // cache may now be stale — drop it before forwarding the notification.
+      clearSymmetricKeyCache();
+
       if (window.parent !== window) {
         window.parent.postMessage({ type: `vault:${msg.type}` }, '*');
       }

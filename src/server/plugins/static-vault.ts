@@ -55,7 +55,9 @@ export async function staticVaultPlugin(app: FastifyInstance): Promise<void> {
   }
 
   app.addHook('onRequest', async (request, reply) => {
-    if (request.hostname !== env.VAULT_HOST) {
+    // `request.host` keeps the port, matching env.VAULT_HOST (derived from new URL(...).host).
+    // The port-stripped `request.hostname` would never match on a deployment with an explicit port.
+    if (request.host !== env.VAULT_HOST) {
       return;
     }
 

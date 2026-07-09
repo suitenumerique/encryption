@@ -1,10 +1,10 @@
 import { computeKeyFingerprint, formatFingerprint } from '@encryption/src/crypto/fingerprint';
 
 describe('computeKeyFingerprint', () => {
-  it('should produce 16 lowercase hex chars without spaces', async () => {
+  it('should produce 40 decimal digits', async () => {
     const fingerprint = await computeKeyFingerprint(btoa('test-public-key-data'));
 
-    expect(fingerprint).toMatch(/^[a-f0-9]{16}$/);
+    expect(fingerprint).toMatch(/^\d{40}$/);
   });
 
   it('should produce different fingerprints for different keys', async () => {
@@ -19,14 +19,18 @@ describe('computeKeyFingerprint', () => {
 
     expect(await computeKeyFingerprint(key)).toBe(await computeKeyFingerprint(key));
   });
+
+  it('should agree between base64 and ArrayBuffer inputs for the same key', async () => {
+    const bytes = new TextEncoder().encode('same-key-material');
+    const base64 = btoa(String.fromCharCode(...bytes));
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+
+    expect(await computeKeyFingerprint(base64)).toBe(await computeKeyFingerprint(buffer));
+  });
 });
 
 describe('formatFingerprint', () => {
-  it('should format as uppercase groups of 4 with spaces', () => {
-    expect(formatFingerprint('a1b2c3d4e5f67890')).toBe('A1B2 C3D4 E5F6 7890');
-  });
-
-  it('should handle already uppercase input', () => {
-    expect(formatFingerprint('A1B2C3D4E5F67890')).toBe('A1B2 C3D4 E5F6 7890');
+  it('should group 40 digits into blocks of five', () => {
+    expect(formatFingerprint('0031700000000000000000000000000000000042')).toBe('00317 00000 00000 00000 00000 00000 00000 00042');
   });
 });

@@ -38,15 +38,36 @@ describe('public-key schemas', () => {
   });
 
   describe('GetPublicKeysQuerySchema', () => {
-    it('should accept comma-separated user_ids', () => {
-      const valid = { user_ids: '550e8400-e29b-41d4-a716-446655440000,660e8400-e29b-41d4-a716-446655440001' };
+    it('should split and trim comma-separated user_ids into an array', () => {
+      const valid = { user_ids: '550e8400-e29b-41d4-a716-446655440000, 660e8400-e29b-41d4-a716-446655440001' };
       const result = GetPublicKeysQuerySchema.parse(valid);
 
-      expect(result.user_ids).toContain(',');
+      expect(result.user_ids).toEqual(['550e8400-e29b-41d4-a716-446655440000', '660e8400-e29b-41d4-a716-446655440001']);
     });
 
     it('should reject missing user_ids', () => {
       expect(() => GetPublicKeysQuerySchema.parse({})).toThrow();
+    });
+
+    it('should reject an empty user id (e.g. a trailing comma)', () => {
+      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: 'a,' })).toThrow();
+    });
+
+    it('should reject a list longer than 100 ids', () => {
+      const tooMany = Array.from({ length: 101 }, (_, i) => `u${i}`).join(',');
+
+      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: tooMany })).toThrow();
+    });
+
+    it('should accept a list of exactly 100 ids', () => {
+      const exactly = Array.from({ length: 100 }, (_, i) => `u${i}`).join(',');
+      const result = GetPublicKeysQuerySchema.parse({ user_ids: exactly });
+
+      expect(result.user_ids).toHaveLength(100);
+    });
+
+    it('should reject an over-long single user id', () => {
+      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: 'x'.repeat(201) })).toThrow();
     });
   });
 });

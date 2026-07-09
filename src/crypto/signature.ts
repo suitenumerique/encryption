@@ -60,11 +60,7 @@ export async function signDetached(message: Uint8Array, secretKey: SignatureSecr
  * having to catch — the "this looks tampered, warn the user" path is a normal
  * outcome, not an exceptional one.
  */
-export async function verifyDetached(
-  signature: Uint8Array,
-  message: Uint8Array,
-  publicKey: SignaturePublicKey
-): Promise<boolean> {
+export async function verifyDetached(signature: Uint8Array, message: Uint8Array, publicKey: SignaturePublicKey): Promise<boolean> {
   await ensureSodium();
 
   // libsodium throws if the public key has the wrong length; treat any such

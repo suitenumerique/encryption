@@ -1,10 +1,4 @@
-import {
-  encryptContent,
-  encryptSymmetricKeyForUsers,
-  generateSymmetricKey,
-  importPublicKeyFromBase64,
-  uint8ToBase64,
-} from '@encryption/src/crypto';
+import { encryptContent, encryptSymmetricKeyForUsers, generateSymmetricKey, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
@@ -15,9 +9,7 @@ import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/oper
  * key and encrypt the payload identically, then diverge only in how the
  * freshly-minted key is wrapped.
  */
-async function mintKeyAndEncrypt(
-  data: ArrayBuffer,
-): Promise<{ newKey: Uint8Array; encryptedContent: ArrayBuffer }> {
+async function mintKeyAndEncrypt(data: ArrayBuffer): Promise<{ newKey: Uint8Array; encryptedContent: ArrayBuffer }> {
   const newKey = await generateSymmetricKey();
   const dataBytes = new Uint8Array(data);
   const encrypted = await encryptContent(dataBytes, newKey);
@@ -48,7 +40,7 @@ export async function handleEncryptWithKey(
     data: ArrayBuffer;
     encryptedSymmetricKey: ArrayBuffer;
     encryptedKeyChain?: ArrayBuffer[];
-  },
+  }
 ): Promise<{ encryptedData: ArrayBuffer }> {
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
   const dataBytes = new Uint8Array(payload.data);
@@ -58,7 +50,7 @@ export async function handleEncryptWithKey(
       ? await resolveKeyChain(
           userId,
           encryptedKey,
-          payload.encryptedKeyChain.map((buf) => new Uint8Array(buf)),
+          payload.encryptedKeyChain.map((buf) => new Uint8Array(buf))
         )
       : await resolveSymmetricKey(userId, encryptedKey);
 
@@ -77,7 +69,7 @@ export async function handleEncryptWithKey(
  */
 export async function handleEncryptWithoutKey(
   userId: string,
-  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer> },
+  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer> }
 ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
   const pair = await getStoredKeyPair(userId);
 
@@ -119,7 +111,7 @@ export async function handleEncryptNestedWithoutKey(
     data: ArrayBuffer;
     encryptedSymmetricKey: ArrayBuffer;
     encryptedKeyChain?: ArrayBuffer[];
-  },
+  }
 ): Promise<{ encryptedContent: ArrayBuffer; wrappedKey: ArrayBuffer }> {
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
   const chain = (payload.encryptedKeyChain ?? []).map((buf) => new Uint8Array(buf));

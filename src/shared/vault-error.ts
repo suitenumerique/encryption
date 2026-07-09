@@ -45,6 +45,29 @@ export const VaultErrorCode = {
    */
   INVALID_KEY_BINDING: 'INVALID_KEY_BINDING',
   /**
+   * A pulled vault failed its integrity check: the identity-signed manifest did
+   * not verify, an item's ciphertext hash or coverage did not match, or the
+   * revision rolled back. Distinct from a wrong recovery phrase (which fails the
+   * unlock, not the integrity check) — it means the SERVER served tampered or
+   * incoherent vault data, so the user must be warned, not told to re-type.
+   */
+  VAULT_INTEGRITY_FAILED: 'VAULT_INTEGRITY_FAILED',
+  /**
+   * A wrap was attempted for a recipient whose identity is not TOFU-'trusted'
+   * with a matching fingerprint (refused, never verified, or a fingerprint
+   * mismatch that may be a MITM-substituted key). The vault refuses to wrap the
+   * symmetric key until the recipient's identity is verified. The offending
+   * userIds are in the error message.
+   */
+  UNTRUSTED_RECIPIENT: 'UNTRUSTED_RECIPIENT',
+  /**
+   * A write-through change (e.g. a TOFU decision) could not be pushed to the
+   * server, so it was NOT kept locally either — the caller should surface a
+   * "couldn't save, retry" and the local state is unchanged. Distinct from a
+   * network throw (which also aborts before persisting).
+   */
+  SYNC_FAILED: 'SYNC_FAILED',
+  /**
    * Catch-all for situations the SDK couldn't classify into a more
    * specific code — present so consumers always have something to switch
    * on rather than falling back to message regex.

@@ -30,19 +30,17 @@ export async function handleRewrapNestedKey(
     oldEncryptedKey: ArrayBuffer;
     oldEncryptedKeyChain?: ArrayBuffer[];
     newEncryptedKeyChain?: ArrayBuffer[];
-  },
+  }
 ): Promise<{ newEncryptedKey: ArrayBuffer }> {
   const entryKey = new Uint8Array(payload.encryptedSymmetricKey);
   const oldWrappedKey = new Uint8Array(payload.oldEncryptedKey);
 
-  const resolveChainOrEntry = async (
-    chain?: ArrayBuffer[],
-  ): Promise<Uint8Array> =>
+  const resolveChainOrEntry = async (chain?: ArrayBuffer[]): Promise<Uint8Array> =>
     chain && chain.length > 0
       ? resolveKeyChain(
           userId,
           entryKey,
-          chain.map((buf) => new Uint8Array(buf)),
+          chain.map((buf) => new Uint8Array(buf))
         )
       : resolveSymmetricKey(userId, entryKey);
 

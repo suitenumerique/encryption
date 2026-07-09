@@ -2,6 +2,7 @@ import { CunninghamProvider } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { VaultClient } from '@encryption/src/client/vault-client';
+import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { ShareDocumentModal } from '@encryption/src/demo/ShareDocumentModal';
 import {
   DEMO_USERS,
@@ -13,9 +14,29 @@ import {
   logoutUser,
   resolveAllDemoUserIds,
 } from '@encryption/src/demo/auth';
-import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
+import { type RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
+import { VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 
 type EncryptionState = 'loading' | 'no-keys' | 'ready' | 'error' | 'not-connected';
+
+// How a product should react to the SDK's stable VaultError codes: map the ones
+// that need user action to a prompt that opens the encryption UI, so the user
+// learns WHY a document won't decrypt instead of seeing a bare failure. Transient
+// or unrelated errors (timeout, wrong phrase) return null and don't raise a badge.
+function attentionMessage(err: unknown): string | null {
+  if (!isVaultError(err)) return null;
+
+  switch (err.code) {
+    case VaultErrorCode.VAULT_INTEGRITY_FAILED:
+      return 'Your encrypted data failed an integrity check and may have been altered on the server. Open encryption to review.';
+    case VaultErrorCode.MISSING_KEYS:
+      return 'Encryption keys are missing on this device. Open encryption to restore or set them up.';
+    case VaultErrorCode.UNTRUSTED_RECIPIENT:
+      return "A recipient's identity is not verified. Open encryption settings to verify before sharing.";
+    default:
+      return null;
+  }
+}
 
 const VAULT_URL = 'http://data.encryption.localhost:7200';
 const INTERFACE_URL = 'http://encryption.localhost:7200';
@@ -29,49 +50,47 @@ interface SharedAccess {
   role: string;
 }
 
+// Wire shape of a document in the shared demo store. Everything crossing to the
+// server is base64 ciphertext or metadata — never plaintext. `encryptedKeys`
+// maps each authorized userId to their own wrapped copy of the symmetric key,
+// so a recipient in any other instance can decrypt for real.
 interface FakeDocument {
   id: string;
   title: string;
-  content: string;
-  encryptedContent: ArrayBuffer | null;
-  encryptedKey: ArrayBuffer | null;
+  encryptedContent: string; // base64
+  encryptedKeys: Record<string, string>; // userId -> base64 wrapped key
   createdBy: string;
-  createdAt: Date;
+  createdAtMillis: number;
   sharedWith: SharedAccess[];
 }
 
-function sendPrivilegedRequest(iframe: HTMLIFrameElement, type: string, payload?: Record<string, unknown>): Promise<unknown> {
-  const requestId = crypto.randomUUID();
-  const origin = new URL(VAULT_URL).origin;
+const DEMO_API = '/api/demo/documents';
+// Each demo port is a DIFFERENT product (like Docs vs Drive): the store is
+// namespaced by this id, so documents created on one product never leak into the
+// other, even though both share the same encryption vault.
+const PRODUCT_ID = window.location.port || 'default';
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      window.removeEventListener('message', handler);
-      reject(new Error('Request timed out'));
-    }, 30000);
+// base64 <-> ArrayBuffer bridges for the crypto SDK, which speaks ArrayBuffer
+// while the store speaks base64. Slice to an exact-sized buffer so no trailing
+// bytes of a shared backing buffer leak in.
+function abToBase64(buf: ArrayBuffer): string {
+  return uint8ToBase64(new Uint8Array(buf));
+}
 
-    function handler(event: MessageEvent) {
-      if (event.origin !== origin) return;
-      const data = event.data as VaultResponse;
-      if (data?.type !== 'vault:result' || !('requestId' in data) || data.requestId !== requestId) return;
+function base64ToAb(s: string): ArrayBuffer {
+  const u = base64ToUint8(s);
 
-      clearTimeout(timeout);
-      window.removeEventListener('message', handler);
-
-      if (data.success) resolve(data.data);
-      else reject(new Error(data.error));
-    }
-
-    window.addEventListener('message', handler);
-    iframe.contentWindow!.postMessage({ type, requestId, ...(payload ? { payload } : {}) }, origin);
-  });
+  return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer;
 }
 
 export function DemoApp() {
   const clientRef = useRef<VaultClient | null>(null);
   const [state, setState] = useState<EncryptionState>('not-connected');
   const [currentUser, setCurrentUser] = useState<DemoUser | null>(null);
+  const currentUserRef = useRef<DemoUser | null>(null);
+  currentUserRef.current = currentUser;
   const [logs, setLogs] = useState<string[]>([]);
+  const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const [allDocuments, setAllDocuments] = useState<FakeDocument[]>([]);
   // Show documents owned by or shared with the current user
   const currentKeycloakId = currentUser ? getKnownUserId(currentUser.username) : null;
@@ -83,6 +102,10 @@ export function DemoApp() {
   const [newDocContent, setNewDocContent] = useState('');
   const [interfaceContainer, setInterfaceContainer] = useState<HTMLDivElement | null>(null);
   const [shareDoc, setShareDoc] = useState<FakeDocument | null>(null);
+  // A standing prompt raised when a vault operation fails with a code that needs
+  // user action (integrity failure, missing keys, ...). Persists across the raw
+  // per-doc errors so the user has a durable "open encryption" affordance.
+  const [attention, setAttention] = useState<string | null>(null);
 
   // Force re-render when login state changes
   const [, setLoginVersion] = useState(0);
@@ -94,9 +117,33 @@ export function DemoApp() {
     setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }, []);
 
+  // Keep the log panel pinned to the newest entry.
+  useEffect(() => {
+    const el = logsContainerRef.current;
+
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs]);
+
   // Pre-resolve all demo users' Keycloak subs so the Share modal can look them up
   useEffect(() => {
     resolveAllDemoUserIds();
+  }, []);
+
+  // Subscribe to the shared demo store over SSE. The server pushes the full
+  // document list on connect and after every change, so every demo instance
+  // (this tab, the other port, a private window) converges on one list.
+  useEffect(() => {
+    const source = new EventSource(`${DEMO_API.replace('/documents', '/events')}?product=${PRODUCT_ID}`);
+
+    source.onmessage = (event) => {
+      try {
+        setAllDocuments(JSON.parse(event.data) as FakeDocument[]);
+      } catch {
+        /* ignore malformed frames (e.g. heartbeat comments never reach onmessage) */
+      }
+    };
+
+    return () => source.close();
   }, []);
 
   // Initialize vault client
@@ -104,7 +151,17 @@ export function DemoApp() {
     const client = new VaultClient({ vaultUrl: VAULT_URL, interfaceUrl: INTERFACE_URL, theme: 'light' });
     clientRef.current = client;
 
-    client.on('vault:ready', () => log('Vault ready'));
+    client.on('vault:ready', () => {
+      log('Vault ready');
+      // Re-apply the auth context after ANY vault (re)initialization — a fresh
+      // VaultClient (dev HMR, remount) starts with none, so operations would
+      // otherwise fail with "auth context required". The userId comes from the
+      // persistent map, so it works even if the short-lived token has expired.
+      const user = currentUserRef.current;
+      const suiteUserId = user ? getKnownUserId(user.username) : null;
+
+      if (suiteUserId) client.setAuthContext({ suiteUserId });
+    });
     client.on('onboarding:complete', ({ publicKey }) => {
       setState('ready');
       log(`Onboarding complete. Public key: ${publicKey.slice(0, 30)}...`);
@@ -145,22 +202,6 @@ export function DemoApp() {
     return () => client.destroy();
   }, [log]);
 
-  // Login a user via Keycloak
-  const handleLogin = useCallback(
-    async (user: DemoUser) => {
-      log(`Logging in ${user.firstName} ${user.lastName}...`);
-
-      try {
-        const entry = await loginUser(user.username);
-        log(`Authenticated ${user.firstName} (sub: ${entry.userId.slice(0, 8)}...)`);
-        refreshLoginState();
-      } catch (err) {
-        log(`Login failed for ${user.firstName}: ${(err as Error).message}`);
-      }
-    },
-    [log, refreshLoginState]
-  );
-
   // Logout a user
   const handleLogout = useCallback(
     (user: DemoUser) => {
@@ -176,13 +217,30 @@ export function DemoApp() {
     [currentUser, log, refreshLoginState]
   );
 
-  // Select a user as the active one (must be logged in first)
+  // Select a user as the active one. Logs in on demand (and re-logs in if the
+  // short-lived token has expired), so the demo is a single "Select" click
+  // instead of separate Login + Select steps.
   const handleSelectUser = useCallback(
     async (user: DemoUser) => {
       const client = clientRef.current;
-      const tokenEntry = getToken(user.username);
 
-      if (!client || !tokenEntry) return;
+      if (!client) return;
+
+      let tokenEntry = getToken(user.username);
+
+      if (!tokenEntry) {
+        try {
+          log(`Logging in ${user.firstName} ${user.lastName}...`);
+
+          tokenEntry = await loginUser(user.username);
+
+          refreshLoginState();
+        } catch (err) {
+          log(`Login failed for ${user.firstName}: ${(err as Error).message}`);
+
+          return;
+        }
+      }
 
       // Close any open interface iframe before switching users
       client.closeInterface();
@@ -209,7 +267,7 @@ export function DemoApp() {
         log(`Error checking keys: ${(err as Error).message}`);
       }
     },
-    [log]
+    [log, refreshLoginState]
   );
 
   const [interfaceOpen, setInterfaceOpen] = useState(false);
@@ -236,53 +294,125 @@ export function DemoApp() {
       const plainBytes = new TextEncoder().encode(newDocContent);
       log(`Encrypting document '${newDocTitle}'...`);
 
-      // Get the current user's public key to encrypt for themselves
-      const { publicKey } = await client.getPublicKey();
-      const tokenEntry = getToken(currentUser.username);
+      // Encryption is a LOCAL vault op (+ a public directory lookup), so it does
+      // not need a live access token — only the author's userId. Use the
+      // persistent username -> sub map, which survives the short-lived Keycloak
+      // token expiring, instead of gating doc creation on a fresh login.
+      const authorId = getKnownUserId(currentUser.username);
 
-      if (!tokenEntry) throw new Error('Not authenticated');
+      if (!authorId) throw new Error('Unknown user — log in once to register your keys.');
 
-      const { encryptedContent, encryptedKeys } = await client.encryptWithoutKey(
-        plainBytes.buffer as ArrayBuffer,
-        { [tokenEntry.userId]: publicKey }
-      );
+      // Encrypt for the author themselves. The vault resolves the recipient's key
+      // from the directory and trust-checks it (own identity is always trusted).
+      const authorLabel = { email: currentUser.email, name: `${currentUser.firstName} ${currentUser.lastName}` };
+      const { encryptedContent, encryptedKeys } = await client.encryptWithoutKey(plainBytes.buffer as ArrayBuffer, { [authorId]: authorLabel });
 
       const doc: FakeDocument = {
         id: crypto.randomUUID(),
         title: newDocTitle,
-        content: newDocContent,
-        encryptedContent,
-        encryptedKey: encryptedKeys[tokenEntry.userId],
+        encryptedContent: abToBase64(encryptedContent),
+        encryptedKeys: { [authorId]: abToBase64(encryptedKeys[authorId]) },
         createdBy: currentUser.username,
-        createdAt: new Date(),
+        createdAtMillis: Date.now(),
         sharedWith: [],
       };
 
-      setAllDocuments((prev) => [...prev, doc]);
+      // Persist to the shared store; the SSE stream echoes it back into the list.
+      await fetch(`${DEMO_API}?product=${PRODUCT_ID}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(doc),
+      });
+
       setNewDocTitle('');
       setNewDocContent('');
-      log(`Document encrypted (${encryptedContent.byteLength} bytes)`);
+      log(`Document encrypted (${encryptedContent.byteLength} bytes) and saved to the shared store`);
+      setAttention(null);
     } catch (err) {
       log(`Encryption failed: ${(err as Error).message}`);
+      const msg = attentionMessage(err);
+      if (msg) setAttention(msg);
     }
   }, [currentUser, newDocTitle, newDocContent, log]);
 
   const handleDecryptDocument = useCallback(
     async (doc: FakeDocument) => {
       const client = clientRef.current;
-      if (!client || !doc.encryptedContent) return;
+      if (!client || !currentKeycloakId) return;
 
       try {
         log(`Decrypting '${doc.title}'...`);
-        if (!doc.encryptedKey) throw new Error('No encrypted key for this document');
-        const { data } = await client.decryptWithKey(doc.encryptedContent, doc.encryptedKey);
+
+        // Each authorized user has their own wrapped copy of the key. Shared
+        // recipients decrypt with theirs, added at share time via shareKeys.
+        const myWrappedKey = doc.encryptedKeys[currentKeycloakId];
+
+        if (!myWrappedKey) throw new Error('No encrypted key for you on this document');
+
+        const { data } = await client.decryptWithKey(base64ToAb(doc.encryptedContent), base64ToAb(myWrappedKey));
         const plaintext = new TextDecoder().decode(data);
+
         log(`Decrypted: '${plaintext}'`);
+        setAttention(null);
       } catch (err) {
         log(`Decryption failed: ${(err as Error).message}`);
+        const msg = attentionMessage(err);
+        if (msg) setAttention(msg);
       }
     },
-    [log]
+    [log, currentKeycloakId]
+  );
+
+  // Apply a change to a document's access list. Newly added recipients get the
+  // document's symmetric key wrapped for them (shareKeys), removed recipients
+  // lose their wrapped copy, and the result is persisted to the shared store.
+  // The creator's own key is always preserved so they never lock themselves out.
+  const handleAccessesChange = useCallback(
+    async (doc: FakeDocument, newAccesses: SharedAccess[]) => {
+      const client = clientRef.current;
+      if (!client || !currentKeycloakId) return;
+
+      try {
+        const myWrappedKey = doc.encryptedKeys[currentKeycloakId];
+        if (!myWrappedKey) throw new Error('You have no key for this document, so you cannot re-share it');
+
+        const creatorId = getKnownUserId(doc.createdBy);
+        const keptIds = new Set<string>(newAccesses.map((a) => a.userId));
+        if (creatorId) keptIds.add(creatorId);
+
+        // Keep the creator's and still-shared recipients' wrapped keys; drop the rest.
+        const nextKeys: Record<string, string> = {};
+        for (const [uid, wrapped] of Object.entries(doc.encryptedKeys)) {
+          if (keptIds.has(uid)) nextKeys[uid] = wrapped;
+        }
+
+        // Wrap the key for newly added recipients (already TOFU-checked in the
+        // share modal). Pass a labeled map: the vault resolves + trust-checks
+        // each userId, and the labels feed the trust modal if one is untrusted.
+        const newRecipients = newAccesses.filter((a) => a.publicKey && !nextKeys[a.userId]);
+
+        if (newRecipients.length > 0) {
+          const recipients: Record<string, RecipientLabel> = {};
+          for (const a of newRecipients) recipients[a.userId] = { email: a.email, name: a.fullName };
+
+          const { encryptedKeys } = await client.shareKeys(base64ToAb(myWrappedKey), recipients);
+          for (const [uid, wrapped] of Object.entries(encryptedKeys)) nextKeys[uid] = abToBase64(wrapped);
+          log(`Wrapped the document key for ${newRecipients.length} new recipient(s)`);
+        }
+
+        await fetch(`${DEMO_API}/${doc.id}?product=${PRODUCT_ID}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sharedWith: newAccesses, encryptedKeys: nextKeys }),
+        });
+
+        // Reflect the change in the open modal immediately; SSE refreshes the list.
+        setShareDoc((prev) => (prev && prev.id === doc.id ? { ...prev, sharedWith: newAccesses, encryptedKeys: nextKeys } : prev));
+      } catch (err) {
+        log(`Sharing update failed: ${(err as Error).message}`);
+      }
+    },
+    [currentKeycloakId, log]
   );
 
   const currentToken = currentUser ? getToken(currentUser.username) : null;
@@ -295,7 +425,9 @@ export function DemoApp() {
             <div>
               <h1 style={{ color: '#000091', margin: 0 }}>{productName}</h1>
               <p style={{ color: '#666', margin: '4px 0 0', fontSize: 13 }}>
-                Port {window.location.port} — Demo app: encryption keys and fingerprint trust/refuse decisions persist in the vault (IndexedDB). Documents and sharing are in-memory only (local to this tab). Some UI state may not be kept across modal close/open.
+                Port {window.location.port} — Demo app: encryption keys and fingerprint trust/refuse decisions persist in the vault (IndexedDB).
+                Documents and sharing live in a shared dev-only server store (in-memory, resets on server restart), so every demo instance — this tab,
+                the other port, a private window — sees the same list live.
               </p>
             </div>
           </div>
@@ -325,20 +457,19 @@ export function DemoApp() {
                     {loggedIn && <span style={{ color: '#18753c', marginLeft: 4 }}>●</span>}
                   </span>
 
-                  {!loggedIn && (
-                    <button onClick={() => handleLogin(user)} style={{ fontSize: 11, padding: '1px 6px', cursor: 'pointer' }}>
-                      Login
-                    </button>
-                  )}
-
-                  {loggedIn && !isActive && (
+                  {/* One click: logs in on demand (or re-logs in on expiry), then selects. */}
+                  {!isActive && (
                     <button onClick={() => handleSelectUser(user)} style={{ fontSize: 11, padding: '1px 6px', cursor: 'pointer' }}>
                       Select
                     </button>
                   )}
 
                   {loggedIn && (
-                    <button onClick={() => handleLogout(user)} style={{ fontSize: 11, padding: '1px 6px', cursor: 'pointer', color: '#ce0500' }}>
+                    <button
+                      onClick={() => handleLogout(user)}
+                      style={{ fontSize: 11, padding: '1px 6px', cursor: 'pointer', color: '#ce0500' }}
+                      title="Log out"
+                    >
                       ×
                     </button>
                   )}
@@ -369,7 +500,7 @@ export function DemoApp() {
             }}
           />
           <span style={{ fontWeight: 600, fontSize: 14 }}>
-            {state === 'not-connected' && 'Login and select a user to start'}
+            {state === 'not-connected' && 'Select a user to start'}
             {state === 'loading' && 'Loading...'}
             {state === 'no-keys' && 'No encryption keys — Onboarding required'}
             {state === 'ready' && `Encryption ready for ${currentUser?.firstName}`}
@@ -387,6 +518,37 @@ export function DemoApp() {
           )}
         </div>
 
+        {/* Attention banner: a product surfaces vault issues here (and typically as
+            a badge on its encryption menu icon) so the user knows to open the
+            iframe, rather than only seeing per-document decryption failures. */}
+        {attention && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 16px',
+              borderRadius: 8,
+              marginBottom: 20,
+              background: '#fff3cd',
+              border: '1px solid #ffe08a',
+            }}
+          >
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <span style={{ fontSize: 14, flex: 1 }}>{attention}</span>
+            <button onClick={handleOpenSettings} style={{ padding: '4px 12px', cursor: 'pointer' }}>
+              Open encryption
+            </button>
+            <button
+              onClick={() => setAttention(null)}
+              style={{ padding: '4px 8px', cursor: 'pointer', background: 'transparent', border: 'none', fontSize: 16 }}
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           {/* Left: Documents + Interface container */}
           <div>
@@ -396,8 +558,9 @@ export function DemoApp() {
               <div ref={setInterfaceContainer} style={{ border: '1px dashed #ddd', borderRadius: 8, minHeight: 40 }} />
             </div>
 
-            {/* Create document */}
-            {state === 'ready' && (
+            {/* Create document — hidden while the onboarding/settings interface is
+                open, so it only appears once encryption is fully set up. */}
+            {state === 'ready' && !interfaceOpen && (
               <section style={{ padding: 16, border: '1px solid #ddd', borderRadius: 8, marginBottom: 16 }}>
                 <h3 style={{ margin: '0 0 8px' }}>Create an encrypted document</h3>
                 <input
@@ -436,7 +599,7 @@ export function DemoApp() {
                     <div>
                       <strong>{doc.title}</strong>
                       <div style={{ fontSize: 11, color: '#888' }}>
-                        by {doc.createdBy} — {doc.createdAt.toLocaleTimeString()}
+                        by {doc.createdBy} — {new Date(doc.createdAtMillis).toLocaleTimeString()}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
@@ -463,6 +626,7 @@ export function DemoApp() {
                 </button>
               </div>
               <div
+                ref={logsContainerRef}
                 style={{
                   fontFamily: 'monospace',
                   fontSize: 12,
@@ -490,8 +654,9 @@ export function DemoApp() {
         </div>
 
         <footer style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid #ddd', fontSize: 12, color: '#999' }}>
-          Two instances of this demo product run on ports 7201 and 7202, proving that encryption works across different origins via the same vault
-          iframe.
+          Two separate demo products run on ports 7201 (Product A) and 7202 (Product B), like Docs and Drive: each has its OWN documents, but the same
+          account&apos;s encryption keys work on both via the shared vault iframe. A document created on one product stays on that product; switch the
+          active user to test sharing between users within a product.
         </footer>
 
         {shareDoc && (
@@ -503,10 +668,7 @@ export function DemoApp() {
             vaultClient={clientRef.current}
             resolveUserId={getKnownUserId}
             accesses={shareDoc.sharedWith}
-            onAccessesChange={(newAccesses) => {
-              setAllDocuments((prev) => prev.map((d) => (d.id === shareDoc.id ? { ...d, sharedWith: newAccesses } : d)));
-              setShareDoc((prev) => (prev ? { ...prev, sharedWith: newAccesses } : null));
-            }}
+            onAccessesChange={(newAccesses) => handleAccessesChange(shareDoc, newAccesses)}
           />
         )}
       </div>

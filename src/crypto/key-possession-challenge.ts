@@ -4,7 +4,7 @@
  * Used at `/api/keys/init` + `/api/keys/complete` to make sure the user
  * actually holds the private key they're trying to register, before the
  * server persists the public key for the user. Without this, an authorised
- * caller (with a valid ProConnect JWT) could register a public key whose
+ * caller (with a valid OIDC JWT) could register a public key whose
  * private counterpart they cannot decrypt with — either by accident
  * (frontend bug) or to claim someone else's published pubkey as their own.
  *

@@ -15,6 +15,7 @@
  * removes any chance of the two views disagreeing for a given user.
  */
 import { computeKeyFingerprint, verifyKeyRegistration } from '@encryption/src/crypto';
+import type { ContinuityLink } from '@encryption/src/vault/operations/identity-continuity';
 
 // In production, the vault and the API server share the same origin (data.encryption.xx).
 // The relative path works without a base URL. In dev, the Vite proxy forwards /api to the server.
@@ -98,4 +99,38 @@ export async function handleFetchPublicKeys(
   }
 
   return { users };
+}
+
+/**
+ * Fetch a contact's identity-continuity chain from the directory (current
+ * identity first, back toward older ones). Runs inside the vault, which owns all
+ * directory HTTP. Returns an empty chain on any failure so a mismatch stays
+ * fail-safe (unknown) rather than throwing out of the fingerprint check. The
+ * caller (`resolveContinuity`) re-verifies every link's signature, so a hostile
+ * or unreachable server can only cause a fresh out-of-band check, never trust.
+ */
+export async function fetchContinuityChain(userId: string): Promise<ContinuityLink[]> {
+  const response = await fetch(`${API_BASE}/api/public-keys/${encodeURIComponent(userId)}/continuity`);
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const data = (await response.json()) as {
+    chain: Array<{
+      signature_public_key: string;
+      previous_signature_public_key: string;
+      generation: number;
+      algo: string;
+      continuity_signature: string;
+    }>;
+  };
+
+  return data.chain.map((link) => ({
+    signaturePublicKey: link.signature_public_key,
+    previousSignaturePublicKey: link.previous_signature_public_key,
+    generation: link.generation,
+    algo: link.algo,
+    continuitySignature: link.continuity_signature,
+  }));
 }

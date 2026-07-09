@@ -12,19 +12,14 @@
  * key-management module to return a freshly-generated pair.
  */
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
+import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
+import { handleEncryptNestedWithoutKey, handleEncryptWithKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
+import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 
 // Mock BEFORE importing the handlers (Jest hoists jest.mock to the top of the file).
 jest.mock('@encryption/src/vault/operations/key-management', () => {
   return { getStoredKeyPair: jest.fn() };
 });
-
-import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
-import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
-import {
-  handleEncryptNestedWithoutKey,
-  handleEncryptWithKey,
-  handleEncryptWithoutKey,
-} from '@encryption/src/vault/operations/encrypt';
 
 const USER_ID = 'user-alice';
 
@@ -83,7 +78,7 @@ describe('vault encrypt operations', () => {
         handleEncryptWithoutKey(USER_ID, {
           data: new ArrayBuffer(4),
           userPublicKeys: {},
-        }),
+        })
       ).rejects.toThrow('No key pair found');
     });
   });

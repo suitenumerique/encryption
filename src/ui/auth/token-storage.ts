@@ -9,8 +9,7 @@
  * product embedding gets its own token session. This is acceptable — the OIDC
  * session is per-product anyway.
  */
-
-import type { TokenSet } from '@encryption/src/ui/auth/oidc-client';
+import { type TokenSet, tokenSetSchema } from '@encryption/src/ui/auth/oidc-client';
 
 const STORAGE_KEY_PREFIX = 'encryption-oidc-token:';
 
@@ -28,7 +27,9 @@ export function readToken(suiteUserId: string): TokenSet | null {
 
     if (!raw) return null;
 
-    return JSON.parse(raw) as TokenSet;
+    const parsed = tokenSetSchema.safeParse(JSON.parse(raw));
+
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }

@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 
 import { MSG_INTERFACE_CONTEXT, MSG_INTERFACE_REQUEST_CONTEXT } from '@encryption/src/shared/constants';
+import { type InterfaceContext, type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 
 interface ParentContext {
   /** suiteUserId from the parent product (the cross-product user identifier) */
   suiteUserId: string | null;
   /** Origin of the parent frame that sent the context message */
   parentOrigin: string | null;
+  /**
+   * The recipients to verify (userId → display label), set only when the SDK
+   * opened the interface at /verify-recipients. Passed on the same context
+   * channel so the handshake delivers it regardless of load timing.
+   */
+  verifyRecipients: Record<string, RecipientLabel> | null;
+  /** The recipient to inspect and its label, set only when the SDK opened /recipient-profile. */
+  recipientProfile: InterfaceContext['recipientProfile'] | null;
 }
 
 /**
@@ -19,6 +28,8 @@ export function useParentMessages(): ParentContext {
   const [context, setContext] = useState<ParentContext>({
     suiteUserId: null,
     parentOrigin: null,
+    verifyRecipients: null,
+    recipientProfile: null,
   });
 
   useEffect(() => {
@@ -27,9 +38,17 @@ export function useParentMessages(): ParentContext {
         return;
       }
 
+      const parsed = interfaceContextSchema.safeParse(event.data);
+
+      if (!parsed.success) {
+        return;
+      }
+
       setContext({
-        suiteUserId: event.data.suiteUserId ?? null,
+        suiteUserId: parsed.data.suiteUserId,
         parentOrigin: event.origin,
+        verifyRecipients: parsed.data.verifyRecipients?.recipients ?? null,
+        recipientProfile: parsed.data.recipientProfile ?? null,
       });
     };
 

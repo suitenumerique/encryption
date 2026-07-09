@@ -1,3 +1,5 @@
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
+
 let allowedOrigins: string[] = [];
 let interfaceOrigin: string | null = null;
 
@@ -15,7 +17,7 @@ export function initOriginGuard(origins: string[], interfaceEncryptionOrigin: st
  */
 export function validateIframeContext(): void {
   if (window.self === window.top) {
-    throw new Error('Vault must be loaded in an iframe');
+    throw new VaultError(VaultErrorCode.IFRAME_REQUIRED, 'Vault must be loaded in an iframe');
   }
 }
 

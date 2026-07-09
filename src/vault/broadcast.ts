@@ -26,3 +26,13 @@ export function getVaultBroadcastChannel(): BroadcastChannel | null {
     return null;
   }
 }
+
+/**
+ * Close and forget the shared channel. The vault never needs this at runtime
+ * (the channel lives for the page), but tests must close it so an open handle
+ * doesn't keep the process alive.
+ */
+export function closeVaultBroadcastChannel(): void {
+  sharedChannel?.close();
+  sharedChannel = null;
+}

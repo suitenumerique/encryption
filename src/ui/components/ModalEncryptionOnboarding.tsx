@@ -1,26 +1,41 @@
-import { Alert, Button, Loader, TextArea, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, Loader, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import type { TFunction } from 'i18next';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { formatFingerprint } from '@encryption/src/crypto/fingerprint';
+import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
+import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
+import { API_ERROR_CONCURRENT_REGISTRATION, API_ERROR_KEY_VERSION_CONFLICT } from '@encryption/src/shared/error-codes';
+import { VaultError, VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import type { UserInfo } from '@encryption/src/ui/App';
 import {
   ApiError,
-  completeKeyPossession,
+  bootstrapVault,
   disablePublicKey,
-  fetchActivePublicKey,
+  fetchNextKeyNumbers,
+  fetchPublicKeys,
   initKeyPossession,
 } from '@encryption/src/ui/api/server-client';
-import { API_ERROR_CONCURRENT_REGISTRATION, API_ERROR_KEY_VERSION_CONFLICT } from '@encryption/src/shared/error-codes';
-import {
-  SessionExpiredError,
-  withFreshToken,
-} from '@encryption/src/ui/auth/session-expired';
+import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
+import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
+import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
+import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
+import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
+import type { OnboardingBundle } from '@encryption/src/vault/operations/onboarding';
 
-type OnboardingStep = 'explanation' | 'existing-key-choice' | 'last-resort' | 'generating' | 'restore' | 'backup';
+type OnboardingStep =
+  | 'checking-history'
+  | 'explanation'
+  | 'existing-key-choice'
+  | 'previous-identity'
+  | 'last-resort'
+  | 'generating'
+  | 'restore'
+  | 'backup';
 
 /**
  * "Start from scratch" confirmation step.
@@ -59,21 +74,17 @@ function LastResortStep({
 
       {hasFingerprint && (
         <div style={{ marginTop: 12, borderTop: '1px solid var(--c--contextuals--border--surface--primary, #ddd)', paddingTop: 12 }}>
-          <p style={{ fontSize: 13, margin: '0 0 8px' }}>
-            {t('onboarding.confirm_fingerprint_to_delete')}
-          </p>
+          <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('onboarding.confirm_fingerprint_to_delete')}</p>
           <div
             style={{
-              fontFamily: 'monospace',
               fontSize: 14,
-              letterSpacing: '0.05em',
               padding: 'var(--c--globals--spacings--2, 8px)',
               background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
               borderRadius: 4,
               marginBottom: 8,
             }}
           >
-            {formatFingerprint(existingKeyFingerprint!)}
+            <FingerprintDisplay fingerprint={existingKeyFingerprint!} style={{ fontSize: 14 }} />
           </div>
           <input
             type="text"
@@ -84,7 +95,8 @@ function LastResortStep({
               width: '100%',
               boxSizing: 'border-box',
               fontFamily: 'monospace',
-              fontSize: 13,
+              fontSize: 14,
+              letterSpacing: '0.05em',
               padding: 'var(--c--globals--spacings--2, 8px)',
               borderRadius: 4,
               border: `1px solid ${fingerprintMatch ? 'var(--c--globals--colors--success-500, #0d6635)' : 'var(--c--contextuals--border--surface--primary, #e5e5e5)'}`,
@@ -114,7 +126,8 @@ interface ModalEncryptionOnboardingProps {
   userInfo?: UserInfo | null;
   onSuccess?: (publicKey: string) => void;
   onClose: () => void;
-  onOpenDeviceTransfer?: () => void;
+  /** Navigate to the device-approval flow to receive keys from another device. */
+  onUseAnotherDevice?: () => void;
   /**
    * Triggered when the user clicks "Reconnect" after a session-expired
    * error. Wire to `oidcAuth.requestAuth` — opens a new tab to /login.
@@ -134,6 +147,24 @@ interface ModalEncryptionOnboardingProps {
   currentAccessToken?: string | null;
 }
 
+/**
+ * Map a caught unlock error to its i18n key. Only WRONG_SECRET_KEY blames the
+ * recovery phrase; a server-integrity failure gets its own message, and anything
+ * else (network, 500, missing identity) falls back to the generic error rather
+ * than being misattributed to a typo.
+ */
+function unlockErrorKey(
+  err: unknown
+): 'errors.vault.integrity_failed' | 'errors.vault.wrong_recovery_phrase' | 'errors.vault.no_vault_to_restore' | 'errors.unknown' {
+  if (isVaultError(err)) {
+    if (err.code === VaultErrorCode.VAULT_INTEGRITY_FAILED) return 'errors.vault.integrity_failed';
+    if (err.code === VaultErrorCode.WRONG_SECRET_KEY) return 'errors.vault.wrong_recovery_phrase';
+    if (err.code === VaultErrorCode.NOT_INITIALIZED) return 'errors.vault.no_vault_to_restore';
+  }
+
+  return 'errors.unknown';
+}
+
 export function ModalEncryptionOnboarding({
   getToken,
   userId,
@@ -143,27 +174,47 @@ export function ModalEncryptionOnboarding({
   userInfo = null,
   onSuccess,
   onClose,
-  onOpenDeviceTransfer,
+  onUseAnotherDevice,
   onReconnect,
   isAuthenticating = false,
   currentAccessToken = null,
 }: ModalEncryptionOnboardingProps) {
-  const { t } = useTranslation('common');
-  const { generateKeys, getPublicKey, exportBackup, importBackup, request, respondToKeyChallenge, signKeyRegistration } =
-    useEncryptionContext();
+  const { t, i18n } = useTranslation('common');
+  const {
+    generateKeys,
+    commitStagedVault,
+    uncommitStagedVault,
+    getPublicKey,
+    request,
+    respondToKeyChallenge,
+    signKeyRegistration,
+    prepareOnboarding,
+    restoreFromPhrase,
+    reactivateVault,
+    syncVault,
+  } = useEncryptionContext();
 
-  const [step, setStep] = useState<OnboardingStep>(hasExistingBackendKey ? 'existing-key-choice' : 'explanation');
+  // With an active server key -> existing-key-choice. Otherwise DON'T show the
+  // fresh "Enable" screen yet: first check (checking-history) whether the account
+  // has a disabled/dormant identity, so we never flash "Enable encryption" (and
+  // let the user mint a NEW identity) when they actually have history to restore.
+  const [step, setStep] = useState<OnboardingStep>(hasExistingBackendKey ? 'existing-key-choice' : 'checking-history');
   const [isPending, setIsPending] = useState(false);
   const [backupPassphrase, setBackupPassphrase] = useState<string | null>(null);
-  const [showPassphrase, setShowPassphrase] = useState(false);
+  // The locally-prepared onboarding bundle, held between the backup step and the
+  // moment the user confirms the backup. NOTHING is sent to the server until then,
+  // so abandoning the backup step leaves no server-side registration or vault.
+  const [onboardingBundle, setOnboardingBundle] = useState<{ bundle: OnboardingBundle; version: number } | null>(null);
+  const [isCommitting, setIsCommitting] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const [restoreInput, setRestoreInput] = useState('');
+  // True only when every word box of the recovery phrase is filled; gates the restore button.
+  const [restoreComplete, setRestoreComplete] = useState(false);
+  // Set when the entered phrase unlocked a DORMANT vault: shows an in-app confirm
+  // modal (not window.confirm) before reactivating, since that demotes the current one.
+  const [reactivatePrompt, setReactivatePrompt] = useState<{ date: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
-  // Snapshot of the access token the moment we latched onto the
-  // session-expired state. A subsequent change in `currentAccessToken`
-  // relative to this snapshot means the Reconnect flow produced a fresh
-  // token — at that point we auto-clear the banner.
-  const [expiredAtToken, setExpiredAtToken] = useState<string | null>(null);
+  const { sessionExpired, markSessionExpired, clearSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
   // True when the user has just performed the "delete old key" flow.
   // Used to (a) skip the existing-key-choice auto-redirect below since
   // `hasExistingBackendKey` stays stale-true until the parent refetches,
@@ -177,66 +228,102 @@ export function ModalEncryptionOnboarding({
   // bounce the user back to the existing-key-choice step they just chose
   // to leave behind.
   useEffect(() => {
-    if (hasExistingBackendKey && step === 'explanation' && !hasJustReset) {
+    if (hasExistingBackendKey && (step === 'explanation' || step === 'checking-history' || step === 'previous-identity') && !hasJustReset) {
       setStep('existing-key-choice');
     }
   }, [hasExistingBackendKey, step, hasJustReset]);
 
+  // Resolve the checking-history step AUTHORITATIVELY from the server (the
+  // `hasExistingBackendKey` prop arrives async and may still be a stale false):
+  //   - an ACTIVE identity exists            -> existing-key-choice
+  //   - no active but a DISABLED/dormant one -> previous-identity (restore/reactivate)
+  //     (next_version > 1 means some key ever existed = there is history)
+  //   - nothing at all                       -> explanation (truly new account)
+  // Right after a reset we go straight to enable. On error we fail open to enable
+  // so onboarding is never blocked. Runs once.
+  const historyChecked = useRef(false);
+
   useEffect(() => {
-    if (
-      sessionExpired &&
-      !isAuthenticating &&
-      currentAccessToken &&
-      currentAccessToken !== expiredAtToken
-    ) {
-      setSessionExpired(false);
-      setExpiredAtToken(null);
+    if (hasExistingBackendKey || step !== 'checking-history') return;
+
+    if (hasJustReset) {
+      setStep('explanation');
+
+      return;
     }
-  }, [sessionExpired, isAuthenticating, currentAccessToken, expiredAtToken]);
+    if (historyChecked.current || !userId) return;
 
-  const markSessionExpired = useCallback(() => {
-    setExpiredAtToken(currentAccessToken);
-    setSessionExpired(true);
-  }, [currentAccessToken]);
+    historyChecked.current = true;
+    (async () => {
+      try {
+        const active = await fetchPublicKeys([userId]);
 
-  // Two-phase proof-of-possession registration, used by both the fresh
-  // generate flow and the backup-restore flow. Proves possession of BOTH the
-  // encryption key (KEM decapsulation → HMAC) and the identity/signature key
-  // (signature over the server challenge), and registers a record whose
-  // binding signature the vault produced over a monotonic `version`.
-  //
-  // For a genuinely new key the `version` must be exactly (current active
-  // version + 1). Two devices can race for the same next version, so on a
-  // version/concurrency conflict we refetch and retry with a freshly signed
-  // record. Restoring a backup of an already-registered key is NOT a new
-  // version: the shortcut below skips registration when the key is already
-  // active, and the server reactivates it (rather than minting a new version)
-  // in every other case.
-  const registerKeyWithPoP = useCallback(
-    async (): Promise<void> => {
-      if (!userId) return;
+        if (active.length > 0) {
+          setStep('existing-key-choice');
 
-      const MAX_ATTEMPTS = 3;
-
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        // Determine the next version from the user's current active key.
-        const active = await fetchActivePublicKey(userId);
-        const version = (active?.version ?? 0) + 1;
-        const createdAtMillis = Date.now();
-
-        // The vault signs the registration record (it is the only holder of
-        // the signature secret key) over this version + timestamp.
-        const reg = await signKeyRegistration(version, createdAtMillis);
-
-        // Nothing to do when the key we hold is already the active registered
-        // key (the common restore-on-current-device case): re-registering it
-        // would only bump a version the server will refuse and then reactivate.
-        if (active && active.encryption_public_key === reg.encryptionPublicKey) {
           return;
         }
 
+        const { next_version } = await withFreshToken(getToken, (token) => fetchNextKeyNumbers(token));
+        setStep(next_version > 1 ? 'previous-identity' : 'explanation');
+      } catch {
+        setStep('explanation');
+      }
+    })();
+  }, [hasExistingBackendKey, hasJustReset, step, getToken, userId]);
+
+  // Build the onboarding bundle LOCALLY (recovery phrase + keyring + sealed items
+  // + signed manifest) without touching the server. The only server call here is
+  // reading the next version/generation. The actual registration + vault creation
+  // is deferred to handleCommitOnboarding, which runs only after the user confirms
+  // they saved the recovery phrase.
+  const prepareOnboardingBundle = useCallback(async (): Promise<{ bundle: OnboardingBundle; version: number }> => {
+    if (!userId) throw new Error(t('errors.vault.registration_failed'));
+
+    const lang = mnemonicLanguageForLocale(i18n.language);
+
+    return withFreshToken(getToken, async (token) => {
+      // Count disabled rows too, so a re-onboard after a reset seals `max + 1`.
+      const { next_version, next_generation } = await fetchNextKeyNumbers(token);
+      const bundle = await prepareOnboarding({ lang, version: next_version, generation: next_generation });
+
+      return { bundle, version: next_version };
+    });
+  }, [userId, getToken, i18n.language, prepareOnboarding, t]);
+
+  // Commit the prepared onboarding to the server: prove possession of both keys
+  // and create the synchronized vault in ONE atomic transaction (POST /api/vault).
+  // Runs only from the backup step, after the user confirms the backup, so the
+  // server never has a half-registered user with an unsaved recovery phrase.
+  const handleCommitOnboarding = useCallback(async () => {
+    if (!onboardingBundle || !userId) return;
+
+    setIsCommitting(true);
+    setCommitError(null);
+    clearSessionExpired();
+
+    // A registration for this user can land between prepare and this commit (e.g.
+    // onboarding in another tab), making the version we signed stale. The server
+    // rejects it with a 409; re-seal the keys at a fresh version and retry. The
+    // recovery phrase is reused so the one the user already saved stays valid.
+    const MAX_COMMIT_ATTEMPTS = 3;
+    const isVersionConflict = (err: unknown) =>
+      err instanceof ApiError && (err.code === API_ERROR_KEY_VERSION_CONFLICT || err.code === API_ERROR_CONCURRENT_REGISTRATION);
+
+    try {
+      let current = onboardingBundle;
+
+      // Commit the staged vault to disk BEFORE talking to the server, so the
+      // registration + first sync run against the real persisted vault (the sync's
+      // read-modify-write and the server revision land on disk normally). If the
+      // server round-trip fails, the catch below uncommits it.
+      await commitStagedVault();
+
+      for (let attempt = 0; ; attempt++) {
         try {
           await withFreshToken(getToken, async (token) => {
+            const reg = await signKeyRegistration(current.version, Date.now());
+
             const { challengeId, ciphertext } = await initKeyPossession(token, {
               userId,
               encryptionPublicKey: reg.encryptionPublicKey,
@@ -246,61 +333,140 @@ export function ModalEncryptionOnboarding({
               keyBindingSignature: reg.keyBindingSignature,
             });
             const { response, challengeSignature } = await respondToKeyChallenge(challengeId, ciphertext);
-            await completeKeyPossession(token, challengeId, response, challengeSignature);
+
+            await bootstrapVault(token, {
+              registration: { challenge_id: challengeId, response, challenge_signature: challengeSignature },
+              keyring: current.bundle.keyring,
+              items: current.bundle.items,
+              manifest: current.bundle.manifest,
+              manifest_sig: current.bundle.manifestSig,
+            });
+
+            // Pull the just-bootstrapped vault so the local cache revision matches the
+            // server. A transport error is best-effort (the next sync reconciles), but
+            // an integrity-error means the server already served back tampered/incoherent
+            // data for a vault we just wrote — surface it loudly rather than swallow it.
+            const sync = await syncVault(token).catch(() => null);
+            if (sync?.status === 'integrity-error')
+              throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'Vault failed its integrity check right after creation.');
           });
 
-          return;
+          break;
         } catch (err) {
-          const conflict =
-            err instanceof ApiError && (err.code === API_ERROR_KEY_VERSION_CONFLICT || err.code === API_ERROR_CONCURRENT_REGISTRATION);
+          if (attempt >= MAX_COMMIT_ATTEMPTS - 1 || !isVersionConflict(err)) throw err;
 
-          // Retry only the version/concurrency race; rethrow everything else
-          // (and the conflict too once attempts are exhausted).
-          if (!conflict || attempt === MAX_ATTEMPTS) {
-            throw err;
-          }
+          // Re-seal at the now-current version, keeping the same phrase/keyring.
+          const lang = mnemonicLanguageForLocale(i18n.language);
+          const refreshed = await withFreshToken(getToken, async (token) => {
+            const { next_version, next_generation } = await fetchNextKeyNumbers(token);
+            const bundle = await prepareOnboarding({
+              lang,
+              version: next_version,
+              generation: next_generation,
+              reusePhrase: current.bundle.recoveryPhrase,
+            });
+
+            return { bundle, version: next_version };
+          });
+
+          current = refreshed;
+          setOnboardingBundle(refreshed);
         }
       }
-    },
-    [getToken, userId, respondToKeyChallenge, signKeyRegistration],
-  );
+
+      // Registration + first sync succeeded: the vault is already committed on
+      // disk (has-keys is now true), nothing more to persist.
+      const { publicKey } = await getPublicKey();
+      onSuccess?.(publicKey);
+      onClose();
+    } catch (err) {
+      // The server round-trip failed after we committed locally: roll the vault
+      // back out of IndexedDB so has-keys is false again (the user is not
+      // registered), while it stays staged in memory for a retry with the same
+      // phrase. Best-effort: a failed rollback must not mask the original error.
+      await uncommitStagedVault().catch(() => {});
+
+      if (err instanceof SessionExpiredError) {
+        markSessionExpired();
+      } else if (isVaultError(err) && err.code === VaultErrorCode.VAULT_INTEGRITY_FAILED) {
+        setCommitError(t('errors.vault.integrity_failed'));
+      } else {
+        // The generic message is intentionally coarse for the user, but the real
+        // cause (an API error code, a PoP failure, a transport error) must not be
+        // swallowed silently: log it so a failing onboarding is diagnosable.
+        console.error('[onboarding] vault bootstrap failed', err);
+        setCommitError(t('errors.vault.registration_failed'));
+      }
+    } finally {
+      setIsCommitting(false);
+    }
+  }, [
+    onboardingBundle,
+    userId,
+    getToken,
+    signKeyRegistration,
+    respondToKeyChallenge,
+    syncVault,
+    commitStagedVault,
+    uncommitStagedVault,
+    getPublicKey,
+    prepareOnboarding,
+    i18n.language,
+    onSuccess,
+    onClose,
+    markSessionExpired,
+    clearSessionExpired,
+    t,
+  ]);
+
+  // Back out of the backup step before committing: nothing is on the server yet,
+  // but the local keys were minted, so destroy them to return to a clean state.
+  const handleCancelBackup = useCallback(async () => {
+    try {
+      await request(MSG_VAULT_DESTROY_KEYS);
+    } catch {
+      // Best-effort cleanup
+    }
+    setOnboardingBundle(null);
+    setBackupPassphrase(null);
+    setCommitError(null);
+    onClose();
+  }, [request, onClose]);
 
   const handleGenerateKeys = useCallback(async () => {
     setIsPending(true);
     setError(null);
-    setSessionExpired(false);
+    clearSessionExpired();
 
     try {
-      // Mint both key pairs (encryption + identity/signature) locally.
+      // Mint both key pairs (encryption + identity/signature) locally. They are
+      // STAGED in memory only: nothing touches IndexedDB (so has-keys stays false)
+      // until the backup is confirmed and the server registration succeeds.
+      // Abandoning the flow here (reload, close) therefore leaves no keys behind.
       await generateKeys();
 
-      // Register the public key on the encryption server through the
-      // proof-of-possession flow (the central authority requires the user
-      // to demonstrate they hold the matching private key). Without
-      // server registration, other products and users cannot discover
-      // this user's public key. If any step fails, destroy the local keys
-      // to prevent an inconsistent state.
-      if (userId) {
+      // Build the recovery phrase + bundle LOCALLY. Nothing is registered on the
+      // server yet: that happens only once the user confirms the backup. If the
+      // local prepare fails, destroy the just-minted keys so we leave no residue.
+      let prepared: { bundle: OnboardingBundle; version: number };
+
+      try {
+        prepared = await prepareOnboardingBundle();
+      } catch (prepError) {
         try {
-          await registerKeyWithPoP();
-        } catch (regError) {
-          // Clean up local keys regardless of the specific failure mode —
-          // a key that doesn't exist on the server is useless and would
-          // leave the user in an inconsistent state.
-          try {
-            await request('vault:destroy-keys');
-          } catch {
-            // Best effort cleanup
-          }
-          if (regError instanceof SessionExpiredError) {
-            throw regError;
-          }
-          throw new Error(t('errors.vault.registration_failed'));
+          await request(MSG_VAULT_DESTROY_KEYS);
+        } catch {
+          // Best effort cleanup
         }
+        if (prepError instanceof SessionExpiredError) {
+          throw prepError;
+        }
+        throw new Error(t('errors.vault.registration_failed'));
       }
 
-      const backup = await exportBackup();
-      setBackupPassphrase(backup.passphrase);
+      setOnboardingBundle(prepared);
+      setBackupPassphrase(prepared.bundle.recoveryPhrase);
+      setCommitError(null);
       setStep('backup');
     } catch (err) {
       if (err instanceof SessionExpiredError) {
@@ -311,12 +477,12 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [generateKeys, exportBackup, request, getToken, userId, t, markSessionExpired]);
+  }, [generateKeys, prepareOnboardingBundle, request, t, markSessionExpired, clearSessionExpired]);
 
   const handleResetFromZero = useCallback(async () => {
     setIsPending(true);
     setError(null);
-    setSessionExpired(false);
+    clearSessionExpired();
 
     try {
       // Disable the existing public key on the server, then move the
@@ -339,178 +505,98 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [getToken, markSessionExpired]);
+  }, [getToken, markSessionExpired, clearSessionExpired]);
 
   const handleRestoreKeys = useCallback(async () => {
-    if (!restoreInput.trim()) return;
+    if (!restoreComplete) return;
 
     setIsPending(true);
     setError(null);
-    setSessionExpired(false);
+    clearSessionExpired();
+
+    const phrase = restoreInput.trim();
 
     try {
-      const { publicKey } = await importBackup(restoreInput.trim());
+      // Cold-unlock the server vault with the recovery phrase: the phrase both
+      // proves possession (PoP gate) and unwraps the VRK. No re-registration —
+      // the keys were registered at the original onboarding.
+      const { publicKey, isActiveVault, vaultCreatedAtMillis } = await withFreshToken(getToken, (token) => restoreFromPhrase(phrase, token));
 
-      if (userId) {
-        try {
-          await registerKeyWithPoP();
-        } catch (regError) {
-          // Clean up local keys — they're useless without server
-          // registration, whether the cause is an expired session or a
-          // 5xx from the registration endpoint.
-          try {
-            await request('vault:destroy-keys');
-          } catch {
-            // Best effort
-          }
-          if (regError instanceof SessionExpiredError) {
-            throw regError;
-          }
-          throw new Error(t('errors.vault.registration_failed'));
-        }
+      // If the phrase resolved to a DORMANT (superseded) vault, nothing has been
+      // stored locally yet: bringing it back demotes the current vault, so we ask
+      // first (in-app modal), then reactivation is what commits and caches. The
+      // demoted vault stays recoverable with its own phrase.
+      if (!isActiveVault) {
+        setReactivatePrompt({ date: new Intl.DateTimeFormat(i18n.language).format(new Date(vaultCreatedAtMillis)) });
+
+        return;
       }
 
       onSuccess?.(publicKey);
       onClose();
     } catch (err) {
-      if (err instanceof SessionExpiredError) {
-        markSessionExpired();
-      } else {
-        const msg = (err as Error).message;
-        // Preserve our own specific error; fall back to "invalid backup"
-        // only when the failure is the importBackup step.
-        if (msg === t('errors.vault.registration_failed')) {
-          setError(msg);
-        } else {
-          setError(t('errors.vault.invalid_backup'));
-        }
-      }
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setError(t(unlockErrorKey(err)));
     } finally {
       setIsPending(false);
     }
-  }, [restoreInput, importBackup, request, getToken, userId, onSuccess, onClose, t, markSessionExpired]);
+  }, [restoreInput, restoreComplete, restoreFromPhrase, getToken, onSuccess, onClose, t, i18n.language, markSessionExpired, clearSessionExpired]);
 
-  const [isCopied, setIsCopied] = useState(false);
-
-  const handleCopyPassphrase = useCallback(async () => {
-    if (!backupPassphrase) return;
+  // Confirmed reactivation of the dormant vault the phrase unlocked.
+  const handleConfirmReactivate = useCallback(async () => {
+    setIsPending(true);
+    setError(null);
 
     try {
-      await navigator.clipboard.writeText(backupPassphrase);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 3000);
-    } catch {
-      // Clipboard may not be available in iframes
+      const reactivated = await withFreshToken(getToken, (token) => reactivateVault(restoreInput.trim(), token));
+      setReactivatePrompt(null);
+      onSuccess?.(reactivated.publicKey);
+      onClose();
+    } catch (err) {
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setError(t(unlockErrorKey(err)));
+    } finally {
+      setIsPending(false);
     }
-  }, [backupPassphrase]);
+  }, [getToken, reactivateVault, restoreInput, onSuccess, onClose, markSessionExpired, t]);
 
-  const handleSaveFile = useCallback(() => {
-    if (!backupPassphrase) return;
-
-    const blob = new Blob([backupPassphrase], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'encryption-recovery-phrase.txt';
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [backupPassphrase]);
-
-  const handlePrint = useCallback(() => {
-    if (!backupPassphrase) return;
-
-    function escapeHtml(str: string): string {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    const domain = parentOrigin ?? window.location.origin;
-    const footer = t('onboarding.print_footer', { domain });
-
-    // Use a hidden iframe to trigger print without opening a new tab.
-    // This works inside sandboxed iframes (allow-popups not needed).
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.left = '-9999px';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    document.body.appendChild(printFrame);
-
-    const doc = printFrame.contentDocument ?? printFrame.contentWindow?.document;
-
-    if (!doc) {
-      document.body.removeChild(printFrame);
-
-      return;
-    }
-
-    doc.open();
-    doc.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${escapeHtml(t('onboarding.print_title'))}</title>
-          <style>
-            body { font-family: system-ui, sans-serif; padding: 40px; max-width: 600px; margin: 0 auto; }
-            h1 { font-size: 18px; margin-bottom: 8px; }
-            .warning { border-left: 4px solid #b34000; background: #ffe9e6; padding: 12px; margin: 16px 0; font-size: 13px; border-radius: 0 4px 4px 0; }
-            .passphrase { font-family: monospace; font-size: 11px; line-height: 1.5; word-break: break-all; border: 1px solid #ccc; padding: 12px; background: #f9f9f9; margin: 16px 0; }
-            .footer { font-size: 11px; color: #999; margin-top: 32px; }
-          </style>
-        </head>
-        <body>
-          <h1>${escapeHtml(t('onboarding.print_title'))}</h1>
-          <div class="warning">${escapeHtml(t('onboarding.print_warning'))}</div>
-          <p>${escapeHtml(t('onboarding.print_label'))}</p>
-          <div class="passphrase">${escapeHtml(backupPassphrase)}</div>
-          <div class="footer">${escapeHtml(footer)}</div>
-        </body>
-      </html>
-    `);
-    doc.close();
-
-    const triggerPrint = () => {
-      printFrame.contentWindow?.print();
-      setTimeout(() => printFrame.parentNode?.removeChild(printFrame), 1000);
-    };
-
-    // If the document is already loaded (synchronous write), print immediately.
-    // Otherwise wait for the load event.
-    if (doc.readyState === 'complete') {
-      triggerPrint();
-    } else {
-      printFrame.onload = triggerPrint;
-    }
-  }, [backupPassphrase, parentOrigin, t]);
-
-  const handleBackupDone = useCallback(async () => {
-    try {
-      const { publicKey } = await getPublicKey();
-      onSuccess?.(publicKey);
-    } catch {
-      // Key was already generated, just close
-    }
-
-    onClose();
-  }, [getPublicKey, onSuccess, onClose]);
+  // Warn on tab reload/close while the backup step shows an un-confirmed phrase.
+  useUnsavedPhraseGuard(step === 'backup' && !isCommitting);
 
   return (
     <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
-      {sessionExpired && onReconnect && (
-        <SessionExpiredAlert
-          onReconnect={onReconnect}
-          isAuthenticating={isAuthenticating}
-        />
-      )}
+      {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
       {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+
+      <Modal
+        isOpen={reactivatePrompt !== null}
+        onClose={isPending ? () => undefined : () => setReactivatePrompt(null)}
+        closeOnClickOutside={false}
+        size={ModalSize.MEDIUM}
+        title={t('onboarding.reactivate_title')}
+      >
+        <p style={{ fontSize: 14 }}>{reactivatePrompt ? t('onboarding.reactivate_confirm', { date: reactivatePrompt.date }) : ''}</p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <Button variant="secondary" onClick={() => setReactivatePrompt(null)} disabled={isPending}>
+            {t('onboarding.btn_cancel')}
+          </Button>
+          <Button onClick={handleConfirmReactivate} disabled={isPending}>
+            {isPending ? t('onboarding.btn_restoring') : t('onboarding.reactivate_confirm_button')}
+          </Button>
+        </div>
+      </Modal>
+
+      {step === 'checking-history' && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 160 }}>
+          <Loader />
+        </div>
+      )}
 
       {step === 'explanation' && (
         <>
           {hasJustReset && (
             <Alert type={VariantType.SUCCESS}>
-              {t(
-                'onboarding.reset_success',
-                'Your previous encryption key has been deleted. You can now set up a new one.',
-              )}
+              {t('onboarding.reset_success', 'Your previous keys have been disabled (not deleted). You can now set up new ones.')}
             </Alert>
           )}
           <h2>{t('onboarding.title_enable')}</h2>
@@ -558,15 +644,13 @@ export function ModalEncryptionOnboarding({
               <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 4px' }}>{t('settings.fingerprint_label')}</p>
               <div
                 style={{
-                  fontFamily: 'monospace',
                   fontSize: 16,
-                  letterSpacing: '0.05em',
                   padding: 'var(--c--globals--spacings--2, 8px)',
                   background: 'var(--c--contextuals--background--surface--primary, #fff)',
                   borderRadius: 4,
                 }}
               >
-                {formatFingerprint(existingKeyFingerprint)}
+                <FingerprintDisplay fingerprint={existingKeyFingerprint} style={{ fontSize: 16 }} />
               </div>
             </div>
           )}
@@ -577,13 +661,43 @@ export function ModalEncryptionOnboarding({
             <Button variant="secondary" fullWidth onClick={() => setStep('restore')}>
               {t('onboarding.btn_restore_from_backup')}
             </Button>
-            {onOpenDeviceTransfer && (
-              <Button variant="secondary" fullWidth onClick={onOpenDeviceTransfer}>
-                {t('onboarding.btn_device_transfer')}
+            {onUseAnotherDevice && (
+              <Button variant="secondary" fullWidth onClick={onUseAnotherDevice}>
+                {t('onboarding.btn_use_another_device')}
               </Button>
             )}
             <Button variant="tertiary" fullWidth onClick={() => setStep('last-resort')}>
               {t('onboarding.btn_last_resort')}
+            </Button>
+            <Button variant="tertiary" fullWidth onClick={onClose}>
+              {t('onboarding.btn_cancel')}
+            </Button>
+          </div>
+        </>
+      )}
+
+      {step === 'previous-identity' && (
+        <>
+          <h2>{t('onboarding.title_previous_identity')}</h2>
+          {userInfo?.name && (
+            <p style={{ color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+              {userInfo.name}
+              {userInfo.email ? ` (${userInfo.email})` : ''}
+            </p>
+          )}
+          <Alert type={VariantType.INFO}>{t('onboarding.previous_identity_detected')}</Alert>
+          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>{t('onboarding.previous_identity_hint')}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+            <Button fullWidth onClick={() => setStep('restore')}>
+              {t('onboarding.btn_restore_from_backup')}
+            </Button>
+            {onUseAnotherDevice && (
+              <Button variant="secondary" fullWidth onClick={onUseAnotherDevice}>
+                {t('onboarding.btn_use_another_device')}
+              </Button>
+            )}
+            <Button variant="tertiary" fullWidth onClick={() => setStep('explanation')}>
+              {t('onboarding.btn_start_new_identity')}
             </Button>
             <Button variant="tertiary" fullWidth onClick={onClose}>
               {t('onboarding.btn_cancel')}
@@ -613,13 +727,12 @@ export function ModalEncryptionOnboarding({
         <>
           <h2>{t('onboarding.title_restore')}</h2>
           <SecurityNotice t={t} />
-          <TextArea
-            label={t('onboarding.restore_placeholder')}
-            value={restoreInput}
-            onChange={(e) => setRestoreInput(e.target.value)}
-            rows={5}
-            fullWidth
-            style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 8 }}
+          <p style={{ fontSize: 13, margin: '8px 0' }}>{t('onboarding.restore_placeholder')}</p>
+          <RecoveryPhraseInput
+            onChange={(phrase, complete) => {
+              setRestoreInput(phrase);
+              setRestoreComplete(complete);
+            }}
           />
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
             <Button
@@ -627,164 +740,37 @@ export function ModalEncryptionOnboarding({
               onClick={() => {
                 setError(null);
                 setRestoreInput('');
-                setStep(hasExistingBackendKey ? 'existing-key-choice' : 'explanation');
+                setRestoreComplete(false);
+                // Return to wherever restore was entered from: the active-key
+                // choice, the previous-identity choice (disabled/dormant history),
+                // or the bare enable screen.
+                setStep(hasExistingBackendKey ? 'existing-key-choice' : historyChecked.current ? 'previous-identity' : 'explanation');
               }}
             >
               {t('onboarding.btn_back')}
             </Button>
-            <Button onClick={handleRestoreKeys} disabled={isPending || !restoreInput.trim()}>
+            <Button onClick={handleRestoreKeys} disabled={isPending || !restoreComplete}>
               {isPending ? t('onboarding.btn_restoring') : t('onboarding.btn_restore')}
             </Button>
           </div>
         </>
       )}
 
-      {step === 'backup' && (
+      {step === 'backup' && backupPassphrase && (
         <>
           <h2>{t('onboarding.title_backup')}</h2>
-          <Alert type={VariantType.SUCCESS}>{t('onboarding.backup_success')}</Alert>
-
-          <div style={{ marginTop: 12 }}>
-            <Alert type={VariantType.WARNING}>{t('onboarding.backup_warning')}</Alert>
-          </div>
-
-          {backupPassphrase && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
-              {/* Option 1: Copy to password manager — Recommended */}
-              <div
-                style={{
-                  padding: 'var(--c--globals--spacings--3, 12px)',
-                  border: '2px solid var(--c--globals--colors--success-500, #18753c)',
-                  borderRadius: 4,
-                  background: 'var(--c--contextuals--background--semantic--contextual--success, #b8fec9)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14 }}>{t('onboarding.backup_option_copy')}</span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: 10,
-                      background: 'var(--c--globals--colors--success-500, #18753c)',
-                      color: 'white',
-                    }}
-                  >
-                    {t('onboarding.badge_recommended')}
-                  </span>
-                </div>
-                <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--surface--secondary, #333)' }}>
-                  {t('onboarding.backup_option_copy_description')}
-                </p>
-                <Button size="small" variant="secondary" onClick={handleCopyPassphrase} icon={isCopied ? <span className="material-icons" style={{ fontSize: 16 }}>check</span> : undefined}>
-                  {isCopied ? t('onboarding.btn_copied') : t('onboarding.btn_copy_clipboard')}
-                </Button>
-              </div>
-
-              {/* Option 2: Save as file — Intermediate */}
-              <div
-                style={{
-                  padding: 'var(--c--globals--spacings--3, 12px)',
-                  border: '1px solid var(--c--contextuals--border--surface--primary, #ddd)',
-                  borderRadius: 4,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14 }}>{t('onboarding.backup_option_file')}</span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: 10,
-                      background: 'var(--c--globals--colors--info-500, #0063cb)',
-                      color: 'white',
-                    }}
-                  >
-                    {t('onboarding.badge_intermediate')}
-                  </span>
-                </div>
-                <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
-                  {t('onboarding.backup_option_file_description')}
-                </p>
-                <Button size="small" variant="secondary" onClick={handleSaveFile}>
-                  {t('onboarding.btn_save_file')}
-                </Button>
-              </div>
-
-              {/* Option 3: Print on paper — Discouraged */}
-              <div
-                style={{
-                  padding: 'var(--c--globals--spacings--3, 12px)',
-                  border: '1px solid var(--c--contextuals--border--surface--primary, #ddd)',
-                  borderRadius: 4,
-                  opacity: 0.8,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14 }}>{t('onboarding.backup_option_print')}</span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: 10,
-                      background: 'var(--c--globals--colors--warning-500, #b34000)',
-                      color: 'white',
-                    }}
-                  >
-                    {t('onboarding.badge_discouraged')}
-                  </span>
-                </div>
-                <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
-                  {t('onboarding.backup_option_print_description')}
-                </p>
-                <Button size="small" variant="tertiary" onClick={handlePrint}>
-                  {t('onboarding.btn_print')}
-                </Button>
-              </div>
-
-              {/* Reveal passphrase — hidden by default */}
-              <div
-                style={{
-                  padding: 'var(--c--globals--spacings--3, 12px)',
-                  border: '1px solid var(--c--contextuals--border--surface--primary, #ddd)',
-                  borderRadius: 4,
-                }}
-              >
-                {!showPassphrase ? (
-                  <>
-                    <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('onboarding.reveal_description')}</p>
-                    <Button size="small" variant="tertiary" onClick={() => setShowPassphrase(true)}>
-                      {t('onboarding.btn_reveal')}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>{t('onboarding.passphrase_label')}</p>
-                    <textarea
-                      readOnly
-                      value={backupPassphrase}
-                      rows={4}
-                      style={{
-                        width: '100%',
-                        fontFamily: 'monospace',
-                        fontSize: 10,
-                        boxSizing: 'border-box',
-                        lineHeight: 1.4,
-                        userSelect: 'all',
-                      }}
-                    />
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button onClick={handleBackupDone}>{t('onboarding.btn_backup_done')}</Button>
-          </div>
+          <Alert type={VariantType.INFO}>{t('onboarding.backup_success')}</Alert>
+          <RecoveryKitBackup
+            passphrase={backupPassphrase}
+            parentOrigin={parentOrigin}
+            onConfirm={handleCommitOnboarding}
+            confirmLabel={t('onboarding.btn_backup_done')}
+            busyLabel={t('onboarding.finalizing')}
+            isBusy={isCommitting}
+            error={commitError}
+            onCancel={handleCancelBackup}
+            cancelLabel={t('onboarding.btn_cancel')}
+          />
         </>
       )}
     </div>

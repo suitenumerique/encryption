@@ -1,114 +1,26 @@
 /**
- * Key backup and restoration for X-Wing key pairs.
+ * Public-key wire encoding for server registration, plus the browser-safe base64
+ * helpers used across the crypto layer. The wire-format public-key blob carries a
+ * single CRYPTO_VERSION prefix byte before the X-Wing public key.
  *
- * Keys are serialized as JSON containing base64-encoded raw bytes,
- * then the JSON is base64url-encoded as a "passphrase" string
- * compact enough to store in a password manager.
- *
- * The wire-format public-key blob (used for server registration) carries
- * a single CRYPTO_VERSION prefix byte before the X-Wing public key.
- * The backup JSON carries the same version in a top-level `version` field
- * so future migrations can dispatch on it.
- *
- * SECURITY NOTE: The backup contains the full X-Wing secret key (not a seed).
- * Using a seed to derive the key was considered but rejected:
- * - X-Wing's IND-CCA security argument is parameterized by the underlying
- *   randomness; using a user-chosen seed would weaken it to the seed's
- *   entropy and lose the hybrid's independent-compromise property.
- * - With the full secret key, X25519 and ML-KEM-768 keep independent
- *   security margins.
- * - The tradeoff is a longer passphrase (~3-4 KB encoded), but it can be
- *   saved as a file or copied into a password manager. The mnemonic
- *   (24 BIP-39 words) is reserved for device transfer, where the
- *   ephemeral symmetric key it encodes stays short.
+ * Note: there is deliberately NO full-private-key export here. Recovery is the
+ * server vault unlocked by the recovery phrase (or device approval); a raw-key
+ * blob would be a second, more dangerous secret and is not offered.
  */
 import type { HybridKeyPair, HybridPublicKey } from '@encryption/src/crypto/encryption';
 import type { SignatureKeyPair } from '@encryption/src/crypto/signature';
 import { CRYPTO_VERSION } from '@encryption/src/shared/constants';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
-// ============================================================================
-// Serialization: key bundle → JSON → passphrase
-// ============================================================================
-
 /**
  * Everything a device needs to BE a given identity: the encryption key pair
- * (X-Wing) plus the signature key pair (Ed25519, the identity). They travel
- * together everywhere — backup and device transfer — because losing one means
- * losing the other (same IndexedDB), and a restored device must reproduce the
- * SAME identity fingerprint that contacts verified out-of-band. Splitting them
- * would let the encryption key rotate while the verified identity stayed put,
- * which is exactly the inconsistency we want to make impossible.
+ * (X-Wing) plus the signature key pair (Ed25519, the identity). They live
+ * together because losing one means losing the other, and a restored device must
+ * reproduce the SAME identity fingerprint that contacts verified out-of-band.
  */
 export interface UserKeyBundle {
   encryption: HybridKeyPair;
   signature: SignatureKeyPair;
-}
-
-interface SerializedKeyBundle {
-  version: number;
-  publicKey: string; // base64 of the X-Wing (encryption) public key bytes
-  secretKey: string; // base64 of the X-Wing (encryption) secret key bytes
-  signaturePublicKey: string; // base64 of the Ed25519 (identity) public key bytes
-  signatureSecretKey: string; // base64 of the Ed25519 (identity) secret key bytes
-}
-
-export function keyPairToPassphrase(bundle: UserKeyBundle): string {
-  const serialized: SerializedKeyBundle = {
-    version: CRYPTO_VERSION,
-    publicKey: uint8ToBase64(bundle.encryption.publicKey),
-    secretKey: uint8ToBase64(bundle.encryption.secretKey),
-    signaturePublicKey: uint8ToBase64(bundle.signature.publicKey),
-    signatureSecretKey: uint8ToBase64(bundle.signature.secretKey),
-  };
-
-  const json = JSON.stringify(serialized);
-
-  return uint8ToBase64Url(new TextEncoder().encode(json));
-}
-
-export function passphraseToKeyPair(passphrase: string): UserKeyBundle {
-  const json = new TextDecoder().decode(base64UrlToUint8(passphrase));
-
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new VaultError(VaultErrorCode.INVALID_BACKUP, 'Invalid backup: corrupted or incompatible key format');
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new VaultError(VaultErrorCode.INVALID_BACKUP, 'Invalid backup: corrupted or incompatible key format');
-  }
-
-  const serialized = parsed as Record<string, unknown>;
-
-  if (
-    typeof serialized.publicKey !== 'string' ||
-    typeof serialized.secretKey !== 'string' ||
-    typeof serialized.signaturePublicKey !== 'string' ||
-    typeof serialized.signatureSecretKey !== 'string'
-  ) {
-    throw new VaultError(VaultErrorCode.INVALID_BACKUP, 'Invalid backup: corrupted or incompatible key format');
-  }
-
-  // Reject any backup that doesn't carry the version this build understands —
-  // a legacy decode path can be added here when CRYPTO_VERSION bumps.
-  if (serialized.version !== CRYPTO_VERSION) {
-    throw new VaultError(VaultErrorCode.UNSUPPORTED_CRYPTO_VERSION, `Unsupported crypto version ${String(serialized.version)} in backup`);
-  }
-
-  return {
-    encryption: {
-      publicKey: base64ToUint8(serialized.publicKey),
-      secretKey: base64ToUint8(serialized.secretKey),
-    },
-    signature: {
-      publicKey: base64ToUint8(serialized.signaturePublicKey),
-      secretKey: base64ToUint8(serialized.signatureSecretKey),
-    },
-  };
 }
 
 // ============================================================================
@@ -128,11 +40,11 @@ export function exportPublicKeyAsBase64(publicKey: HybridPublicKey): string {
 }
 
 /**
- * Deserialize an X-Wing public key from the base64 server format.
+ * Deserialize a public key from its raw wire bytes (`[version:1][key]`),
+ * stripping the version byte. Used server-side now that keys are stored as
+ * `Bytes` rather than base64.
  */
-export function importPublicKeyFromBase64(base64: string): HybridPublicKey {
-  const blob = base64ToUint8(base64);
-
+export function importPublicKeyFromBytes(blob: Uint8Array): HybridPublicKey {
   if (blob.length < 2) {
     throw new VaultError(VaultErrorCode.INVALID_BACKUP, 'Invalid public key: payload too short');
   }
@@ -144,6 +56,13 @@ export function importPublicKeyFromBase64(base64: string): HybridPublicKey {
   }
 
   return blob.slice(1);
+}
+
+/**
+ * Deserialize an X-Wing public key from the base64 server format.
+ */
+export function importPublicKeyFromBase64(base64: string): HybridPublicKey {
+  return importPublicKeyFromBytes(base64ToUint8(base64));
 }
 
 // ============================================================================
@@ -169,14 +88,4 @@ export function base64ToUint8(base64: string): Uint8Array {
   }
 
   return bytes;
-}
-
-function uint8ToBase64Url(bytes: Uint8Array): string {
-  return uint8ToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64UrlToUint8(base64url: string): Uint8Array {
-  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-
-  return base64ToUint8(base64);
 }

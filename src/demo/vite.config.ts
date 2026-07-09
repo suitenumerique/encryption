@@ -2,7 +2,7 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(() => {
   // In dev, DEMO_PORT env var selects the port (default 7203)
   const port = parseInt(process.env.DEMO_PORT ?? '7201', 10);
 

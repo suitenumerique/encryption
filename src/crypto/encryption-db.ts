@@ -1,26 +1,21 @@
 import { type IDBPDatabase, openDB } from 'idb';
 
-import { DB_NAME, DB_VERSION, STORE_KEY_PAIRS, STORE_KNOWN_PUBLIC_KEYS } from '@encryption/src/shared/constants';
+import { DB_NAME, DB_VERSION, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 /**
- * Opens (or reuses) the encryption IndexedDB with all required object stores.
- * Uses a singleton promise so the upgrade callback only runs once.
- *
- * Stores:
- * - keyPairs: the user's own key pairs (public + private together), keyed by an identifier
- * - knownPublicKeys: registry of other users' public keys, keyed by user ID
+ * Opens (or reuses) the encryption IndexedDB. Uses a singleton promise so the
+ * upgrade callback only runs once. The only store is the synchronized vault
+ * cache; key material and the known-key registry live inside the sealed vault,
+ * not in plaintext stores of their own.
  */
 export function getEncryptionDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
       upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE_KEY_PAIRS)) {
-          db.createObjectStore(STORE_KEY_PAIRS);
-        }
-        if (!db.objectStoreNames.contains(STORE_KNOWN_PUBLIC_KEYS)) {
-          db.createObjectStore(STORE_KNOWN_PUBLIC_KEYS);
+        if (!db.objectStoreNames.contains(STORE_VAULT_CACHE)) {
+          db.createObjectStore(STORE_VAULT_CACHE);
         }
       },
       // Browser abnormally killed the connection — reopen on next call.

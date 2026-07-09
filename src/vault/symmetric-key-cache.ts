@@ -1,3 +1,5 @@
+import { uint8ToBase64 } from '@encryption/src/crypto';
+
 /**
  * Session-only cache for decrypted symmetric keys.
  *
@@ -12,7 +14,13 @@
  *
  * The cache is:
  * - In-memory only (lives in the vault iframe, never persisted)
- * - Keyed by: `${userId}:${encryptedKeyHash}` where hash is a simple fast hash
+ * - Keyed by: `${userId}:${base64(encryptedKey)}` — the FULL wrapped-key bytes,
+ *   not a short hash. A non-cryptographic hash (previously a 32-bit rolling
+ *   hash) is trivially collidable: a caller could craft a garbage wrapped-key
+ *   blob that hashes to a cached entry's bucket and get another document's key
+ *   returned without ever possessing that document's wrapped key. Keying by the
+ *   lossless base64 of the exact bytes makes a hit require byte-for-byte
+ *   equality, so a collision cannot return the wrong key.
  * - Session-scoped: cleared on page reload (vault iframe reload)
  * - Size-limited: max 50 entries with LRU eviction
  */
@@ -26,19 +34,8 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-/** Fast hash for cache key — NOT cryptographic, just for deduplication */
-function fastHash(data: Uint8Array): string {
-  let hash = 0;
-
-  for (let i = 0; i < data.length; i++) {
-    hash = ((hash << 5) - hash + data[i]) | 0;
-  }
-
-  return hash.toString(36);
-}
-
 function cacheKey(userId: string, encryptedKey: Uint8Array): string {
-  return `${userId}:${fastHash(encryptedKey)}`;
+  return `${userId}:${uint8ToBase64(encryptedKey)}`;
 }
 
 /**
@@ -55,6 +52,17 @@ export function getCachedSymmetricKey(userId: string, encryptedKey: Uint8Array):
   }
 
   return null;
+}
+
+/**
+ * Drop every cached key. MUST be called whenever the active vault/keyring
+ * changes (new identity, restore, reactivate, adopt, destroy, or another tab
+ * changing the keys), because cache entries are keyed by userId — which is
+ * STABLE across identity changes — so a stale entry from a previous vault would
+ * otherwise let a document decrypt against a vault that can no longer unwrap it.
+ */
+export function clearSymmetricKeyCache(): void {
+  cache.clear();
 }
 
 /**

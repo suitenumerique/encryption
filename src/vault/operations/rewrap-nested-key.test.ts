@@ -16,18 +16,14 @@
  * wrapping changed).
  */
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
+import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
+import { handleEncryptNestedWithoutKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
+import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
+import { handleRewrapNestedKey } from '@encryption/src/vault/operations/rewrap-nested-key';
 
 jest.mock('@encryption/src/vault/operations/key-management', () => {
   return { getStoredKeyPair: jest.fn() };
 });
-
-import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
-import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
-import {
-  handleEncryptNestedWithoutKey,
-  handleEncryptWithoutKey,
-} from '@encryption/src/vault/operations/encrypt';
-import { handleRewrapNestedKey } from '@encryption/src/vault/operations/rewrap-nested-key';
 
 const USER_ID = 'user-alice';
 
@@ -102,9 +98,7 @@ describe('handleRewrapNestedKey', () => {
 
     // The new wrap must NOT equal the old one — it's a different
     // ciphertext (different parent key, different nonce).
-    expect(new Uint8Array(newEncryptedKey)).not.toEqual(
-      new Uint8Array(file.wrappedKey),
-    );
+    expect(new Uint8Array(newEncryptedKey)).not.toEqual(new Uint8Array(file.wrappedKey));
 
     // The file decrypts through the NEW chain.
     const after = await handleDecryptWithKey(USER_ID, {
@@ -288,7 +282,7 @@ describe('handleRewrapNestedKey', () => {
         oldEncryptedKey: file.wrappedKey,
         oldEncryptedKeyChain: [folderB.wrappedKey],
         newEncryptedKeyChain: [folderA.wrappedKey],
-      }),
+      })
     ).rejects.toThrow(/wrong secret key/i);
   });
 });

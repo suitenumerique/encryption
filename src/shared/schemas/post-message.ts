@@ -2,27 +2,34 @@ import { z } from 'zod';
 
 import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
+  MSG_VAULT_APPROVE_DEVICE,
+  MSG_VAULT_CHANGE_RECOVERY_PHRASE,
   MSG_VAULT_CHECK_FINGERPRINTS,
-  MSG_VAULT_CLAIM_TRANSFER_IMPORT,
+  MSG_VAULT_COMMIT_STAGED,
+  MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_DESTROY_KEYS,
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITH_KEY,
-  MSG_VAULT_EXPORT_BACKUP,
   MSG_VAULT_GENERATE_KEYS,
   MSG_VAULT_GET_KNOWN_FINGERPRINTS,
   MSG_VAULT_GET_PUBLIC_KEY,
   MSG_VAULT_HAS_KEYS,
-  MSG_VAULT_IMPORT_BACKUP,
-  MSG_VAULT_PREPARE_TRANSFER_EXPORT,
+  MSG_VAULT_PREPARE_ONBOARDING,
+  MSG_VAULT_REACTIVATE,
   MSG_VAULT_READY,
   MSG_VAULT_REFUSE_FINGERPRINT,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
+  MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
+  MSG_VAULT_SIGN_REQUEST,
+  MSG_VAULT_START_DEVICE_APPROVAL,
+  MSG_VAULT_SYNC,
+  MSG_VAULT_UNCOMMIT_STAGED,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 
@@ -117,6 +124,8 @@ export const VaultCheckFingerprintsRequest = z.object({
   payload: z.object({
     userFingerprints: z.record(z.string(), z.string()), // userId → fingerprint (from product's share-time snapshot)
     currentUserId: z.string().optional(),
+    // On a mismatch the vault fetches the contact's continuity chain from the
+    // directory itself, so no continuity data crosses the postMessage boundary.
   }),
 });
 
@@ -155,8 +164,6 @@ export const VaultProductRequestSchema = z.discriminatedUnion('type', [
   VaultWrapNestedKeyRequest,
   VaultShareKeysRequest,
   VaultCheckFingerprintsRequest,
-  VaultAcceptFingerprintRequest,
-  VaultRefuseFingerprintRequest,
   VaultGetKnownFingerprintsRequest,
 ]);
 
@@ -188,40 +195,96 @@ export const VaultRespondToKeyChallengeRequest = z.object({
   }),
 });
 
-export const VaultExportBackupRequest = z.object({
-  type: z.literal(MSG_VAULT_EXPORT_BACKUP),
-  requestId: z.string(),
-});
-
-export const VaultImportBackupRequest = z.object({
-  type: z.literal(MSG_VAULT_IMPORT_BACKUP),
-  requestId: z.string(),
-  payload: z.object({
-    passphrase: z.string(),
-  }),
-});
-
 export const VaultDestroyKeysRequest = z.object({
   type: z.literal(MSG_VAULT_DESTROY_KEYS),
   requestId: z.string(),
 });
 
-export const VaultPrepareTransferExportRequest = z.object({
-  type: z.literal(MSG_VAULT_PREPARE_TRANSFER_EXPORT),
+export const VaultCommitStagedRequest = z.object({
+  type: z.literal(MSG_VAULT_COMMIT_STAGED),
+  requestId: z.string(),
+});
+
+export const VaultUncommitStagedRequest = z.object({
+  type: z.literal(MSG_VAULT_UNCOMMIT_STAGED),
+  requestId: z.string(),
+});
+
+export const VaultPrepareOnboardingRequest = z.object({
+  type: z.literal(MSG_VAULT_PREPARE_ONBOARDING),
   requestId: z.string(),
   payload: z
     .object({
-      language: z.enum(['french', 'english']).optional(),
+      lang: z.enum(['french', 'english']).optional(),
+      version: z.number().int().positive().optional(),
+      generation: z.number().int().positive().optional(),
+      // Reproduce the same keyring from an already-shown phrase, so a commit
+      // retry after a version conflict re-seals items without a new phrase.
+      reusePhrase: z.string().optional(),
     })
     .optional(),
 });
 
-export const VaultClaimTransferImportRequest = z.object({
-  type: z.literal(MSG_VAULT_CLAIM_TRANSFER_IMPORT),
+export const VaultChangeRecoveryPhraseRequest = z.object({
+  type: z.literal(MSG_VAULT_CHANGE_RECOVERY_PHRASE),
+  requestId: z.string(),
+  payload: z
+    .object({
+      lang: z.enum(['french', 'english']).optional(),
+    })
+    .optional(),
+});
+
+export const VaultRestoreFromPhraseRequest = z.object({
+  type: z.literal(MSG_VAULT_RESTORE_FROM_PHRASE),
   requestId: z.string(),
   payload: z.object({
-    encryptedPayload: z.string(), // base64 encrypted payload from the server
-    transferPassphrase: z.string(), // 24-word mnemonic passphrase representing the AES key
+    recoveryPhrase: z.string(),
+    token: z.string(),
+  }),
+});
+
+export const VaultReactivateRequest = z.object({
+  type: z.literal(MSG_VAULT_REACTIVATE),
+  requestId: z.string(),
+  payload: z.object({
+    recoveryPhrase: z.string(),
+    token: z.string(),
+  }),
+});
+
+export const VaultSyncRequest = z.object({
+  type: z.literal(MSG_VAULT_SYNC),
+  requestId: z.string(),
+  payload: z
+    .object({
+      token: z.string().nullable().optional(), // OIDC token to authenticate the pull/push
+    })
+    .optional(),
+});
+
+export const VaultStartDeviceApprovalRequest = z.object({
+  type: z.literal(MSG_VAULT_START_DEVICE_APPROVAL),
+  requestId: z.string(),
+});
+
+export const VaultCompleteDeviceApprovalRequest = z.object({
+  type: z.literal(MSG_VAULT_COMPLETE_DEVICE_APPROVAL),
+  requestId: z.string(),
+  payload: z.object({
+    wrappedDeviceBootstrap: z.string(),
+    token: z.string().nullable().optional(),
+  }),
+});
+
+export const VaultApproveDeviceRequest = z.object({
+  type: z.literal(MSG_VAULT_APPROVE_DEVICE),
+  requestId: z.string(),
+  payload: z.object({
+    devicePublicKey: z.string(),
+    // The out-of-band decimal fingerprint (QR-scanned or typed) the enrolled
+    // device checks the server-returned key against before wrapping the VRK.
+    expectedDecimal: z.string(),
   }),
 });
 
@@ -230,11 +293,19 @@ export const VaultPrivilegedRequestSchema = z.discriminatedUnion('type', [
   VaultGenerateKeysRequest,
   VaultSignKeyRegistrationRequest,
   VaultRespondToKeyChallengeRequest,
-  VaultExportBackupRequest,
-  VaultImportBackupRequest,
   VaultDestroyKeysRequest,
-  VaultPrepareTransferExportRequest,
-  VaultClaimTransferImportRequest,
+  VaultCommitStagedRequest,
+  VaultUncommitStagedRequest,
+  VaultPrepareOnboardingRequest,
+  VaultChangeRecoveryPhraseRequest,
+  VaultRestoreFromPhraseRequest,
+  VaultReactivateRequest,
+  VaultSyncRequest,
+  VaultStartDeviceApprovalRequest,
+  VaultCompleteDeviceApprovalRequest,
+  VaultApproveDeviceRequest,
+  VaultAcceptFingerprintRequest,
+  VaultRefuseFingerprintRequest,
 ]);
 
 // ============================================================================
@@ -253,18 +324,24 @@ export const VaultRequestSchema = z.discriminatedUnion('type', [
   VaultWrapNestedKeyRequest,
   VaultShareKeysRequest,
   VaultCheckFingerprintsRequest,
-  VaultAcceptFingerprintRequest,
-  VaultRefuseFingerprintRequest,
   VaultGetKnownFingerprintsRequest,
   // Privileged operations
+  VaultAcceptFingerprintRequest,
+  VaultRefuseFingerprintRequest,
   VaultGenerateKeysRequest,
   VaultSignKeyRegistrationRequest,
   VaultRespondToKeyChallengeRequest,
-  VaultExportBackupRequest,
-  VaultImportBackupRequest,
   VaultDestroyKeysRequest,
-  VaultPrepareTransferExportRequest,
-  VaultClaimTransferImportRequest,
+  VaultCommitStagedRequest,
+  VaultUncommitStagedRequest,
+  VaultPrepareOnboardingRequest,
+  VaultChangeRecoveryPhraseRequest,
+  VaultRestoreFromPhraseRequest,
+  VaultReactivateRequest,
+  VaultSyncRequest,
+  VaultStartDeviceApprovalRequest,
+  VaultCompleteDeviceApprovalRequest,
+  VaultApproveDeviceRequest,
 ]);
 
 export type VaultRequest = z.infer<typeof VaultRequestSchema>;
@@ -274,11 +351,20 @@ export const PRIVILEGED_OPERATIONS = new Set<string>([
   MSG_VAULT_GENERATE_KEYS,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
-  MSG_VAULT_EXPORT_BACKUP,
-  MSG_VAULT_IMPORT_BACKUP,
   MSG_VAULT_DESTROY_KEYS,
-  MSG_VAULT_PREPARE_TRANSFER_EXPORT,
-  MSG_VAULT_CLAIM_TRANSFER_IMPORT,
+  MSG_VAULT_COMMIT_STAGED,
+  MSG_VAULT_UNCOMMIT_STAGED,
+  MSG_VAULT_PREPARE_ONBOARDING,
+  MSG_VAULT_CHANGE_RECOVERY_PHRASE,
+  MSG_VAULT_RESTORE_FROM_PHRASE,
+  MSG_VAULT_REACTIVATE,
+  MSG_VAULT_SYNC,
+  MSG_VAULT_SIGN_REQUEST,
+  MSG_VAULT_START_DEVICE_APPROVAL,
+  MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
+  MSG_VAULT_APPROVE_DEVICE,
+  MSG_VAULT_ACCEPT_FINGERPRINT,
+  MSG_VAULT_REFUSE_FINGERPRINT,
 ]);
 
 // ============================================================================

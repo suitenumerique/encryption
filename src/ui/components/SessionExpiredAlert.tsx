@@ -16,10 +16,7 @@ interface SessionExpiredAlertProps {
  * by any iframe handler that hit `SessionExpiredError`. See
  * `auth/session-expired.ts` for the overall pattern.
  */
-export function SessionExpiredAlert({
-  onReconnect,
-  isAuthenticating = false,
-}: SessionExpiredAlertProps) {
+export function SessionExpiredAlert({ onReconnect, isAuthenticating = false }: SessionExpiredAlertProps) {
   const { t } = useTranslation('common');
   return (
     <Alert type={VariantType.ERROR}>
@@ -31,17 +28,9 @@ export function SessionExpiredAlert({
           flexWrap: 'wrap',
         }}
       >
-        <span style={{ flex: 1, minWidth: 0 }}>
-          {t('errors.vault.session_expired')}
-        </span>
-        <Button
-          size="small"
-          onClick={onReconnect}
-          disabled={isAuthenticating}
-        >
-          {isAuthenticating
-            ? t('auth.authenticating', 'Signing in…')
-            : t('auth.reconnect', 'Reconnect')}
+        <span style={{ flex: 1, minWidth: 0 }}>{t('errors.vault.session_expired')}</span>
+        <Button size="small" onClick={onReconnect} disabled={isAuthenticating}>
+          {isAuthenticating ? t('auth.authenticating', 'Signing in…') : t('auth.reconnect', 'Reconnect')}
         </Button>
       </div>
     </Alert>

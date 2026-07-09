@@ -1,22 +1,19 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Authentication</title>
-</head>
-<body>
-  <p>Authenticating...</p>
-  <script type="module">
-    // oidc-client-ts handles the popup callback via signinPopupCallback().
-    // This page just needs to exist at the redirect URI — the UserManager
-    // in the opener window will process the URL parameters automatically.
-    // As a fallback, post the URL back to the opener.
-    if (window.opener) {
-      window.opener.postMessage(
-        { type: 'oidc-callback', url: window.location.href },
-        window.location.origin
-      );
-    }
-  </script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Authentication</title>
+  </head>
+  <body>
+    <p>Authenticating...</p>
+    <script type="module">
+      // oidc-client-ts handles the popup callback via signinPopupCallback().
+      // This page just needs to exist at the redirect URI — the UserManager
+      // in the opener window will process the URL parameters automatically.
+      // As a fallback, post the URL back to the opener.
+      if (window.opener) {
+        window.opener.postMessage({ type: 'oidc-callback', url: window.location.href }, window.location.origin);
+      }
+    </script>
+  </body>
 </html>

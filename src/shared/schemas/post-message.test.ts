@@ -47,11 +47,6 @@ describe('post-message schemas', () => {
       expect(() => VaultPrivilegedRequestSchema.parse(valid)).not.toThrow();
     });
 
-    it('should accept import-backup with passphrase', () => {
-      const valid = { type: 'vault:import-private-key-backup', requestId: '123', payload: { passphrase: 'abc' } };
-      expect(() => VaultPrivilegedRequestSchema.parse(valid)).not.toThrow();
-    });
-
     it('should accept destroy-keys', () => {
       const valid = { type: 'vault:destroy-keys', requestId: '123' };
       expect(() => VaultPrivilegedRequestSchema.parse(valid)).not.toThrow();
@@ -66,9 +61,9 @@ describe('post-message schemas', () => {
   describe('PRIVILEGED_OPERATIONS set', () => {
     it('should contain all sensitive operations', () => {
       expect(PRIVILEGED_OPERATIONS.has('vault:generate-keys')).toBe(true);
-      expect(PRIVILEGED_OPERATIONS.has('vault:export-private-key-backup')).toBe(true);
-      expect(PRIVILEGED_OPERATIONS.has('vault:import-private-key-backup')).toBe(true);
       expect(PRIVILEGED_OPERATIONS.has('vault:destroy-keys')).toBe(true);
+      expect(PRIVILEGED_OPERATIONS.has('vault:accept-fingerprint')).toBe(true);
+      expect(PRIVILEGED_OPERATIONS.has('vault:refuse-fingerprint')).toBe(true);
     });
 
     it('should NOT contain product operations', () => {
@@ -76,6 +71,8 @@ describe('post-message schemas', () => {
       expect(PRIVILEGED_OPERATIONS.has('vault:encrypt-without-key')).toBe(false);
       expect(PRIVILEGED_OPERATIONS.has('vault:decrypt-with-key')).toBe(false);
       expect(PRIVILEGED_OPERATIONS.has('vault:get-public-key')).toBe(false);
+      expect(PRIVILEGED_OPERATIONS.has('vault:check-fingerprints')).toBe(false);
+      expect(PRIVILEGED_OPERATIONS.has('vault:get-known-fingerprints')).toBe(false);
     });
   });
 

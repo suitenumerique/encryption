@@ -27,21 +27,34 @@ export function LoginPage() {
 
   if (error) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', gap: '16px', padding: '24px' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '100vh',
+          gap: '16px',
+          padding: '24px',
+        }}
+      >
         <span style={{ fontSize: '48px' }}>⚠️</span>
-        <p style={{ color: '#c00', fontWeight: 600, textAlign: 'center' }}>
-          Authentication failed
-        </p>
-        <p style={{ color: '#666', fontSize: '14px', textAlign: 'center', maxWidth: '400px' }}>
-          {error}
-        </p>
+        <p style={{ color: '#c00', fontWeight: 600, textAlign: 'center' }}>Authentication failed</p>
+        <p style={{ color: '#666', fontSize: '14px', textAlign: 'center', maxWidth: '400px' }}>{error}</p>
         <p style={{ color: '#999', fontSize: '12px', textAlign: 'center', maxWidth: '400px' }}>
-          This may happen if the encryption service cannot reach the identity provider.
-          Check that the OIDC configuration is correct.
+          This may happen if the encryption service cannot reach the identity provider. Check that the OIDC configuration is correct.
         </p>
         <button
           onClick={() => window.close()}
-          style={{ marginTop: '8px', padding: '8px 24px', background: '#0063CB', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          style={{
+            marginTop: '8px',
+            padding: '8px 24px',
+            background: '#0063CB',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
         >
           Close
         </button>

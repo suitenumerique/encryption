@@ -2,29 +2,25 @@
  * Share document modal — adapted from docs/DocShareModal.tsx
  *
  * Uses QuickSearch + QuickSearchGroup from ui-kit with custom renderElement
- * for fingerprint badges, suffix warnings, and key mismatch modals.
+ * for suffix warnings.
  * Stripped of Docs-specific dependencies (Box, Text, useDocAccesses, etc.)
+ *
+ * Trust decisions (verifying an unknown/changed recipient key) are NOT handled
+ * here: the demo simply calls shareKeys, and the SDK auto-opens the shared
+ * "verify recipients" interface modal whenever a share hits UNTRUSTED_RECIPIENT.
  *
  * DEMO LIMITATIONS:
  * - Documents and accesses are in-memory only (local to the tab).
- * - Fingerprint trust/refuse decisions ARE persisted in the vault's IndexedDB
- *   (via checkFingerprints/acceptFingerprint/refuseFingerprint), so they
- *   survive modal close/reopen and page reload.
- * - Key mismatch state (unknown keys not yet decided) is ephemeral — it's
- *   recomputed on each search from the vault registry.
  */
 import { Button, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
-import { Badge, QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { VaultClient } from '@encryption/src/client/vault-client';
-import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
-import { ModalKeyMismatch } from '@encryption/src/demo/ModalKeyMismatch';
 import { ModalNoKey } from '@encryption/src/demo/ModalNoKey';
-import { DEMO_USERS } from '@encryption/src/demo/auth';
-import { useKeyFingerprint } from '@encryption/src/demo/useKeyFingerprint';
-import { fetchPublicKeys, type PublicKeyEntry } from '@encryption/src/ui/api/server-client';
+import { DEMO_USERS, getUserLabel } from '@encryption/src/demo/auth';
+import { type PublicKeyEntry, fetchPublicKeys } from '@encryption/src/ui/api/server-client';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -57,10 +53,39 @@ interface DemoUser {
   binding_verified: boolean;
 }
 
-interface KeyMismatch {
-  userId: string;
-  knownKey: string;
-  currentKey: string;
+// ─── VerifyButton — opens the recipient profile / verify screen ──
+// Discreet affordance that opens the encryption interface at this recipient's
+// profile (trust decision, fingerprint, Trust/Refuse). Only rendered for
+// recipients that actually have an encryption key: there is nothing to verify
+// for someone who has not enabled encryption.
+
+function VerifyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      title="Verify this contact's identity"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        background: 'none',
+        border: 'none',
+        color: 'var(--c--globals--colors--brand-400, #000091)',
+        padding: '2px 4px',
+        fontSize: 12,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span className="material-icons" style={{ fontSize: 16 }}>
+        verified_user
+      </span>
+      Verify
+    </button>
+  );
 }
 
 // ─── SearchUserRow — adapted from docs/SearchUserRow.tsx ─────────
@@ -69,17 +94,13 @@ function SearchUserRow({
   user,
   suffix,
   onSuffixClick,
-  fingerprintKey,
   right,
 }: {
   user: DemoUser;
   suffix?: { text: string; color?: string };
   onSuffixClick?: () => void;
-  fingerprintKey?: string | null;
   right?: React.ReactNode;
 }) {
-  const fingerprint = useKeyFingerprint(fingerprintKey);
-
   return (
     <QuickSearchItemTemplate
       alwaysShowRight={!!right}
@@ -137,12 +158,6 @@ function SearchUserRow({
             {user.full_name && (
               <span style={{ fontSize: 12, marginTop: -2, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>{user.email}</span>
             )}
-            {fingerprint && (
-              <Badge style={{ width: 'fit-content', gap: '0.3rem', margin: '5px 0' }}>
-                <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>Fingerprint </span>
-                <span style={{ fontSize: 10, fontFamily: 'monospace', letterSpacing: '0.05em' }}>{fingerprint}</span>
-              </Badge>
-            )}
           </div>
         </div>
       }
@@ -156,26 +171,28 @@ function InviteUserRow({
   user,
   suffix,
   onSuffixClick,
-  fingerprintKey,
+  onViewProfile,
 }: {
   user: DemoUser;
   suffix?: { text: string; color?: string };
   onSuffixClick?: () => void;
-  fingerprintKey?: string | null;
+  onViewProfile?: (userId: string) => void;
 }) {
   return (
     <SearchUserRow
       user={user}
       suffix={suffix}
       onSuffixClick={onSuffixClick}
-      fingerprintKey={fingerprintKey ?? user.signature_public_key}
       right={
-        <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400, #000091)', fontSize: 13 }}>
-          Add{' '}
-          <span className="material-icons" style={{ fontSize: 18 }}>
-            add
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {onViewProfile && user.encryption_public_key && <VerifyButton onClick={() => onViewProfile(user.id)} />}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400, #000091)', fontSize: 13 }}>
+            Add{' '}
+            <span className="material-icons" style={{ fontSize: 18 }}>
+              add
+            </span>
           </span>
-        </span>
+        </div>
       }
     />
   );
@@ -183,7 +200,17 @@ function InviteUserRow({
 
 // ─── MemberRow — shared user with role dropdown + delete ─────────
 
-function MemberRow({ access, onUpdateRole, onDelete }: { access: SharedAccess; onUpdateRole: (role: string) => void; onDelete: () => void }) {
+function MemberRow({
+  access,
+  onUpdateRole,
+  onDelete,
+  onViewProfile,
+}: {
+  access: SharedAccess;
+  onUpdateRole: (role: string) => void;
+  onDelete: () => void;
+  onViewProfile?: (userId: string) => void;
+}) {
   const user: DemoUser = {
     id: access.userId,
     full_name: access.fullName,
@@ -196,9 +223,9 @@ function MemberRow({ access, onUpdateRole, onDelete }: { access: SharedAccess; o
   return (
     <SearchUserRow
       user={user}
-      fingerprintKey={access.signaturePublicKey}
       right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {onViewProfile && access.publicKey && <VerifyButton onClick={() => onViewProfile(access.userId)} />}
           <select
             value={access.role}
             onChange={(e) => onUpdateRole(e.target.value)}
@@ -244,24 +271,13 @@ function MemberRow({ access, onUpdateRole, onDelete }: { access: SharedAccess; o
 function QuickSearchInviteInputSection({
   searchUsers,
   onSelect,
-  keyMismatchUserIds,
-  refusedUserIds,
-  keyMismatches,
-  acceptNewKey,
-  refuseKey,
-  clearRefused,
+  onViewProfile,
 }: {
   searchUsers: DemoUser[];
   onSelect: (user: DemoUser) => void;
-  keyMismatchUserIds: Set<string>;
-  refusedUserIds: Set<string>;
-  keyMismatches: KeyMismatch[];
-  acceptNewKey: (userId: string) => Promise<void>;
-  refuseKey: (userId: string) => Promise<void>;
-  clearRefused: (userId: string) => void;
+  onViewProfile?: (userId: string) => void;
 }) {
   const [noKeyUser, setNoKeyUser] = useState<DemoUser | null>(null);
-  const [mismatchUser, setMismatchUser] = useState<DemoUser | null>(null);
 
   const handleSelect = useCallback(
     (user: DemoUser) => {
@@ -278,43 +294,22 @@ function QuickSearchInviteInputSection({
         return;
       }
 
-      if (refusedUserIds.has(user.id)) {
-        return; // Blocked — refused key
-      }
-
-      if (keyMismatchUserIds.has(user.id)) {
-        setMismatchUser(user);
-
-        return;
-      }
-
       onSelect(user);
     },
-    [keyMismatchUserIds, refusedUserIds, onSelect]
+    [onSelect]
   );
 
-  const getUserSuffix = useCallback(
-    (user: DemoUser): { text: string; color?: string } | undefined => {
-      if (user.encryption_public_key && !user.binding_verified) {
-        return { text: 'INVALID IDENTITY SIGNATURE — DO NOT SHARE', color: 'var(--c--globals--colors--error-500, #ce0500)' };
-      }
+  const getUserSuffix = useCallback((user: DemoUser): { text: string; color?: string } | undefined => {
+    if (user.encryption_public_key && !user.binding_verified) {
+      return { text: 'INVALID IDENTITY SIGNATURE — DO NOT SHARE', color: 'var(--c--globals--colors--error-500, #ce0500)' };
+    }
 
-      if (refusedUserIds.has(user.id)) {
-        return { text: 'KEY REFUSED — DO NOT SHARE', color: 'var(--c--globals--colors--error-500, #ce0500)' };
-      }
+    if (!user.encryption_public_key) {
+      return { text: '(encryption not enabled)' };
+    }
 
-      if (keyMismatchUserIds.has(user.id)) {
-        return { text: 'DIFFERENT PUBLIC KEY, PLEASE VERIFY' };
-      }
-
-      if (!user.encryption_public_key) {
-        return { text: '(encryption not enabled)' };
-      }
-
-      return undefined;
-    },
-    [keyMismatchUserIds, refusedUserIds]
-  );
+    return undefined;
+  }, []);
 
   const searchData: QuickSearchData<DemoUser> = useMemo(
     () => ({
@@ -324,48 +319,15 @@ function QuickSearchInviteInputSection({
     [searchUsers]
   );
 
-  const activeMismatch = mismatchUser ? keyMismatches.find((m) => m.userId === mismatchUser.id) : null;
-  const isRefusedUser = mismatchUser ? refusedUserIds.has(mismatchUser.id) : false;
-
   return (
     <div style={{ padding: '0 var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px)' }}>
       <QuickSearchGroup
         group={searchData}
         onSelect={handleSelect}
-        renderElement={(user) => (
-          <InviteUserRow
-            user={user}
-            suffix={getUserSuffix(user)}
-            onSuffixClick={keyMismatchUserIds.has(user.id) || refusedUserIds.has(user.id) ? () => setMismatchUser(user) : undefined}
-            fingerprintKey={user.signature_public_key}
-          />
-        )}
+        renderElement={(user) => <InviteUserRow user={user} suffix={getUserSuffix(user)} onViewProfile={onViewProfile} />}
       />
 
       {noKeyUser && <ModalNoKey userName={noKeyUser.full_name || noKeyUser.email} onClose={() => setNoKeyUser(null)} />}
-
-      {mismatchUser && (activeMismatch || isRefusedUser) && (
-        <ModalKeyMismatch
-          onClose={() => setMismatchUser(null)}
-          onAcceptKey={() => {
-            if (isRefusedUser) {
-              clearRefused(mismatchUser.id);
-            }
-            void acceptNewKey(mismatchUser.id).then(() => {
-              onSelect(mismatchUser);
-            });
-          }}
-          onRefuseKey={
-            !isRefusedUser
-              ? () => {
-                  void refuseKey(mismatchUser.id);
-                }
-              : undefined
-          }
-          knownKey={activeMismatch?.knownKey}
-          currentKey={activeMismatch?.currentKey ?? mismatchUser.encryption_public_key ?? undefined}
-        />
-      )}
     </div>
   );
 }
@@ -377,10 +339,12 @@ function QuickSearchGroupMember({
   accesses,
   onUpdateRole,
   onDelete,
+  onViewProfile,
 }: {
   accesses: SharedAccess[];
   onUpdateRole: (userId: string, role: string) => void;
   onDelete: (userId: string) => void;
+  onViewProfile?: (userId: string) => void;
 }) {
   const membersData: QuickSearchData<SharedAccess> = useMemo(
     () => ({
@@ -397,7 +361,12 @@ function QuickSearchGroupMember({
       <QuickSearchGroup
         group={membersData}
         renderElement={(access) => (
-          <MemberRow access={access} onUpdateRole={(role) => onUpdateRole(access.userId, role)} onDelete={() => onDelete(access.userId)} />
+          <MemberRow
+            access={access}
+            onUpdateRole={(role) => onUpdateRole(access.userId, role)}
+            onDelete={() => onDelete(access.userId)}
+            onViewProfile={onViewProfile}
+          />
         )}
       />
     </div>
@@ -428,11 +397,6 @@ export function ShareDocumentModal({
 
   // Members state managed by parent (persists across modal open/close)
 
-  // Key mismatch + refused tracking
-  const [keyMismatches, setKeyMismatches] = useState<KeyMismatch[]>([]);
-  const keyMismatchUserIds = useMemo(() => new Set(keyMismatches.map((m) => m.userId)), [keyMismatches]);
-  const [refusedUserIds, setRefusedUserIds] = useState<Set<string>>(new Set());
-
   const showMemberSection = inputValue === '' && selectedUsers.length === 0;
 
   // Search handler with debounce (like Docs' onFilter + useUsers)
@@ -447,10 +411,15 @@ export function ShareDocumentModal({
 
       setLoading(true);
 
-      const q = query.toLowerCase();
-      const matched = DEMO_USERS.filter(
-        (u) => u.firstName.toLowerCase().includes(q) || u.lastName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
-      );
+      // Match every whitespace-separated token against the full "name email"
+      // haystack, so "bob dupont" (spanning first + last name) matches, not just
+      // single-field substrings like "bob".
+      const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+      const matched = DEMO_USERS.filter((u) => {
+        const haystack = `${u.firstName} ${u.lastName} ${u.email}`.toLowerCase();
+
+        return tokens.every((tok) => haystack.includes(tok));
+      });
 
       const userIdMap: Record<string, string> = {};
 
@@ -513,48 +482,8 @@ export function ShareDocumentModal({
 
       setSearchUsers(results);
       setLoading(false);
-
-      // Check fingerprints against vault registry (TOFU). The fingerprint is of
-      // the IDENTITY (signature) key, and only records whose binding verified
-      // are eligible — a tampered record never reaches the trust check.
-      if (vaultClient && currentUserId) {
-        const fps: Record<string, string> = {};
-
-        for (const u of results) {
-          if (u.signature_public_key && u.binding_verified) {
-            try {
-              fps[u.id] = await computeKeyFingerprint(u.signature_public_key);
-            } catch {
-              /* skip */
-            }
-          }
-        }
-
-        if (Object.keys(fps).length > 0) {
-          try {
-            const { results: checks } = await vaultClient.checkFingerprints(fps, currentUserId);
-            const mm: KeyMismatch[] = [];
-            const refused = new Set<string>();
-
-            for (const c of checks) {
-              if (c.status === 'refused') {
-                refused.add(c.userId);
-              } else if (c.status === 'unknown' && c.knownFingerprint) {
-                const u = results.find((x) => x.id === c.userId);
-
-                if (u?.signature_public_key) mm.push({ userId: c.userId, knownKey: c.knownFingerprint, currentKey: u.signature_public_key });
-              }
-            }
-
-            setKeyMismatches(mm);
-            setRefusedUserIds(refused);
-          } catch {
-            /* vault unavailable */
-          }
-        }
-      }
     },
-    [currentUserId, resolveUserId, vaultClient]
+    [currentUserId, resolveUserId]
   );
 
   const onFilter = useCallback(
@@ -575,167 +504,202 @@ export function ShareDocumentModal({
     setSearchUsers([]);
   }, []);
 
-  // Accept a mismatched key
-  const acceptNewKey = useCallback(
-    async (userId: string) => {
+  // Recipient profile overlay: clicking "View / verify" on any recipient row
+  // opens the encryption interface at that person's profile screen inside a
+  // demo-owned container (the interface draws its own trust/fingerprint UI).
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
+  const [profileContainer, setProfileContainer] = useState<HTMLDivElement | null>(null);
+
+  // Mount (or re-target) the profile iframe once both the target userId and the
+  // container element exist. Re-runs when either changes, so switching between
+  // recipients re-points the same overlay.
+  useEffect(() => {
+    if (!profileUserId || !profileContainer || !vaultClient) return;
+
+    // Demo recipients come from the fixed DEMO_USERS list, so their real email +
+    // name always resolve; if a sub somehow isn't a known demo user, there is
+    // nothing meaningful to show, so skip rather than invent a placeholder.
+    const label = getUserLabel(profileUserId);
+    if (!label) return;
+
+    vaultClient.openRecipientProfile(profileContainer, profileUserId, label);
+  }, [profileUserId, profileContainer, vaultClient]);
+
+  const openProfile = useCallback(
+    (userId: string) => {
       if (!vaultClient) return;
 
-      const mm = keyMismatches.find((m) => m.userId === userId);
-
-      if (!mm) return;
-
-      try {
-        const fp = await computeKeyFingerprint(mm.currentKey);
-
-        await vaultClient.acceptFingerprint(userId, fp);
-        setKeyMismatches((prev) => prev.filter((m) => m.userId !== userId));
-      } catch {
-        /* vault error */
-      }
+      setProfileUserId(userId);
     },
-    [vaultClient, keyMismatches]
+    [vaultClient]
   );
 
-  // Refuse a key — marks it as dangerous in the vault registry
-  const refuseKey = useCallback(
-    async (userId: string) => {
-      if (!vaultClient) return;
+  const closeProfile = useCallback(() => {
+    vaultClient?.closeInterface();
+    setProfileUserId(null);
+  }, [vaultClient]);
 
-      const mm = keyMismatches.find((m) => m.userId === userId);
-
-      if (!mm) return;
-
-      try {
-        const fp = await computeKeyFingerprint(mm.currentKey);
-
-        await vaultClient.refuseFingerprint(userId, fp);
-        setKeyMismatches((prev) => prev.filter((m) => m.userId !== userId));
-        setRefusedUserIds((prev) => new Set([...prev, userId]));
-      } catch {
-        /* vault error */
-      }
-    },
-    [vaultClient, keyMismatches]
-  );
+  // Only expose the affordance when there is a client to open the profile with.
+  const onViewProfile = vaultClient ? openProfile : undefined;
 
   return (
-    <Modal
-      isOpen={isOpen}
-      closeOnClickOutside
-      onClose={onClose}
-      size={ModalSize.LARGE}
-      title={<span style={{ fontSize: 16, fontWeight: 600 }}>Share &ldquo;{documentTitle}&rdquo;</span>}
-    >
-      <div style={{ paddingBottom: 'var(--c--globals--spacings--base, 16px)' }}>
-        {/* Selected users bar — like Docs' DocShareAddMemberList */}
-        {selectedUsers.length > 0 && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px var(--c--globals--spacings--base, 16px)',
-              borderBottom: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
-            }}
-          >
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1 }}>
-              {selectedUsers.map((u) => (
-                <span
-                  key={u.id}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    padding: '4px 10px',
-                    borderRadius: 16,
-                    background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
-                    fontSize: 13,
-                  }}
-                >
-                  {u.full_name}
-                  <button
-                    onClick={() => setSelectedUsers((prev) => prev.filter((x) => x.id !== u.id))}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1, color: '#666' }}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
+    <>
+      <Modal
+        isOpen={isOpen}
+        closeOnClickOutside
+        onClose={onClose}
+        size={ModalSize.LARGE}
+        title={<span style={{ fontSize: 16, fontWeight: 600 }}>Share &ldquo;{documentTitle}&rdquo;</span>}
+      >
+        <div style={{ paddingBottom: 'var(--c--globals--spacings--base, 16px)' }}>
+          {/* Selected users bar — like Docs' DocShareAddMemberList */}
+          {selectedUsers.length > 0 && (
+            <div
               style={{
-                padding: '6px 10px',
-                borderRadius: 4,
-                border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
-                fontSize: 13,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px var(--c--globals--spacings--base, 16px)',
+                borderBottom: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
               }}
             >
-              <option value="editor">Editor</option>
-              <option value="viewer">Viewer</option>
-            </select>
-            <Button
-              size="small"
-              onClick={() => {
-                onAccessesChange([
-                  ...accesses,
-                  ...selectedUsers.map((u) => ({
-                    userId: u.id,
-                    fullName: u.full_name,
-                    email: u.email,
-                    publicKey: u.encryption_public_key,
-                    signaturePublicKey: u.signature_public_key,
-                    role: selectedRole,
-                  })),
-                ]);
-                setSelectedUsers([]);
-              }}
-            >
-              Share
-            </Button>
-          </div>
-        )}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1 }}>
+                {selectedUsers.map((u) => (
+                  <span
+                    key={u.id}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '4px 10px',
+                      borderRadius: 16,
+                      background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                      fontSize: 13,
+                    }}
+                  >
+                    {u.full_name}
+                    {onViewProfile && u.encryption_public_key && (
+                      <button
+                        onClick={() => onViewProfile(u.id)}
+                        title="Verify this contact's identity"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: 0,
+                          lineHeight: 1,
+                          color: 'var(--c--globals--colors--brand-400, #000091)',
+                          display: 'inline-flex',
+                        }}
+                      >
+                        <span className="material-icons" style={{ fontSize: 16 }}>
+                          verified_user
+                        </span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSelectedUsers((prev) => prev.filter((x) => x.id !== u.id))}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1, color: '#666' }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <select
+                value={selectedRole}
+                onChange={(e) => setSelectedRole(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
+                  fontSize: 13,
+                }}
+              >
+                <option value="editor">Editor</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <Button
+                size="small"
+                onClick={() => {
+                  onAccessesChange([
+                    ...accesses,
+                    ...selectedUsers.map((u) => ({
+                      userId: u.id,
+                      fullName: u.full_name,
+                      email: u.email,
+                      publicKey: u.encryption_public_key,
+                      signaturePublicKey: u.signature_public_key,
+                      role: selectedRole,
+                    })),
+                  ]);
+                  setSelectedUsers([]);
+                }}
+              >
+                Share
+              </Button>
+            </div>
+          )}
 
-        {/* QuickSearch — exactly like Docs */}
-        <QuickSearch
-          label="Search results"
-          onFilter={onFilter}
-          inputValue={inputValue}
-          showInput
-          loading={loading}
-          placeholder="Search users by name or email..."
+          {/* QuickSearch — exactly like Docs */}
+          <QuickSearch
+            label="Search results"
+            onFilter={onFilter}
+            inputValue={inputValue}
+            showInput
+            loading={loading}
+            placeholder="Search users by name or email..."
+          >
+            {/* Members list — shown when NOT searching (like Docs' showMemberSection) */}
+            {showMemberSection && (
+              <QuickSearchGroupMember
+                accesses={accesses}
+                onUpdateRole={(userId, role) => onAccessesChange(accesses.map((a) => (a.userId === userId ? { ...a, role } : a)))}
+                onDelete={(userId) => onAccessesChange(accesses.filter((a) => a.userId !== userId))}
+                onViewProfile={onViewProfile}
+              />
+            )}
+
+            {/* Search results — shown when searching (like Docs' QuickSearchInviteInputSection) */}
+            {!showMemberSection && <QuickSearchInviteInputSection searchUsers={searchUsers} onSelect={onSelect} onViewProfile={onViewProfile} />}
+          </QuickSearch>
+        </div>
+      </Modal>
+
+      {/* Recipient profile overlay — hosts the encryption interface iframe. Sits
+          above the share modal; click the backdrop or Close to dismiss. */}
+      {profileUserId && (
+        <div
+          onClick={closeProfile}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            background: 'rgba(0, 0, 0, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
-          {/* Members list — shown when NOT searching (like Docs' showMemberSection) */}
-          {showMemberSection && (
-            <QuickSearchGroupMember
-              accesses={accesses}
-              onUpdateRole={(userId, role) => onAccessesChange(accesses.map((a) => (a.userId === userId ? { ...a, role } : a)))}
-              onDelete={(userId) => onAccessesChange(accesses.filter((a) => a.userId !== userId))}
-            />
-          )}
-
-          {/* Search results — shown when searching (like Docs' QuickSearchInviteInputSection) */}
-          {!showMemberSection && (
-            <QuickSearchInviteInputSection
-              searchUsers={searchUsers}
-              onSelect={onSelect}
-              keyMismatchUserIds={keyMismatchUserIds}
-              refusedUserIds={refusedUserIds}
-              keyMismatches={keyMismatches}
-              acceptNewKey={acceptNewKey}
-              refuseKey={refuseKey}
-              clearRefused={(userId) =>
-                setRefusedUserIds((prev) => {
-                  const next = new Set(prev);
-                  next.delete(userId);
-                  return next;
-                })
-              }
-            />
-          )}
-        </QuickSearch>
-      </div>
-    </Modal>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: 'white', borderRadius: 8, width: 'min(560px, 92vw)', maxHeight: '90vh', overflow: 'auto', padding: 12 }}
+          >
+            {/* No title here: the interface iframe renders its own "Encryption
+                Identity" heading, so a second title would be redundant. */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+              <button
+                onClick={closeProfile}
+                aria-label="Close"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 28, lineHeight: 1, padding: '0 4px', color: '#666' }}
+              >
+                ×
+              </button>
+            </div>
+            <div ref={setProfileContainer} style={{ minHeight: 200 }} />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

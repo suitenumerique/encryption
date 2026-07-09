@@ -4,7 +4,8 @@ import {
   MSG_INTERFACE_ONBOARDING_COMPLETE,
   MSG_INTERFACE_REQUEST_CONTEXT,
   MSG_INTERFACE_RESIZE,
-  MSG_VAULT_ACCEPT_FINGERPRINT,
+  MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_VERIFY_COMPLETE,
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
@@ -15,14 +16,17 @@ import {
   MSG_VAULT_GET_PUBLIC_KEY,
   MSG_VAULT_HAS_KEYS,
   MSG_VAULT_READY,
-  MSG_VAULT_REFUSE_FINGERPRINT,
   MSG_VAULT_RESULT,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
+import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import { type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
+
+export type { RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
 
 export interface EncryptionClientOptions {
   /** URL of the vault domain (data.encryption), e.g. "https://data.encryption.numerique.gouv.fr" */
@@ -133,6 +137,18 @@ export class VaultClient {
   private theme: string;
   private lang: string | null;
   private authContext: AuthContext | null = null;
+  // "Verify recipients" trust modal: the SDK-created full-screen overlay hosting
+  // the interface iframe and the resolver awaiting its outcome.
+  private verifyOverlay: HTMLElement | null = null;
+  private verifyResolve: ((outcome: 'resolved' | 'cancelled') => void) | null = null;
+  // The per-flow context owed to the interface iframe, set when a flow opens and
+  // cleared on teardown / closeInterface. Ephemeral by design: recipient labels
+  // (name/email) are display-only and never persisted, synced, or sent to any
+  // server; only the flow currently open carries a block here.
+  private pendingContext: {
+    verifyRecipients?: { recipients: Record<string, RecipientLabel> };
+    recipientProfile?: { userId: string; label: RecipientLabel };
+  } | null = null;
 
   constructor(options: EncryptionClientOptions) {
     this.vaultUrl = options.vaultUrl;
@@ -145,17 +161,19 @@ export class VaultClient {
   }
 
   /**
-   * Update the Cunningham theme. If the interface iframe is open, updates the hash to trigger a theme change.
+   * Update the Cunningham theme. If the interface iframe is open, sends it a
+   * theme message so it re-themes in place.
    * @param theme - Cunningham theme name: "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark", etc.
    */
   setTheme(theme: string): void {
     this.theme = theme;
 
-    // If the interface iframe is open, update its hash so it picks up the theme change
-    if (this.interfaceIframe) {
-      const currentSrc = new URL(this.interfaceIframe.src);
-      currentSrc.hash = `theme=${theme}`;
-      this.interfaceIframe.src = currentSrc.toString();
+    // Drive the theme purely via postMessage. Reassigning interfaceIframe.src
+    // would force a full navigation back to the iframe's original route,
+    // discarding any in-app state (e.g. an unsaved recovery phrase mid-backup)
+    // if the interface has since navigated internally.
+    if (this.interfaceIframe?.contentWindow) {
+      this.interfaceIframe.contentWindow.postMessage({ type: MSG_INTERFACE_SET_THEME, theme }, this.interfaceOrigin);
     }
   }
 
@@ -169,15 +187,7 @@ export class VaultClient {
 
     // If the interface iframe is already open, update it immediately
     // (e.g., after a token refresh)
-    if (this.interfaceIframe?.contentWindow) {
-      this.interfaceIframe.contentWindow.postMessage(
-        {
-          type: MSG_INTERFACE_CONTEXT,
-          suiteUserId: context.suiteUserId,
-        },
-        this.interfaceOrigin
-      );
-    }
+    this.sendContext(this.interfaceIframe?.contentWindow);
   }
 
   /**
@@ -228,10 +238,7 @@ export class VaultClient {
     document.body.appendChild(this.vaultIframe);
 
     const timeoutPromise = new Promise<void>((_, reject) => {
-      this.initTimeoutId = setTimeout(
-        () => reject(new VaultError(VaultErrorCode.TIMEOUT, 'Vault initialization timed out')),
-        this.timeout,
-      );
+      this.initTimeoutId = setTimeout(() => reject(new VaultError(VaultErrorCode.TIMEOUT, 'Vault initialization timed out')), this.timeout);
     });
 
     try {
@@ -258,6 +265,11 @@ export class VaultClient {
       this.messageHandler = null;
     }
 
+    // Resolve any in-flight verify overlay as cancelled before tearing it down,
+    // so a pending share awaiting its outcome rejects (original error) instead of
+    // hanging.
+    this.completeVerify('cancelled');
+
     this.removeIframe(this.vaultIframe);
     this.removeIframe(this.interfaceIframe);
     this.vaultIframe = null;
@@ -282,8 +294,14 @@ export class VaultClient {
 
   /**
    * Create a new ROOT encrypted resource. Mints a fresh symmetric key,
-   * encrypts `data` with it, and wraps the new key once per user under
-   * that user's public key.
+   * encrypts `data` with it, and wraps the new key once per recipient.
+   *
+   * Pass recipients as a labeled map (userId → {email, name?}), not public keys:
+   * the vault resolves + trust-checks each recipient (binding + TOFU 'trusted'
+   * with matching fingerprint) before wrapping, and throws UNTRUSTED_RECIPIENT if
+   * any is unverified or untrusted. Call checkFingerprints first to resolve any
+   * 'unknown' contacts. The labels are display-only and used only if the trust
+   * modal opens; the vault request itself sees just the userIds.
    *
    * Use this for standalone encrypted files (no parent) and for the root
    * folder of an encrypted subtree.
@@ -292,15 +310,27 @@ export class VaultClient {
    */
   async encryptWithoutKey(
     data: ArrayBuffer,
-    userPublicKeys: Record<string, ArrayBuffer>,
+    recipients: Record<string, RecipientLabel>,
     options?: { optimizeMemory?: boolean }
   ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+    return this.withRecipientVerification(recipients, (isFinalAttempt) =>
+      this.encryptWithoutKeyRequest(data, Object.keys(recipients), options, isFinalAttempt)
+    );
+  }
+
+  private async encryptWithoutKeyRequest(
+    data: ArrayBuffer,
+    recipientUserIds: string[],
+    options: { optimizeMemory?: boolean } | undefined,
+    allowTransfer: boolean
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
     const optimize = options?.optimizeMemory === true;
-    return (await this.vaultRequest(
-      MSG_VAULT_ENCRYPT_WITHOUT_KEY,
-      { data, userPublicKeys, optimizeMemory: optimize },
-      optimize ? [data] : undefined,
-    )) as {
+    // Transferring `data` detaches it, so only do it on the FINAL attempt: an
+    // auto-verify retry needs the buffer intact if the first attempt is refused
+    // for an untrusted recipient. (optimizeMemory is a client-side hint here; the
+    // vault op does not read it.)
+    const transferables = optimize && allowTransfer ? [data] : undefined;
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientUserIds, optimizeMemory: optimize }, transferables)) as {
       encryptedContent: ArrayBuffer;
       encryptedKeys: Record<string, ArrayBuffer>;
     };
@@ -339,11 +369,7 @@ export class VaultClient {
       payload.encryptedKeyChain = encryptedKeyChain;
     }
 
-    return (await this.vaultRequest(
-      MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
-      payload,
-      optimize ? [data] : undefined,
-    )) as {
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY, payload, optimize ? [data] : undefined)) as {
       encryptedContent: ArrayBuffer;
       wrappedKey: ArrayBuffer;
     };
@@ -378,11 +404,7 @@ export class VaultClient {
       payload.encryptedKeyChain = encryptedKeyChain;
     }
 
-    return (await this.vaultRequest(
-      MSG_VAULT_ENCRYPT_WITH_KEY,
-      payload,
-      optimize ? [data] : undefined,
-    )) as {
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITH_KEY, payload, optimize ? [data] : undefined)) as {
       encryptedData: ArrayBuffer;
     };
   }
@@ -413,11 +435,7 @@ export class VaultClient {
       payload.encryptedKeyChain = encryptedKeyChain;
     }
 
-    return (await this.vaultRequest(
-      MSG_VAULT_DECRYPT_WITH_KEY,
-      payload,
-      optimize ? [encryptedData] : undefined,
-    )) as { data: ArrayBuffer };
+    return (await this.vaultRequest(MSG_VAULT_DECRYPT_WITH_KEY, payload, optimize ? [encryptedData] : undefined)) as { data: ArrayBuffer };
   }
 
   /**
@@ -506,10 +524,18 @@ export class VaultClient {
 
   /**
    * Share an existing document's or item's symmetric key with additional users.
-   * Accepts the same map format as encryptWithoutKey.
+   *
+   * Pass recipients as a labeled map (userId → {email, name?}), not public keys:
+   * the vault resolves each recipient's encryption key from the directory itself
+   * and wraps ONLY for identities whose binding verifies AND that you have marked
+   * 'trusted' (TOFU) with a matching fingerprint. If any recipient is unverified
+   * or untrusted it throws UNTRUSTED_RECIPIENT and wraps for none — call
+   * checkFingerprints (and resolve any 'unknown') first. Recipients are resolved
+   * in one batched request. The labels are display-only and used only if the
+   * trust modal opens; the vault request itself sees just the userIds.
    *
    * @param encryptedSymmetricKey - current user's encrypted copy of the key
-   * @param userPublicKeys - Record of userId → ArrayBuffer public key for each new user
+   * @param recipients - map of userId → display label to share with
    * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
    *   When provided, resolves the chain from entry point to the target item's key
    *   before re-encrypting for the target users.
@@ -517,10 +543,18 @@ export class VaultClient {
    */
   async shareKeys(
     encryptedSymmetricKey: ArrayBuffer,
-    userPublicKeys: Record<string, ArrayBuffer>,
+    recipients: Record<string, RecipientLabel>,
     encryptedKeyChain?: ArrayBuffer[]
   ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
-    const payload: Record<string, unknown> = { encryptedSymmetricKey, userPublicKeys };
+    return this.withRecipientVerification(recipients, () => this.shareKeysRequest(encryptedSymmetricKey, Object.keys(recipients), encryptedKeyChain));
+  }
+
+  private async shareKeysRequest(
+    encryptedSymmetricKey: ArrayBuffer,
+    recipientUserIds: string[],
+    encryptedKeyChain?: ArrayBuffer[]
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
+    const payload: Record<string, unknown> = { encryptedSymmetricKey, recipientUserIds };
 
     if (encryptedKeyChain) {
       payload.encryptedKeyChain = encryptedKeyChain;
@@ -563,7 +597,9 @@ export class VaultClient {
       userId: string;
       knownFingerprint: string | null;
       providedFingerprint: string;
-      status: 'trusted' | 'refused' | 'unknown';
+      // 'mismatch' = a recorded fingerprint that has since changed (transient, not
+      // a persisted status); 'unknown' = seen but not yet verified.
+      status: 'trusted' | 'refused' | 'unknown' | 'mismatch';
     }>;
   }> {
     return (await this.vaultRequest(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints, currentUserId })) as {
@@ -571,25 +607,9 @@ export class VaultClient {
         userId: string;
         knownFingerprint: string | null;
         providedFingerprint: string;
-        status: 'trusted' | 'refused' | 'unknown';
+        status: 'trusted' | 'refused' | 'unknown' | 'mismatch';
       }>;
     };
-  }
-
-  /**
-   * Accept a fingerprint: mark as trusted in the local registry.
-   */
-  async acceptFingerprint(userId: string, fingerprint: string): Promise<void> {
-    await this.vaultRequest(MSG_VAULT_ACCEPT_FINGERPRINT, { userId, fingerprint });
-    this.emit('fingerprint-changed', undefined as never);
-  }
-
-  /**
-   * Refuse a fingerprint: mark as refused in the local registry (shown in red in the UI).
-   */
-  async refuseFingerprint(userId: string, fingerprint: string): Promise<void> {
-    await this.vaultRequest(MSG_VAULT_REFUSE_FINGERPRINT, { userId, fingerprint });
-    this.emit('fingerprint-changed', undefined as never);
   }
 
   /**
@@ -608,29 +628,27 @@ export class VaultClient {
   // =========================================================================
 
   /**
-   * Compute a SHA-256 fingerprint of a public key.
-   * Returns 16 lowercase hex characters for storage (e.g. "a1b2c3d4e5f67890").
+   * Compute a 128-bit DECIMAL fingerprint of a public key: the first 16 bytes of
+   * its SHA-256, read big-endian as a fixed-width 40-digit decimal. Matches the
+   * device-pairing fingerprint so every surface shows the same value.
    * This is a pure client-side operation — no vault iframe needed.
    *
    * @param publicKey - The public key as ArrayBuffer (from fetchPublicKeys or getPublicKey)
    */
   async computeKeyFingerprint(publicKey: ArrayBuffer): Promise<string> {
-    const hash = await crypto.subtle.digest('SHA-256', publicKey);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', publicKey)).slice(0, 16);
 
-    return Array.from(new Uint8Array(hash))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-      .slice(0, 16);
+    let n = 0n;
+    for (const b of hash) n = (n << 8n) | BigInt(b);
+
+    return n.toString().padStart(40, '0');
   }
 
   /**
-   * Format a raw fingerprint for display: "a1b2c3d4e5f67890" → "A1B2 C3D4 E5F6 7890"
+   * Format a raw decimal fingerprint for display, grouped in blocks of five.
    */
   formatFingerprint(fingerprint: string): string {
-    return fingerprint
-      .replace(/(.{4})/g, '$1 ')
-      .trim()
-      .toUpperCase();
+    return formatDecimalFingerprint(fingerprint);
   }
 
   // =========================================================================
@@ -663,17 +681,31 @@ export class VaultClient {
   }
 
   /**
-   * Open the encryption interface for device transfer.
-   */
-  openDeviceTransfer(container: HTMLElement): void {
-    this.openInterface(container, '/device-transfer');
-  }
-
-  /**
    * Open the encryption settings (view fingerprint, delete keys).
    */
   openSettings(container: HTMLElement): void {
     this.openInterface(container, '/settings');
+  }
+
+  /**
+   * Open device approval: enroll this device from another, or approve a new one.
+   */
+  openDeviceApproval(container: HTMLElement): void {
+    this.openInterface(container, '/device-approval');
+  }
+
+  /**
+   * Open the per-recipient profile: the recipient's current trust decision, their
+   * identity fingerprint (for out-of-band comparison), and Trust / Refuse actions.
+   * Opened explicitly by the product (e.g. clicking a person in its share UI), so
+   * it mounts in a product-provided container like the other open* methods.
+   */
+  openRecipientProfile(container: HTMLElement, userId: string, label: RecipientLabel): void {
+    // Reset per-flow state, then set the profile target so the context handshake
+    // carries it (and its display label) once the iframe loads / requests context.
+    this.openInterface(container, '/recipient-profile');
+    this.pendingContext = { recipientProfile: { userId, label } };
+    this.sendContext(this.interfaceIframe?.contentWindow);
   }
 
   /**
@@ -684,6 +716,10 @@ export class VaultClient {
       this.removeIframe(this.interfaceIframe);
       this.interfaceIframe = null;
     }
+
+    // Context scoped to a single interface flow — clear it so a later open()
+    // of another screen never re-sends a stale flow block.
+    this.pendingContext = null;
   }
 
   // =========================================================================
@@ -709,48 +745,156 @@ export class VaultClient {
   private openInterface(container: HTMLElement, path: string): void {
     this.closeInterface();
 
-    this.interfaceIframe = document.createElement('iframe');
+    this.interfaceIframe = this.buildInterfaceIframe(path);
+    this.interfaceIframe.style.minHeight = '300px';
+    container.appendChild(this.interfaceIframe);
+  }
+
+  /**
+   * Construct and configure an interface iframe for `path` (sandbox, allow,
+   * theme/lang hash, context handshake). Mounting is left to the caller so the
+   * same setup serves both the product-provided container (openInterface) and
+   * the SDK-created full-screen overlay (openVerifyRecipients).
+   */
+  private buildInterfaceIframe(path: string): HTMLIFrameElement {
+    const iframe = document.createElement('iframe');
     const hashParams = new URLSearchParams({ theme: this.theme });
 
     if (this.lang) {
       hashParams.set('lang', this.lang);
     }
 
-    this.interfaceIframe.src = `${this.interfaceUrl}${path}#${hashParams.toString()}`;
-    this.interfaceIframe.style.width = '100%';
-    this.interfaceIframe.style.minHeight = '300px';
-    this.interfaceIframe.style.border = 'none';
-    this.interfaceIframe.style.overflow = 'hidden';
+    iframe.src = `${this.interfaceUrl}${path}#${hashParams.toString()}`;
+    iframe.style.width = '100%';
+    iframe.style.border = 'none';
+    iframe.style.overflow = 'hidden';
     // Sandbox permissions (principle of least privilege):
     // - allow-scripts: required for the React app and OIDC client
     // - allow-same-origin: required for sessionStorage (OIDC state)
     // - allow-forms: required for potential native form submissions (Cunningham components)
     // - allow-downloads: required for the recovery phrase file download during backup
     // - allow-popups: required for window.open() to open the OIDC login tab
-    this.interfaceIframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-downloads allow-popups');
+    // - allow-modals: required for window.print() of the recovery kit and the
+    //   beforeunload guard that warns before losing an un-saved recovery phrase
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals');
     // Permissions policy:
     // - camera: required for QR code scanning during device transfer import
     // - clipboard-write: required for the "Copy to clipboard" button during backup
-    this.interfaceIframe.setAttribute('allow', 'camera; clipboard-write');
-    this.interfaceIframe.setAttribute('title', 'Encryption Interface');
-    container.appendChild(this.interfaceIframe);
+    iframe.setAttribute('allow', 'camera; clipboard-write');
+    iframe.setAttribute('title', 'Encryption Interface');
 
-    const origin = this.interfaceOrigin;
-
-    this.interfaceIframe.addEventListener('load', () => {
+    iframe.addEventListener('load', () => {
       // Send auth context to the interface once it loads.
       // The interface also requests context via a handshake (MSG_INTERFACE_REQUEST_CONTEXT)
       // to handle the race condition where the React app mounts after the load event.
-      if (this.authContext) {
-        this.interfaceIframe?.contentWindow?.postMessage(
-          {
-            type: MSG_INTERFACE_CONTEXT,
-            suiteUserId: this.authContext.suiteUserId,
-          },
-          origin
-        );
-      }
+      this.sendContext(iframe.contentWindow);
     });
+
+    return iframe;
+  }
+
+  /** The context message currently owed to the interface, or null before auth. */
+  private sendContext(target: Window | null | undefined): void {
+    if (!target || !this.authContext) {
+      return;
+    }
+
+    // suiteUserId is always present; the per-flow block (verify / profile), if
+    // any, rides on the same channel the interface handshakes for. Validate
+    // before posting so a malformed context fails loudly in dev.
+    const context = interfaceContextSchema.parse({
+      suiteUserId: this.authContext.suiteUserId,
+      ...(this.pendingContext ?? {}),
+    });
+
+    target.postMessage({ type: MSG_INTERFACE_CONTEXT, ...context }, this.interfaceOrigin);
+  }
+
+  /**
+   * Open the SDK-owned "verify recipients" overlay on top of the product's own
+   * share dialog, and resolve with the user's outcome. The SDK deliberately does
+   * NOT draw any chrome here: the container is a minimal, transparent, full-
+   * viewport layer, and the interface (a Cunningham Modal) draws the whole modal
+   * (its own backdrop + card) inside the transparent iframe, so it matches the
+   * rest of the interface UI. Tears the overlay down once the outcome is in.
+   */
+  private openVerifyRecipients(recipients: Record<string, RecipientLabel>): Promise<'resolved' | 'cancelled'> {
+    this.closeInterface();
+    this.teardownVerifyOverlay();
+
+    this.pendingContext = { verifyRecipients: { recipients } };
+
+    // Minimal full-viewport layer: no background, no card. The React app inside
+    // draws the modal; keeping this transparent lets its backdrop show through.
+    const overlay = document.createElement('div');
+    overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647'].join(';');
+
+    const iframe = this.buildInterfaceIframe('/verify-recipients');
+    // Fill the layer and stay transparent so the interface-drawn backdrop is what
+    // the user sees (not an SDK-managed card).
+    iframe.style.height = '100%';
+    iframe.style.background = 'transparent';
+    iframe.setAttribute('allowtransparency', 'true');
+    // Assigning to interfaceIframe lets the shared context handshake and theme
+    // updates target this iframe exactly like any other flow.
+    this.interfaceIframe = iframe;
+    overlay.appendChild(iframe);
+    document.body.appendChild(overlay);
+    this.verifyOverlay = overlay;
+
+    return new Promise<'resolved' | 'cancelled'>((resolve) => {
+      this.verifyResolve = resolve;
+    });
+  }
+
+  private completeVerify(outcome: 'resolved' | 'cancelled'): void {
+    const resolve = this.verifyResolve;
+    this.verifyResolve = null;
+    this.teardownVerifyOverlay();
+    resolve?.(outcome);
+  }
+
+  private teardownVerifyOverlay(): void {
+    if (this.verifyOverlay?.parentNode) {
+      this.verifyOverlay.parentNode.removeChild(this.verifyOverlay);
+    }
+
+    this.verifyOverlay = null;
+    this.pendingContext = null;
+    // The overlay owned the interface iframe, so it is gone with it.
+    this.interfaceIframe = null;
+  }
+
+  /**
+   * Run a recipient-bearing operation, and on UNTRUSTED_RECIPIENT open the shared
+   * verify modal for the ORIGINAL recipients (full labeled map; the interface
+   * surfaces only the blocked ones). If the user trusts them all, retry the
+   * operation exactly once; otherwise rethrow the original error so the product
+   * sees the share failed (all-or-nothing). Any other error rethrows unchanged.
+   * This is always on: whether to prompt for trust is not a product choice, so
+   * there is no opt-out.
+   */
+  private async withRecipientVerification<T>(recipients: Record<string, RecipientLabel>, run: (isFinalAttempt: boolean) => Promise<T>): Promise<T> {
+    try {
+      // The first attempt may fail the trust gate and be retried, so it must not
+      // transfer (detach) any buffers; the retry is the final attempt.
+      return await run(false);
+    } catch (err) {
+      if (err instanceof VaultError && err.code === VaultErrorCode.UNTRUSTED_RECIPIENT) {
+        const outcome = await this.openVerifyRecipients(recipients);
+
+        if (outcome === 'resolved') {
+          // The user trusted every recipient (accept-fingerprint ran in the
+          // vault), so the local registry changed: notify listeners and retry
+          // the operation exactly once.
+          this.emit('fingerprint-changed', undefined as never);
+
+          return await run(true);
+        }
+      }
+
+      throw err;
+    }
   }
 
   private async vaultRequest(type: string, payload?: Record<string, unknown>, transferables?: Transferable[]): Promise<unknown> {
@@ -861,34 +1005,32 @@ export class VaultClient {
       return;
     }
 
-    const msg = data as { type: string; publicKey?: string; height?: number };
+    const msg = data as { type: string; publicKey?: string; height?: number; outcome?: 'resolved' | 'cancelled' };
 
     switch (msg.type) {
       case MSG_INTERFACE_REQUEST_CONTEXT:
         // Handshake: interface iframe requests its context on mount
-        if (this.interfaceIframe?.contentWindow) {
-          if (this.authContext) {
-            this.interfaceIframe.contentWindow.postMessage(
-              {
-                type: MSG_INTERFACE_CONTEXT,
-                suiteUserId: this.authContext.suiteUserId,
-              },
-              this.interfaceOrigin
-            );
-          }
-        }
+        this.sendContext(this.interfaceIframe?.contentWindow);
         break;
       case MSG_INTERFACE_RESIZE:
         // Auto-resize: the interface iframe communicates its content height.
         // `Math.ceil` alone is sufficient to avoid subpixel scrollbars; an
         // additional buffer compounded with the child's ResizeObserver
         // into a feedback loop that grew the iframe ~2px per interaction.
-        if (msg.height && this.interfaceIframe) {
+        // Skipped for the verify overlay: it is a full-viewport iframe drawing
+        // its own modal, so collapsing it to content height would break the
+        // backdrop.
+        if (msg.height && this.interfaceIframe && !this.verifyOverlay) {
           this.interfaceIframe.style.height = `${Math.ceil(msg.height)}px`;
         }
         break;
       case MSG_INTERFACE_ONBOARDING_COMPLETE:
         this.emit('onboarding:complete', { publicKey: msg.publicKey ?? '' });
+        break;
+      case MSG_INTERFACE_VERIFY_COMPLETE:
+        // The verify overlay reports its outcome; any value other than an explicit
+        // 'resolved' aborts the share (all-or-nothing).
+        this.completeVerify(msg.outcome === 'resolved' ? 'resolved' : 'cancelled');
         break;
       case MSG_INTERFACE_CLOSED:
         this.closeInterface();

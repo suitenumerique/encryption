@@ -18,6 +18,15 @@ export type MnemonicLanguage = 'french' | 'english';
 
 export { french as frenchWordlist, english as englishWordlist };
 
+/**
+ * Pick the BIP-39 wordlist language from an interface locale (an i18next code
+ * like `fr`, `fr-FR`, `en`, `en-GB`). Prefix-matched, so a regional locale still
+ * resolves to the base language; anything non-French falls back to English.
+ */
+export function mnemonicLanguageForLocale(locale: string): MnemonicLanguage {
+  return locale.toLowerCase().startsWith('fr') ? 'french' : 'english';
+}
+
 function getWordlist(language: MnemonicLanguage): string[] {
   return language === 'french' ? french : english;
 }

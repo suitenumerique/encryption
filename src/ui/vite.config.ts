@@ -32,7 +32,7 @@ function injectRuntimeConfig(): Plugin {
  * SPA fallback for interface.html in dev mode.
  * Vite's built-in SPA fallback only works with index.html, but our entry
  * is interface.html. This plugin serves it for all non-asset HTML routes
- * (e.g. /onboarding, /settings, /device-transfer).
+ * (e.g. /onboarding, /settings).
  */
 function spaFallback(): Plugin {
   return {

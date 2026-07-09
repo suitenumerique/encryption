@@ -5,13 +5,20 @@ import { z } from 'zod';
 // See src/crypto/key-possession-challenge.ts (encryption-key PoP) and
 // src/crypto/key-registration.ts (identity binding + signature-key PoP).
 
+// Generous upper bounds on the base64 blobs. Real sizes: X-Wing public key
+// ~1624 chars; Ed25519 key ~44; Ed25519 signature / HMAC tag ~88. The caps are
+// well above those so valid payloads pass, but they stop a caller from smuggling
+// a near-1-MiB string through a bare z.string() bounded only by the body limit.
+const MAX_ENCRYPTION_KEY_B64 = 4096;
+const MAX_SIGNATURE_B64 = 1024;
+
 export const InitKeyPossessionBodySchema = z.object({
   user_id: z.string().min(1),
-  encryption_public_key: z.string(), // base64 [version:1][xwingPubkey:1216]
-  signature_public_key: z.string(), // base64 [version:1][ed25519Pubkey:32] — the identity
+  encryption_public_key: z.string().min(1).max(MAX_ENCRYPTION_KEY_B64), // base64 [version:1][xwingPubkey:1216]
+  signature_public_key: z.string().min(1).max(MAX_SIGNATURE_B64), // base64 [version:1][ed25519Pubkey:32] — the identity
   version: z.number().int().positive(), // monotonic per-user key version (>= 1)
   created_at_millis: z.number().int().nonnegative(), // client-asserted creation time, covered by the binding signature
-  key_binding_signature: z.string(), // base64 Ed25519 signature over the canonical registration payload
+  key_binding_signature: z.string().min(1).max(MAX_SIGNATURE_B64), // base64 Ed25519 signature over the canonical registration payload
 });
 
 export type InitKeyPossessionBody = z.infer<typeof InitKeyPossessionBodySchema>;
@@ -25,8 +32,8 @@ export type InitKeyPossessionResponse = z.infer<typeof InitKeyPossessionResponse
 
 export const CompleteKeyPossessionBodySchema = z.object({
   challenge_id: z.string().uuid(),
-  response: z.string(), // base64-encoded HMAC-SHA256 tag (32 bytes) — encryption-key PoP
-  challenge_signature: z.string(), // base64-encoded Ed25519 signature over the challenge id — signature-key PoP
+  response: z.string().min(1).max(MAX_SIGNATURE_B64), // base64-encoded HMAC-SHA256 tag (32 bytes) — encryption-key PoP
+  challenge_signature: z.string().min(1).max(MAX_SIGNATURE_B64), // base64-encoded Ed25519 signature over the challenge id — signature-key PoP
 });
 
 export type CompleteKeyPossessionBody = z.infer<typeof CompleteKeyPossessionBodySchema>;

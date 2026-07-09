@@ -20,8 +20,18 @@ export const PublicKeySchema = z.object({
 
 export type PublicKey = z.infer<typeof PublicKeySchema>;
 
+// The listing endpoint feeds `user_ids` straight into an IN(...) query, so the
+// list is split, trimmed, and bounded here: at most 100 ids, each non-empty and
+// length-capped, so a caller cannot enumerate with (or blow up the query on) an
+// unbounded batch. `user_ids` resolves to the parsed array, not the raw string.
+const MAX_USER_IDS = 100;
+const MAX_USER_ID_LENGTH = 200;
+
 export const GetPublicKeysQuerySchema = z.object({
-  user_ids: z.string(), // comma-separated user identifiers
+  user_ids: z
+    .string()
+    .transform((value) => value.split(',').map((id) => id.trim()))
+    .pipe(z.array(z.string().min(1).max(MAX_USER_ID_LENGTH)).min(1).max(MAX_USER_IDS)),
 });
 
 export type GetPublicKeysQuery = z.infer<typeof GetPublicKeysQuerySchema>;
@@ -31,3 +41,24 @@ export const GetPublicKeysResponseSchema = z.object({
 });
 
 export type GetPublicKeysResponse = z.infer<typeof GetPublicKeysResponseSchema>;
+
+// Identity-continuity chain for a single user, walked from the CURRENT identity
+// (head) back toward older ones, one link per rotation. Each link is a genuine
+// rotation cross-signed by the previous identity key, so a consumer can verify
+// the whole chain locally and a compromised registry can only withhold links
+// (fail-safe), never fabricate trust.
+export const ContinuityLinkSchema = z.object({
+  signature_public_key: z.string(), // this identity's key (base64 wire blob)
+  previous_signature_public_key: z.string(), // the key that endorsed it
+  generation: z.number().int().positive(),
+  algo: z.string(),
+  continuity_signature: z.string(), // base64 Sign(previousIdentitySecret, this identity)
+});
+
+export type ContinuityLinkWire = z.infer<typeof ContinuityLinkSchema>;
+
+export const GetContinuityResponseSchema = z.object({
+  chain: z.array(ContinuityLinkSchema),
+});
+
+export type GetContinuityResponse = z.infer<typeof GetContinuityResponseSchema>;

@@ -1,62 +1,10 @@
 import sodium from 'libsodium-wrappers-sumo';
 
 import { ensureSodium, generateUserKeyPair } from '@encryption/src/crypto/encryption';
-import {
-  type UserKeyBundle,
-  base64ToUint8,
-  exportPublicKeyAsBase64,
-  importPublicKeyFromBase64,
-  keyPairToPassphrase,
-  passphraseToKeyPair,
-} from '@encryption/src/crypto/encryption-backup';
-import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
+import { base64ToUint8, exportPublicKeyAsBase64, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
 import { CRYPTO_VERSION } from '@encryption/src/shared/constants';
 
-async function generateBundle(): Promise<UserKeyBundle> {
-  return {
-    encryption: await generateUserKeyPair(),
-    signature: await generateSignatureKeyPair(),
-  };
-}
-
 describe('encryption-backup', () => {
-  describe('keyPairToPassphrase / passphraseToKeyPair', () => {
-    it('should roundtrip an encryption + signature key bundle through passphrase encoding', async () => {
-      const bundle = await generateBundle();
-
-      const passphrase = keyPairToPassphrase(bundle);
-      expect(typeof passphrase).toBe('string');
-      expect(passphrase.length).toBeGreaterThan(0);
-
-      const restored = passphraseToKeyPair(passphrase);
-      expect(restored.encryption.publicKey).toEqual(bundle.encryption.publicKey);
-      expect(restored.encryption.secretKey).toEqual(bundle.encryption.secretKey);
-      expect(restored.signature.publicKey).toEqual(bundle.signature.publicKey);
-      expect(restored.signature.secretKey).toEqual(bundle.signature.secretKey);
-    });
-
-    it('should reject a backup missing the signature key pair', () => {
-      // A pre-signature backup (encryption keys only) must be rejected rather
-      // than silently restoring an identity-less pair.
-      const legacyJson = JSON.stringify({ version: CRYPTO_VERSION, publicKey: 'AAAA', secretKey: 'AAAA' });
-      const legacy = btoa(legacyJson).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-      expect(() => passphraseToKeyPair(legacy)).toThrow(/invalid backup/i);
-    });
-
-    it('should reject a passphrase with an unsupported version', async () => {
-      const bundle = await generateBundle();
-      const passphrase = keyPairToPassphrase(bundle);
-
-      // Decode → tamper version → re-encode
-      const json = new TextDecoder().decode(base64ToUint8(passphrase.replace(/-/g, '+').replace(/_/g, '/')));
-      const tampered = json.replace(`"version":${CRYPTO_VERSION}`, '"version":999');
-      const reencoded = btoa(tampered).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-      expect(() => passphraseToKeyPair(reencoded)).toThrow(/unsupported crypto version/i);
-    });
-  });
-
   describe('exportPublicKeyAsBase64 / importPublicKeyFromBase64', () => {
     it('should roundtrip an X-Wing public key through the wire format', async () => {
       await ensureSodium();

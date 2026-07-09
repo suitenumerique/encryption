@@ -13,6 +13,7 @@
  * 7. The original iframe receives the BroadcastChannel message and proceeds
  */
 import { User, UserManager, WebStorageStateStore } from 'oidc-client-ts';
+import { z } from 'zod';
 
 /**
  * Read OIDC config from window.__ENCRYPTION_CONFIG__ (injected by the server at runtime).
@@ -36,12 +37,34 @@ const OIDC_REDIRECT_URI = runtimeConfig?.oidcRedirectUri;
 
 export const OIDC_AUTH_MESSAGE_TYPE = 'encryption-oidc-auth-complete';
 
-export interface TokenSet {
-  accessToken: string;
-  refreshToken: string | null;
-  idToken: string | null;
-  expiresAt: number; // Unix timestamp in ms
-  sub: string;
+export const tokenSetSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string().nullable(),
+  idToken: z.string().nullable(),
+  expiresAt: z.number(), // Unix timestamp in ms
+  sub: z.string(),
+});
+export type TokenSet = z.infer<typeof tokenSetSchema>;
+
+// The subset of JWT claims we read. z.object strips unknown keys, so the many
+// other claims a token carries pass through harmlessly; all are optional because
+// the OIDC provider decides which it emits.
+export const jwtClaimsSchema = z.object({
+  sub: z.string().optional(),
+  name: z.string().optional(),
+  preferred_username: z.string().optional(),
+  email: z.string().optional(),
+});
+export type JwtClaims = z.infer<typeof jwtClaimsSchema>;
+
+/** Decode + validate a JWT's claims without verifying the signature (the server
+ *  already validated the token). Returns null on any malformed input. */
+export function decodeJwtClaims(token: string): JwtClaims | null {
+  try {
+    return jwtClaimsSchema.parse(JSON.parse(atob(token.split('.')[1])));
+  } catch {
+    return null;
+  }
 }
 
 let userManager: UserManager | null = null;
@@ -189,18 +212,8 @@ export function tokenNeedsRefresh(tokenSet: TokenSet): boolean {
   return tokenSet.expiresAt - Date.now() < TOKEN_REFRESH_BUFFER_MS;
 }
 
-/**
- * Decode the `sub` claim from a JWT access token without verifying the signature.
- * The token is already validated by the server — this is just for extracting metadata.
- */
 function decodeJwtSub(token: string): string | undefined {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-
-    return payload.sub;
-  } catch {
-    return undefined;
-  }
+  return decodeJwtClaims(token)?.sub;
 }
 
 /**
@@ -247,20 +260,27 @@ async function doRefresh(refreshToken: string): Promise<TokenSet> {
  * Prevents concurrent refreshes when multiple product tabs embed the interface.
  *
  * @param currentTokenSet - The current token set (may be expired)
- * @param readStoredToken - Callback to read the latest token from vault IndexedDB
+ * @param readStoredToken - Callback to read the latest token from storage
  *   (another tab may have already refreshed it while we were waiting for the lock)
+ * @param persistToken - Callback to persist the refreshed token to storage. It is
+ *   invoked INSIDE the lock, immediately after a successful refresh and before the
+ *   lock is released, so a second tab acquiring the lock next reads the rotated
+ *   token instead of the stale one. Persisting after releasing the lock (e.g. via a
+ *   later React effect) lets a second tab refresh again with an already-consumed
+ *   refresh token, causing a spurious "session expired" under Keycloak rotation.
  * @returns The refreshed token set
  */
 export async function refreshTokenWithLock(
   currentTokenSet: TokenSet,
-  readStoredToken: () => Promise<TokenSet | null>
+  readStoredToken: () => Promise<TokenSet | null>,
+  persistToken: (tokenSet: TokenSet) => void
 ): Promise<TokenSet> {
   if (!currentTokenSet.refreshToken) {
     throw new Error('No refresh token available');
   }
 
   return navigator.locks.request('encryption-oidc-token-refresh', async () => {
-    // Re-read from vault — another tab may have refreshed while we waited for the lock
+    // Re-read from storage — another tab may have refreshed while we waited for the lock
     const stored = await readStoredToken();
 
     if (stored && !tokenNeedsRefresh(stored)) {
@@ -269,7 +289,11 @@ export async function refreshTokenWithLock(
 
     // Still expired — do the actual refresh
     const refreshToken = stored?.refreshToken ?? currentTokenSet.refreshToken;
+    const refreshed = await doRefresh(refreshToken!);
 
-    return doRefresh(refreshToken!);
+    // Make storage authoritative under the lock, before releasing it.
+    persistToken(refreshed);
+
+    return refreshed;
   });
 }

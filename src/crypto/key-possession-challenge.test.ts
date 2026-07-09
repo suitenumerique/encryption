@@ -1,11 +1,7 @@
 import sodium from 'libsodium-wrappers-sumo';
 
 import { ensureSodium, generateUserKeyPair, hybridDecapsulate } from '@encryption/src/crypto/encryption';
-import {
-  computeChallengeResponse,
-  createKeyPossessionChallenge,
-  verifyChallengeResponse,
-} from '@encryption/src/crypto/key-possession-challenge';
+import { computeChallengeResponse, createKeyPossessionChallenge, verifyChallengeResponse } from '@encryption/src/crypto/key-possession-challenge';
 
 describe('key-possession-challenge', () => {
   it('roundtrips: holder of the secret key recovers the expected HMAC', async () => {

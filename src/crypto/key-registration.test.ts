@@ -166,9 +166,7 @@ describe('key-registration', () => {
     it('rejects when the endorsed generation is tampered', async () => {
       const { record, previousSignaturePublicKeyB64, continuitySignatureB64 } = await buildContinuity({ generation: 2 });
 
-      expect(
-        await verifyIdentityContinuity({ ...record, generation: 3 }, previousSignaturePublicKeyB64, continuitySignatureB64)
-      ).toBe(false);
+      expect(await verifyIdentityContinuity({ ...record, generation: 3 }, previousSignaturePublicKeyB64, continuitySignatureB64)).toBe(false);
     });
 
     it('rejects a malformed continuity signature without throwing', async () => {

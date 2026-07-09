@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { VaultClient } from '@encryption/src/client/vault-client';
-import { decryptContent, encryptContent, ensureSodium, generateSymmetricKey, writeUint32LE, readUint32LE } from '@encryption/src/crypto';
-import { MSG_VAULT_GENERATE_KEYS, MSG_VAULT_RESULT } from '@encryption/src/shared/constants';
+import { decryptContent, encryptContent, ensureSodium, generateSymmetricKey, readUint32LE, writeUint32LE } from '@encryption/src/crypto';
 import { DEMO_USERS, getToken, loginUser } from '@encryption/src/demo/auth';
+import { MSG_VAULT_COMMIT_STAGED, MSG_VAULT_GENERATE_KEYS, MSG_VAULT_RESULT } from '@encryption/src/shared/constants';
 
 const VAULT_URL = 'http://data.encryption.localhost:7200';
 const INTERFACE_URL = 'http://encryption.localhost:7200';
@@ -128,12 +128,7 @@ function formatSize(bytes: number): string {
  * Send a privileged request directly to the vault iframe.
  * In dev mode, the vault allows product origins to send privileged operations.
  */
-function sendVaultRequest(
-  vaultIframe: HTMLIFrameElement,
-  type: string,
-  suiteUserId: string,
-  payload?: Record<string, unknown>
-): Promise<unknown> {
+function sendVaultRequest(vaultIframe: HTMLIFrameElement, type: string, suiteUserId: string, payload?: Record<string, unknown>): Promise<unknown> {
   const requestId = crypto.randomUUID();
   const origin = new URL(VAULT_URL).origin;
 
@@ -156,10 +151,7 @@ function sendVaultRequest(
     }
 
     window.addEventListener('message', handler);
-    vaultIframe.contentWindow!.postMessage(
-      { type, requestId, suiteUserId, ...(payload ? { payload } : {}) },
-      origin
-    );
+    vaultIframe.contentWindow!.postMessage({ type, requestId, suiteUserId, ...(payload ? { payload } : {}) }, origin);
   });
 }
 
@@ -224,7 +216,11 @@ export function BenchmarkApp() {
           return;
         }
 
+        // generate-keys only STAGES the vault in memory (the real onboarding
+        // registers it before committing). This benchmark has no server step, so
+        // commit it straight away to get a persisted vault the benchmark can reuse.
         await sendVaultRequest(vaultIframe, MSG_VAULT_GENERATE_KEYS, entry.userId);
+        await sendVaultRequest(vaultIframe, MSG_VAULT_COMMIT_STAGED, entry.userId);
         log('Keys generated successfully');
         setState('ready');
       }
@@ -262,216 +258,219 @@ export function BenchmarkApp() {
     log(`\n========== BENCHMARK START: ${formatSize(sizeBytes)} ==========`);
 
     try {
+      // 1. Generate test data
+      setProgress('Generating test data...');
+      const testData = generateData(sizeBytes);
 
-    // 1. Generate test data
-    setProgress('Generating test data...');
-    const testData = generateData(sizeBytes);
+      // Small delay to let UI update
+      await new Promise((r) => setTimeout(r, 50));
 
-    // Small delay to let UI update
-    await new Promise((r) => setTimeout(r, 50));
+      // =====================================================
+      // 2. DIRECT: encrypt/decrypt using crypto functions
+      // =====================================================
+      setProgress('Running DIRECT benchmark (no postMessage)...');
+      log('--- Direct (in-page crypto, no postMessage) ---');
 
-    // =====================================================
-    // 2. DIRECT: encrypt/decrypt using crypto functions
-    // =====================================================
-    setProgress('Running DIRECT benchmark (no postMessage)...');
-    log('--- Direct (in-page crypto, no postMessage) ---');
+      await ensureSodium();
+      const directKey = await generateSymmetricKey();
 
-    await ensureSodium();
-    const directKey = await generateSymmetricKey();
-
-    // Warm up the in-page libsodium WASM with a small encrypt/decrypt cycle
-    // so JIT compilation doesn't skew the benchmark
-    const warmupDirect = new Uint8Array(1024);
-    crypto.getRandomValues(warmupDirect);
-    const warmupEnc = await encryptContent(warmupDirect, directKey);
-    await decryptContent(warmupEnc, directKey);
-    log('Direct crypto warmed up');
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Determine effective chunk size:
-    // - If user selected a chunk size, use it
-    // - If "None" but data exceeds WASM heap limit, force 200 MB chunks to avoid _malloc crash
-    // - If "None" and data fits, no chunking
-    let effectiveChunkSize: number;
-    let useChunking: boolean;
-
-    if (selectedChunkSize !== null) {
-      effectiveChunkSize = selectedChunkSize;
-      useChunking = true;
-    } else if (sizeBytes > WASM_HEAP_LIMIT) {
-      effectiveChunkSize = WASM_HEAP_LIMIT;
-      useChunking = true;
-      log(`Data exceeds WASM heap limit — forcing ${formatSize(WASM_HEAP_LIMIT)} chunks to avoid _malloc crash`);
-    } else {
-      effectiveChunkSize = sizeBytes; // no chunking
-      useChunking = false;
-    }
-
-    if (useChunking) {
-      log(`Chunked encryption: ${Math.ceil(sizeBytes / effectiveChunkSize)} chunks of ${formatSize(effectiveChunkSize)}`);
-    }
-
-    const directEncStart = performance.now();
-    const directEncrypted = await encryptChunked(testData, directKey, effectiveChunkSize);
-    const directEncEnd = performance.now();
-    const directEncMs = directEncEnd - directEncStart;
-    log(`Direct encrypt: ${formatMs(directEncMs)} (${formatSize(directEncrypted.length)} ciphertext)`);
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    const directDecStart = performance.now();
-    const directDecrypted = useChunking ? await decryptChunked(directEncrypted, directKey) : await decryptContent(directEncrypted, directKey);
-    const directDecEnd = performance.now();
-    const directDecMs = directDecEnd - directDecStart;
-    log(`Direct decrypt: ${formatMs(directDecMs)} (${formatSize(directDecrypted.length)} plaintext)`);
-
-    // Verify correctness
-    if (directDecrypted.length !== testData.length) {
-      log('ERROR: Direct decryption size mismatch!');
-    }
-
-    const directResult: BenchmarkResult = {
-      label: useChunking ? `Direct (${Math.ceil(sizeBytes / effectiveChunkSize)} chunks of ${formatSize(effectiveChunkSize)})` : 'Direct (no chunking)',
-      encryptMs: directEncMs,
-      decryptMs: directDecMs,
-      totalMs: directEncMs + directDecMs,
-      sizeBytes,
-      throughputMBs: (sizeBytes / (1024 * 1024)) / ((directEncMs + directDecMs) / 1000),
-    };
-
-    setResults((prev) => [...prev, directResult]);
-    await new Promise((r) => setTimeout(r, 50));
-
-    // =====================================================
-    // 3. VIA POSTMESSAGE: encrypt/decrypt through vault iframe
-    // =====================================================
-    setProgress('Running POSTMESSAGE benchmark (via vault iframe)...');
-    log('--- Via PostMessage (VaultClient → vault iframe) ---');
-
-    const tokenEntry = getToken(DEMO_USERS[0].username);
-    if (!tokenEntry) {
-      log('ERROR: Not authenticated');
-      setState('ready');
-      return;
-    }
-
-    log('Getting public key and creating initial encrypted key...');
-    const { publicKey } = await client.getPublicKey();
-
-    // Create an encrypted symmetric key (one-time setup, not timed as part of the benchmark)
-    const setupData = new Uint8Array(16); // tiny payload just to get the key
-    crypto.getRandomValues(setupData);
-    const { encryptedKeys } = await client.encryptWithoutKey(setupData.buffer as ArrayBuffer, {
-      [tokenEntry.userId]: publicKey,
-    });
-    const encryptedSymKey = encryptedKeys[tokenEntry.userId];
-    log('Encrypted symmetric key obtained (setup done)');
-
-    // Warm up the symmetric key cache in the vault by doing one encrypt
-    const warmupData = new Uint8Array(16);
-    crypto.getRandomValues(warmupData);
-    await client.encryptWithKey(warmupData.buffer as ArrayBuffer, encryptedSymKey);
-    log('Symmetric key cache warmed up');
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    // For large data, chunk the postMessage calls too (vault has same WASM limits)
-    let pmEncMs: number;
-    let pmDecMs: number;
-    let pmEncryptedSize: number;
-    let pmDecryptedSize: number;
-
-    if (useChunking) {
-      const chunkCount = Math.ceil(sizeBytes / effectiveChunkSize);
-
-      // Encrypt chunks via postMessage
-      const pmEncStart = performance.now();
-      const encryptedChunks: ArrayBuffer[] = [];
-
-      for (let i = 0; i < chunkCount; i++) {
-        const start = i * effectiveChunkSize;
-        const end = Math.min(start + effectiveChunkSize, sizeBytes);
-        const chunk = testData.slice(start, end);
-        const { encryptedData } = await client.encryptWithKey(chunk.buffer as ArrayBuffer, encryptedSymKey);
-        encryptedChunks.push(encryptedData);
-      }
-
-      const pmEncEnd = performance.now();
-      pmEncMs = pmEncEnd - pmEncStart;
-      pmEncryptedSize = encryptedChunks.reduce((sum, c) => sum + c.byteLength, 0);
-      log(`PostMessage encrypt: ${formatMs(pmEncMs)} (${formatSize(pmEncryptedSize)} ciphertext, ${chunkCount} chunks)`);
+      // Warm up the in-page libsodium WASM with a small encrypt/decrypt cycle
+      // so JIT compilation doesn't skew the benchmark
+      const warmupDirect = new Uint8Array(1024);
+      crypto.getRandomValues(warmupDirect);
+      const warmupEnc = await encryptContent(warmupDirect, directKey);
+      await decryptContent(warmupEnc, directKey);
+      log('Direct crypto warmed up');
 
       await new Promise((r) => setTimeout(r, 50));
 
-      // Decrypt chunks via postMessage
-      const pmDecStart = performance.now();
-      let decTotal = 0;
+      // Determine effective chunk size:
+      // - If user selected a chunk size, use it
+      // - If "None" but data exceeds WASM heap limit, force 200 MB chunks to avoid _malloc crash
+      // - If "None" and data fits, no chunking
+      let effectiveChunkSize: number;
+      let useChunking: boolean;
 
-      for (const chunk of encryptedChunks) {
-        const { data } = await client.decryptWithKey(chunk, encryptedSymKey);
-        decTotal += data.byteLength;
+      if (selectedChunkSize !== null) {
+        effectiveChunkSize = selectedChunkSize;
+        useChunking = true;
+      } else if (sizeBytes > WASM_HEAP_LIMIT) {
+        effectiveChunkSize = WASM_HEAP_LIMIT;
+        useChunking = true;
+        log(`Data exceeds WASM heap limit — forcing ${formatSize(WASM_HEAP_LIMIT)} chunks to avoid _malloc crash`);
+      } else {
+        effectiveChunkSize = sizeBytes; // no chunking
+        useChunking = false;
       }
 
-      const pmDecEnd = performance.now();
-      pmDecMs = pmDecEnd - pmDecStart;
-      pmDecryptedSize = decTotal;
-      log(`PostMessage decrypt: ${formatMs(pmDecMs)} (${formatSize(pmDecryptedSize)} plaintext, ${chunkCount} chunks)`);
-    } else {
-      // Single-shot for data that fits in WASM heap
-      // We need a fresh copy of testData because ArrayBuffer gets transferred (neutered)
-      const testDataForPostMessage = new Uint8Array(sizeBytes);
-      testDataForPostMessage.set(testData);
+      if (useChunking) {
+        log(`Chunked encryption: ${Math.ceil(sizeBytes / effectiveChunkSize)} chunks of ${formatSize(effectiveChunkSize)}`);
+      }
 
-      const pmEncStart = performance.now();
-      const { encryptedData: pmEncrypted } = await client.encryptWithKey(
-        testDataForPostMessage.buffer as ArrayBuffer,
-        encryptedSymKey
-      );
-      const pmEncEnd = performance.now();
-      pmEncMs = pmEncEnd - pmEncStart;
-      pmEncryptedSize = pmEncrypted.byteLength;
-      log(`PostMessage encrypt: ${formatMs(pmEncMs)} (${formatSize(pmEncryptedSize)} ciphertext)`);
+      const directEncStart = performance.now();
+      const directEncrypted = await encryptChunked(testData, directKey, effectiveChunkSize);
+      const directEncEnd = performance.now();
+      const directEncMs = directEncEnd - directEncStart;
+      log(`Direct encrypt: ${formatMs(directEncMs)} (${formatSize(directEncrypted.length)} ciphertext)`);
 
       await new Promise((r) => setTimeout(r, 50));
 
-      const pmDecStart = performance.now();
-      const { data: pmDecrypted } = await client.decryptWithKey(pmEncrypted, encryptedSymKey);
-      const pmDecEnd = performance.now();
-      pmDecMs = pmDecEnd - pmDecStart;
-      pmDecryptedSize = pmDecrypted.byteLength;
-      log(`PostMessage decrypt: ${formatMs(pmDecMs)} (${formatSize(pmDecryptedSize)} plaintext)`);
-    }
+      const directDecStart = performance.now();
+      const directDecrypted = useChunking ? await decryptChunked(directEncrypted, directKey) : await decryptContent(directEncrypted, directKey);
+      const directDecEnd = performance.now();
+      const directDecMs = directDecEnd - directDecStart;
+      log(`Direct decrypt: ${formatMs(directDecMs)} (${formatSize(directDecrypted.length)} plaintext)`);
 
-    const pmResult: BenchmarkResult = {
-      label: useChunking ? `PostMessage (${Math.ceil(sizeBytes / effectiveChunkSize)} chunks of ${formatSize(effectiveChunkSize)})` : 'PostMessage (no chunking)',
-      encryptMs: pmEncMs,
-      decryptMs: pmDecMs,
-      totalMs: pmEncMs + pmDecMs,
-      sizeBytes,
-      throughputMBs: (sizeBytes / (1024 * 1024)) / ((pmEncMs + pmDecMs) / 1000),
-    };
+      // Verify correctness
+      if (directDecrypted.length !== testData.length) {
+        log('ERROR: Direct decryption size mismatch!');
+      }
 
-    setResults((prev) => [...prev, pmResult]);
+      const directResult: BenchmarkResult = {
+        label: useChunking
+          ? `Direct (${Math.ceil(sizeBytes / effectiveChunkSize)} chunks of ${formatSize(effectiveChunkSize)})`
+          : 'Direct (no chunking)',
+        encryptMs: directEncMs,
+        decryptMs: directDecMs,
+        totalMs: directEncMs + directDecMs,
+        sizeBytes,
+        throughputMBs: sizeBytes / (1024 * 1024) / ((directEncMs + directDecMs) / 1000),
+      };
 
-    // =====================================================
-    // 4. Summary
-    // =====================================================
-    const overhead = pmResult.totalMs - directResult.totalMs;
-    const overheadPct = ((overhead / directResult.totalMs) * 100).toFixed(1);
-    log(`\n========== RESULTS ==========`);
-    log(`Direct total:      ${formatMs(directResult.totalMs)}`);
-    log(`PostMessage total:  ${formatMs(pmResult.totalMs)}`);
-    log(`Overhead:           ${formatMs(overhead)} (+${overheadPct}%)`);
-    log(`Direct throughput:  ${directResult.throughputMBs.toFixed(1)} MB/s`);
-    log(`PM throughput:      ${pmResult.throughputMBs.toFixed(1)} MB/s`);
-    log(`=============================\n`);
+      setResults((prev) => [...prev, directResult]);
+      await new Promise((r) => setTimeout(r, 50));
 
-    setProgress('');
-    setState('done');
+      // =====================================================
+      // 3. VIA POSTMESSAGE: encrypt/decrypt through vault iframe
+      // =====================================================
+      setProgress('Running POSTMESSAGE benchmark (via vault iframe)...');
+      log('--- Via PostMessage (VaultClient → vault iframe) ---');
 
+      const tokenEntry = getToken(DEMO_USERS[0].username);
+      if (!tokenEntry) {
+        log('ERROR: Not authenticated');
+        setState('ready');
+        return;
+      }
+
+      log('Creating initial encrypted key...');
+
+      // Create an encrypted symmetric key (one-time setup, not timed as part of the benchmark).
+      // The vault resolves the recipient key from the directory (own identity is always trusted).
+      const setupData = new Uint8Array(16); // tiny payload just to get the key
+      crypto.getRandomValues(setupData);
+      const selfLabel = { email: DEMO_USERS[0].email, name: `${DEMO_USERS[0].firstName} ${DEMO_USERS[0].lastName}` };
+      const { encryptedKeys } = await client.encryptWithoutKey(setupData.buffer as ArrayBuffer, { [tokenEntry.userId]: selfLabel });
+      const encryptedSymKey = encryptedKeys[tokenEntry.userId];
+      log('Encrypted symmetric key obtained (setup done)');
+
+      // Warm up the symmetric key cache in the vault by doing one encrypt
+      const warmupData = new Uint8Array(16);
+      crypto.getRandomValues(warmupData);
+      await client.encryptWithKey(warmupData.buffer as ArrayBuffer, encryptedSymKey);
+      log('Symmetric key cache warmed up');
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // For large data, chunk the postMessage calls too (vault has same WASM limits)
+      let pmEncMs: number;
+      let pmDecMs: number;
+      let pmEncryptedSize: number;
+      let pmDecryptedSize: number;
+
+      if (useChunking) {
+        const chunkCount = Math.ceil(sizeBytes / effectiveChunkSize);
+
+        // Encrypt chunks via postMessage
+        const pmEncStart = performance.now();
+        const encryptedChunks: ArrayBuffer[] = [];
+
+        for (let i = 0; i < chunkCount; i++) {
+          const start = i * effectiveChunkSize;
+          const end = Math.min(start + effectiveChunkSize, sizeBytes);
+          const chunk = testData.slice(start, end);
+          const { encryptedData } = await client.encryptWithKey(chunk.buffer as ArrayBuffer, encryptedSymKey);
+          encryptedChunks.push(encryptedData);
+        }
+
+        const pmEncEnd = performance.now();
+        pmEncMs = pmEncEnd - pmEncStart;
+        pmEncryptedSize = encryptedChunks.reduce((sum, c) => sum + c.byteLength, 0);
+        log(`PostMessage encrypt: ${formatMs(pmEncMs)} (${formatSize(pmEncryptedSize)} ciphertext, ${chunkCount} chunks)`);
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Decrypt chunks via postMessage
+        const pmDecStart = performance.now();
+        let decTotal = 0;
+
+        for (const chunk of encryptedChunks) {
+          const { data } = await client.decryptWithKey(chunk, encryptedSymKey);
+          decTotal += data.byteLength;
+        }
+
+        const pmDecEnd = performance.now();
+        pmDecMs = pmDecEnd - pmDecStart;
+        pmDecryptedSize = decTotal;
+        log(`PostMessage decrypt: ${formatMs(pmDecMs)} (${formatSize(pmDecryptedSize)} plaintext, ${chunkCount} chunks)`);
+      } else {
+        // Single-shot for data that fits in WASM heap
+        // We need a fresh copy of testData because ArrayBuffer gets transferred (neutered)
+        const testDataForPostMessage = new Uint8Array(sizeBytes);
+        testDataForPostMessage.set(testData);
+
+        const pmEncStart = performance.now();
+        const { encryptedData: pmEncrypted } = await client.encryptWithKey(testDataForPostMessage.buffer as ArrayBuffer, encryptedSymKey);
+        const pmEncEnd = performance.now();
+        pmEncMs = pmEncEnd - pmEncStart;
+        pmEncryptedSize = pmEncrypted.byteLength;
+        log(`PostMessage encrypt: ${formatMs(pmEncMs)} (${formatSize(pmEncryptedSize)} ciphertext)`);
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        const pmDecStart = performance.now();
+        const { data: pmDecrypted } = await client.decryptWithKey(pmEncrypted, encryptedSymKey);
+        const pmDecEnd = performance.now();
+        pmDecMs = pmDecEnd - pmDecStart;
+        pmDecryptedSize = pmDecrypted.byteLength;
+        log(`PostMessage decrypt: ${formatMs(pmDecMs)} (${formatSize(pmDecryptedSize)} plaintext)`);
+      }
+
+      const pmResult: BenchmarkResult = {
+        label: useChunking
+          ? `PostMessage (${Math.ceil(sizeBytes / effectiveChunkSize)} chunks of ${formatSize(effectiveChunkSize)})`
+          : 'PostMessage (no chunking)',
+        encryptMs: pmEncMs,
+        decryptMs: pmDecMs,
+        totalMs: pmEncMs + pmDecMs,
+        sizeBytes,
+        throughputMBs: sizeBytes / (1024 * 1024) / ((pmEncMs + pmDecMs) / 1000),
+      };
+
+      setResults((prev) => [...prev, pmResult]);
+
+      // =====================================================
+      // 4. Summary
+      // =====================================================
+      const overhead = pmResult.totalMs - directResult.totalMs;
+      const overheadPct = ((overhead / directResult.totalMs) * 100).toFixed(1);
+      log(`\n========== RESULTS ==========`);
+      log(`Direct total:      ${formatMs(directResult.totalMs)}`);
+      log(`PostMessage total:  ${formatMs(pmResult.totalMs)}`);
+      log(`Overhead:           ${formatMs(overhead)} (+${overheadPct}%)`);
+      log(`Direct throughput:  ${directResult.throughputMBs.toFixed(1)} MB/s`);
+      log(`PM throughput:      ${pmResult.throughputMBs.toFixed(1)} MB/s`);
+      log(`=============================\n`);
+
+      setProgress('');
+      setState('done');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) : String(err);
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err !== null && 'message' in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
       log(`ERROR: ${msg}`);
       setProgress('');
       setState('ready');
@@ -483,8 +482,8 @@ export function BenchmarkApp() {
       <header style={{ borderBottom: '2px solid #000091', paddingBottom: 16, marginBottom: 24 }}>
         <h1 style={{ color: '#000091', margin: 0 }}>Encryption Benchmark</h1>
         <p style={{ color: '#666', margin: '4px 0 0', fontSize: 13 }}>
-          Compare encryption performance: direct in-page crypto vs. postMessage through vault iframe.
-          Measures the real overhead of the iframe isolation architecture.
+          Compare encryption performance: direct in-page crypto vs. postMessage through vault iframe. Measures the real overhead of the iframe
+          isolation architecture.
         </p>
       </header>
 
@@ -618,9 +617,8 @@ export function BenchmarkApp() {
                 fontSize: 14,
               }}
             >
-              <strong>PostMessage overhead:</strong>{' '}
-              {formatMs(results[1].totalMs - results[0].totalMs)} (+
-              {((results[1].totalMs - results[0].totalMs) / results[0].totalMs * 100).toFixed(1)}%)
+              <strong>PostMessage overhead:</strong> {formatMs(results[1].totalMs - results[0].totalMs)} (+
+              {(((results[1].totalMs - results[0].totalMs) / results[0].totalMs) * 100).toFixed(1)}%)
               <br />
               <span style={{ fontSize: 12, color: '#666' }}>
                 Encrypt overhead: {formatMs(results[1].encryptMs - results[0].encryptMs)} | Decrypt overhead:{' '}
@@ -666,9 +664,9 @@ export function BenchmarkApp() {
       </section>
 
       <footer style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid #ddd', fontSize: 12, color: '#999' }}>
-        This benchmark measures the overhead of postMessage + structured clone transfer for large ArrayBuffers through
-        the vault iframe, compared to running the same XChaCha20-Poly1305 operations directly in the page.
-        The symmetric key cache is warmed before timing, so only the data transfer + crypto cost is measured.
+        This benchmark measures the overhead of postMessage + structured clone transfer for large ArrayBuffers through the vault iframe, compared to
+        running the same XChaCha20-Poly1305 operations directly in the page. The symmetric key cache is warmed before timing, so only the data
+        transfer + crypto cost is measured.
       </footer>
     </div>
   );
