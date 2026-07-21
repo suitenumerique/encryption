@@ -26,8 +26,9 @@ import { handleCheckFingerprints } from '@encryption/src/vault/operations/finger
 
 /**
  * Resolve the encryption public keys (as ArrayBuffer, the shape the low-level
- * wrap ops accept) to wrap for, keyed by userId, enforcing BOTH checks the vault
- * owns so the PRODUCT never has to:
+ * wrap ops accept) to wrap for, keyed by the subs the product passed (the only
+ * id space products know), enforcing BOTH checks the vault owns so the PRODUCT
+ * never has to:
  *
  *   1. Binding — handleFetchPublicKeys runs verifyKeyRegistration on each record
  *      and withholds (null) any encryption key not provably signed by its
@@ -44,40 +45,42 @@ import { handleCheckFingerprints } from '@encryption/src/vault/operations/finger
  * Because TOFU lives here, sharing does not require the product to call
  * checkFingerprints. The product surfaces fingerprints only for EXPLICIT
  * verification (a profile/contact view) and to react when this gate refuses.
- * Throws UNTRUSTED_RECIPIENT (all-or-nothing) listing the offending userIds, which
+ * Throws UNTRUSTED_RECIPIENT (all-or-nothing) listing the offending subs, which
  * for this gate means a mismatch or a refusal (never a mere first encounter).
  */
-export async function resolveTrustedRecipientKeys(ownerUserId: string, recipientUserIds: string[]): Promise<Record<string, ArrayBuffer>> {
-  const unique = [...new Set(recipientUserIds)];
+export async function resolveTrustedRecipientKeys(ownerUserId: string, recipientSubs: string[]): Promise<Record<string, ArrayBuffer>> {
+  const unique = [...new Set(recipientSubs)];
 
   if (unique.length === 0) return {};
 
-  // One batched directory fetch; each entry is binding-verified in the vault.
-  const { users } = await handleFetchPublicKeys(ownerUserId, { userIds: unique });
+  // One batched directory fetch (by sub — the only id a product holds); each
+  // entry is binding-verified in the vault and carries the INTERNAL id, which
+  // is what TOFU keys on. The sub never reaches the trust store.
+  const { users } = await handleFetchPublicKeys(ownerUserId, { subs: unique });
 
   // Run TOFU on the fingerprints of the binding-verified records (first-sight
-  // pin, match, continuity carry-forward, or 'unknown' on a mismatch). currentUserId
-  // makes the owner's own identity always trusted.
+  // pin, match, continuity carry-forward, or 'unknown' on a mismatch), keyed by
+  // INTERNAL id so trust survives an OIDC provider migration.
   const userFingerprints: Record<string, string> = {};
 
-  for (const uid of unique) {
-    const entry = users[uid];
+  for (const sub of unique) {
+    const entry = users[sub];
 
-    if (entry?.verified && entry.encryptionPublicKey) userFingerprints[uid] = entry.identityFingerprint;
+    if (entry?.verified && entry.encryptionPublicKey) userFingerprints[entry.userId] = entry.identityFingerprint;
   }
 
   // record: true — this is an ACTUAL share, so first-sight recipients are recorded
   // as 'unknown' (and self / continuity persisted). A product's read-only status
   // check does not set this, so listing people never floods the vault.
-  const { results } = await handleCheckFingerprints(ownerUserId, { userFingerprints, currentUserId: ownerUserId }, { record: true });
+  const { results } = await handleCheckFingerprints(ownerUserId, { userFingerprints }, { record: true });
   const statusByUser = new Map(results.map((r) => [r.userId, r.status]));
 
   const resolved: Record<string, ArrayBuffer> = {};
   const rejected: string[] = [];
 
-  for (const uid of unique) {
-    const entry = users[uid];
-    const status = statusByUser.get(uid);
+  for (const sub of unique) {
+    const entry = users[sub];
+    const status = entry ? statusByUser.get(entry.userId) : undefined;
 
     // Cannot wrap if the binding failed / is missing. Trust-wise, only 'refused'
     // and 'mismatch' block: a contact the user refused, or one whose RECORDED
@@ -86,11 +89,13 @@ export async function resolveTrustedRecipientKeys(ownerUserId: string, recipient
     // sharing to a not-yet-verified contact is allowed; verifying is a separate,
     // explicit user action, and a mismatch is what forces a decision.
     if (!entry || !entry.verified || !entry.encryptionPublicKey || (status !== 'trusted' && status !== 'unknown')) {
-      rejected.push(uid);
+      // Rejections are reported as the subs the product passed — the only ids
+      // it can act on (open the verify modal, show the person).
+      rejected.push(sub);
       continue;
     }
 
-    resolved[uid] = entry.encryptionPublicKey;
+    resolved[sub] = entry.encryptionPublicKey;
   }
 
   if (rejected.length > 0) {

@@ -12,6 +12,7 @@
       "no_server_vault": "These keys were never registered on the server, so they cannot be re-enabled. Remove them from this device and set up encryption again.",
       "invalid_request": "The request was invalid. Please try again.",
       "unauthorized": "Your session is not authenticated. Reload the page to sign in, then retry.",
+      "email_claim_required": "Your account has no usable email address. An email address is required to use encryption; contact your administrator.",
       "forbidden": "You do not have permission to perform this action.",
       "internal_error": "An unexpected server error occurred. Please try again later."
     },

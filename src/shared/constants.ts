@@ -22,10 +22,18 @@ export const MAX_CONTINUITY_HOPS = 5;
 export const DB_NAME = 'encryption';
 export const DB_VERSION = 1;
 
-// Store for the synchronized vault's local cache, keyed by userId: the sealed
-// items + manifest + revision, the wrapped VRK, and the non-extractable device
-// key that unwraps it. A copied database is inert without the live device key.
+// Store for the synchronized vault's local cache, keyed by the INTERNAL user
+// id: the sealed items + manifest + revision, the wrapped VRK, and the
+// non-extractable device key that unwraps it. A copied database is inert
+// without the live device key.
 export const STORE_VAULT_CACHE = 'vaultCache';
+
+// Alias map `sub -> internal user id`, written alongside the vault cache (same
+// moments: onboarding, unlock, sync), so a cached vault always resolves
+// offline. Plain metadata: both identifiers are non-secret, no trust decision
+// ever reads this map (trust lives in the sealed TOFU store), and every server
+// call is independently authenticated.
+export const STORE_USER_ALIAS = 'userAlias';
 
 // ============================================================================
 // PostMessage type keys — shared between iframes and their parents
@@ -44,6 +52,7 @@ export const MSG_VAULT_SHARE_KEYS = 'vault:share-keys';
 export const MSG_VAULT_FETCH_PUBLIC_KEYS = 'vault:fetch-public-keys';
 
 // --- Vault privileged requests (encryption → data.encryption) ---
+export const MSG_VAULT_RESOLVE_USER = 'vault:resolve-user';
 export const MSG_VAULT_GENERATE_KEYS = 'vault:generate-keys';
 export const MSG_VAULT_SIGN_KEY_REGISTRATION = 'vault:sign-key-registration';
 export const MSG_VAULT_RESPOND_TO_KEY_CHALLENGE = 'vault:respond-to-key-challenge';

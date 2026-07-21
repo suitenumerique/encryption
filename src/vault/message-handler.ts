@@ -18,6 +18,7 @@ import {
   MSG_VAULT_PREPARE_ONBOARDING,
   MSG_VAULT_REACTIVATE,
   MSG_VAULT_REFUSE_FINGERPRINT,
+  MSG_VAULT_RESOLVE_USER,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
@@ -39,10 +40,10 @@ import { handleApproveDevice, handleCompleteDeviceApproval, handleStartDeviceApp
 import { handleEncryptNestedWithoutKey, handleEncryptWithKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import {
-  handleAcceptFingerprint,
-  handleCheckFingerprints,
+  handleAcceptFingerprintBySub,
+  handleCheckFingerprintsBySubs,
   handleGetKnownFingerprints,
-  handleRefuseFingerprint,
+  handleRefuseFingerprintBySub,
 } from '@encryption/src/vault/operations/fingerprint-registry';
 import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-keys';
 import { handleGetPublicKey, handleHasKeys } from '@encryption/src/vault/operations/key-management';
@@ -57,6 +58,7 @@ import { handleReactivateVault, handleRestoreFromPhrase } from '@encryption/src/
 import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
+import { resolveBoundaryUser } from '@encryption/src/vault/user-resolution';
 import { ensureVaultSyncDriver } from '@encryption/src/vault/vault-sync-driver';
 
 async function dispatch(data: unknown, userId: string): Promise<unknown> {
@@ -72,11 +74,12 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_GET_PUBLIC_KEY:
       return handleGetPublicKey(userId);
     case MSG_VAULT_ENCRYPT_WITHOUT_KEY: {
-      // Trust gate at the boundary: the product passes recipient userIds; the
-      // vault resolves them to encryption keys ONLY for identities whose binding
-      // verifies and that are TOFU-trusted. A product can never inject raw keys.
-      const p = payload as { data: ArrayBuffer; recipientUserIds: string[] };
-      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientUserIds ?? []);
+      // Trust gate at the boundary: the product passes recipient SUBS (the only
+      // id space it holds); the vault resolves them to encryption keys ONLY for
+      // identities whose binding verifies and that are TOFU-trusted (trust is
+      // keyed internally). A product can never inject raw keys.
+      const p = payload as { data: ArrayBuffer; recipientSubs: string[] };
+      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs ?? []);
 
       return handleEncryptWithoutKey(userId, { data: p.data, userPublicKeys });
     }
@@ -116,31 +119,39 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
         }
       );
     case MSG_VAULT_SHARE_KEYS: {
-      // Same trust gate as encrypt-without-key: resolve recipient userIds to
+      // Same trust gate as encrypt-without-key: resolve recipient subs to
       // verified, TOFU-trusted encryption keys before the wrap.
-      const p = payload as { encryptedSymmetricKey: ArrayBuffer; recipientUserIds: string[]; encryptedKeyChain?: ArrayBuffer[] };
-      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientUserIds ?? []);
+      const p = payload as { encryptedSymmetricKey: ArrayBuffer; recipientSubs: string[]; encryptedKeyChain?: ArrayBuffer[] };
+      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs ?? []);
 
       return handleShareKeys(userId, { encryptedSymmetricKey: p.encryptedSymmetricKey, userPublicKeys, encryptedKeyChain: p.encryptedKeyChain });
     }
     case MSG_VAULT_FETCH_PUBLIC_KEYS:
-      return handleFetchPublicKeys(userId, payload as { userIds: string[] });
+      // `subs` is the product/interface form: results come back keyed by the
+      // queried subs, which is all a product correlates on. `userIds` is for
+      // vault-internal callers. Entries carry the internal id as a field
+      // (public directory data, and the wrappers here need it for TOFU), but
+      // products have no use for it.
+      return handleFetchPublicKeys(userId, payload as { userIds?: string[]; subs?: string[] });
     case MSG_VAULT_CHECK_FINGERPRINTS:
-      return handleCheckFingerprints(
-        userId,
-        payload as {
-          userFingerprints: Record<string, string>;
-          currentUserId?: string;
-        }
-      );
+      // Callers hold subs; the wrapper resolves them to the internal ids the
+      // TOFU store keys on and maps results back.
+      return handleCheckFingerprintsBySubs(userId, payload as { userFingerprints: Record<string, string> });
     case MSG_VAULT_ACCEPT_FINGERPRINT:
-      return handleAcceptFingerprint(userId, payload as { userId: string; fingerprint: string });
+      return handleAcceptFingerprintBySub(userId, payload as { sub: string; fingerprint: string });
     case MSG_VAULT_REFUSE_FINGERPRINT:
-      return handleRefuseFingerprint(userId, payload as { userId: string; fingerprint: string });
+      return handleRefuseFingerprintBySub(userId, payload as { sub: string; fingerprint: string });
     case MSG_VAULT_GET_KNOWN_FINGERPRINTS:
       return handleGetKnownFingerprints(userId);
 
     // Privileged operations (encryption only)
+    case MSG_VAULT_RESOLVE_USER:
+      // The boundary above already did the work: it adopted the interface's
+      // declared internal id (persisting the sub -> id alias) or resolved the
+      // sub through the alias/registry chain. Echoing the outcome lets the
+      // interface obtain its id with no OIDC session (expired-token settings);
+      // the unresolvable case answers null before dispatch, like has-keys.
+      return { internalUserId: userId };
     case MSG_VAULT_GENERATE_KEYS:
       return handleGenerateKeys(userId);
     case MSG_VAULT_COMMIT_STAGED:
@@ -208,13 +219,33 @@ export function setupMessageHandler(): void {
     let response: VaultResponse;
 
     try {
-      const declaredUserId = event.data.suiteUserId as string | undefined;
+      // Products declare the OIDC sub (`suiteUserId`); the interface, which
+      // learned the internal id from /api/me, declares `internalUserId` too.
+      // The sub stops HERE: everything past this boundary (cache keys, TOFU,
+      // signed payloads, request proofs) speaks the internal id only. The
+      // adopt-vs-resolve decision lives in resolveBoundaryUser.
+      const declaredSub = event.data.suiteUserId as string | undefined;
+      const declaredInternalId = event.data.internalUserId as string | undefined;
 
-      if (!declaredUserId) {
-        throw new VaultError(VaultErrorCode.AUTH_REQUIRED, 'suiteUserId is required for all vault operations.');
+      const userId = await resolveBoundaryUser(declaredSub, declaredInternalId, isPrivilegedAllowed);
+
+      if (!userId) {
+        // A sub with no resolvable internal id means "this user never
+        // registered anything" (or the registry is unreachable with nothing
+        // cached). `has-keys` has a truthful answer for that, and
+        // `resolve-user`'s whole job is to report resolvability, so it answers
+        // null rather than failing; everything else fails with a stable,
+        // actionable code.
+        if (operationType === MSG_VAULT_HAS_KEYS || operationType === MSG_VAULT_RESOLVE_USER) {
+          const data = operationType === MSG_VAULT_HAS_KEYS ? { hasKeys: false } : { internalUserId: null };
+          const response: VaultResponse = { type: MSG_VAULT_RESULT, requestId, success: true, data };
+          event.source?.postMessage(response, { targetOrigin: event.origin });
+
+          return;
+        }
+
+        throw new VaultError(VaultErrorCode.UNRESOLVED_USER, 'No encryption account is known for this user yet.');
       }
-
-      const userId = declaredUserId;
 
       // Ensure the background sync driver is running for this user (idempotent):
       // the vault keeps itself synced (identity-signed, no interface/JWT) as long

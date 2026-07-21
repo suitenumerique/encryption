@@ -46,7 +46,14 @@ export interface EncryptionClientOptions {
 }
 
 export interface AuthContext {
-  /** Authenticated user ID (cross-product suite identifier from the identity provider's sub claim) */
+  /**
+   * The identity provider's `sub` claim for the logged-in user. Products only
+   * ever deal in subs — their own APIs know users by sub, and every SDK
+   * operation (recipients, fingerprints, profiles) takes subs. The vault
+   * resolves them to its internal, migration-stable user ids at its boundary
+   * (local alias map, then public registry); that internal id never has to be
+   * handled, stored, or even seen by a product.
+   */
   suiteUserId: string;
 }
 
@@ -296,12 +303,14 @@ export class VaultClient {
    * Create a new ROOT encrypted resource. Mints a fresh symmetric key,
    * encrypts `data` with it, and wraps the new key once per recipient.
    *
-   * Pass recipients as a labeled map (userId → {email, name?}), not public keys:
-   * the vault resolves + trust-checks each recipient (binding + TOFU 'trusted'
-   * with matching fingerprint) before wrapping, and throws UNTRUSTED_RECIPIENT if
-   * any is unverified or untrusted. Call checkFingerprints first to resolve any
+   * Pass recipients as a labeled map (OIDC sub → {email, name?}), not public
+   * keys — the subs your product already holds for its users. The vault
+   * resolves + trust-checks each recipient (binding + TOFU 'trusted' with
+   * matching fingerprint, keyed internally so trust survives an OIDC provider
+   * migration) before wrapping, and throws UNTRUSTED_RECIPIENT if any is
+   * unverified or untrusted. Call checkFingerprints first to resolve any
    * 'unknown' contacts. The labels are display-only and used only if the trust
-   * modal opens; the vault request itself sees just the userIds.
+   * modal opens; the vault request itself sees just the subs.
    *
    * Use this for standalone encrypted files (no parent) and for the root
    * folder of an encrypted subtree.
@@ -320,7 +329,7 @@ export class VaultClient {
 
   private async encryptWithoutKeyRequest(
     data: ArrayBuffer,
-    recipientUserIds: string[],
+    recipientSubs: string[],
     options: { optimizeMemory?: boolean } | undefined,
     allowTransfer: boolean
   ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
@@ -330,7 +339,7 @@ export class VaultClient {
     // for an untrusted recipient. (optimizeMemory is a client-side hint here; the
     // vault op does not read it.)
     const transferables = optimize && allowTransfer ? [data] : undefined;
-    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientUserIds, optimizeMemory: optimize }, transferables)) as {
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientSubs, optimizeMemory: optimize }, transferables)) as {
       encryptedContent: ArrayBuffer;
       encryptedKeys: Record<string, ArrayBuffer>;
     };
@@ -525,9 +534,9 @@ export class VaultClient {
   /**
    * Share an existing document's or item's symmetric key with additional users.
    *
-   * Pass recipients as a labeled map (userId → {email, name?}), not public keys:
-   * the vault resolves each recipient's encryption key from the directory itself
-   * and wraps ONLY for identities whose binding verifies AND that you have marked
+   * Pass recipients as a labeled map (OIDC sub → {email, name?}), not public
+   * keys: the vault resolves each recipient's encryption key from the directory
+   * itself and wraps ONLY for identities whose binding verifies AND that you have marked
    * 'trusted' (TOFU) with a matching fingerprint. If any recipient is unverified
    * or untrusted it throws UNTRUSTED_RECIPIENT and wraps for none — call
    * checkFingerprints (and resolve any 'unknown') first. Recipients are resolved
@@ -551,10 +560,10 @@ export class VaultClient {
 
   private async shareKeysRequest(
     encryptedSymmetricKey: ArrayBuffer,
-    recipientUserIds: string[],
+    recipientSubs: string[],
     encryptedKeyChain?: ArrayBuffer[]
   ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
-    const payload: Record<string, unknown> = { encryptedSymmetricKey, recipientUserIds };
+    const payload: Record<string, unknown> = { encryptedSymmetricKey, recipientSubs };
 
     if (encryptedKeyChain) {
       payload.encryptedKeyChain = encryptedKeyChain;
@@ -566,13 +575,16 @@ export class VaultClient {
   }
 
   /**
-   * Fetch registered users for a list of user IDs. The vault calls the
-   * encryption server itself (products never touch it) and verifies each
-   * record's binding signature before returning. Users with no active
-   * registration are absent from the map.
+   * Fetch registered users for a list of OIDC subs (the ids your product
+   * already holds). The vault calls the encryption server itself (products
+   * never touch it) and verifies each record's binding signature before
+   * returning. The map is keyed by the subs you queried; subs with no active
+   * registration are absent (that person never onboarded encryption). Use it
+   * when building a sharing UI: it tells you who has keys, their fingerprint,
+   * and whether the directory record is coherent (`verified`).
    */
-  async fetchPublicKeys(userIds: string[]): Promise<Record<string, RegisteredUser>> {
-    const { users } = (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds })) as {
+  async fetchPublicKeys(subs: string[]): Promise<Record<string, RegisteredUser>> {
+    const { users } = (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { subs })) as {
       users: Record<string, RegisteredUser>;
     };
 
@@ -585,14 +597,13 @@ export class VaultClient {
 
   /**
    * Check fingerprints provided by the product against the vault's local registry.
-   * The product sends the fingerprints it stored at share time.
+   * The product sends the fingerprints it stored at share time, keyed by OIDC
+   * sub; results echo the same subs back (the vault translates to its internal
+   * trust keys on its side).
    *
    * Returns results with status: "trusted", "refused", or "unknown" (needs user decision).
    */
-  async checkFingerprints(
-    userFingerprints: Record<string, string>,
-    currentUserId?: string
-  ): Promise<{
+  async checkFingerprints(userFingerprints: Record<string, string>): Promise<{
     results: Array<{
       userId: string;
       knownFingerprint: string | null;
@@ -602,7 +613,7 @@ export class VaultClient {
       status: 'trusted' | 'refused' | 'unknown' | 'mismatch';
     }>;
   }> {
-    return (await this.vaultRequest(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints, currentUserId })) as {
+    return (await this.vaultRequest(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints })) as {
       results: Array<{
         userId: string;
         knownFingerprint: string | null;
@@ -699,6 +710,7 @@ export class VaultClient {
    * identity fingerprint (for out-of-band comparison), and Trust / Refuse actions.
    * Opened explicitly by the product (e.g. clicking a person in its share UI), so
    * it mounts in a product-provided container like the other open* methods.
+   * `userId` is the recipient's OIDC sub, like every id a product passes.
    */
   openRecipientProfile(container: HTMLElement, userId: string, label: RecipientLabel): void {
     // Reset per-flow state, then set the profile target so the context handshake

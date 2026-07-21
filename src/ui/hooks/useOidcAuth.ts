@@ -24,6 +24,12 @@ interface OidcAuthState {
   requestAuth: () => void;
   /** Update the token set (e.g. after a refresh) */
   updateTokenSet: (tokenSet: TokenSet) => void;
+  /**
+   * Drop the session after the IdP definitively rejected the refresh token.
+   * Without this, a dead-but-present token keeps `needsAuth` false forever and
+   * the UI never offers to sign in again.
+   */
+  clearTokenSet: () => void;
 }
 
 /**
@@ -124,5 +130,8 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
     isConfigured: isOidcConfigured(),
     requestAuth,
     updateTokenSet: setTokenSet,
+    // Setting it to null makes the effect above flip `needsAuth` back on, so
+    // the UI returns to its "sign in" affordance instead of looking logged in.
+    clearTokenSet: () => setTokenSet(null),
   };
 }

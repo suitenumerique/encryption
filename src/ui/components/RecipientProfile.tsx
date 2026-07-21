@@ -18,7 +18,7 @@ import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
 interface RecipientProfileProps {
-  /** The recipient to inspect (opaque userId, passed via the context channel). */
+  /** The recipient to inspect (their OIDC sub, passed via the context channel). */
   userId: string | null;
   /** Product-supplied display label (email, name optional) for the recipient. */
   label?: RecipientLabel;
@@ -97,14 +97,17 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
   const load = useCallback(async () => {
     if (!userId) return;
 
-    const { users } = (await request(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds: [userId] })) as { users: Record<string, VaultRegisteredUser> };
+    // `userId` is the recipient's OIDC sub (what the product passed); the vault
+    // resolves it and echoes it back as the map key. The internal id on the
+    // entry is what the TOFU registry keys on.
+    const { users } = (await request(MSG_VAULT_FETCH_PUBLIC_KEYS, { subs: [userId] })) as { users: Record<string, VaultRegisteredUser> };
     const entry = users[userId];
     setFingerprint(entry?.verified ? entry.identityFingerprint : null);
 
     const { fingerprints } = (await request(MSG_VAULT_GET_KNOWN_FINGERPRINTS)) as {
       fingerprints: Record<string, { fingerprint: string; status: Decision }>;
     };
-    setDecision(fingerprints[userId]?.status ?? 'unknown');
+    setDecision(entry ? (fingerprints[entry.userId]?.status ?? 'unknown') : 'unknown');
   }, [userId, request]);
 
   useEffect(() => {
@@ -134,7 +137,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
       setError(null);
 
       try {
-        await request(type, { userId, fingerprint });
+        await request(type, { sub: userId, fingerprint });
         await load();
       } catch (err) {
         onError(err);
@@ -169,7 +172,14 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 18, fontWeight: 700, margin: 0, wordBreak: 'break-word' }}>{primary}</p>
               {secondary && (
-                <p style={{ fontSize: 13, margin: '2px 0 0', color: 'var(--c--contextuals--content--surface--secondary, #666)', wordBreak: 'break-all' }}>
+                <p
+                  style={{
+                    fontSize: 13,
+                    margin: '2px 0 0',
+                    color: 'var(--c--contextuals--content--surface--secondary, #666)',
+                    wordBreak: 'break-all',
+                  }}
+                >
                   {secondary}
                 </p>
               )}
@@ -196,9 +206,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
                     fontWeight: 600,
                     margin: '16px 0 0',
                     color:
-                      decision === 'trusted'
-                        ? 'var(--c--globals--colors--success-600, #18753c)'
-                        : 'var(--c--globals--colors--error-500, #ce0500)',
+                      decision === 'trusted' ? 'var(--c--globals--colors--success-600, #18753c)' : 'var(--c--globals--colors--error-500, #ce0500)',
                   }}
                 >
                   {t(`profile.decision_${decision}`)}

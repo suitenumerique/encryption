@@ -20,6 +20,7 @@ import {
   MSG_VAULT_REACTIVATE,
   MSG_VAULT_READY,
   MSG_VAULT_REFUSE_FINGERPRINT,
+  MSG_VAULT_RESOLVE_USER,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
@@ -348,6 +349,7 @@ export type VaultRequest = z.infer<typeof VaultRequestSchema>;
 
 /** Set of operation types that require encryption origin */
 export const PRIVILEGED_OPERATIONS = new Set<string>([
+  MSG_VAULT_RESOLVE_USER,
   MSG_VAULT_GENERATE_KEYS,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,

@@ -40,7 +40,7 @@ export const REQUEST_SIG_MAX_AGE_SECONDS = 120;
 export const REQUEST_SIG_SKEW_SECONDS = 30;
 
 interface ProofClaims {
-  sub: string; // userId the proof is made for (must match the JWT subject)
+  sub: string; // INTERNAL user id the proof is made for (must match the JWT-resolved internal id, never an OIDC sub)
   htm: string; // HTTP method, uppercase
   htu: string; // request path (no query string)
   bh: string; // base64url(SHA-256(rawBody)); the digest of the exact request body

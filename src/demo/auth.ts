@@ -5,8 +5,6 @@
  *
  * Supports multiple users logged in simultaneously via a token store (Map).
  */
-import { type RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
-
 const KEYCLOAK_URL = 'http://localhost:7203';
 const REALM = 'encryption';
 
@@ -59,22 +57,6 @@ const knownUserIds = new Map<string, string>();
 /** Get the Keycloak sub for a demo user (if they've logged in at least once). */
 export function getKnownUserId(username: string): string | null {
   return knownUserIds.get(username) ?? null;
-}
-
-/**
- * Display-only label (email + name) for a resolved Keycloak sub, or undefined if
- * the sub is not (yet) a known demo user. The vault/interface only knows opaque
- * userIds; the demo threads these labels through the share/profile calls so the
- * interface can show WHO a recipient is. Never persisted or sent to any server.
- */
-export function getUserLabel(userId: string): RecipientLabel | undefined {
-  for (const user of DEMO_USERS) {
-    if (getKnownUserId(user.username) === userId) {
-      return { email: user.email, name: `${user.firstName} ${user.lastName}` };
-    }
-  }
-
-  return undefined;
 }
 
 /**

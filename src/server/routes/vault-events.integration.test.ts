@@ -8,7 +8,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AddressInfo } from 'node:net';
 
-import { exportPublicKeyAsBase64, base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
+import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import { prisma } from '@encryption/src/prisma/client';

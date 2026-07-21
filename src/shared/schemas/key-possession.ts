@@ -13,7 +13,7 @@ const MAX_ENCRYPTION_KEY_B64 = 4096;
 const MAX_SIGNATURE_B64 = 1024;
 
 export const InitKeyPossessionBodySchema = z.object({
-  user_id: z.string().min(1),
+  user_id: z.string().uuid(), // INTERNAL encryption user id (never an OIDC sub, whose shape is provider-defined)
   encryption_public_key: z.string().min(1).max(MAX_ENCRYPTION_KEY_B64), // base64 [version:1][xwingPubkey:1216]
   signature_public_key: z.string().min(1).max(MAX_SIGNATURE_B64), // base64 [version:1][ed25519Pubkey:32] — the identity
   version: z.number().int().positive(), // monotonic per-user key version (>= 1)
@@ -39,7 +39,7 @@ export const CompleteKeyPossessionBodySchema = z.object({
 export type CompleteKeyPossessionBody = z.infer<typeof CompleteKeyPossessionBodySchema>;
 
 export const CompleteKeyPossessionResponseSchema = z.object({
-  user_id: z.string(),
+  user_id: z.string().uuid(),
   encryption_public_key: z.string(),
   signature_public_key: z.string(),
   key_binding_signature: z.string(),

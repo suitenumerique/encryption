@@ -1,6 +1,6 @@
 import { type IDBPDatabase, openDB } from 'idb';
 
-import { DB_NAME, DB_VERSION, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { DB_NAME, DB_VERSION, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -16,6 +16,9 @@ export function getEncryptionDB(): Promise<IDBPDatabase> {
       upgrade(db) {
         if (!db.objectStoreNames.contains(STORE_VAULT_CACHE)) {
           db.createObjectStore(STORE_VAULT_CACHE);
+        }
+        if (!db.objectStoreNames.contains(STORE_USER_ALIAS)) {
+          db.createObjectStore(STORE_USER_ALIAS);
         }
       },
       // Browser abnormally killed the connection — reopen on next call.

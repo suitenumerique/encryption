@@ -27,6 +27,14 @@ import {
 
 const mockTransaction = jest.fn();
 
+// env is mocked so importing the route (which reads the active issuer for the
+// `subs=` directory form) does not pull the real env validator under test.
+jest.mock('@encryption/src/server/env', () => ({
+  env: {
+    OIDC_ISSUER: 'https://issuer.example',
+  },
+}));
+
 jest.mock('@encryption/src/prisma/client', () => ({
   prisma: {
     encryptionKey: {
@@ -35,6 +43,9 @@ jest.mock('@encryption/src/prisma/client', () => ({
       updateMany: jest.fn(),
       count: jest.fn(),
       aggregate: jest.fn(),
+    },
+    oidcAccount: {
+      findMany: jest.fn(),
     },
     identity: {
       aggregate: jest.fn(),
@@ -175,7 +186,7 @@ describe('public-keys routes', () => {
       mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401 }));
       (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([]);
 
-      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=user-1' });
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=550e8400-e29b-41d4-a716-446655440000' });
 
       expect(response.statusCode).toBe(200);
       expect(mockVerifyJWT).not.toHaveBeenCalled();
@@ -186,7 +197,7 @@ describe('public-keys routes', () => {
       const createdAt = new Date(1_700_000_000_000);
       (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([
         {
-          userId: 'user-1',
+          userId: '550e8400-e29b-41d4-a716-446655440000',
           encryptionPublicKey: kb('enc1'),
           keyBindingSignature: kb('bind1'),
           version: 2,
@@ -196,12 +207,12 @@ describe('public-keys routes', () => {
         },
       ]);
 
-      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=user-1' });
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=550e8400-e29b-41d4-a716-446655440000' });
 
       expect(response.statusCode).toBe(200);
       expect(JSON.parse(response.body).keys).toEqual([
         {
-          user_id: 'user-1',
+          user_id: '550e8400-e29b-41d4-a716-446655440000',
           encryption_public_key: kb64('enc1'),
           signature_public_key: kb64('sig1'),
           key_binding_signature: kb64('bind1'),
@@ -210,7 +221,7 @@ describe('public-keys routes', () => {
         },
       ]);
       expect(mockedPrisma.encryptionKey.findMany).toHaveBeenCalledWith({
-        where: { userId: { in: ['user-1'] }, disabledAt: null, identity: { is: { disabledAt: null } } },
+        where: { userId: { in: ['550e8400-e29b-41d4-a716-446655440000'] }, disabledAt: null, identity: { is: { disabledAt: null } } },
         include: { identity: true },
       });
     });
@@ -219,10 +230,114 @@ describe('public-keys routes', () => {
       const app = buildApp();
       (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([]);
 
-      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=unknown-user' });
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?user_ids=660e8400-e29b-41d4-a716-446655440001' });
 
       expect(response.statusCode).toBe(200);
       expect(JSON.parse(response.body).keys).toHaveLength(0);
+    });
+
+    it('resolves subs through oidc_accounts and echoes the matched sub', async () => {
+      const app = buildApp();
+      const createdAt = new Date(1_700_000_000_000);
+      (mockedPrisma.oidcAccount.findMany as jest.Mock).mockResolvedValue([
+        // A disabled row under the ACTIVE issuer still resolves: disabledAt
+        // blocks authentication, not directory resolution.
+        { userId: 'internal-1', subject: 'kc-sub-1', issuer: 'https://issuer.example', disabledAt: new Date() },
+      ]);
+      (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([
+        {
+          userId: 'internal-1',
+          encryptionPublicKey: kb('enc1'),
+          keyBindingSignature: kb('bind1'),
+          version: 1,
+          createdAt,
+          identity: { signaturePublicKey: kb('sig1') },
+        },
+      ]);
+
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?subs=kc-sub-1' });
+
+      expect(response.statusCode).toBe(200);
+      // Resolution is scoped to the currently configured issuer, always.
+      expect(mockedPrisma.oidcAccount.findMany).toHaveBeenCalledWith({
+        where: { issuer: 'https://issuer.example', subject: { in: ['kc-sub-1'] } },
+      });
+      const keys = JSON.parse(response.body).keys;
+      expect(keys).toHaveLength(1);
+      expect(keys[0].user_id).toBe('internal-1');
+      expect(keys[0].sub).toBe('kc-sub-1');
+    });
+
+    it('never resolves a sub through a retired issuer (fail-closed after a provider cutover)', async () => {
+      const app = buildApp();
+      // The DB holds this sub only under a retired issuer, so the issuer-scoped
+      // query matches nothing and the sub simply does not resolve. Matching the
+      // retired row would be fail-open: on a cross-issuer sub collision the
+      // directory could hand out another human's public key.
+      (mockedPrisma.oidcAccount.findMany as jest.Mock).mockResolvedValue([]);
+
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?subs=recycled-sub' });
+
+      expect(mockedPrisma.oidcAccount.findMany).toHaveBeenCalledWith({
+        where: { issuer: 'https://issuer.example', subject: { in: ['recycled-sub'] } },
+      });
+      expect(JSON.parse(response.body).keys).toEqual([]);
+      expect(mockedPrisma.encryptionKey.findMany).not.toHaveBeenCalled();
+    });
+
+    it('echoes one entry PER matched sub when several subs resolve to the same user (email-linked credentials)', async () => {
+      const app = buildApp();
+      const createdAt = new Date(1_700_000_000_000);
+      (mockedPrisma.oidcAccount.findMany as jest.Mock).mockResolvedValue([
+        { userId: 'internal-1', subject: 'kc-sub-old', issuer: 'https://issuer.example', disabledAt: null },
+        { userId: 'internal-1', subject: 'kc-sub-new', issuer: 'https://issuer.example', disabledAt: null },
+      ]);
+      (mockedPrisma.encryptionKey.findMany as jest.Mock).mockResolvedValue([
+        {
+          userId: 'internal-1',
+          encryptionPublicKey: kb('enc1'),
+          keyBindingSignature: kb('bind1'),
+          version: 1,
+          createdAt,
+          identity: { signaturePublicKey: kb('sig1') },
+        },
+      ]);
+
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?subs=kc-sub-old&subs=kc-sub-new' });
+
+      // Both queried subs find their echo; collapsing to one entry would make
+      // the other sub read as "no keys" to the caller.
+      const keys = JSON.parse(response.body).keys;
+      expect(keys.map((k: { user_id: string; sub: string }) => [k.user_id, k.sub])).toEqual([
+        ['internal-1', 'kc-sub-old'],
+        ['internal-1', 'kc-sub-new'],
+      ]);
+    });
+
+    it('rejects a query mixing user_ids and subs', async () => {
+      const app = buildApp();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/public-keys?user_ids=550e8400-e29b-41d4-a716-446655440000&subs=kc-sub-1',
+      });
+
+      // The bare test app has no ZodError -> 400 mapper (that lives in
+      // createServer's error handler); what matters here is that the mixed
+      // query never reaches the database.
+      expect(response.statusCode).toBeGreaterThanOrEqual(400);
+      expect(mockedPrisma.encryptionKey.findMany).not.toHaveBeenCalled();
+    });
+
+    it('answers an unmatched sub with an empty list without touching the key table', async () => {
+      const app = buildApp();
+      (mockedPrisma.oidcAccount.findMany as jest.Mock).mockResolvedValue([]);
+
+      const response = await app.inject({ method: 'GET', url: '/api/public-keys?subs=ghost' });
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body).keys).toHaveLength(0);
+      expect(mockedPrisma.encryptionKey.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -456,7 +571,7 @@ describe('public-keys routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/public-keys/register/init',
-        payload: { ...initPayload(reg), user_id: 'someone-else' },
+        payload: { ...initPayload(reg), user_id: '770e8400-e29b-41d4-a716-446655440002' },
       });
 
       expect(response.statusCode).toBe(403);

@@ -38,8 +38,14 @@ describe('public-key schemas', () => {
   });
 
   describe('GetPublicKeysQuerySchema', () => {
-    it('should split and trim comma-separated user_ids into an array', () => {
-      const valid = { user_ids: '550e8400-e29b-41d4-a716-446655440000, 660e8400-e29b-41d4-a716-446655440001' };
+    it('should normalize a single occurrence to a one-element array', () => {
+      const result = GetPublicKeysQuerySchema.parse({ user_ids: '550e8400-e29b-41d4-a716-446655440000' });
+
+      expect(result.user_ids).toEqual(['550e8400-e29b-41d4-a716-446655440000']);
+    });
+
+    it('should keep repeated occurrences in order', () => {
+      const valid = { user_ids: ['550e8400-e29b-41d4-a716-446655440000', '660e8400-e29b-41d4-a716-446655440001'] };
       const result = GetPublicKeysQuerySchema.parse(valid);
 
       expect(result.user_ids).toEqual(['550e8400-e29b-41d4-a716-446655440000', '660e8400-e29b-41d4-a716-446655440001']);
@@ -49,25 +55,43 @@ describe('public-key schemas', () => {
       expect(() => GetPublicKeysQuerySchema.parse({})).toThrow();
     });
 
-    it('should reject an empty user id (e.g. a trailing comma)', () => {
-      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: 'a,' })).toThrow();
+    it('should reject an empty sub', () => {
+      expect(() => GetPublicKeysQuerySchema.parse({ subs: ['kc-sub-1', ''] })).toThrow();
     });
 
+    // Synthetic but well-formed uuids: 100 distinct suffixes over a fixed stem.
+    const uuidAt = (i: number) => `550e8400-e29b-41d4-a716-4466554${String(i).padStart(5, '0')}`;
+
     it('should reject a list longer than 100 ids', () => {
-      const tooMany = Array.from({ length: 101 }, (_, i) => `u${i}`).join(',');
+      const tooMany = Array.from({ length: 101 }, (_, i) => uuidAt(i));
 
       expect(() => GetPublicKeysQuerySchema.parse({ user_ids: tooMany })).toThrow();
     });
 
     it('should accept a list of exactly 100 ids', () => {
-      const exactly = Array.from({ length: 100 }, (_, i) => `u${i}`).join(',');
+      const exactly = Array.from({ length: 100 }, (_, i) => uuidAt(i));
       const result = GetPublicKeysQuerySchema.parse({ user_ids: exactly });
 
       expect(result.user_ids).toHaveLength(100);
     });
 
-    it('should reject an over-long single user id', () => {
-      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: 'x'.repeat(201) })).toThrow();
+    it('should reject a non-uuid user id (an OIDC sub does not belong in user_ids)', () => {
+      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: 'keycloak-sub-1' })).toThrow();
+    });
+
+    it('should accept free-form subs but reject an over-long one', () => {
+      expect(GetPublicKeysQuerySchema.parse({ subs: ['kc sub with spaces', 'another#sub'] }).subs).toHaveLength(2);
+      expect(() => GetPublicKeysQuerySchema.parse({ subs: 'x'.repeat(201) })).toThrow();
+    });
+
+    // A comma is legal in an OIDC sub; the old comma-joined form shattered it
+    // into two bogus lookups. Repeated parameters must carry it through intact.
+    it('should preserve a comma inside a sub', () => {
+      expect(GetPublicKeysQuerySchema.parse({ subs: 'weird,sub' }).subs).toEqual(['weird,sub']);
+    });
+
+    it('should reject mixing user_ids and subs (response keying would be ambiguous)', () => {
+      expect(() => GetPublicKeysQuerySchema.parse({ user_ids: uuidAt(0), subs: 'kc-sub-1' })).toThrow();
     });
   });
 });

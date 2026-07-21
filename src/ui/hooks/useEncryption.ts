@@ -11,6 +11,7 @@ import {
   MSG_VAULT_PREPARE_ONBOARDING,
   MSG_VAULT_REACTIVATE,
   MSG_VAULT_READY,
+  MSG_VAULT_RESOLVE_USER,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
@@ -39,8 +40,23 @@ export interface OnboardingBundle {
 interface UseEncryptionReturn {
   /** True when the vault iframe is loaded AND auth info has been set */
   isReady: boolean;
-  /** Set the auth info (suiteUserId) for all subsequent vault requests */
-  setAuthInfo: (suiteUserId: string) => void;
+  /**
+   * Set the auth info for all subsequent vault requests. `internalUserId`
+   * (from /api/me) is what the vault actually operates under — the interface
+   * is authoritative for it, which also covers first onboarding where the sub
+   * resolves to nothing yet. Until it is known, requests carry the sub alone
+   * and the vault resolves it through its alias/registry chain.
+   */
+  setAuthInfo: (suiteUserId: string, internalUserId?: string | null) => void;
+  /**
+   * Resolve the declared sub to the internal user id through the vault's
+   * alias/registry chain: needs NO OIDC session, so an onboarded user gets
+   * their id even with an expired token. Returns null for a never-onboarded
+   * user (fall back to /api/me). When the envelope already carries the
+   * internal id, the call doubles as a seed: the vault adopts it and persists
+   * the sub -> id alias, so later visits resolve offline.
+   */
+  resolveInternalUser: () => Promise<string | null>;
   request: (type: string, payload?: unknown) => Promise<unknown>;
   generateKeys: () => Promise<{ publicKey: string; signaturePublicKey: string }>;
   commitStagedVault: () => Promise<{ committed: boolean }>;
@@ -98,9 +114,29 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   const [hasAuth, setHasAuth] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const internalUserIdRef = useRef<string | null>(null);
   const pendingRef = useRef<Map<string, { resolve: (value: unknown) => void; reject: (reason: unknown) => void }>>(new Map());
 
+  // Resolved when the CURRENT iframe has signalled MSG_VAULT_READY. A freshly
+  // appended iframe already exposes a `contentWindow`, but it still holds the
+  // `about:blank` document, which inherits the PARENT's origin — so posting to
+  // it with the vault's targetOrigin is rejected by the browser ("target origin
+  // does not match the recipient window's origin"). A new deferred is installed
+  // per iframe (mount, dev remount, vaultUrl change) so requests wait for the
+  // frame they will actually be delivered to.
+  const readyRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
+
   useEffect(() => {
+    let markReady = (): void => {};
+    const readyDeferred = {
+      promise: new Promise<void>((resolve) => {
+        markReady = resolve;
+      }),
+      resolve: () => markReady(),
+    };
+
+    readyRef.current = readyDeferred;
+
     // Create hidden vault iframe
     const iframe = document.createElement('iframe');
     iframe.src = `${vaultUrl}/bridge.html`;
@@ -118,6 +154,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
 
       if (data.type === MSG_VAULT_READY) {
         setIframeReady(true);
+        readyDeferred.resolve();
 
         return;
       }
@@ -144,6 +181,11 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
     return () => {
       window.removeEventListener('message', handleMessage);
 
+      // The next iframe starts at `about:blank` again, so readiness MUST NOT
+      // carry over: leaving it true lets consumers (and `request`) treat the
+      // replacement frame as live and post into the wrong origin.
+      setIframeReady(false);
+
       // Reject all pending requests on cleanup to avoid dangling promises
       for (const [, pending] of pendingRef.current) {
         pending.reject(new Error('Vault iframe destroyed'));
@@ -156,8 +198,9 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
     };
   }, [vaultUrl]);
 
-  const setAuthInfo = useCallback((suiteUserId: string) => {
+  const setAuthInfo = useCallback((suiteUserId: string, internalUserId?: string | null) => {
     userIdRef.current = suiteUserId;
+    internalUserIdRef.current = internalUserId ?? null;
     setHasAuth(true);
   }, []);
 
@@ -169,6 +212,20 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
 
       if (!userIdRef.current) {
         throw new Error('Auth info is required. Call setAuthInfo() first.');
+      }
+
+      // Wait for the iframe to have navigated to the vault origin. Looping
+      // because a remount mid-wait swaps the deferred: the one we awaited may
+      // belong to an iframe that is already gone, so re-check that the deferred
+      // we waited on is still the installed one before posting.
+      for (let deferred = readyRef.current; deferred; deferred = readyRef.current) {
+        await deferred.promise;
+
+        if (readyRef.current === deferred) break;
+      }
+
+      if (!iframeRef.current?.contentWindow) {
+        throw new Error('Vault iframe not ready');
       }
 
       const requestId = crypto.randomUUID();
@@ -192,11 +249,26 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
           },
         });
 
-        iframeRef.current!.contentWindow!.postMessage({ type, requestId, suiteUserId: userIdRef.current, payload }, vaultOrigin);
+        iframeRef.current!.contentWindow!.postMessage(
+          {
+            type,
+            requestId,
+            suiteUserId: userIdRef.current,
+            ...(internalUserIdRef.current ? { internalUserId: internalUserIdRef.current } : {}),
+            payload,
+          },
+          vaultOrigin
+        );
       });
     },
     [vaultUrl]
   );
+
+  const resolveInternalUser = useCallback(async (): Promise<string | null> => {
+    const result = (await request(MSG_VAULT_RESOLVE_USER)) as { internalUserId: string | null };
+
+    return result.internalUserId;
+  }, [request]);
 
   const generateKeys = useCallback(() => request(MSG_VAULT_GENERATE_KEYS) as Promise<{ publicKey: string; signaturePublicKey: string }>, [request]);
 
@@ -288,6 +360,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   return {
     isReady,
     setAuthInfo,
+    resolveInternalUser,
     request,
     generateKeys,
     commitStagedVault,

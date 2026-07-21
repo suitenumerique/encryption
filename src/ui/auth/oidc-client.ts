@@ -217,6 +217,20 @@ function decodeJwtSub(token: string): string | undefined {
 }
 
 /**
+ * The IdP definitively rejected the refresh token: it is dead for good (idle
+ * timeout, revoked session, realm or database reset). Callers MUST distinguish
+ * this from a transient failure (offline, 5xx), because only this one may drop
+ * the stored session; clearing on a hiccup would sign the user out every time
+ * the IdP stumbles.
+ */
+export class InvalidGrantError extends Error {
+  constructor() {
+    super('invalid_grant');
+    this.name = 'InvalidGrantError';
+  }
+}
+
+/**
  * Refresh the access token using the refresh token.
  * Calls the OIDC token endpoint directly (standard refresh_token grant).
  */
@@ -236,6 +250,12 @@ async function doRefresh(refreshToken: string): Promise<TokenSet> {
   });
 
   if (!response.ok) {
+    // OAuth 2 returns 400 (invalid_grant) for a token the IdP will never
+    // accept again; 401 is the same verdict from a stricter deployment.
+    if (response.status === 400 || response.status === 401) {
+      throw new InvalidGrantError();
+    }
+
     throw new Error(`Token refresh failed: ${response.status}`);
   }
 

@@ -127,4 +127,23 @@ describe('refreshTokenWithLock', () => {
     expect(body.get('refresh_token')).toBe('stored-refresh');
     expect(persistToken).toHaveBeenCalledTimes(1);
   });
+
+  // The caller evicts the stored session on InvalidGrantError only, so the two
+  // failure shapes must stay distinguishable: a dead token has to log the user
+  // out, an IdP hiccup must not.
+  it('reports a definitively rejected refresh token as InvalidGrantError', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'invalid_grant' }) });
+
+    await expect(refreshTokenWithLock(staleToken(), async () => null, jest.fn())).rejects.toMatchObject({ name: 'InvalidGrantError' });
+  });
+
+  it('does NOT report a transient failure as InvalidGrantError', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
+
+    await expect(refreshTokenWithLock(staleToken(), async () => null, jest.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
+
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(refreshTokenWithLock(staleToken(), async () => null, jest.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
+  });
 });

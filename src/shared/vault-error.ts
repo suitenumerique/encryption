@@ -26,6 +26,15 @@ export const VaultErrorCode = {
   NOT_INITIALIZED: 'NOT_INITIALIZED',
   /** `setAuthContext({ suiteUserId })` was never called. */
   AUTH_REQUIRED: 'AUTH_REQUIRED',
+  /**
+   * The declared sub could not be resolved to an internal encryption user id:
+   * no local alias, and no directory row (either the user never onboarded, or
+   * the registry was unreachable with nothing cached). Thrown by every vault
+   * operation EXCEPT `has-keys`, which responds `{ hasKeys: false }` instead
+   * of throwing: for that probe, "unresolvable" and "never onboarded" are the
+   * same answer, and products use it to decide whether to offer onboarding.
+   */
+  UNRESOLVED_USER: 'UNRESOLVED_USER',
   /** Privileged operation attempted from a non-encryption-origin caller. */
   PRIVILEGED_ORIGIN_REQUIRED: 'PRIVILEGED_ORIGIN_REQUIRED',
   /** A vault request didn't get an answer within the configured timeout. */

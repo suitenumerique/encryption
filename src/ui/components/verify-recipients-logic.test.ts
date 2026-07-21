@@ -8,8 +8,8 @@ import {
 describe('buildUserFingerprints', () => {
   it('keeps only binding-verified records', () => {
     const users = {
-      alice: { identityFingerprint: 'aaa', verified: true },
-      bob: { identityFingerprint: 'bbb', verified: false },
+      alice: { userId: 'internal-alice', identityFingerprint: 'aaa', verified: true },
+      bob: { userId: 'internal-bob', identityFingerprint: 'bbb', verified: false },
     };
 
     expect(buildUserFingerprints(['alice', 'bob'], users)).toEqual({ alice: 'aaa' });

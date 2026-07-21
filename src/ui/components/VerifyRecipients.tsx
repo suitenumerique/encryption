@@ -25,13 +25,11 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
 
 interface VerifyRecipientsProps {
   /**
-   * The recipients (userId → display label) the share targeted, passed via the
+   * The recipients (OIDC sub → display label) the share targeted, passed via the
    * context channel. Only the ones that block the share get surfaced below; the
    * label is used for display.
    */
   recipients: Record<string, RecipientLabel>;
-  /** The sharing user's own id, so the vault never surfaces "self" as untrusted. */
-  currentUserId: string | null;
   /** Report the outcome to the SDK: all trusted, or refused/cancelled/closed. */
   onComplete: (outcome: 'resolved' | 'cancelled') => void;
   onReconnect?: () => void;
@@ -53,7 +51,6 @@ interface VerifyRecipientsProps {
  */
 export function VerifyRecipients({
   recipients: recipientLabels,
-  currentUserId,
   onComplete,
   onReconnect,
   isAuthenticating = false,
@@ -92,9 +89,9 @@ export function VerifyRecipients({
 
     (async () => {
       try {
-        const userIds = recipientKey.length > 0 ? recipientKey.split(',') : [];
+        const subs = recipientKey.length > 0 ? recipientKey.split(',') : [];
 
-        if (userIds.length === 0) {
+        if (subs.length === 0) {
           if (!cancelled) {
             setRecipients([]);
             setPhase('ready');
@@ -103,10 +100,12 @@ export function VerifyRecipients({
           return;
         }
 
-        const { users } = (await request(MSG_VAULT_FETCH_PUBLIC_KEYS, { userIds })) as { users: Record<string, VaultRegisteredUser> };
-        const userFingerprints = buildUserFingerprints(userIds, users);
+        // Recipients arrive as subs (from the product via the SDK); the vault
+        // translates them to its internal trust keys and echoes the subs back.
+        const { users } = (await request(MSG_VAULT_FETCH_PUBLIC_KEYS, { subs })) as { users: Record<string, VaultRegisteredUser> };
+        const userFingerprints = buildUserFingerprints(subs, users);
 
-        const { results } = (await request(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints, currentUserId })) as {
+        const { results } = (await request(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints })) as {
           results: FingerprintCheckResult[];
         };
 
@@ -122,7 +121,7 @@ export function VerifyRecipients({
     return () => {
       cancelled = true;
     };
-  }, [isReady, recipientKey, currentUserId, request, onError]);
+  }, [isReady, recipientKey, request, onError]);
 
   const handleTrust = useCallback(
     async (recipient: SurfacedRecipient) => {
@@ -130,7 +129,7 @@ export function VerifyRecipients({
       setError(null);
 
       try {
-        await request(MSG_VAULT_ACCEPT_FINGERPRINT, { userId: recipient.userId, fingerprint: recipient.fingerprint });
+        await request(MSG_VAULT_ACCEPT_FINGERPRINT, { sub: recipient.userId, fingerprint: recipient.fingerprint });
         setRecipients((prev) => prev.map((r) => (r.userId === recipient.userId ? { ...r, trusted: true } : r)));
       } catch (err) {
         onError(err);
@@ -149,7 +148,7 @@ export function VerifyRecipients({
       setBusy(true);
 
       try {
-        await request(MSG_VAULT_REFUSE_FINGERPRINT, { userId: recipient.userId, fingerprint: recipient.fingerprint });
+        await request(MSG_VAULT_REFUSE_FINGERPRINT, { sub: recipient.userId, fingerprint: recipient.fingerprint });
       } catch {
         // Best-effort: abort regardless of whether the refusal persisted.
       } finally {

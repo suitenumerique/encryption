@@ -9,11 +9,11 @@ import {
   MSG_INTERFACE_SET_THEME,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
-import { fetchPublicKeys } from '@encryption/src/ui/api/server-client';
+import { fetchMe, fetchPublicKeysBySubs } from '@encryption/src/ui/api/server-client';
 import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
 import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
-import { type TokenSet, decodeJwtClaims, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
-import { readToken, storeToken } from '@encryption/src/ui/auth/token-storage';
+import { InvalidGrantError, type TokenSet, decodeJwtClaims, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
+import { clearToken, readToken, storeToken } from '@encryption/src/ui/auth/token-storage';
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
@@ -73,15 +73,23 @@ function decodeJwtUserInfo(token: string): UserInfo {
 function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Route) => void }) {
   const parentContext = useParentMessages();
   const { t } = useTranslation('common');
-  const { setAuthInfo, hasKeys } = useEncryptionContext();
+  const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
+
+  // The INTERNAL encryption user id. Resolved vault-first (alias store /
+  // registry, no OIDC session needed, so settings work with an expired token),
+  // with /api/me as the fallback for a never-onboarded user. It is what the
+  // vault operates under and what binding signatures embed; components wait on
+  // it (nullable userId props).
+  const [internalUserId, setInternalUserId] = useState<string | null>(null);
 
   // Set auth info on the encryption context FIRST — the vault needs this before
-  // we can make any requests (including token restoration).
+  // we can make any requests (including token restoration). Re-sent when the
+  // internal id lands so subsequent vault requests carry it.
   useEffect(() => {
     if (parentContext.suiteUserId) {
-      setAuthInfo(parentContext.suiteUserId);
+      setAuthInfo(parentContext.suiteUserId, internalUserId);
     }
-  }, [parentContext.suiteUserId, setAuthInfo]);
+  }, [parentContext.suiteUserId, internalUserId, setAuthInfo]);
 
   // Navigation guard: the setup/restore screens make no sense once this device
   // already holds keys, so redirect to settings if we land on them with a vault
@@ -172,8 +180,22 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       oidcAuth.updateTokenSet(refreshed);
 
       return refreshed.accessToken;
-    } catch {
-      // Refresh failed — token is expired and unrecoverable
+    } catch (err) {
+      // A definitively rejected refresh token (idle timeout, revoked session,
+      // a reset Keycloak realm) must be evicted from memory AND localStorage.
+      // Keeping it wedges the interface for good: the stale access token still
+      // reads as "authenticated", so `needsAuth` stays false, no sign-in is
+      // offered, and the restore-from-localStorage effect resurrects the same
+      // dead token on every reload. Transient failures (offline, 5xx) fall
+      // through untouched so a network hiccup never logs the user out.
+      if (err instanceof InvalidGrantError) {
+        if (parentContext.suiteUserId) {
+          clearToken(parentContext.suiteUserId);
+        }
+
+        oidcAuth.clearTokenSet();
+      }
+
       return null;
     }
   }, [oidcAuth.tokenSet, parentContext.suiteUserId]);
@@ -182,6 +204,66 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // but must call getValidToken() before actual API calls to ensure the token
   // is fresh (lazy refresh with Web Locks mutex if it expires within 1 minute).
   const oidcToken = oidcAuth.token;
+
+  // Resolve the internal user id, vault first: the alias/registry chain needs
+  // no OIDC session, so an onboarded user gets their id (and a working
+  // settings page) even with an expired token. /api/me is the fallback for a
+  // never-onboarded user only: it mints the server-side user row, which must
+  // exist before onboarding can sign a key registration (the internal id is
+  // inside the binding signature), and onboarding needs a live session anyway.
+  useEffect(() => {
+    if (!isReady || internalUserId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const resolved = await resolveInternalUser();
+
+        if (cancelled) return;
+        if (resolved) {
+          setInternalUserId(resolved);
+
+          return;
+        }
+      } catch {
+        // Vault unavailable: fall through to /api/me below.
+      }
+
+      if (!oidcToken) return;
+
+      try {
+        const token = await getValidToken();
+        const me = token ? await fetchMe(token) : null;
+
+        if (!cancelled && me) setInternalUserId(me.userId);
+      } catch (err) {
+        // Not an error condition for the page: an expired session only matters
+        // if the user turns out to need onboarding, which will ask them to
+        // sign in through its own flow.
+        console.warn('[encryption-ui] Failed to resolve internal user id:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isReady, oidcToken, internalUserId, getValidToken, resolveInternalUser]);
+
+  // Seed the vault's persistent alias store once the id is known: the request
+  // envelope carries the internal id (setAuthInfo above re-ran), the vault
+  // adopts it and persists the sub -> id alias, so the NEXT interface visit
+  // resolves offline and token-free even if this one never touched the vault.
+  const aliasSeededRef = useRef(false);
+
+  useEffect(() => {
+    if (!internalUserId || !isReady || aliasSeededRef.current) return;
+
+    aliasSeededRef.current = true;
+    resolveInternalUser().catch(() => {
+      // Best-effort: the alias also gets written by any later vault request.
+    });
+  }, [internalUserId, isReady, resolveInternalUser]);
 
   const [hasExistingBackendKey, setHasExistingBackendKey] = useState(false);
   const [existingKeyFingerprint, setExistingKeyFingerprint] = useState<string | null>(null);
@@ -197,11 +279,14 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
     return decodeJwtUserInfo(oidcToken);
   }, [oidcToken]);
 
-  // Check for existing backend keys once we have a userId
+  // Check for existing backend keys, to route the user to restore instead of
+  // fresh onboarding. Queried by sub because that is the only id the parent
+  // context guarantees, through the unauthenticated directory form, so it
+  // works with no (or an expired) OIDC session, like resolution above.
   useEffect(() => {
     if (!parentContext.suiteUserId) return;
 
-    fetchPublicKeys([parentContext.suiteUserId])
+    fetchPublicKeysBySubs([parentContext.suiteUserId])
       .then(async (keys) => {
         setHasExistingBackendKey(keys.length > 0);
 
@@ -316,7 +401,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <ModalEncryptionOnboarding
           getToken={getValidToken}
-          userId={parentContext.suiteUserId}
+          userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={hasExistingBackendKey}
           existingKeyFingerprint={existingKeyFingerprint}
@@ -334,7 +419,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <ModalEncryptionOnboarding
           getToken={getValidToken}
-          userId={parentContext.suiteUserId}
+          userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={true}
           existingKeyFingerprint={existingKeyFingerprint}
@@ -352,7 +437,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <ModalEncryptionOnboarding
           getToken={getValidToken}
-          userId={parentContext.suiteUserId}
+          userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={true}
           existingKeyFingerprint={existingKeyFingerprint}
@@ -370,7 +455,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <EncryptionSettings
           userInfo={userInfo}
-          userId={parentContext.suiteUserId}
+          userId={internalUserId}
           getToken={getValidToken}
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
@@ -404,7 +489,6 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <VerifyRecipients
           recipients={parentContext.verifyRecipients ?? {}}
-          currentUserId={parentContext.suiteUserId}
           onComplete={(outcome) => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_VERIFY_COMPLETE, { outcome })}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}

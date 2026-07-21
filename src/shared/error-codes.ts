@@ -8,6 +8,8 @@ export const API_ERROR_INTERNAL = 'internal_error';
 export const API_ERROR_UNAUTHORIZED = 'unauthorized';
 export const API_ERROR_FORBIDDEN = 'forbidden';
 
+export const API_ERROR_EMAIL_CLAIM_REQUIRED = 'email_claim_required';
+
 export const API_ERROR_FORBIDDEN_OTHER_USER = 'forbidden_other_user';
 export const API_ERROR_RATE_LIMIT_KEYS = 'rate_limit_keys';
 export const API_ERROR_RATE_LIMIT_CHALLENGES = 'rate_limit_challenges';

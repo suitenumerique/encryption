@@ -10,7 +10,7 @@
 import { computeKeyFingerprint } from '@encryption/src/crypto';
 import { type TofuStatus, type VaultState, activeIdentity, setTofu } from '@encryption/src/crypto/vault-state';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
-import { fetchContinuityChain } from '@encryption/src/vault/operations/fetch-public-keys';
+import { fetchContinuityChain, handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import { type ContinuityLink, resolveContinuity } from '@encryption/src/vault/operations/identity-continuity';
 import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
 import { loadVault, mutateVault } from '@encryption/src/vault/vault-keys';
@@ -65,8 +65,8 @@ export interface FingerprintCheckResult {
 export async function handleCheckFingerprints(
   userId: string,
   payload: {
+    /** Fingerprints keyed by INTERNAL user id (the TOFU key space). Boundary callers holding subs go through {@link handleCheckFingerprintsBySubs}. */
     userFingerprints: Record<string, string>;
-    currentUserId?: string;
   },
   // `record` controls PERSISTENCE. It is true ONLY on the wrap-time path (an
   // actual share, resolveTrustedRecipientKeys): only then do we record a
@@ -210,14 +210,86 @@ export async function handleCheckFingerprints(
   return { results };
 }
 
-/** Accept a fingerprint: mark it trusted in the synchronized registry (write-through). */
+/**
+ * Boundary variant of {@link handleCheckFingerprints} for callers that hold
+ * subs (products, the interface's verify screens): resolves each sub through
+ * the directory to the internal id the TOFU store keys on, checks, and maps
+ * the results back to the caller's subs. A sub with no directory record cannot
+ * be checked and reads as 'unknown' with no recorded fingerprint.
+ */
+export async function handleCheckFingerprintsBySubs(
+  userId: string,
+  payload: { userFingerprints: Record<string, string> }
+): Promise<{ results: FingerprintCheckResult[] }> {
+  const subs = Object.keys(payload.userFingerprints);
+
+  if (subs.length === 0) return { results: [] };
+
+  const { users } = await handleFetchPublicKeys(userId, { subs });
+
+  const internalFingerprints: Record<string, string> = {};
+
+  for (const sub of subs) {
+    const entry = users[sub];
+
+    if (entry) {
+      internalFingerprints[entry.userId] = payload.userFingerprints[sub];
+    }
+  }
+
+  const { results } = await handleCheckFingerprints(userId, { userFingerprints: internalFingerprints });
+  const byInternal = new Map(results.map((r) => [r.userId, r]));
+
+  // One result per QUERIED sub — two subs resolving to the same internal user
+  // (email-linked credentials) each get the shared verdict, and an
+  // unresolvable sub reads as 'unknown' with nothing recorded.
+  return {
+    results: subs.map((sub) => {
+      const verdict = users[sub] ? byInternal.get(users[sub].userId) : undefined;
+
+      return verdict
+        ? { ...verdict, userId: sub, providedFingerprint: payload.userFingerprints[sub] }
+        : { userId: sub, knownFingerprint: null, providedFingerprint: payload.userFingerprints[sub], status: 'unknown' as const };
+    }),
+  };
+}
+
+/** Accept a fingerprint: mark it trusted in the synchronized registry (write-through). Keys by INTERNAL id. */
 export async function handleAcceptFingerprint(userId: string, payload: { userId: string; fingerprint: string }): Promise<void> {
   await writeThrough(userId, (state) => setTofu(state, payload.userId, payload.fingerprint, 'trusted', Date.now()));
 }
 
-/** Refuse a fingerprint: mark it refused so the UI shows it in red (write-through). */
+/** Refuse a fingerprint: mark it refused so the UI shows it in red (write-through). Keys by INTERNAL id. */
 export async function handleRefuseFingerprint(userId: string, payload: { userId: string; fingerprint: string }): Promise<void> {
   await writeThrough(userId, (state) => setTofu(state, payload.userId, payload.fingerprint, 'refused', Date.now()));
+}
+
+// Resolve one sub to the internal id a trust decision must be recorded under.
+// Trust decisions are meaningless without a directory record (the fingerprint
+// being decided on comes from one), so an unresolvable sub is an error.
+async function resolveDecisionTarget(userId: string, sub: string): Promise<string> {
+  const { users } = await handleFetchPublicKeys(userId, { subs: [sub] });
+  const entry = users[sub];
+
+  if (!entry) {
+    throw new VaultError(VaultErrorCode.UNRESOLVED_USER, 'This person has no registered encryption identity to decide on.');
+  }
+
+  return entry.userId;
+}
+
+/** Boundary variant of {@link handleAcceptFingerprint} for callers holding a sub (the verify/profile screens). */
+export async function handleAcceptFingerprintBySub(userId: string, payload: { sub: string; fingerprint: string }): Promise<void> {
+  const remoteUserId = await resolveDecisionTarget(userId, payload.sub);
+
+  await handleAcceptFingerprint(userId, { userId: remoteUserId, fingerprint: payload.fingerprint });
+}
+
+/** Boundary variant of {@link handleRefuseFingerprint} for callers holding a sub. */
+export async function handleRefuseFingerprintBySub(userId: string, payload: { sub: string; fingerprint: string }): Promise<void> {
+  const remoteUserId = await resolveDecisionTarget(userId, payload.sub);
+
+  await handleRefuseFingerprint(userId, { userId: remoteUserId, fingerprint: payload.fingerprint });
 }
 
 /** All known (non-tombstoned) fingerprints with their status for this user. */

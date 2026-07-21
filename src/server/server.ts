@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
 import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
+import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { versionRoute } from '@encryption/src/server/routes/versions';
@@ -75,6 +76,7 @@ export async function createServer() {
 
   // Register routes
   app.register(versionRoute);
+  app.register(meRoute);
   app.register(publicKeysRoute);
   app.register(vaultRoute);
 

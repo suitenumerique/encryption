@@ -74,10 +74,34 @@ export interface PublicKeyEntry {
 }
 
 export async function fetchPublicKeys(userIds: string[]): Promise<PublicKeyEntry[]> {
-  const userIdsParam = userIds.map(encodeURIComponent).join(',');
-  const result = await request<{ keys: PublicKeyEntry[] }>(`/api/public-keys?user_ids=${userIdsParam}`);
+  const params = new URLSearchParams(userIds.map((userId) => ['user_ids', userId]));
+  const result = await request<{ keys: PublicKeyEntry[] }>(`/api/public-keys?${params.toString()}`);
 
   return result.keys;
+}
+
+/**
+ * Directory lookup by OIDC sub (unauthenticated, like every directory read).
+ * Used before /api/me has resolved the internal id — e.g. the pre-login
+ * "does this user already hold keys" check.
+ */
+export async function fetchPublicKeysBySubs(subs: string[]): Promise<Array<PublicKeyEntry & { sub?: string }>> {
+  // Repeated `subs` parameters, never comma-joined: a sub may contain a comma.
+  const params = new URLSearchParams(subs.map((sub) => ['subs', sub]));
+  const result = await request<{ keys: Array<PublicKeyEntry & { sub?: string }> }>(`/api/public-keys?${params.toString()}`);
+
+  return result.keys;
+}
+
+/**
+ * Resolve the caller's OIDC session to the INTERNAL user id (minting the user
+ * server-side on first contact). The interface threads this id into every
+ * privileged vault flow: it is the id embedded in binding signatures.
+ */
+export async function fetchMe(token: string): Promise<{ userId: string; email: string | null }> {
+  const result = await request<{ user_id: string; email: string | null }>('/api/me', { token });
+
+  return { userId: result.user_id, email: result.email };
 }
 
 /**
@@ -204,11 +228,19 @@ export function approveDevicePath(requestId: string): string {
 }
 
 /** Enrolled device, manual fallback: this user's pending (unapproved) device requests. */
-export async function listPendingApprovals(token: string, xSignature: string): Promise<{ approvals: Array<{ request_id: string; device_public_key: string }> }> {
+export async function listPendingApprovals(
+  token: string,
+  xSignature: string
+): Promise<{ approvals: Array<{ request_id: string; device_public_key: string }> }> {
   return request<{ approvals: Array<{ request_id: string; device_public_key: string }> }>('/api/vault/approvals/pending', { token, xSignature });
 }
 
-export async function approveDeviceOnServer(token: string, requestId: string, wrappedDeviceBootstrap: string, xSignature: string): Promise<{ approved: boolean }> {
+export async function approveDeviceOnServer(
+  token: string,
+  requestId: string,
+  wrappedDeviceBootstrap: string,
+  xSignature: string
+): Promise<{ approved: boolean }> {
   return request<{ approved: boolean }>(approveDevicePath(requestId), {
     method: 'POST',
     token,

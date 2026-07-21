@@ -19,6 +19,7 @@
       "rate_limit_challenges": "Trop de tentatives de vérification. Veuillez patienter un instant et réessayer.",
       "invalid_request": "La requête est invalide. Veuillez réessayer.",
       "unauthorized": "Votre session n'est pas authentifiée. Rechargez la page pour vous connecter, puis réessayez.",
+      "email_claim_required": "Votre compte ne dispose d'aucune adresse e-mail utilisable. Une adresse e-mail est requise pour utiliser le chiffrement ; contactez votre administrateur.",
       "forbidden": "Vous n'avez pas l'autorisation d'effectuer cette action.",
       "internal_error": "Une erreur serveur inattendue s'est produite. Veuillez réessayer plus tard."
     },

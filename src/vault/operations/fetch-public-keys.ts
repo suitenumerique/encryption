@@ -7,8 +7,9 @@
  * server themselves. The vault verifies the identity binding signature on
  * every record (see src/crypto/key-registration.ts).
  *
- * The result is a SINGLE map keyed by userId — one entry bundling the identity
- * and its encryption key together. A verified entry carries the encryption key
+ * The result is a SINGLE map keyed by the id the caller queried with (the sub
+ * for `subs` queries, the internal id for `userIds` queries) — one entry
+ * bundling the identity and its encryption key together. A verified entry carries the encryption key
  * that is safe to wrap for; an UNVERIFIED entry (forged / tampered / incoherent
  * directory record) carries `encryptionPublicKey: null` so a product can never
  * wrap a key for it. Keeping both in one object (rather than two parallel maps)
@@ -22,7 +23,8 @@ import type { ContinuityLink } from '@encryption/src/vault/operations/identity-c
 const API_BASE = '';
 
 interface DirectoryEntry {
-  user_id: string;
+  user_id: string; // INTERNAL encryption-service user id
+  sub?: string; // echoed only for records matched through the `subs=` form
   encryption_public_key: string;
   signature_public_key: string;
   key_binding_signature: string;
@@ -31,6 +33,11 @@ interface DirectoryEntry {
 }
 
 export interface VaultRegisteredUser {
+  /**
+   * INTERNAL encryption-service user id. Products never need it (they speak
+   * subs); the vault keys TOFU and every persistent artifact by it.
+   */
+  userId: string;
   signaturePublicKey: ArrayBuffer;
   identityFingerprint: string;
   version: number;
@@ -53,18 +60,36 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 export async function handleFetchPublicKeys(
   _userId: string,
-  payload: { userIds: string[] }
+  payload: { userIds?: string[]; subs?: string[] }
 ): Promise<{ users: Record<string, VaultRegisteredUser> }> {
-  if (!payload.userIds || payload.userIds.length === 0) {
+  const userIds = payload.userIds ?? [];
+  const subs = payload.subs ?? [];
+
+  if (userIds.length === 0 && subs.length === 0) {
     return { users: {} };
   }
 
-  // Encode each id: an IdP `sub` is not always a UUID and may contain `&`,
-  // `#`, `+`, or whitespace that would otherwise corrupt the query string. The
-  // server splits on comma after decoding, so a `,` inside an id is still
-  // ambiguous — encode guards every other reserved character.
-  const userIdsParam = payload.userIds.map(encodeURIComponent).join(',');
-  const response = await fetch(`${API_BASE}/api/public-keys?user_ids=${userIdsParam}`);
+  // Mirrors the server schema: one form or the other, never both — mixing
+  // would make the result keying ambiguous (a record matched by both forms
+  // can only be keyed one way in the returned map).
+  if (userIds.length > 0 && subs.length > 0) {
+    throw new Error('userIds and subs are mutually exclusive');
+  }
+
+  // One repeated parameter per id rather than a comma-joined list: subs are
+  // free-form IdP identifiers and may contain any ASCII character, comma
+  // included, which a joined list would shatter. URLSearchParams also handles
+  // every other reserved character (`&`, `#`, `+`, whitespace).
+  const params = new URLSearchParams();
+
+  for (const sub of subs) {
+    params.append('subs', sub);
+  }
+  for (const userId of userIds) {
+    params.append('user_ids', userId);
+  }
+
+  const response = await fetch(`${API_BASE}/api/public-keys?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error(`Failed to fetch public keys: ${response.status}`);
@@ -86,7 +111,11 @@ export async function handleFetchPublicKeys(
 
     const identityFingerprint = await computeKeyFingerprint(key.signature_public_key);
 
-    users[key.user_id] = {
+    // Key the map by the id the CALLER used: the echoed sub for `subs` queries
+    // (products/interface only ever hold subs), the internal id otherwise
+    // (vault-internal callers). The internal id always travels as a field.
+    users[key.sub ?? key.user_id] = {
+      userId: key.user_id,
       signaturePublicKey: base64ToArrayBuffer(key.signature_public_key),
       identityFingerprint,
       version: key.version,

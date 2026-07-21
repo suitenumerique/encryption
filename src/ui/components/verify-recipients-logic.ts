@@ -16,6 +16,8 @@ export interface SurfacedRecipient {
 
 /** What the vault's fetch-public-keys op returns per user (subset we read here). */
 export interface VaultRegisteredUser {
+  /** INTERNAL encryption-service user id (the TOFU key space); the map itself is keyed by the queried subs. */
+  userId: string;
   identityFingerprint: string;
   verified: boolean;
 }

@@ -7,6 +7,7 @@ import { createKeyPossessionChallenge } from '@encryption/src/crypto/key-possess
 import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
 import { assertValidSignaturePublicKey } from '@encryption/src/crypto/signature';
 import { prisma } from '@encryption/src/prisma/client';
+import { env } from '@encryption/src/server/env';
 import {
   type CompleteTxResult,
   completeRegistrationInTx,
@@ -52,8 +53,45 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
   // a public directory is inherently enumerable and that is the accepted design.
   app.get('/api/public-keys', {
     handler: async (request) => {
-      // Already split, trimmed, and bounded (<= 100 non-empty ids) by the schema.
-      const userIds = GetPublicKeysQuerySchema.parse(request.query).user_ids;
+      // Already split, trimmed, bounded (<= 100 ids), and EXCLUSIVE (exactly
+      // one form) by the schema. `user_ids` are internal ids; `subs` are OIDC
+      // subs resolved through oidc_accounts, active issuer only.
+      const query = GetPublicKeysQuerySchema.parse(request.query);
+
+      // internal id -> every queried sub that resolved to it. A user can hold
+      // several subs under the SAME issuer (email-fallback linking after an
+      // IdP recreated their account), and each queried sub deserves its own
+      // echoed entry — collapsing them would make one of the subs read as
+      // "no keys" to the caller.
+      const subsByUser = new Map<string, string[]>();
+      let userIds: string[];
+
+      if (query.subs !== undefined) {
+        // Resolution is restricted to the CURRENTLY configured issuer: exactly
+        // one exists at a time (cutover, not coexistence), so callers never
+        // pass one. Retired-issuer rows are kept (audit trail, operator merge
+        // tooling) but deliberately NEVER resolved here: matching them would
+        // be fail-open, since a fresh sub colliding with a retired one could
+        // return another human's keys, the one wrong answer a key directory
+        // must never give. The cost is fail-closed and self-healing: after a
+        // provider cutover a user stops resolving (shows as "no keys") until
+        // their first post-cutover login re-links their new credential.
+        const accounts = await prisma.oidcAccount.findMany({
+          where: { issuer: env.OIDC_ISSUER, subject: { in: query.subs } },
+        });
+
+        for (const account of accounts) {
+          subsByUser.set(account.userId, [...(subsByUser.get(account.userId) ?? []), account.subject]);
+        }
+
+        userIds = [...subsByUser.keys()];
+      } else {
+        userIds = query.user_ids!;
+      }
+
+      if (userIds.length === 0) {
+        return { keys: [] };
+      }
 
       // The active encryption key joined to the identity that vouches for it, and
       // ONLY when that identity is itself active: disabling an identity hides the
@@ -70,14 +108,21 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       });
 
       return {
-        keys: keys.map((key) => ({
-          user_id: key.userId,
-          encryption_public_key: uint8ToBase64(key.encryptionPublicKey),
-          signature_public_key: uint8ToBase64(key.identity.signaturePublicKey),
-          key_binding_signature: uint8ToBase64(key.keyBindingSignature),
-          version: key.version,
-          created_at_millis: key.createdAt.getTime(),
-        })),
+        // One entry per (record, matched sub) pair for `subs` queries so each
+        // queried sub finds its echo; plain per-record entries for `user_ids`.
+        keys: keys.flatMap((key) => {
+          const base = {
+            user_id: key.userId,
+            encryption_public_key: uint8ToBase64(key.encryptionPublicKey),
+            signature_public_key: uint8ToBase64(key.identity.signaturePublicKey),
+            key_binding_signature: uint8ToBase64(key.keyBindingSignature),
+            version: key.version,
+            created_at_millis: key.createdAt.getTime(),
+          };
+          const matched = subsByUser.get(key.userId);
+
+          return matched ? matched.map((sub) => ({ ...base, sub })) : [base];
+        }),
       };
     },
   });
@@ -250,8 +295,9 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       const body = InitKeyPossessionBodySchema.parse(request.body);
       const userId = request.userId!;
 
-      // user_id in the body must match the JWT sub — safety check against
-      // a caller passing the wrong identifier (e.g. a product-scoped id).
+      // user_id in the body must match the authenticated INTERNAL user id —
+      // safety check against a caller passing the wrong identifier (an OIDC
+      // sub or a product-scoped id would fail here).
       if (body.user_id !== userId) {
         return reply.status(403).send({ code: API_ERROR_FORBIDDEN_OTHER_USER });
       }

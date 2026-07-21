@@ -92,7 +92,9 @@ export function DemoApp() {
   const [logs, setLogs] = useState<string[]>([]);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const [allDocuments, setAllDocuments] = useState<FakeDocument[]>([]);
-  // Show documents owned by or shared with the current user
+  // Show documents owned by or shared with the current user. All ids here are
+  // Keycloak subs: the only id space a product ever handles (the encryption
+  // service translates to its internal ids behind its own boundary).
   const currentKeycloakId = currentUser ? getKnownUserId(currentUser.username) : null;
   const documents = useMemo(() => {
     if (!currentUser) return [];
@@ -295,7 +297,7 @@ export function DemoApp() {
       log(`Encrypting document '${newDocTitle}'...`);
 
       // Encryption is a LOCAL vault op (+ a public directory lookup), so it does
-      // not need a live access token — only the author's userId. Use the
+      // not need a live access token — only the author's sub. Use the
       // persistent username -> sub map, which survives the short-lived Keycloak
       // token expiring, instead of gating doc creation on a fresh login.
       const authorId = getKnownUserId(currentUser.username);

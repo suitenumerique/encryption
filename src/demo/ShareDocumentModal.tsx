@@ -16,11 +16,11 @@ import { Button, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
 import { QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { VaultClient } from '@encryption/src/client/vault-client';
-import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
+import type { RegisteredUser, VaultClient } from '@encryption/src/client/vault-client';
+import { uint8ToBase64 } from '@encryption/src/crypto';
 import { ModalNoKey } from '@encryption/src/demo/ModalNoKey';
-import { DEMO_USERS, getUserLabel } from '@encryption/src/demo/auth';
-import { type PublicKeyEntry, fetchPublicKeys } from '@encryption/src/ui/api/server-client';
+import { DEMO_USERS } from '@encryption/src/demo/auth';
+import type { RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -421,69 +421,50 @@ export function ShareDocumentModal({
         return tokens.every((tok) => haystack.includes(tok));
       });
 
-      const userIdMap: Record<string, string> = {};
+      // The demo, like any product, only ever handles subs: the SDK fetch keys
+      // by sub, verifies each record's identity binding inside the vault, and
+      // returns the map keyed by the same subs.
+      const subByUsername: Record<string, string> = {};
 
       for (const user of matched) {
-        const realId = resolveUserId(user.username);
+        const sub = resolveUserId(user.username);
 
-        if (realId) userIdMap[user.username] = realId;
+        if (sub) subByUsername[user.username] = sub;
       }
 
-      const realIds = Object.values(userIdMap);
-      const entriesById: Record<string, PublicKeyEntry> = {};
+      const subs = Object.values(subByUsername);
+      let resolved: Record<string, RegisteredUser> = {};
 
-      if (realIds.length > 0) {
+      if (subs.length > 0 && vaultClient) {
         try {
-          const keys = await fetchPublicKeys(realIds);
-
-          for (const key of keys) entriesById[key.user_id] = key;
+          resolved = await vaultClient.fetchPublicKeys(subs);
         } catch {
           /* server unavailable */
         }
       }
 
-      const results: DemoUser[] = await Promise.all(
-        matched
-          .filter((u) => userIdMap[u.username] && userIdMap[u.username] !== currentUserId)
-          .map(async (u) => {
-            const realId = userIdMap[u.username];
-            const entry = entriesById[realId];
+      const results: DemoUser[] = matched
+        .filter((u) => subByUsername[u.username] && subByUsername[u.username] !== currentUserId)
+        .map((u) => {
+          const sub = subByUsername[u.username];
+          const record = resolved[sub];
 
-            // Verify the directory record's identity binding before trusting
-            // any of its keys. An incoherent record is the "backend tampered"
-            // signal that blocks sharing.
-            let bindingVerified = false;
-
-            if (entry) {
-              try {
-                bindingVerified = await verifyKeyRegistration({
-                  userId: entry.user_id,
-                  version: entry.version,
-                  createdAtMillis: entry.created_at_millis,
-                  encryptionPublicKeyB64: entry.encryption_public_key,
-                  signaturePublicKeyB64: entry.signature_public_key,
-                  keyBindingSignatureB64: entry.key_binding_signature,
-                });
-              } catch {
-                bindingVerified = false;
-              }
-            }
-
-            return {
-              id: realId,
-              full_name: `${u.firstName} ${u.lastName}`,
-              email: u.email,
-              encryption_public_key: entry?.encryption_public_key ?? null,
-              signature_public_key: entry?.signature_public_key ?? null,
-              binding_verified: bindingVerified,
-            };
-          })
-      );
+          return {
+            id: sub,
+            full_name: `${u.firstName} ${u.lastName}`,
+            email: u.email,
+            encryption_public_key: record?.verified ? uint8ToBase64(new Uint8Array(record.encryptionPublicKey)) : null,
+            signature_public_key: record ? uint8ToBase64(new Uint8Array(record.signaturePublicKey)) : null,
+            // An unverified record is the "backend tampered" signal that blocks
+            // sharing (the vault already refused to expose its encryption key).
+            binding_verified: record?.verified ?? false,
+          };
+        });
 
       setSearchUsers(results);
       setLoading(false);
     },
-    [currentUserId, resolveUserId]
+    [currentUserId, resolveUserId, vaultClient]
   );
 
   const onFilter = useCallback(
@@ -516,14 +497,20 @@ export function ShareDocumentModal({
   useEffect(() => {
     if (!profileUserId || !profileContainer || !vaultClient) return;
 
-    // Demo recipients come from the fixed DEMO_USERS list, so their real email +
-    // name always resolve; if a sub somehow isn't a known demo user, there is
-    // nothing meaningful to show, so skip rather than invent a placeholder.
-    const label = getUserLabel(profileUserId);
+    // The label travels with the rows we already display (search results,
+    // pending selection, existing accesses).
+    const fromRows = [...searchUsers, ...selectedUsers].find((u) => u.id === profileUserId);
+    const fromAccesses = accesses.find((a) => a.userId === profileUserId);
+    const label: RecipientLabel | undefined = fromRows
+      ? { email: fromRows.email, name: fromRows.full_name }
+      : fromAccesses
+        ? { email: fromAccesses.email, name: fromAccesses.fullName }
+        : undefined;
+
     if (!label) return;
 
     vaultClient.openRecipientProfile(profileContainer, profileUserId, label);
-  }, [profileUserId, profileContainer, vaultClient]);
+  }, [profileUserId, profileContainer, vaultClient, searchUsers, selectedUsers, accesses]);
 
   const openProfile = useCallback(
     (userId: string) => {

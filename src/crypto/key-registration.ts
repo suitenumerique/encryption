@@ -36,7 +36,11 @@ const POP_CHALLENGE_DOMAIN = 'lasuite-encryption/key-pop/v1';
 const IDENTITY_CONTINUITY_DOMAIN = 'lasuite-encryption/identity-continuity/v1';
 
 export interface KeyRegistrationRecord {
-  /** Suite-wide user identifier (identity provider `sub`). */
+  /**
+   * INTERNAL encryption-service user id (users.id), never the OIDC sub: the
+   * signed payload must survive identity-provider migrations, so it embeds the
+   * one identifier whose lifecycle the service fully owns.
+   */
   userId: string;
   /** Monotonic per-user key version, starting at 1. */
   version: number;

@@ -42,6 +42,52 @@ enum VaultItemType {
   active
 }
 
+/// A user of the encryption service. `id` is the canonical, immutable user
+/// identifier: it is embedded in binding signatures, request proofs, sealed
+/// TOFU items, and local caches, so it MUST never change once minted. OIDC
+/// credentials map to it through OidcAccount; credentials can change (provider
+/// migration, sub format change), this id cannot.
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @map("email") // latest email from OIDC claims to be used for notifications (not login), this one is not unique since over time an organization could reallocate an email for a new sub
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  oidcAccounts            OidcAccount[]
+  identities              Identity[]
+  encryptionKeys          EncryptionKey[]
+  keyPossessionChallenges KeyPossessionChallenge[]
+  vaultKeyrings           VaultKeyring[]
+  vaultChallenges         VaultChallenge[]
+  vaultApprovals          VaultApproval[]
+
+  @@map("users")
+}
+
+/// One OIDC credential (issuer + sub) linked to a user. `subject` is only
+/// unique per issuer (two providers can issue the same sub value for two
+/// different humans), hence the composite unique. A user accumulates rows
+/// across provider migrations. Rows are never deleted, but retired-issuer rows
+/// are kept for AUDIT and operator merge tooling only: directory resolution is
+/// scoped to the currently configured issuer (matching a retired row could
+/// return another human's keys on a cross-issuer sub collision). `disabledAt`
+/// blocks authentication with a retired provider.
+model OidcAccount {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  issuer     String    @map("issuer") /// the token's `iss` claim, verbatim
+  subject    String    @map("subject") /// the token's `sub` claim, verbatim
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") /// bumped at login (daily throttle); identifies dead credentials after a migration
+  disabledAt DateTime? @map("disabled_at") /// set when an operator retires a provider's credentials; blocks auth, not resolution
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([issuer, subject])
+  @@index([userId])
+  @@map("oidc_accounts")
+}
+
 /// A user's IDENTITY: the Ed25519 signature key contacts verify out-of-band
 /// via fingerprint / QR code. Split from the encryption key (KeyRegistration
 /// below) on purpose — the identity is long-lived and stable, while encryption
@@ -64,7 +110,7 @@ enum VaultItemType {
 /// the columns exist now so the model never has to be migrated for it.
 model Identity {
   id                 String        @id @default(uuid()) @db.Uuid
-  userId             String        @map("user_id") /// Not always a UUID — depends on the identity provider (suite-wide `sub`, not product-scoped ids)
+  userId             String        @map("user_id") @db.Uuid /// canonical internal user id (users.id), NOT the OIDC sub; it is embedded in signed payloads so it must be immutable
   signaturePublicKey Bytes         @unique @map("signature_public_key") /// [version:1][ed25519Pubkey:32] — the identity; globally unique so two users can't claim the same identity even if a private key leaked. Bytes: the server verifies bindings + PoP against it.
   algo               SignatureAlgo @default(ed25519) @map("algo") /// identity signature algorithm (closed set, see SignatureAlgo)
   generation         Int           @map("generation") /// monotonic per user, starting at 1; bumps only on a genuine identity rotation
@@ -79,6 +125,7 @@ model Identity {
   nextIdentities      Identity[] @relation("IdentityChain")
   continuitySignature Bytes?     @map("continuity_signature") /// Sign(previousIdentitySecret, canonical(this identity)); Bytes because the server will verify the link when the continuity/migration flow is wired
 
+  user           User            @relation(fields: [userId], references: [id])
   encryptionKeys EncryptionKey[]
   vaultKeyrings  VaultKeyring[]
 
@@ -105,7 +152,8 @@ model Identity {
 /// duplicate — the signed metadata is immutable, so re-dating it is impossible.
 model EncryptionKey {
   id                  String         @id @default(uuid()) @db.Uuid
-  userId              String         @map("user_id")
+  userId              String         @map("user_id") @db.Uuid
+  user                User           @relation(fields: [userId], references: [id])
   identityId          String         @map("identity_id") @db.Uuid
   identity            Identity       @relation(fields: [identityId], references: [id])
   encryptionPublicKey Bytes          @unique @map("encryption_public_key") /// [version:1][xwingPubkey:1216]; globally unique. Bytes: the server encapsulates to it for the PoP challenge.
@@ -137,7 +185,8 @@ model EncryptionKey {
 /// are cleaned up.
 model KeyPossessionChallenge {
   id                  String   @id @default(uuid()) @db.Uuid
-  userId              String   @map("user_id")
+  userId              String   @map("user_id") @db.Uuid
+  user                User     @relation(fields: [userId], references: [id])
   encryptionPublicKey Bytes    @map("encryption_public_key") /// [version:1][xwingPubkey:1216] — replayed verbatim into EncryptionKey on success
   signaturePublicKey  Bytes    @map("signature_public_key") /// [version:1][ed25519Pubkey:32]
   keyBindingSignature Bytes    @map("key_binding_signature") /// Ed25519 binding signature, verified at init and persisted on success
@@ -210,7 +259,7 @@ model VaultMeta {
 /// generated with.
 model VaultKeyring {
   id            String    @id @default(uuid()) @db.Uuid
-  userId        String    @map("user_id")
+  userId        String    @map("user_id") @db.Uuid
   identityId    String    @map("identity_id") @db.Uuid /// the directory identity this vault belongs to; lets reactivation flip the right identity + encryption key active
   // wrappedVrk is an OPAQUE blob the server never compares or decodes (it is only
   // released to the client after a proof of possession, then unwrapped client-side),
@@ -226,6 +275,7 @@ model VaultKeyring {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
 
+  user     User        @relation(fields: [userId], references: [id])
   identity Identity    @relation(fields: [identityId], references: [id])
   items    VaultItem[]
   meta     VaultMeta?
@@ -239,7 +289,8 @@ model VaultKeyring {
 /// vault auth key to prove possession of the recovery phrase.
 model VaultChallenge {
   id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @map("user_id")
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
   nonce     Bytes    @map("nonce")
   expiresAt DateTime @map("expires_at")
   createdAt DateTime @default(now()) @map("created_at")
@@ -255,7 +306,8 @@ model VaultChallenge {
 /// here for the newcomer to poll.
 model VaultApproval {
   id                     String   @id @default(uuid()) @db.Uuid
-  userId                 String   @map("user_id")
+  userId                 String   @map("user_id") @db.Uuid
+  user                   User     @relation(fields: [userId], references: [id])
   requestId              String   @unique @map("request_id")
   devicePublicKey        String   @map("device_public_key") /// base64
   // Opaque base64 blob wrapped to the new device's ephemeral key: a JSON bundle

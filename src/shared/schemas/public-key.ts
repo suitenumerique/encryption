@@ -10,7 +10,8 @@ import { z } from 'zod';
 // schemas for that live in `./key-possession.ts`.
 
 export const PublicKeySchema = z.object({
-  user_id: z.string().min(1),
+  user_id: z.string().uuid(), // INTERNAL encryption-service user id, never an OIDC sub
+  sub: z.string().min(1).optional(), // echoed only for records matched through the `subs=` query form, so the caller can correlate
   encryption_public_key: z.string(), // base64 [version:1][xwingPubkey:1216]
   signature_public_key: z.string(), // base64 [version:1][ed25519Pubkey:32] — the identity
   key_binding_signature: z.string(), // base64 Ed25519 signature over the canonical registration payload
@@ -20,19 +21,42 @@ export const PublicKeySchema = z.object({
 
 export type PublicKey = z.infer<typeof PublicKeySchema>;
 
-// The listing endpoint feeds `user_ids` straight into an IN(...) query, so the
-// list is split, trimmed, and bounded here: at most 100 ids, each non-empty and
-// length-capped, so a caller cannot enumerate with (or blow up the query on) an
-// unbounded batch. `user_ids` resolves to the parsed array, not the raw string.
+// The listing endpoint accepts two id spaces:
+//  - `user_ids`: canonical INTERNAL ids (uuids, so comma-splitting is unambiguous);
+//  - `subs`: OIDC subs, resolved through oidc_accounts server-side — the form a
+//    product uses at its "list users to share with" step, since subs are what it
+//    holds. Records matched this way echo the sub back for correlation.
+// Both forms take REPEATED query parameters (`?subs=a&subs=b`), never a
+// comma-joined list. OIDC constrains `sub` to at most 255 ASCII characters and
+// excludes no character, so a sub may legitimately contain a comma; the query
+// value is percent-decoded before any split, so encoding cannot rescue a
+// comma-joined list and one such sub would silently shatter into two bogus
+// lookups. Repetition is unambiguous by construction. A single occurrence
+// arrives as a bare string and is normalized to a one-element array so callers
+// downstream always see a list.
+// Both lists feed IN(...) queries, so each is bounded here: at most 100 ids,
+// each non-empty and length-capped, so a caller cannot enumerate with (or blow
+// up the query on) an unbounded batch. EXACTLY one of the two forms must be
+// present: mixing them would make the response keying ambiguous (a record
+// matched by both forms can only be echoed one way).
 const MAX_USER_IDS = 100;
 const MAX_USER_ID_LENGTH = 200;
 
-export const GetPublicKeysQuerySchema = z.object({
-  user_ids: z
-    .string()
-    .transform((value) => value.split(',').map((id) => id.trim()))
-    .pipe(z.array(z.string().min(1).max(MAX_USER_ID_LENGTH)).min(1).max(MAX_USER_IDS)),
-});
+const asList = z.union([z.string(), z.array(z.string())]).transform((value) => (Array.isArray(value) ? value : [value]));
+
+// Internal ids are uuids by construction; subs are provider-defined free-form.
+const userIdList = asList.pipe(z.array(z.string().uuid()).min(1).max(MAX_USER_IDS));
+
+const subList = asList.pipe(z.array(z.string().min(1).max(MAX_USER_ID_LENGTH)).min(1).max(MAX_USER_IDS));
+
+export const GetPublicKeysQuerySchema = z
+  .object({
+    user_ids: userIdList.optional(),
+    subs: subList.optional(),
+  })
+  .refine((query) => (query.user_ids !== undefined) !== (query.subs !== undefined), {
+    message: 'exactly one of user_ids or subs is required',
+  });
 
 export type GetPublicKeysQuery = z.infer<typeof GetPublicKeysQuerySchema>;
 
