@@ -179,3 +179,28 @@ export function activeEncryptionKey(state: VaultState): EncryptionKeyEntry | und
 export function encryptionKeyByVersion(state: VaultState, version: number): EncryptionKeyEntry | undefined {
   return state.encryptionKeys.find((e) => e.version === version);
 }
+
+// ---------------------------------------------------------------------------
+// Change detection
+// ---------------------------------------------------------------------------
+
+// Sorts explicitly rather than trusting insertion order: `identities` and
+// `encryptionKeys` come out of `unionByKey` ordered, but a state rebuilt from a
+// different merge order would otherwise compare unequal while being identical.
+function canonicalKeyMaterial(state: VaultState): string {
+  return JSON.stringify({
+    identities: [...state.identities].sort((a, b) => a.generation - b.generation),
+    encryptionKeys: [...state.encryptionKeys].sort((a, b) => a.version - b.version),
+    active: state.active,
+  });
+}
+
+/**
+ * Whether the user's own key material (identities, encryption keys, active
+ * pointer) differs between two states. Deliberately blind to `tofu`: trust
+ * decisions live in the same vault but are an interface concern, and a change
+ * there is not a key change for anyone listening.
+ */
+export function keyMaterialChanged(before: VaultState, after: VaultState): boolean {
+  return canonicalKeyMaterial(before) !== canonicalKeyMaterial(after);
+}

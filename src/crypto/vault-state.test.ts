@@ -4,6 +4,7 @@ import {
   addEncryptionKey,
   deleteTofu,
   emptyVaultState,
+  keyMaterialChanged,
   mergeVaultState,
   setTofu,
 } from '@encryption/src/crypto/vault-state';
@@ -111,5 +112,34 @@ describe('TOFU conflict resolution', () => {
     const readd = setTofu(base, 'bob', 'fp', 'trusted', 200);
 
     expect(mergeVaultState(deleted, readd).tofu.bob.deleted).toBe(false);
+  });
+});
+
+describe('keyMaterialChanged', () => {
+  const key = (version: number) => ({ version, algo: 'x-wing', publicKey: `pub-${version}`, secretKey: `sec-${version}`, createdAt: 1_000 });
+
+  it('reports no change between identical states', () => {
+    const state = addEncryptionKey(setTofu(emptyVaultState(), 'bob', 'fp', 'trusted', 100), key(1));
+
+    expect(keyMaterialChanged(state, state)).toBe(false);
+  });
+
+  // The case that made every trust decision look like a key rotation.
+  it('ignores a TOFU-only change', () => {
+    const before = addEncryptionKey(emptyVaultState(), key(1));
+
+    expect(keyMaterialChanged(before, setTofu(before, 'bob', 'fp', 'trusted', 100))).toBe(false);
+  });
+
+  it('ignores a status change on an already-known contact', () => {
+    const before = setTofu(emptyVaultState(), 'bob', 'fp', 'unknown', 100);
+
+    expect(keyMaterialChanged(before, setTofu(before, 'bob', 'fp', 'trusted', 200))).toBe(false);
+  });
+
+  it('flags a new encryption key version', () => {
+    const before = addEncryptionKey(emptyVaultState(), key(1));
+
+    expect(keyMaterialChanged(before, addEncryptionKey(before, key(2)))).toBe(true);
   });
 });

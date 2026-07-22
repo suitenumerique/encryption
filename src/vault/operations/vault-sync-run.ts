@@ -11,7 +11,7 @@
 import { unwrapVrkForDevice } from '@encryption/src/crypto/device-cache';
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { buildSignedManifest, openState, sealState } from '@encryption/src/crypto/vault-seal';
-import { type VaultState, activeIdentity, emptyVaultState } from '@encryption/src/crypto/vault-state';
+import { type VaultState, activeIdentity, emptyVaultState, keyMaterialChanged } from '@encryption/src/crypto/vault-state';
 import { BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
@@ -81,8 +81,15 @@ async function runSync(userId: string, payload: SyncPayload): Promise<{ status: 
 
     await saveVaultCache(userId, { ...cache, sealed, manifest, manifestSig, revision: result.revision });
 
-    // Nudge other tabs to reload their in-memory view from the fresh cache.
-    getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
+    // Announce only what the event claims: an actual change of key material,
+    // compared against the state other tabs still hold (`opened` is the
+    // pre-sync cache, so this covers both our own mutation and what was pulled
+    // from the server). A pass that converged on nothing, or that only carried
+    // a TOFU decision, stays silent — trust is invisible to products, and it
+    // leaves the symmetric key cache valid, so it has no listener to serve.
+    if (keyMaterialChanged(opened, result.state)) {
+      getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
+    }
 
     return { status: 'ok', revision: result.revision };
   }
