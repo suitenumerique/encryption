@@ -40,7 +40,7 @@ export function RecoveryKitBackup({
   onCancel,
   cancelLabel,
 }: RecoveryKitBackupProps) {
-  const { t } = useTranslation('common');
+  const { t, i18n } = useTranslation('common');
   const [showPassphrase, setShowPassphrase] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
@@ -100,7 +100,7 @@ export function RecoveryKitBackup({
     doc.open();
     doc.write(`
       <!DOCTYPE html>
-      <html>
+      <html lang="${escapeHtml(i18n.language)}">
         <head>
           <title>${escapeHtml(t('onboarding.print_title'))}</title>
           <style>
@@ -133,7 +133,7 @@ export function RecoveryKitBackup({
     } else {
       printFrame.onload = triggerPrint;
     }
-  }, [passphrase, parentOrigin, t]);
+  }, [passphrase, parentOrigin, t, i18n.language]);
 
   return (
     <>
