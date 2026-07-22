@@ -102,6 +102,11 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
     }
   }, [expectedSuiteUserId]);
 
+  // Setting the token set to null makes the effect below flip `needsAuth` back
+  // on, so the UI returns to its "sign in" affordance instead of looking logged
+  // in. Stable identity, so callers can list it in their dependency arrays.
+  const clearTokenSet = useCallback(() => setTokenSet(null), []);
+
   // Detect that auth is needed, or that the current token is for the wrong user
   useEffect(() => {
     if (!isOidcConfigured() || !expectedSuiteUserId) return;
@@ -130,8 +135,6 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
     isConfigured: isOidcConfigured(),
     requestAuth,
     updateTokenSet: setTokenSet,
-    // Setting it to null makes the effect above flip `needsAuth` back on, so
-    // the UI returns to its "sign in" affordance instead of looking logged in.
-    clearTokenSet: () => setTokenSet(null),
+    clearTokenSet,
   };
 }

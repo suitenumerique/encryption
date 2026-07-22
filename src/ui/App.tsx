@@ -128,6 +128,11 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
   // OIDC self-authentication: the interface obtains its own token.
   const oidcAuth = useOidcAuth(parentContext.suiteUserId);
+  // Both are stable across renders (a state setter and a memoized callback), so
+  // depending on them directly keeps the effects below honest about what they
+  // use without re-running them on every render — which listing the whole
+  // `oidcAuth` object would do.
+  const { updateTokenSet, clearTokenSet } = oidcAuth;
 
   // Restore token from interface's own localStorage (not the vault).
   // This avoids re-authentication when the iframe is recreated (page refresh, modal close/open).
@@ -139,11 +144,11 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
     const stored = readToken(parentContext.suiteUserId);
 
     if (stored && stored.sub === parentContext.suiteUserId) {
-      oidcAuth.updateTokenSet(stored);
+      updateTokenSet(stored);
     }
 
     setTokenRestoreAttempted(true);
-  }, [parentContext.suiteUserId, oidcAuth.token]);
+  }, [parentContext.suiteUserId, oidcAuth.token, updateTokenSet]);
 
   // Persist token set in localStorage after auth or refresh
   useEffect(() => {
@@ -177,7 +182,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       };
 
       const refreshed = await refreshTokenWithLock(currentTokenSet, readStoredToken, persistToken);
-      oidcAuth.updateTokenSet(refreshed);
+      updateTokenSet(refreshed);
 
       return refreshed.accessToken;
     } catch (err) {
@@ -193,12 +198,12 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
           clearToken(parentContext.suiteUserId);
         }
 
-        oidcAuth.clearTokenSet();
+        clearTokenSet();
       }
 
       return null;
     }
-  }, [oidcAuth.tokenSet, parentContext.suiteUserId]);
+  }, [oidcAuth.tokenSet, parentContext.suiteUserId, updateTokenSet, clearTokenSet]);
 
   // OIDC token for server API calls. Components use oidcToken for display/checks,
   // but must call getValidToken() before actual API calls to ensure the token
