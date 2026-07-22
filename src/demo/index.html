@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Empty data URI: browsers auto-request /favicon.ico on every top-level
+         page, which the demo does not serve. Declaring one suppresses the
+         request entirely rather than adding an asset nobody looks at. -->
+    <link rel="icon" href="data:," />
     <title>Encryption Demo - Fake Product</title>
     <style>
       html,

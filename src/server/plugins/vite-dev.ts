@@ -21,6 +21,12 @@ import { env } from '@encryption/src/server/env';
  * Wrapped with fastify-plugin to break encapsulation — the middleware
  * must apply at the root scope so it intercepts requests before Fastify routes.
  */
+// Infrastructure paths Fastify owns on EVERY host, including the vault and UI
+// hosts whose remaining traffic belongs to Vite. Must stay in sync with the
+// matching routes in server.ts: a path missing here is shadowed by Vite in dev
+// and 404s, while working fine in production.
+const FASTIFY_INFRA_PATHS = new Set(['/health', '/robots.txt', '/favicon.ico']);
+
 export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const { createServer: createViteServer } = await import('vite');
 
@@ -70,7 +76,7 @@ export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // Paths with file extensions under /api/ (e.g. /api/server-client.ts)
     // are Vite source files that must be served by the Vite middleware.
     const isApiRoute = path.startsWith('/api/') && !path.slice(path.lastIndexOf('/') + 1).includes('.');
-    if (path === '/health' || path === '/robots.txt' || isApiRoute) {
+    if (FASTIFY_INFRA_PATHS.has(path) || isApiRoute) {
       return next();
     }
 

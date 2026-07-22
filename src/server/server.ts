@@ -90,5 +90,16 @@ export async function createServer() {
     reply.type('text/plain').send('User-agent: *\nDisallow: /\n');
   });
 
+  // Browsers auto-request /favicon.ico for any TOP-LEVEL document (iframes
+  // never trigger it), so this only fires when someone opens a vault or
+  // interface URL directly. Neither domain is meant to be browsed that way and
+  // neither ships an icon, so answer 204 rather than let a 404 sit in the
+  // console. A `<link rel="icon" href="data:,">` would not work here: the CSP
+  // on both hosts restricts `img-src`, and unlike this browser-initiated
+  // request, a markup-declared icon is subject to it.
+  app.get('/favicon.ico', async (_, reply) => {
+    reply.code(204).send();
+  });
+
   return app;
 }
