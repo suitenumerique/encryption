@@ -2,7 +2,8 @@ import middie from '@fastify/middie';
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 import type { IncomingMessage } from 'node:http';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { env } from '@encryption/src/server/env';
 
@@ -31,7 +32,7 @@ export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const { createServer: createViteServer } = await import('vite');
 
   const httpServer = app.server;
-  const root = resolve(__dirname, '../../..');
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
   // Create Vault Vite dev server in middleware mode.
   // Use configFile so Vite resolves the config natively (avoids tsx ESM issues).

@@ -2,8 +2,9 @@
  * Integration test for the server-push channel: a device opens the SSE stream
  * authenticated by its IDENTITY SIGNATURE ALONE (no JWT — tier 1), and a
  * `notifyVaultChanged` for that user delivers a `changed` wake to it within a few
- * ms. Uses a real listening server + Node `fetch` streaming (no new deps); Prisma
- * is mocked exactly as the unit tests do.
+ * ms. Uses a real listening server + Node `fetch` streaming (no new deps), and a
+ * real in-process Postgres so the identity lookup behind the signature check is
+ * the actual query.
  */
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AddressInfo } from 'node:net';
@@ -11,35 +12,38 @@ import type { AddressInfo } from 'node:net';
 import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
-import { prisma } from '@encryption/src/prisma/client';
+import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { notifyVaultChanged } from '@encryption/src/server/vault-notify';
 
-jest.mock('@encryption/src/prisma/client', () => ({
-  prisma: {
-    identity: { findFirst: jest.fn(), findUnique: jest.fn() },
-    vaultKeyring: { findFirst: jest.fn() },
-    vaultMeta: { findUnique: jest.fn() },
-    vaultItem: { findMany: jest.fn() },
-    vaultChallenge: { deleteMany: jest.fn() },
-  },
-}));
+jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
 
-const mp = prisma as unknown as Record<string, Record<string, jest.Mock>>;
-const USER_ID = 'user-integration';
+useTestDatabase();
 
 let app: FastifyInstance;
 let signer: Awaited<ReturnType<typeof generateSignatureKeyPair>>;
+let userId: string;
 
-beforeAll(async () => {
+beforeEach(async () => {
   signer = await generateSignatureKeyPair();
 
   // The SSE route (tier 1) verifies the request signature against the user's
-  // active identity — return the signer's WIRE public key for it.
-  mp.identity.findFirst.mockResolvedValue({
-    signaturePublicKey: Buffer.from(base64ToUint8(exportPublicKeyAsBase64(signer.publicKey))),
-  } as never);
+  // ACTIVE identity, so seed exactly that: a user carrying the signer's wire
+  // public key as its current identity.
+  const user = await testPrisma.user.create({ data: { email: 'sse@example.org' } });
 
+  userId = user.id;
+
+  await testPrisma.identity.create({
+    data: {
+      userId,
+      generation: 1,
+      signaturePublicKey: Buffer.from(base64ToUint8(exportPublicKeyAsBase64(signer.publicKey))),
+    },
+  });
+});
+
+beforeAll(async () => {
   app = Fastify();
   app.decorate('verifyJWT', async () => {}); // unused on tier-1 routes, present so the decorator exists
   app.register(vaultRoute);
@@ -57,7 +61,7 @@ it('delivers a "changed" wake to a signature-authenticated (no JWT) SSE connecti
   const token = await signRequestProof({
     method: 'GET',
     path: '/api/vault/events',
-    userId: USER_ID,
+    userId,
     identitySecretKey: signer.secretKey,
     nowSeconds: Math.floor(Date.now() / 1000),
   });
@@ -83,7 +87,7 @@ it('delivers a "changed" wake to a signature-authenticated (no JWT) SSE connecti
 
   // Let the connection register, then push a wake for this user.
   await new Promise((r) => setTimeout(r, 50));
-  notifyVaultChanged(USER_ID, 7);
+  notifyVaultChanged(userId, 7);
 
   await Promise.race([readUntilChanged, new Promise((_, reject) => setTimeout(() => reject(new Error('no wake within 2s')), 2000))]);
 

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { jwtVerify } from 'jose';
 
+import { testPrisma, testPrismaClient, useTestDatabase } from '@encryption/src/prisma/testing';
 import { env } from '@encryption/src/server/env';
 import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 
@@ -23,29 +24,9 @@ jest.mock('@encryption/src/server/env', () => ({
   },
 }));
 
+jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+
 const mutableEnv = env as unknown as Record<string, unknown>;
-
-const mockOidcFindUnique = jest.fn();
-const mockOidcUpdate = jest.fn();
-const mockOidcCreate = jest.fn();
-const mockUserCreate = jest.fn();
-const mockUserUpdate = jest.fn();
-const mockUserFindMany = jest.fn();
-
-jest.mock('@encryption/src/prisma/client', () => ({
-  prisma: {
-    oidcAccount: {
-      findUnique: (...args: unknown[]) => mockOidcFindUnique(...args),
-      update: (...args: unknown[]) => mockOidcUpdate(...args),
-      create: (...args: unknown[]) => mockOidcCreate(...args),
-    },
-    user: {
-      create: (...args: unknown[]) => mockUserCreate(...args),
-      update: (...args: unknown[]) => mockUserUpdate(...args),
-      findMany: (...args: unknown[]) => mockUserFindMany(...args),
-    },
-  },
-}));
 
 const mockJwtVerify = jwtVerify as jest.Mock;
 
@@ -53,6 +34,8 @@ const mockJwtVerify = jwtVerify as jest.Mock;
 // global fetch; default to "network down" so only tests that opt in exercise it.
 const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
+
+const ISSUER = 'https://issuer.example';
 
 function jsonResponse(body: unknown, contentType = 'application/json') {
   return { ok: true, headers: { get: () => contentType }, json: async () => body, text: async () => JSON.stringify(body) };
@@ -70,20 +53,33 @@ function tokenPayload(overrides: Record<string, unknown> = {}) {
   return { azp: 'encryption', sub: 'user-42', email: 'user@example.org', email_verified: true, ...overrides };
 }
 
-/** A resolvable oidc_accounts row joined to its user, as the plugin reads it. */
-function accountRow(overrides: Partial<{ userId: string; disabledAt: Date | null; lastSeenAt: Date; email: string }> = {}) {
-  return {
-    id: 'account-1',
-    userId: overrides.userId ?? 'internal-1',
-    disabledAt: overrides.disabledAt ?? null,
-    lastSeenAt: overrides.lastSeenAt ?? new Date(),
-    user: { id: overrides.userId ?? 'internal-1', email: overrides.email ?? 'user@example.org' },
-  };
+/** A user with one credential for (ISSUER, subject), as an already-known caller. */
+async function seedAccount(
+  overrides: Partial<{ subject: string; email: string; disabledAt: Date | null; lastSeenAt: Date }> = {}
+): Promise<{ userId: string; accountId: string }> {
+  const user = await testPrisma.user.create({ data: { email: overrides.email ?? 'user@example.org' } });
+  const account = await testPrisma.oidcAccount.create({
+    data: {
+      userId: user.id,
+      issuer: ISSUER,
+      subject: overrides.subject ?? 'user-42',
+      disabledAt: overrides.disabledAt ?? null,
+      lastSeenAt: overrides.lastSeenAt ?? new Date(),
+    },
+  });
+
+  return { userId: user.id, accountId: account.id };
 }
 
-/** An email-fallback candidate with its most recent credential activity. */
-function candidateRow(userId: string, lastSeenAt: Date = new Date()) {
-  return { id: userId, email: 'same@example.org', oidcAccounts: [{ lastSeenAt }] };
+/** An email-fallback candidate: a user whose only credential was last seen at the given date. */
+async function seedCandidate(email: string, lastSeenAt: Date = new Date()): Promise<string> {
+  const user = await testPrisma.user.create({ data: { email } });
+
+  await testPrisma.oidcAccount.create({
+    data: { userId: user.id, issuer: ISSUER, subject: `old-sub-${user.id}`, lastSeenAt },
+  });
+
+  return user.id;
 }
 
 function buildApp() {
@@ -98,7 +94,10 @@ function buildApp() {
 const BEARER = { authorization: 'Bearer some.jwt.token' };
 
 describe('jwtAuthPlugin', () => {
+  useTestDatabase();
+
   beforeEach(() => {
+    jest.restoreAllMocks();
     jest.clearAllMocks();
     mockFetch.mockReset().mockRejectedValue(new Error('no network in unit tests'));
     mutableEnv.OIDC_ACCEPT_UNVERIFIED_EMAIL = false;
@@ -119,12 +118,12 @@ describe('jwtAuthPlugin', () => {
   });
 
   it('passes the configured issuer to jwtVerify', async () => {
+    await seedAccount();
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload() });
-    mockOidcFindUnique.mockResolvedValue(accountRow());
 
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
-    expect(mockJwtVerify).toHaveBeenCalledWith('some.jwt.token', expect.anything(), { issuer: 'https://issuer.example' });
+    expect(mockJwtVerify).toHaveBeenCalledWith('some.jwt.token', expect.anything(), { issuer: ISSUER });
   });
 
   it('401s when the token fails verification (bad signature / expiry / issuer)', async () => {
@@ -163,53 +162,51 @@ describe('jwtAuthPlugin', () => {
 
   it('403s at FIRST CONTACT when neither the token nor userinfo yields an email', async () => {
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ email: undefined, email_verified: undefined }) });
-    mockOidcFindUnique.mockResolvedValue(null);
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(403);
     expect(response.json().code).toBe('email_claim_required');
-    expect(mockUserCreate).not.toHaveBeenCalled();
+    expect(await testPrisma.user.count()).toBe(0);
   });
 
   it('403s at first contact when the email is unverified and unverified capture is off', async () => {
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ email_verified: undefined }) });
-    mockOidcFindUnique.mockResolvedValue(null);
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(403);
     expect(response.json().code).toBe('email_claim_required');
+    expect(await testPrisma.user.count()).toBe(0);
   });
 
   it('authenticates a KNOWN credential even when the token carries no email claim', async () => {
-    mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ email: undefined, email_verified: undefined }) });
-    mockOidcFindUnique.mockResolvedValue(accountRow({ userId: 'internal-veteran' }));
+    const { userId } = await seedAccount({ subject: 'veteran' });
+
+    mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'veteran', email: undefined, email_verified: undefined }) });
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ userId: 'internal-veteran' });
-    // No email needed: no userinfo call, no stored-email refresh.
+    expect(response.json()).toEqual({ userId });
+    // No email needed: no userinfo call, and the stored address is untouched.
     expect(mockFetch).not.toHaveBeenCalled();
-    expect(mockUserUpdate).not.toHaveBeenCalled();
+    expect((await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).email).toBe('user@example.org');
   });
 
   it('fetches the email from the userinfo endpoint at first contact when the token lacks it', async () => {
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'userinfo-newcomer', email: undefined, email_verified: undefined }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserCreate.mockResolvedValue({ id: 'internal-ui' });
     serveUserinfo(jsonResponse({ email: 'from-userinfo@example.org', email_verified: true }));
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(200);
-    expect(mockUserCreate).toHaveBeenCalledWith({
-      data: {
-        email: 'from-userinfo@example.org',
-        oidcAccounts: { create: { issuer: 'https://issuer.example', subject: 'userinfo-newcomer' } },
-      },
-    });
+
+    const minted = await testPrisma.user.findFirstOrThrow({ include: { oidcAccounts: true } });
+
+    expect(minted.email).toBe('from-userinfo@example.org');
+    expect(minted.oidcAccounts).toHaveLength(1);
+    expect(minted.oidcAccounts[0]).toMatchObject({ issuer: ISSUER, subject: 'userinfo-newcomer' });
     // The userinfo call presents the caller's own access token.
     expect(mockFetch).toHaveBeenCalledWith('https://issuer.example/userinfo', { headers: { authorization: 'Bearer some.jwt.token' } });
   });
@@ -219,93 +216,97 @@ describe('jwtAuthPlugin', () => {
     mockJwtVerify
       .mockResolvedValueOnce({ payload: tokenPayload({ sub: 'pc-newcomer', email: undefined, email_verified: undefined }) })
       .mockResolvedValueOnce({ payload: { email: 'signed@example.org', email_verified: true } });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserCreate.mockResolvedValue({ id: 'internal-pc' });
     serveUserinfo(jsonResponse({}, 'application/jwt'));
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(200);
-    expect(mockUserCreate).toHaveBeenCalledWith({
-      data: {
-        email: 'signed@example.org',
-        oidcAccounts: { create: { issuer: 'https://issuer.example', subject: 'pc-newcomer' } },
-      },
-    });
+
+    const minted = await testPrisma.user.findFirstOrThrow({ include: { oidcAccounts: true } });
+
+    expect(minted.email).toBe('signed@example.org');
+    expect(minted.oidcAccounts[0]).toMatchObject({ issuer: ISSUER, subject: 'pc-newcomer' });
   });
 
   it('accepts an unverified email when the deployment opted in, but still rejects a missing one', async () => {
     mutableEnv.OIDC_ACCEPT_UNVERIFIED_EMAIL = true;
 
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ email: 'unverified@example.org', email_verified: undefined, sub: 'newcomer' }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserCreate.mockResolvedValue({ id: 'internal-new' });
 
     const accepted = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(accepted.statusCode).toBe(200);
-    expect(mockUserCreate).toHaveBeenCalledWith({
-      data: {
-        email: 'unverified@example.org',
-        oidcAccounts: { create: { issuer: 'https://issuer.example', subject: 'newcomer' } },
-      },
-    });
+
+    const minted = await testPrisma.user.findFirstOrThrow({ include: { oidcAccounts: true } });
+
+    expect(minted.email).toBe('unverified@example.org');
+    expect(minted.oidcAccounts[0]).toMatchObject({ issuer: ISSUER, subject: 'newcomer' });
 
     // The flag loosens VERIFICATION only, never PRESENCE.
-    mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ email: undefined, email_verified: undefined }) });
+    mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'no-email-at-all', email: undefined, email_verified: undefined }) });
 
     const rejected = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(rejected.statusCode).toBe(403);
+    expect(await testPrisma.user.count()).toBe(1);
   });
 
   it('resolves (issuer, sub) to the INTERNAL user id on a valid token', async () => {
+    const { userId } = await seedAccount();
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload() });
-    mockOidcFindUnique.mockResolvedValue(accountRow({ userId: 'internal-42' }));
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(200);
     // Never the sub: everything past the boundary speaks the internal id.
-    expect(response.json()).toEqual({ userId: 'internal-42' });
-    expect(mockOidcFindUnique).toHaveBeenCalledWith({
-      where: { issuer_subject: { issuer: 'https://issuer.example', subject: 'user-42' } },
-      include: { user: true },
-    });
+    expect(response.json()).toEqual({ userId });
+    expect(userId).not.toBe('user-42');
   });
 
   it('mints a User + OidcAccount on first contact', async () => {
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'newcomer' }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserCreate.mockResolvedValue({ id: 'internal-new' });
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ userId: 'internal-new' });
-    expect(mockUserCreate).toHaveBeenCalledWith({
-      data: {
-        email: 'user@example.org',
-        oidcAccounts: { create: { issuer: 'https://issuer.example', subject: 'newcomer' } },
-      },
-    });
+
+    const minted = await testPrisma.user.findFirstOrThrow({ include: { oidcAccounts: true } });
+
+    expect(response.json()).toEqual({ userId: minted.id });
+    expect(minted.email).toBe('user@example.org');
+    expect(minted.oidcAccounts).toHaveLength(1);
+    expect(minted.oidcAccounts[0]).toMatchObject({ issuer: ISSUER, subject: 'newcomer' });
   });
 
   it('adopts the winner row when a concurrent first request already minted the user', async () => {
+    // The interleaving (row absent at lookup, present at insert) is produced
+    // deterministically from one session: the in-process Postgres has a single
+    // backend, so a genuinely concurrent request cannot be run against it, but
+    // the unique violation the plugin recovers from is the real one raised by
+    // the (issuer, subject) constraint.
+    const winner = await seedAccount({ subject: 'racer', email: 'winner@example.org' });
+
+    // Only the FIRST lookup misses; the spy calls through afterwards, so the
+    // recovery path reads the winner from the database like it would in life.
+    jest.spyOn(testPrismaClient().oidcAccount, 'findUnique').mockImplementationOnce((async () => null) as never);
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'racer' }) });
-    mockOidcFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ userId: 'internal-winner', disabledAt: null });
-    mockUserCreate.mockRejectedValue(Object.assign(new Error('unique violation'), { code: 'P2002' }));
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ userId: 'internal-winner' });
+    expect(response.json()).toEqual({ userId: winner.userId });
+    // The losing insert left nothing behind.
+    expect(await testPrisma.user.count()).toBe(1);
   });
 
   it('403s (not 500) when the race winner is a retired credential', async () => {
+    await seedAccount({ subject: 'racer-retired', disabledAt: new Date() });
+
+    jest.spyOn(testPrismaClient().oidcAccount, 'findUnique').mockImplementationOnce((async () => null) as never);
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'racer-retired' }) });
-    mockOidcFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ userId: 'internal-winner', disabledAt: new Date() });
-    mockUserCreate.mockRejectedValue(Object.assign(new Error('unique violation'), { code: 'P2002' }));
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
@@ -313,8 +314,9 @@ describe('jwtAuthPlugin', () => {
   });
 
   it('403s when the credential belongs to a retired provider (disabledAt set)', async () => {
+    await seedAccount({ disabledAt: new Date() });
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload() });
-    mockOidcFindUnique.mockResolvedValue(accountRow({ disabledAt: new Date() }));
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
@@ -322,48 +324,55 @@ describe('jwtAuthPlugin', () => {
   });
 
   it('refreshes the stored email when the claim changed, and only then', async () => {
+    const { userId } = await seedAccount({ email: 'old@example.org' });
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ email: 'new@example.org' }) });
-    mockOidcFindUnique.mockResolvedValue(accountRow({ email: 'old@example.org' }));
-    mockUserUpdate.mockResolvedValue({});
 
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
-    expect(mockUserUpdate).toHaveBeenCalledWith({ where: { id: 'internal-1' }, data: { email: 'new@example.org' } });
+    const refreshed = await testPrisma.user.findUniqueOrThrow({ where: { id: userId } });
 
-    // Same email: no write.
-    mockUserUpdate.mockClear();
-    mockOidcFindUnique.mockResolvedValue(accountRow({ email: 'new@example.org' }));
+    expect(refreshed.email).toBe('new@example.org');
+
+    // Same email: no write, so updatedAt does not move.
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
-    expect(mockUserUpdate).not.toHaveBeenCalled();
+
+    const untouched = await testPrisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+    expect(untouched.updatedAt).toEqual(refreshed.updatedAt);
   });
 
   it('links an unknown credential to the single user holding its VERIFIED email when the fallback flag is on', async () => {
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = true;
+
+    const existingUserId = await seedCandidate('same@example.org');
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'new-sub-after-migration', email: 'same@example.org' }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserFindMany.mockResolvedValue([candidateRow('internal-existing')]);
-    mockOidcCreate.mockResolvedValue({ userId: 'internal-existing' });
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
-    expect(response.json()).toEqual({ userId: 'internal-existing' });
-    expect(mockOidcCreate).toHaveBeenCalledWith({
-      data: { userId: 'internal-existing', issuer: 'https://issuer.example', subject: 'new-sub-after-migration' },
+    expect(response.json()).toEqual({ userId: existingUserId });
+    // The new credential joined the SAME user, no second user was minted.
+    expect(await testPrisma.user.count()).toBe(1);
+    expect(await testPrisma.oidcAccount.count({ where: { userId: existingUserId } })).toBe(2);
+    expect(await testPrisma.oidcAccount.findFirstOrThrow({ where: { subject: 'new-sub-after-migration' } })).toMatchObject({
+      userId: existingUserId,
+      issuer: ISSUER,
     });
-    expect(mockUserCreate).not.toHaveBeenCalled();
   });
 
   it('mints a fresh user instead of linking when the email is ambiguous (several users hold it)', async () => {
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = true;
+
+    const first = await seedCandidate('shared@example.org');
+    const second = await seedCandidate('shared@example.org');
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'ambiguous', email: 'shared@example.org' }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserFindMany.mockResolvedValue([candidateRow('internal-a'), candidateRow('internal-b')]);
-    mockUserCreate.mockResolvedValue({ id: 'internal-fresh' });
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
-    expect(response.json()).toEqual({ userId: 'internal-fresh' });
-    expect(mockOidcCreate).not.toHaveBeenCalled();
+    expect([first, second]).not.toContain(response.json().userId);
+    expect(await testPrisma.user.count()).toBe(3);
   });
 
   it('mints a fresh user instead of linking when the sole match has been dormant for over a year', async () => {
@@ -371,46 +380,66 @@ describe('jwtAuthPlugin', () => {
     // around; a year-dormant account more likely means the address now belongs
     // to a different human.
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = true;
+
+    const dormantUserId = await seedCandidate('same@example.org', new Date(Date.now() - 400 * 24 * 60 * 60 * 1000));
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'late-comer', email: 'same@example.org' }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserFindMany.mockResolvedValue([candidateRow('internal-dormant', new Date(Date.now() - 400 * 24 * 60 * 60 * 1000))]);
-    mockUserCreate.mockResolvedValue({ id: 'internal-fresh' });
 
     const response = await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
 
-    expect(response.json()).toEqual({ userId: 'internal-fresh' });
-    expect(mockOidcCreate).not.toHaveBeenCalled();
+    expect(response.json().userId).not.toBe(dormantUserId);
+    expect(await testPrisma.user.count()).toBe(2);
+    expect(await testPrisma.oidcAccount.count({ where: { userId: dormantUserId } })).toBe(1);
   });
 
   it('never links by email when the fallback flag is off, or when the email is unverified', async () => {
-    // Flag off: no candidate lookup at all.
+    // Flag off: the holder of the address keeps it to itself.
+    const holderId = await seedCandidate('a@example.org');
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'no-fallback', email: 'a@example.org' }) });
-    mockOidcFindUnique.mockResolvedValue(null);
-    mockUserCreate.mockResolvedValue({ id: 'internal-x' });
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
-    expect(mockUserFindMany).not.toHaveBeenCalled();
+
+    expect(await testPrisma.oidcAccount.count({ where: { userId: holderId } })).toBe(1);
 
     // Flag on but unverified email: still no linking (capture opt-in does NOT
     // weaken identification), even though the address is captured.
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = true;
     mutableEnv.OIDC_ACCEPT_UNVERIFIED_EMAIL = true;
+
+    const secondHolderId = await seedCandidate('b@example.org');
+
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'unverified-sub', email: 'b@example.org', email_verified: undefined }) });
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
-    expect(mockUserFindMany).not.toHaveBeenCalled();
+
+    expect(await testPrisma.oidcAccount.count({ where: { userId: secondHolderId } })).toBe(1);
   });
 
   it('bumps lastSeenAt only when it is older than the daily throttle', async () => {
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload() });
 
     // Fresh row: no write.
-    mockOidcFindUnique.mockResolvedValue(accountRow({ lastSeenAt: new Date() }));
+    const fresh = await seedAccount({ lastSeenAt: new Date() });
+    const freshBefore = await testPrisma.oidcAccount.findUniqueOrThrow({ where: { id: fresh.accountId } });
+
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
-    expect(mockOidcUpdate).not.toHaveBeenCalled();
+
+    expect((await testPrisma.oidcAccount.findUniqueOrThrow({ where: { id: fresh.accountId } })).lastSeenAt).toEqual(freshBefore.lastSeenAt);
 
     // Stale row (two days old): one write.
-    mockOidcFindUnique.mockResolvedValue(accountRow({ lastSeenAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) }));
-    mockOidcUpdate.mockResolvedValue({});
+    await emptyForNextCase();
+
+    const stale = await seedAccount({ lastSeenAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) });
+
     await buildApp().inject({ method: 'GET', url: '/protected', headers: BEARER });
-    expect(mockOidcUpdate).toHaveBeenCalledWith({ where: { id: 'account-1' }, data: { lastSeenAt: expect.any(Date) } });
+
+    const bumped = await testPrisma.oidcAccount.findUniqueOrThrow({ where: { id: stale.accountId } });
+
+    expect(bumped.lastSeenAt.getTime()).toBeGreaterThan(Date.now() - 60000);
   });
 });
+
+/** Clears the rows of the current test so a second case can seed from scratch. */
+async function emptyForNextCase(): Promise<void> {
+  await testPrisma.oidcAccount.deleteMany({});
+  await testPrisma.user.deleteMany({});
+}

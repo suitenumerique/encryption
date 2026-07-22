@@ -1,18 +1,11 @@
 import Fastify from 'fastify';
 
-import { prisma } from '@encryption/src/prisma/client';
+import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { meRoute } from '@encryption/src/server/routes/me';
 
-jest.mock('@encryption/src/prisma/client', () => ({
-  prisma: {
-    user: {
-      findUnique: jest.fn(),
-    },
-  },
-}));
+jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
 
 const mockVerifyJWT = jest.fn();
-const mockedPrisma = prisma as jest.Mocked<typeof prisma>;
 
 function buildApp() {
   const app = Fastify();
@@ -24,19 +17,32 @@ function buildApp() {
 }
 
 describe('GET /api/me', () => {
+  useTestDatabase();
+
   beforeEach(() => jest.clearAllMocks());
 
   it('returns the INTERNAL user id and email resolved by verifyJWT', async () => {
+    const user = await testPrisma.user.create({ data: { email: 'user@example.org' } });
+
     mockVerifyJWT.mockImplementation(async (request) => {
-      request.userId = 'internal-42';
+      request.userId = user.id;
     });
-    (mockedPrisma.user.findUnique as jest.Mock).mockResolvedValue({ id: 'internal-42', email: 'user@example.org' });
 
     const response = await buildApp().inject({ method: 'GET', url: '/api/me' });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ user_id: 'internal-42', email: 'user@example.org' });
-    expect(mockedPrisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'internal-42' } });
+    expect(response.json()).toEqual({ user_id: user.id, email: 'user@example.org' });
+  });
+
+  it('answers with a null email when the token resolves to a user that no longer exists', async () => {
+    mockVerifyJWT.mockImplementation(async (request) => {
+      request.userId = '00000000-0000-4000-8000-000000000000';
+    });
+
+    const response = await buildApp().inject({ method: 'GET', url: '/api/me' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ user_id: '00000000-0000-4000-8000-000000000000', email: null });
   });
 
   it('propagates the auth failure when the token does not verify', async () => {
@@ -45,6 +51,5 @@ describe('GET /api/me', () => {
     const response = await buildApp().inject({ method: 'GET', url: '/api/me' });
 
     expect(response.statusCode).toBe(401);
-    expect(mockedPrisma.user.findUnique).not.toHaveBeenCalled();
   });
 });

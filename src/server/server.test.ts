@@ -18,6 +18,9 @@ jest.mock('@encryption/src/server/env', () => ({
   },
 }));
 
+// This suite only exercises the error handler, it never reaches a query, so it
+// stubs the client rather than booting the in-process database of the
+// route suites (src/prisma/testing.ts).
 jest.mock('@encryption/src/prisma/client', () => ({ prisma: {} }));
 
 // jose is ESM-only and cannot be required by ts-jest (CommonJS); server.ts pulls
