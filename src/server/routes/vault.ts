@@ -301,9 +301,9 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   });
 
   // Server-push channel (SSE): a content-free "your vault changed" wake so a
-  // user's OTHER devices pull near-instantly. JWT-only (SKIP_SIG): it carries no
-  // vault data, and the interface — which opens the stream — has no identity key
-  // to sign with. See src/server/vault-notify.ts.
+  // user's OTHER devices pull near-instantly. SIG_ONLY: the stream is opened by
+  // the vault iframe over the silent data plane, which holds an identity key but
+  // no JWT, and it carries no vault data. See src/server/vault-notify.ts.
   app.get('/api/vault/events', SIG_ONLY, (request, reply) => {
     const userId = request.userId!;
 
@@ -336,8 +336,9 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // wrappedVrk. An enrolled device already holds the VRK (cached under its
   // device key) and does not have the recovery phrase, so it cannot produce the
   // PoP that /fetch requires — and it does not need to: the items are sealed
-  // under the random 256-bit VRK, so JWT is a sufficient gate here. Only the
-  // passphrase-brute-forceable wrappedVrk stays behind the PoP gate on /fetch.
+  // under the random 256-bit VRK, so the identity signature (SIG_ONLY, proving
+  // an open vault) is a sufficient gate here. Only the passphrase-brute-forceable
+  // wrappedVrk stays behind the PoP gate on /fetch.
   app.get('/api/vault/items', SIG_ONLY, async (request, reply) => {
     const keyring = await activeKeyring(request.userId!);
     const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;

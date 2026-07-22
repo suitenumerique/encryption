@@ -89,7 +89,21 @@ it('delivers a "changed" wake to a signature-authenticated (no JWT) SSE connecti
   await new Promise((r) => setTimeout(r, 50));
   notifyVaultChanged(userId, 7);
 
-  await Promise.race([readUntilChanged, new Promise((_, reject) => setTimeout(() => reject(new Error('no wake within 2s')), 2000))]);
+  // The deadline timer MUST be cleared once the wake arrives. Left pending it
+  // outlives the suite, and jest then force-exits the worker with "a worker
+  // process has failed to exit gracefully".
+  let deadline: NodeJS.Timeout | undefined;
+
+  try {
+    await Promise.race([
+      readUntilChanged,
+      new Promise((_, reject) => {
+        deadline = setTimeout(() => reject(new Error('no wake within 2s')), 2000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
 
   expect(received).toContain('event: changed');
   expect(received).toContain('"revision":7');

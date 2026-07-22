@@ -105,6 +105,9 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
           identity: { is: { disabledAt: null } },
         },
         include: { identity: true },
+        // Postgres returns rows in whatever order it pleases without this, so a
+        // multi-user answer would be non-deterministic (and awkward to assert on).
+        orderBy: { userId: 'asc' },
       });
 
       return {

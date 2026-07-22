@@ -20,7 +20,7 @@
     "dev:storybook": "storybook dev -p 7204 --no-open",
     "build:storybook": "storybook build",
     "build": "concurrently --kill-others-on-fail -c \"auto\" \"npm:build:server\" \"npm:build:vault\" \"npm:build:ui\" \"npm:build:client\"",
-    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node24 --outfile=dist/server/main.mjs --format=esm --sourcemap --alias:@encryption/src=./src --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
+    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node24 --outfile=dist/server/main.mjs --format=esm --sourcemap --alias:@encryption/src=./src --external:vite --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
     "build:vault": "vite build --config src/vault/vite.config.ts",
     "build:ui": "vite build --config src/ui/vite.config.ts",
     "build:client": "vite build --config src/client/vite.config.ts && cp dist/client/client.d.mts dist/client/client.d.ts",
