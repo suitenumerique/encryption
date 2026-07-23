@@ -2,9 +2,9 @@ import { type ReactNode, createContext, useContext } from 'react';
 
 import { useEncryption } from '@encryption/src/ui/hooks/useEncryption';
 
-type EncryptionContextType = ReturnType<typeof useEncryption>;
+export type EncryptionContextType = ReturnType<typeof useEncryption>;
 
-const EncryptionContext = createContext<EncryptionContextType | null>(null);
+export const EncryptionContext = createContext<EncryptionContextType | null>(null);
 
 // Read from runtime config (injected by the server) with dev fallback.
 const runtimeConfig = (window as unknown as { __ENCRYPTION_CONFIG__?: { vaultUrl?: string } }).__ENCRYPTION_CONFIG__;

@@ -1,3 +1,8 @@
+// Server-only: the two-phase registration wire shapes. Used by BOTH the
+// public-keys route (directly) and the vault route (folded into the atomic
+// onboarding body), so it sits here rather than inline in one of them. NOT in
+// src/shared/schemas: nothing outside the server enforces these shapes, and the
+// UI reads their types off the generated client.
 import { z } from 'zod';
 
 // Bodies & responses for the two-phase proof-of-possession flow used at

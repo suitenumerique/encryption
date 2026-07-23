@@ -74,7 +74,7 @@ export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     const path = url.split('?')[0];
 
     // Let Fastify handle infrastructure routes and API calls.
-    // Paths with file extensions under /api/ (e.g. /api/server-client.ts)
+    // Paths with file extensions under /api/ (e.g. /api/client.ts)
     // are Vite source files that must be served by the Vite middleware.
     const isApiRoute = path.startsWith('/api/') && !path.slice(path.lastIndexOf('/') + 1).includes('.');
     if (FASTIFY_INFRA_PATHS.has(path) || isApiRoute) {

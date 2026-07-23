@@ -7,14 +7,15 @@ import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_DESTROY_KEYS, MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
 import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { UserInfo } from '@encryption/src/ui/App';
+import { apiDefaults, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
 import {
-  completeKeyPossession,
-  disablePublicKey,
-  fetchNextKeyNumbers,
-  fetchPublicKeys,
-  initKeyPossession,
-  updateVaultKeyring,
-} from '@encryption/src/ui/api/server-client';
+  deleteApiPublicKeys,
+  getApiPublicKeys,
+  getApiPublicKeysNext,
+  postApiPublicKeysRegisterComplete,
+  postApiPublicKeysRegisterInit,
+  putApiVaultKeyring,
+} from '@encryption/src/ui/api/generated/sdk.gen';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
@@ -97,7 +98,9 @@ export function EncryptionSettings({
       const body = JSON.stringify(pendingKeyring);
       const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'PUT', path: '/api/vault/keyring', body })) as { signature: string };
 
-      await withFreshToken(getToken, (token) => updateVaultKeyring(token, pendingKeyring, signature));
+      await withFreshToken(getToken, (token) =>
+        putApiVaultKeyring({ ...apiDefaults, headers: signedHeaders(token, signature), body: pendingKeyring })
+      );
       setPendingKeyring(null);
       setNewRecoveryPhrase(null);
       // Show the confirmation in context, on its own screen, instead of dropping
@@ -142,19 +145,27 @@ export function EncryptionSettings({
 
     try {
       await withFreshToken(getToken, async (token) => {
-        const { next_version } = await fetchNextKeyNumbers(token);
-        const reg = await signKeyRegistration(next_version, Date.now());
-        const { challengeId, ciphertext } = await initKeyPossession(token, {
-          userId,
-          encryptionPublicKey: reg.encryptionPublicKey,
-          signaturePublicKey: reg.signaturePublicKey,
-          version: reg.version,
-          createdAtMillis: reg.createdAtMillis,
-          keyBindingSignature: reg.keyBindingSignature,
+        const next = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
+        const reg = await signKeyRegistration(next.data.next_version, Date.now());
+        const init = await postApiPublicKeysRegisterInit({
+          ...apiDefaults,
+          headers: authHeaders(token),
+          body: {
+            user_id: userId,
+            encryption_public_key: reg.encryptionPublicKey,
+            signature_public_key: reg.signaturePublicKey,
+            version: reg.version,
+            created_at_millis: reg.createdAtMillis,
+            key_binding_signature: reg.keyBindingSignature,
+          },
         });
-        const { response, challengeSignature } = await respondToKeyChallenge(challengeId, ciphertext);
+        const { response, challengeSignature } = await respondToKeyChallenge(init.data.challenge_id, init.data.ciphertext);
 
-        await completeKeyPossession(token, challengeId, response, challengeSignature);
+        await postApiPublicKeysRegisterComplete({
+          ...apiDefaults,
+          headers: authHeaders(token),
+          body: { challenge_id: init.data.challenge_id, response, challenge_signature: challengeSignature },
+        });
       });
       setRemoteStatus('in-sync');
     } catch (err) {
@@ -239,9 +250,9 @@ export function EncryptionSettings({
 
     let cancelled = false;
     setRemoteStatus('checking');
-    fetchPublicKeys([userId])
-      .then(async (keys) => {
-        const remote = keys[0];
+    getApiPublicKeys({ ...apiDefaults, query: { user_ids: [userId] } })
+      .then(async ({ data }) => {
+        const remote = data.keys[0];
 
         if (!remote) {
           // No ACTIVE key on the server. Distinguish "registered then disabled"
@@ -253,8 +264,8 @@ export function EncryptionSettings({
           // re-register.
           let everRegistered = true;
           try {
-            const { next_generation } = await withFreshToken(getToken, (token) => fetchNextKeyNumbers(token));
-            everRegistered = next_generation > 1;
+            const next = await withFreshToken(getToken, (token) => getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) }));
+            everRegistered = next.data.next_generation > 1;
           } catch {
             // Keep the conservative default (offer re-enable, backed by the server guard).
           }
@@ -303,7 +314,7 @@ export function EncryptionSettings({
       // wipe local keys, which would leave this device empty while the server key
       // stays active (and the next screen wrongly reads "existing configuration").
       if (alsoDisableServer) {
-        await withFreshToken(getToken, (token) => disablePublicKey(token));
+        await withFreshToken(getToken, (token) => deleteApiPublicKeys({ ...apiDefaults, headers: authHeaders(token) }));
       }
 
       // Only now remove this device's local keys + vault cache. The server vault

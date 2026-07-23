@@ -9,7 +9,8 @@ import {
   MSG_INTERFACE_SET_THEME,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
-import { fetchMe, fetchPublicKeysBySubs } from '@encryption/src/ui/api/server-client';
+import { apiDefaults, authHeaders } from '@encryption/src/ui/api/client';
+import { getApiMe, getApiPublicKeys } from '@encryption/src/ui/api/generated/sdk.gen';
 import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
 import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
 import { InvalidGrantError, type TokenSet, decodeJwtClaims, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
@@ -239,9 +240,9 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
       try {
         const token = await getValidToken();
-        const me = token ? await fetchMe(token) : null;
+        const me = token ? await getApiMe({ ...apiDefaults, headers: authHeaders(token) }) : null;
 
-        if (!cancelled && me) setInternalUserId(me.userId);
+        if (!cancelled && me) setInternalUserId(me.data.user_id);
       } catch (err) {
         // Not an error condition for the page: an expired session only matters
         // if the user turns out to need onboarding, which will ask them to
@@ -291,8 +292,11 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   useEffect(() => {
     if (!parentContext.suiteUserId) return;
 
-    fetchPublicKeysBySubs([parentContext.suiteUserId])
-      .then(async (keys) => {
+    // Directory lookup by OIDC sub (unauthenticated, like every directory read):
+    // used before /api/me has resolved the internal id.
+    getApiPublicKeys({ ...apiDefaults, query: { subs: [parentContext.suiteUserId] } })
+      .then(async ({ data }) => {
+        const keys = data.keys;
         setHasExistingBackendKey(keys.length > 0);
 
         if (keys.length > 0) {

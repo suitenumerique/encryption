@@ -1,7 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { z } from 'zod';
+
+import { configureZodValidation } from '@encryption/src/server/zod-validation';
 
 /**
  * Compute a single build version hash from all distributed bundles.
@@ -36,9 +40,18 @@ function computeBuildVersion(): string {
 }
 
 export async function versionRoute(app: FastifyInstance): Promise<void> {
+  configureZodValidation(app);
+
   const version = computeBuildVersion();
 
-  app.get('/api/version', async () => {
-    return { version };
+  app.withTypeProvider<ZodTypeProvider>().get('/api/version', {
+    schema: {
+      response: {
+        200: z.object({ version: z.string() }),
+      },
+    },
+    handler: async () => {
+      return { version };
+    },
   });
 }

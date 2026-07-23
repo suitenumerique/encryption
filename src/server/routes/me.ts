@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 
 import { prisma } from '@encryption/src/prisma/client';
+import { configureZodValidation } from '@encryption/src/server/zod-validation';
 
 /**
  * "Who am I" for the interface iframe: maps the caller's OIDC session to the
@@ -9,7 +12,17 @@ import { prisma } from '@encryption/src/prisma/client';
  * this endpoint only matters before a user has any directory row.
  */
 export async function meRoute(app: FastifyInstance): Promise<void> {
-  app.get('/api/me', {
+  configureZodValidation(app);
+
+  app.withTypeProvider<ZodTypeProvider>().get('/api/me', {
+    schema: {
+      response: {
+        200: z.object({
+          user_id: z.string().uuid(),
+          email: z.string().nullable(),
+        }),
+      },
+    },
     preHandler: async (request) => {
       await app.verifyJWT(request);
     },

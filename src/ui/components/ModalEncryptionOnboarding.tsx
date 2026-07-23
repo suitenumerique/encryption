@@ -9,14 +9,14 @@ import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import { API_ERROR_CONCURRENT_REGISTRATION, API_ERROR_KEY_VERSION_CONFLICT } from '@encryption/src/shared/error-codes';
 import { VaultError, VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import type { UserInfo } from '@encryption/src/ui/App';
+import { ApiError, apiDefaults, authHeaders } from '@encryption/src/ui/api/client';
 import {
-  ApiError,
-  bootstrapVault,
-  disablePublicKey,
-  fetchNextKeyNumbers,
-  fetchPublicKeys,
-  initKeyPossession,
-} from '@encryption/src/ui/api/server-client';
+  deleteApiPublicKeys,
+  getApiPublicKeys,
+  getApiPublicKeysNext,
+  postApiPublicKeysRegisterInit,
+  postApiVault,
+} from '@encryption/src/ui/api/generated/sdk.gen';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
@@ -256,16 +256,16 @@ export function ModalEncryptionOnboarding({
     historyChecked.current = true;
     (async () => {
       try {
-        const active = await fetchPublicKeys([userId]);
+        const active = await getApiPublicKeys({ ...apiDefaults, query: { user_ids: [userId] } });
 
-        if (active.length > 0) {
+        if (active.data.keys.length > 0) {
           setStep('existing-key-choice');
 
           return;
         }
 
-        const { next_version } = await withFreshToken(getToken, (token) => fetchNextKeyNumbers(token));
-        setStep(next_version > 1 ? 'previous-identity' : 'explanation');
+        const next = await withFreshToken(getToken, (token) => getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) }));
+        setStep(next.data.next_version > 1 ? 'previous-identity' : 'explanation');
       } catch {
         setStep('explanation');
       }
@@ -284,10 +284,10 @@ export function ModalEncryptionOnboarding({
 
     return withFreshToken(getToken, async (token) => {
       // Count disabled rows too, so a re-onboard after a reset seals `max + 1`.
-      const { next_version, next_generation } = await fetchNextKeyNumbers(token);
-      const bundle = await prepareOnboarding({ lang, version: next_version, generation: next_generation });
+      const { data } = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
+      const bundle = await prepareOnboarding({ lang, version: data.next_version, generation: data.next_generation });
 
-      return { bundle, version: next_version };
+      return { bundle, version: data.next_version };
     });
   }, [userId, getToken, i18n.language, prepareOnboarding, t]);
 
@@ -324,22 +324,31 @@ export function ModalEncryptionOnboarding({
           await withFreshToken(getToken, async (token) => {
             const reg = await signKeyRegistration(current.version, Date.now());
 
-            const { challengeId, ciphertext } = await initKeyPossession(token, {
-              userId,
-              encryptionPublicKey: reg.encryptionPublicKey,
-              signaturePublicKey: reg.signaturePublicKey,
-              version: reg.version,
-              createdAtMillis: reg.createdAtMillis,
-              keyBindingSignature: reg.keyBindingSignature,
+            const init = await postApiPublicKeysRegisterInit({
+              ...apiDefaults,
+              headers: authHeaders(token),
+              body: {
+                user_id: userId,
+                encryption_public_key: reg.encryptionPublicKey,
+                signature_public_key: reg.signaturePublicKey,
+                version: reg.version,
+                created_at_millis: reg.createdAtMillis,
+                key_binding_signature: reg.keyBindingSignature,
+              },
             });
-            const { response, challengeSignature } = await respondToKeyChallenge(challengeId, ciphertext);
+            const challengeId = init.data.challenge_id;
+            const { response, challengeSignature } = await respondToKeyChallenge(challengeId, init.data.ciphertext);
 
-            await bootstrapVault(token, {
-              registration: { challenge_id: challengeId, response, challenge_signature: challengeSignature },
-              keyring: current.bundle.keyring,
-              items: current.bundle.items,
-              manifest: current.bundle.manifest,
-              manifest_sig: current.bundle.manifestSig,
+            await postApiVault({
+              ...apiDefaults,
+              headers: authHeaders(token),
+              body: {
+                registration: { challenge_id: challengeId, response, challenge_signature: challengeSignature },
+                keyring: current.bundle.keyring,
+                items: current.bundle.items,
+                manifest: current.bundle.manifest,
+                manifest_sig: current.bundle.manifestSig,
+              },
             });
 
             // Pull the just-bootstrapped vault so the local cache revision matches the
@@ -358,15 +367,15 @@ export function ModalEncryptionOnboarding({
           // Re-seal at the now-current version, keeping the same phrase/keyring.
           const lang = mnemonicLanguageForLocale(i18n.language);
           const refreshed = await withFreshToken(getToken, async (token) => {
-            const { next_version, next_generation } = await fetchNextKeyNumbers(token);
+            const { data } = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
             const bundle = await prepareOnboarding({
               lang,
-              version: next_version,
-              generation: next_generation,
+              version: data.next_version,
+              generation: data.next_generation,
               reusePhrase: current.bundle.recoveryPhrase,
             });
 
-            return { bundle, version: next_version };
+            return { bundle, version: data.next_version };
           });
 
           current = refreshed;
@@ -492,7 +501,7 @@ export function ModalEncryptionOnboarding({
       // encryption modal to create new keys. `withFreshToken` turns a
       // failed OIDC refresh into a recoverable `SessionExpiredError`
       // surfaced via the Reconnect UI.
-      await withFreshToken(getToken, (token) => disablePublicKey(token));
+      await withFreshToken(getToken, (token) => deleteApiPublicKeys({ ...apiDefaults, headers: authHeaders(token) }));
       setHasJustReset(true);
       setStep('explanation');
       return;

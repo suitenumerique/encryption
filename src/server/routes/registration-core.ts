@@ -12,6 +12,7 @@ import { encodePopChallengeMessage } from '@encryption/src/crypto/key-registrati
 import { verifyDetached } from '@encryption/src/crypto/signature';
 import type { Prisma } from '@encryption/src/generated/prisma/client';
 import { prisma } from '@encryption/src/prisma/client';
+import type { RegistrationErrorStatus } from '@encryption/src/server/error-response';
 import {
   API_ERROR_CHALLENGE_EXPIRED,
   API_ERROR_CHALLENGE_INVALID_RESPONSE,
@@ -43,7 +44,7 @@ export type ChallengeRow = NonNullable<Awaited<ReturnType<typeof prisma.keyPosse
 
 // A read-only proof check that ran before any write. `ok` carries the verified
 // challenge row to feed the transaction; the failure carries an HTTP mapping.
-export type PossessionCheck = { ok: true; challenge: ChallengeRow } | { ok: false; status: number; code: string };
+export type PossessionCheck = { ok: true; challenge: ChallengeRow } | { ok: false; status: RegistrationErrorStatus; code: string };
 
 // Discriminated result from the write transaction. Returning a value (rather
 // than throwing) lets every business-logic exit commit a clean no-op tx while
@@ -319,7 +320,9 @@ export async function completeRegistrationInTx(tx: Prisma.TransactionClient, use
 // Map a non-success transaction result to its HTTP status/code. Returns null
 // for `success` (the caller shapes the success body itself, which differs
 // between the standalone route and the vault bootstrap).
-export function completeResultToHttpError(result: CompleteTxResult): { status: number; code: string; params?: Record<string, unknown> } | null {
+export function completeResultToHttpError(
+  result: CompleteTxResult
+): { status: RegistrationErrorStatus; code: string; params?: Record<string, unknown> } | null {
   switch (result.kind) {
     case 'success':
       return null;

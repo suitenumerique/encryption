@@ -55,6 +55,12 @@ jobs:
       - name: Prepare linting
         run: npm run lint:prepare
 
+      - name: Check the generated API client is synchronized with the routes
+        run: |
+          npm run api:schema:sync
+          git diff --exit-code -- openapi.json src/ui/api/generated \
+            || (echo "::error::openapi.json / src/ui/api/generated are stale. Run 'npm run api:schema:sync' and commit the result." && exit 1)
+
       - name: Lint
         run: npm run lint
 

@@ -7,7 +7,7 @@ module.exports = {
     ecmaVersion: 'latest',
     sourceType: 'module',
   },
-  ignorePatterns: ['build', 'dist', 'node_modules', 'storybook-static'],
+  ignorePatterns: ['build', 'dist', 'node_modules', 'storybook-static', 'src/ui/api/generated'],
   rules: {
     'no-trailing-spaces': 'error',
     'no-console': 'off',

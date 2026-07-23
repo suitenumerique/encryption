@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { z } from 'zod';
 
 import { base64ToUint8, importPublicKeyFromBytes, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { verifyIdentityContinuity } from '@encryption/src/crypto/key-registration';
@@ -7,6 +9,7 @@ import { REQUEST_SIG_HEADER, readProofSubject, verifyRequestProof } from '@encry
 import { type VaultManifest, parseManifest, verifyManifest } from '@encryption/src/crypto/vault-manifest';
 import { DEFAULT_KDF_PARAMS, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
+import { errorResponses } from '@encryption/src/server/error-response';
 import {
   type CompleteTxResult,
   activateRegistration,
@@ -16,7 +19,9 @@ import {
   loadAndVerifyPossession,
   mintIdentityInTx,
 } from '@encryption/src/server/routes/registration-core';
+import { CompleteKeyPossessionBodySchema } from '@encryption/src/server/schemas/key-possession';
 import { addVaultListener, notifyVaultChanged, removeVaultListener } from '@encryption/src/server/vault-notify';
+import { configureZodValidation } from '@encryption/src/server/zod-validation';
 import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
@@ -33,14 +38,7 @@ import {
   API_ERROR_VAULT_PROOF_INVALID,
   API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID,
 } from '@encryption/src/shared/error-codes';
-import {
-  VaultApprovalApproveBodySchema,
-  VaultApprovalRequestBodySchema,
-  VaultFetchBodySchema,
-  VaultKeyringSchema,
-  VaultPutItemBodySchema,
-  VaultStoreBodySchema,
-} from '@encryption/src/shared/schemas/vault';
+import { VaultItemSchema, VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
 
 // KDF params are BOUNDED (not hard-pinned) on every keyring write: they must be at
 // least the current standard (so no client can store a weak, cheap-to-brute-force
@@ -109,6 +107,36 @@ async function verifiedManifest(
 // - SIG_ONLY: identity signature only, NO JWT — the silent data-plane that must
 //   run in the background (the vault holds the key, the interface/JWT may be
 //   absent). `userId` comes from the signed `sub`.
+
+// ----- Request body schemas --------------------------------------------------
+
+const MAX_KEY_B64 = 1024; // Ed25519 key / signature blob
+const MAX_WRAPPED_VRK_B64 = 4096; // wrapped vault root key
+const MAX_DEVICE_KEY_B64 = 4096; // device public key blob
+const MAX_MANIFEST = 128 * 1024; // signed item-index manifest (JSON)
+
+// PoP-gated fetch: the client presents the challenge it was issued plus a
+// signature over it by the vault auth key.
+const VaultFetchBodySchema = z.object({
+  challenge_id: z.string().min(1).max(256),
+  proof: z.string().min(1).max(MAX_KEY_B64), // base64 Ed25519 over the challenge nonce
+});
+
+// ----- Response schemas ------------------------------------------------------
+
+const VaultContentSchema = z.object({
+  vault_id: z.string(),
+  wrapped_vrk: z.string(),
+  revision: z.number().int().nonnegative(),
+  manifest: z.string().nullable(),
+  manifest_sig: z.string().nullable(),
+  items: z.array(VaultItemSchema),
+});
+
+const VaultRevisionOnlyResponseSchema = z.object({ revision: z.number().int().positive() });
+
+const RequestIdParamsSchema = z.object({ requestId: z.string() });
+
 const SKIP_SIG = { config: { skipRequestSignature: true } };
 const SIG_ONLY = { config: { signatureOnly: true } };
 
@@ -118,6 +146,7 @@ const SIG_ONLY = { config: { signatureOnly: true } };
 const IDENTITY_AUTH_GRACE_MS = 365 * 24 * 60 * 60 * 1000;
 
 export async function vaultRoute(app: FastifyInstance): Promise<void> {
+  configureZodValidation(app);
   // The user's current vault: exactly one keyring has `disabledAt` null. The
   // sync and write paths operate on it; superseded (dormant) vaults are reachable
   // only through /fetch, which self-selects by the recovery phrase.
@@ -229,7 +258,13 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   //  - default  -> JWT + identity signature, the signature's sub bound to the JWT.
   // A new route falls under the strictest default (JWT+sig) unless it opts out, so
   // forgetting fails loud (rejects a legitimate call), never silently open.
-  app.addHook('preHandler', async (request, reply) => {
+  // `preValidation`, NOT `preHandler`: the body is parsed by then (the hook needs
+  // it for the body digest) but schema validation has not run yet, so an
+  // unauthenticated caller is rejected 401 BEFORE its payload reaches the
+  // validator. On `preHandler` the order inverts and a forged-signature request
+  // with a malformed body answers 400, leaking that the signature was never the
+  // reason it failed.
+  app.addHook('preValidation', async (request, reply) => {
     const cfg = request.routeOptions.config as { skipRequestSignature?: boolean; signatureOnly?: boolean } | undefined;
     const token = request.headers[REQUEST_SIG_HEADER];
     const nowMs = Date.now();
@@ -273,38 +308,53 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // Usually a single entry; more only after the standard was raised. Returns NO
   // language: the derivation hashes the phrase string (language-agnostic), and the
   // input validates against every wordlist. 404 when the account has no vault.
-  app.get('/api/vault/meta', SKIP_SIG, async (request, reply) => {
-    const keyrings = await prisma.vaultKeyring.findMany({ where: { userId: request.userId! }, select: { kdfOps: true, kdfMem: true } });
+  app.withTypeProvider<ZodTypeProvider>().get('/api/vault/meta', {
+    ...SKIP_SIG,
+    schema: {
+      response: {
+        200: z.object({
+          kdf_variants: z.array(z.object({ kdf_ops: z.number().int().positive(), kdf_mem: z.number().int().positive() })),
+        }),
+        ...errorResponses(404),
+      },
+    },
+    handler: async (request, reply) => {
+      const keyrings = await prisma.vaultKeyring.findMany({ where: { userId: request.userId! }, select: { kdfOps: true, kdfMem: true } });
 
-    if (keyrings.length === 0) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+      if (keyrings.length === 0) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-    const seen = new Set<string>();
-    const variants: Array<{ kdf_ops: number; kdf_mem: number }> = [];
-    for (const k of keyrings) {
-      const key = `${k.kdfOps}:${k.kdfMem}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        variants.push({ kdf_ops: k.kdfOps, kdf_mem: k.kdfMem });
+      const seen = new Set<string>();
+      const variants: Array<{ kdf_ops: number; kdf_mem: number }> = [];
+      for (const k of keyrings) {
+        const key = `${k.kdfOps}:${k.kdfMem}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          variants.push({ kdf_ops: k.kdfOps, kdf_mem: k.kdfMem });
+        }
       }
-    }
-    variants.sort((a, b) => a.kdf_ops * a.kdf_mem - b.kdf_ops * b.kdf_mem);
+      variants.sort((a, b) => a.kdf_ops * a.kdf_mem - b.kdf_ops * b.kdf_mem);
 
-    return { kdf_variants: variants };
+      return { kdf_variants: variants };
+    },
   });
 
   // Cheap poll: the account revision an enrolled device compares before pulling.
-  app.get('/api/vault/revision', SIG_ONLY, async (request) => {
-    const keyring = await activeKeyring(request.userId!);
-    const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
+  app.withTypeProvider<ZodTypeProvider>().get('/api/vault/revision', {
+    ...SIG_ONLY,
+    schema: { response: { 200: z.object({ revision: z.number().int().nonnegative() }) } },
+    handler: async (request) => {
+      const keyring = await activeKeyring(request.userId!);
+      const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
 
-    return { revision: meta?.accountRevision ?? 0 };
+      return { revision: meta?.accountRevision ?? 0 };
+    },
   });
 
   // Server-push channel (SSE): a content-free "your vault changed" wake so a
   // user's OTHER devices pull near-instantly. SIG_ONLY: the stream is opened by
   // the vault iframe over the silent data plane, which holds an identity key but
   // no JWT, and it carries no vault data. See src/server/vault-notify.ts.
-  app.get('/api/vault/events', SIG_ONLY, (request, reply) => {
+  app.get('/api/vault/events', { ...SIG_ONLY, schema: { hide: true } }, (request, reply) => {
     const userId = request.userId!;
 
     reply.hijack();
@@ -339,35 +389,52 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // under the random 256-bit VRK, so the identity signature (SIG_ONLY, proving
   // an open vault) is a sufficient gate here. Only the passphrase-brute-forceable
   // wrappedVrk stays behind the PoP gate on /fetch.
-  app.get('/api/vault/items', SIG_ONLY, async (request, reply) => {
-    const keyring = await activeKeyring(request.userId!);
-    const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
+  app.withTypeProvider<ZodTypeProvider>().get('/api/vault/items', {
+    ...SIG_ONLY,
+    schema: {
+      response: {
+        200: z.object({
+          revision: z.number().int().nonnegative(),
+          manifest: z.string().nullable(),
+          manifest_sig: z.string().nullable(),
+          items: z.array(VaultItemSchema),
+        }),
+      },
+    },
+    handler: async (request, reply) => {
+      const keyring = await activeKeyring(request.userId!);
+      const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
 
-    if (!keyring || !meta) return { revision: 0, manifest: null, manifest_sig: null, items: [] };
+      if (!keyring || !meta) return { revision: 0, manifest: null, manifest_sig: null, items: [] };
 
-    const items = await prisma.vaultItem.findMany({ where: { vaultId: keyring.id } });
+      const items = await prisma.vaultItem.findMany({ where: { vaultId: keyring.id } });
 
-    return reply.send({
-      revision: meta.accountRevision,
-      manifest: meta.manifest,
-      manifest_sig: uint8ToBase64(meta.manifestSig),
-      items: items.map((i) => ({ item_id: i.itemId, type: i.type, ciphertext: i.ciphertext, revision_date_millis: i.revisionDate.getTime() })),
-    });
+      return reply.send({
+        revision: meta.accountRevision,
+        manifest: meta.manifest,
+        manifest_sig: uint8ToBase64(meta.manifestSig),
+        items: items.map((i) => ({ item_id: i.itemId, type: i.type, ciphertext: i.ciphertext, revision_date_millis: i.revisionDate.getTime() })),
+      });
+    },
   });
 
   // Issue a single-use nonce for a proof of possession of the recovery phrase.
-  app.post('/api/vault/challenge', SKIP_SIG, async (request) => {
-    // Opportunistic sweep of this user's expired challenges: they are otherwise
-    // only deleted when re-presented, so an abandoned-challenge loop would grow
-    // the table unbounded with no cron. Scoped to this user, cheap on the index.
-    await prisma.vaultChallenge.deleteMany({ where: { userId: request.userId!, expiresAt: { lt: new Date() } } });
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault/challenge', {
+    ...SKIP_SIG,
+    schema: { response: { 200: z.object({ challenge_id: z.string(), nonce: z.string() }) } },
+    handler: async (request) => {
+      // Opportunistic sweep of this user's expired challenges: they are otherwise
+      // only deleted when re-presented, so an abandoned-challenge loop would grow
+      // the table unbounded with no cron. Scoped to this user, cheap on the index.
+      await prisma.vaultChallenge.deleteMany({ where: { userId: request.userId!, expiresAt: { lt: new Date() } } });
 
-    const nonce = randomBytes(32);
-    const challenge = await prisma.vaultChallenge.create({
-      data: { userId: request.userId!, nonce, expiresAt: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000) },
-    });
+      const nonce = randomBytes(32);
+      const challenge = await prisma.vaultChallenge.create({
+        data: { userId: request.userId!, nonce, expiresAt: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000) },
+      });
 
-    return { challenge_id: challenge.id, nonce: nonce.toString('base64') };
+      return { challenge_id: challenge.id, nonce: nonce.toString('base64') };
+    },
   });
 
   // The recovery phrase self-selects which of the user's vaults it unlocks: the
@@ -377,7 +444,9 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // Does NOT consume the challenge; the caller does, once it commits to its work.
   type Keyring = NonNullable<Awaited<ReturnType<typeof prisma.vaultKeyring.findFirst>>>;
   type ProofChallenge = NonNullable<Awaited<ReturnType<typeof prisma.vaultChallenge.findUnique>>>;
-  type ProofResult = { ok: true; challenge: ProofChallenge; keyring: Keyring } | { ok: false; status: number; code: string };
+  // The failure statuses are a precise union rather than `number` so the routes
+  // forwarding them still satisfy the statuses declared in their own schema.
+  type ProofResult = { ok: true; challenge: ProofChallenge; keyring: Keyring } | { ok: false; status: 401 | 404 | 410; code: string };
 
   async function selectVaultByProof(userId: string, body: { challenge_id: string; proof: string }): Promise<ProofResult> {
     const challenge = await prisma.vaultChallenge.findUnique({ where: { id: body.challenge_id } });
@@ -428,24 +497,37 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // the server-side verifier and is never returned. `is_active` tells the client
   // whether the phrase resolved to the current vault or a dormant one, so it can
   // offer to reactivate the latter WITHOUT the client caching anything yet.
-  app.post('/api/vault/fetch', SKIP_SIG, async (request, reply) => {
-    const body = VaultFetchBodySchema.parse(request.body);
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault/fetch', {
+    ...SKIP_SIG,
+    schema: {
+      body: VaultFetchBodySchema,
+      response: {
+        200: VaultContentSchema.extend({
+          is_active: z.boolean(),
+          created_at_millis: z.number().int().nonnegative(),
+        }),
+        ...errorResponses(400, 401, 404, 410),
+      },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
 
-    const selected = await selectVaultByProof(request.userId!, body);
-    if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
+      const selected = await selectVaultByProof(request.userId!, body);
+      if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
 
-    const matched = selected.keyring;
+      const matched = selected.keyring;
 
-    // Single-use: consume the challenge once it has done its job. deleteMany (not
-    // delete) so a benign race with a concurrent consumer of the same challenge
-    // resolves to a no-op instead of a P2025 that would surface as a 500.
-    await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
+      // Single-use: consume the challenge once it has done its job. deleteMany (not
+      // delete) so a benign race with a concurrent consumer of the same challenge
+      // resolves to a no-op instead of a P2025 that would surface as a 500.
+      await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
 
-    return {
-      ...(await loadVaultContent(matched)),
-      is_active: matched.disabledAt === null,
-      created_at_millis: matched.createdAt.getTime(),
-    };
+      return {
+        ...(await loadVaultContent(matched)),
+        is_active: matched.disabledAt === null,
+        created_at_millis: matched.createdAt.getTime(),
+      };
+    },
   });
 
   // Bring a dormant vault back as the current one. Same phrase PoP as /fetch, so
@@ -454,59 +536,73 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // key are (re)enabled, and whichever vault was active is demoted to dormant
   // (kept, still recoverable by its own phrase). Because it demotes the current
   // vault, the caller confirms with the user first.
-  app.post('/api/vault/reactivate', SKIP_SIG, async (request, reply) => {
-    const body = VaultFetchBodySchema.parse(request.body);
-    const userId = request.userId!;
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault/reactivate', {
+    ...SKIP_SIG,
+    schema: {
+      body: VaultFetchBodySchema,
+      response: {
+        200: VaultContentSchema.extend({
+          reactivated: z.boolean(),
+          active_vault_id: z.string(),
+          disabled_vault_id: z.string().nullable(),
+        }),
+        ...errorResponses(400, 401, 404, 409, 410),
+      },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
+      const userId = request.userId!;
 
-    const selected = await selectVaultByProof(userId, body);
-    if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
+      const selected = await selectVaultByProof(userId, body);
+      if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
 
-    const target = selected.keyring;
+      const target = selected.keyring;
 
-    await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
+      await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
 
-    // Already the current vault: nothing to switch, but still release the content
-    // so the caller can cache it in the one path it caches at all.
-    if (target.disabledAt === null)
-      return { reactivated: false, active_vault_id: target.id, disabled_vault_id: null, ...(await loadVaultContent(target)) };
+      // Already the current vault: nothing to switch, but still release the content
+      // so the caller can cache it in the one path it caches at all.
+      if (target.disabledAt === null)
+        return { reactivated: false, active_vault_id: target.id, disabled_vault_id: null, ...(await loadVaultContent(target)) };
 
-    // The vault we are about to demote, so the client can name it to the user.
-    const previouslyActive = await activeKeyring(userId);
+      // The vault we are about to demote, so the client can name it to the user.
+      const previouslyActive = await activeKeyring(userId);
 
-    // Serializable + retry, like the bootstrap and standalone registration routes:
-    // this flips the single active identity/encryption-key/keyring per user, so it
-    // must not interleave with a concurrent bootstrap or /register on the same user
-    // (READ COMMITTED could leave two active keyrings, or an active keyring pointing
-    // at a demoted identity).
-    try {
-      await prisma.$transaction(
-        async (tx) => {
-          // Re-point the directory to this vault's identity + its latest encryption
-          // key, disabling whatever pair was active (same helper the registration
-          // flow uses to keep exactly one active pair per user).
-          const encKey = await tx.encryptionKey.findFirst({ where: { identityId: target.identityId }, orderBy: { version: 'desc' } });
-          if (encKey) await activateRegistration(tx, userId, encKey.id, target.identityId);
+      // Serializable + retry, like the bootstrap and standalone registration routes:
+      // this flips the single active identity/encryption-key/keyring per user, so it
+      // must not interleave with a concurrent bootstrap or /register on the same user
+      // (READ COMMITTED could leave two active keyrings, or an active keyring pointing
+      // at a demoted identity).
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            // Re-point the directory to this vault's identity + its latest encryption
+            // key, disabling whatever pair was active (same helper the registration
+            // flow uses to keep exactly one active pair per user).
+            const encKey = await tx.encryptionKey.findFirst({ where: { identityId: target.identityId }, orderBy: { version: 'desc' } });
+            if (encKey) await activateRegistration(tx, userId, encKey.id, target.identityId);
 
-          // Flip the vaults: demote every currently active keyring, promote this one.
-          await tx.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: new Date() } });
-          await tx.vaultKeyring.update({ where: { id: target.id }, data: { disabledAt: null } });
-        },
-        { isolationLevel: 'Serializable' }
-      );
-    } catch (err) {
-      if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
-      throw err;
-    }
+            // Flip the vaults: demote every currently active keyring, promote this one.
+            await tx.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: new Date() } });
+            await tx.vaultKeyring.update({ where: { id: target.id }, data: { disabledAt: null } });
+          },
+          { isolationLevel: 'Serializable' }
+        );
+      } catch (err) {
+        if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
+        throw err;
+      }
 
-    // Release the (now current) vault so the client caches it in the same step
-    // that committed the switch: nothing is persisted locally before this point.
-    return {
-      reactivated: true,
-      active_vault_id: target.id,
-      disabled_vault_id: previouslyActive?.id ?? null,
-      disabled_vault_created_at_millis: previouslyActive?.createdAt.getTime() ?? null,
-      ...(await loadVaultContent(target)),
-    };
+      // Release the (now current) vault so the client caches it in the same step
+      // that committed the switch: nothing is persisted locally before this point.
+      return {
+        reactivated: true,
+        active_vault_id: target.id,
+        disabled_vault_id: previouslyActive?.id ?? null,
+        disabled_vault_created_at_millis: previouslyActive?.createdAt.getTime() ?? null,
+        ...(await loadVaultContent(target)),
+      };
+    },
   });
 
   // Atomic onboarding / start over: the directory registration (keys) AND the
@@ -519,211 +615,249 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // active vault is created alongside it. The dormant vault's sealed content is
   // preserved so its own recovery phrase can still recover it within the
   // retention window (see /fetch, which self-selects a vault by its phrase).
-  app.post('/api/vault', SKIP_SIG, async (request, reply) => {
-    const body = VaultStoreBodySchema.parse(request.body);
-    const userId = request.userId!;
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault', {
+    ...SKIP_SIG,
+    schema: {
+      // Atomic onboarding body: the directory registration (proof of possession) folded
+      body:
+        // together with the vault (keyring + sealed items + signed manifest), so both
+        // commit in one server transaction. Server-only: nothing outside this route enforces it,
+        // and the UI reads its type off the generated client.
+        z.object({
+          registration: CompleteKeyPossessionBodySchema,
+          keyring: VaultKeyringSchema,
+          items: z.array(VaultItemSchema).min(1).max(1024),
+          manifest: z.string().min(1).max(MAX_MANIFEST),
+          manifest_sig: z.string().min(1).max(MAX_KEY_B64),
+        }),
+      response: { 200: VaultRevisionOnlyResponseSchema, ...errorResponses(400, 403, 404, 409, 410, 429) },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
+      const userId = request.userId!;
 
-    // Cheap input check before the proof: the keyring's KDF params must be the
-    // pinned standard (uniform params keep restore correct for any vault; also
-    // blocks a weak-params vault).
-    if (!kdfParamsAllowed(body.keyring.kdf_ops, body.keyring.kdf_mem)) return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
+      // Cheap input check before the proof: the keyring's KDF params must be the
+      // pinned standard (uniform params keep restore correct for any vault; also
+      // blocks a weak-params vault).
+      if (!kdfParamsAllowed(body.keyring.kdf_ops, body.keyring.kdf_mem)) return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
 
-    // Read-only proof of possession of both private keys, before any write.
-    const check = await loadAndVerifyPossession(userId, body.registration);
-    if (!check.ok) return reply.status(check.status).send({ code: check.code });
+      // Read-only proof of possession of both private keys, before any write.
+      const check = await loadAndVerifyPossession(userId, body.registration);
+      if (!check.ok) return reply.status(check.status).send({ code: check.code });
 
-    // The keyring's auth verifier must be bound to the identity being registered,
-    // so a token-thief can't write a keyring with a verifier they control (which
-    // would let them pass the unlock PoP gate and pull the brute-forceable VRK).
-    if (!(await authBindingValid(body.keyring.auth_public_key, body.keyring.auth_pub_sig, check.challenge.signaturePublicKey)))
-      return reply.status(400).send({ code: API_ERROR_VAULT_AUTH_BINDING_INVALID });
+      // The keyring's auth verifier must be bound to the identity being registered,
+      // so a token-thief can't write a keyring with a verifier they control (which
+      // would let them pass the unlock PoP gate and pull the brute-forceable VRK).
+      if (!(await authBindingValid(body.keyring.auth_public_key, body.keyring.auth_pub_sig, check.challenge.signaturePublicKey)))
+        return reply.status(400).send({ code: API_ERROR_VAULT_AUTH_BINDING_INVALID });
 
-    // The manifest must be signed by the same identity, so the stored vault's item
-    // index is always authentic (not forgeable by a token-thief or DB tampering).
-    // A freshly bootstrapped vault is account revision 1, so the signed manifest
-    // must declare that revision.
-    if (!(await verifiedManifest(body.manifest, body.manifest_sig, check.challenge.signaturePublicKey, 1)))
-      return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
+      // The manifest must be signed by the same identity, so the stored vault's item
+      // index is always authentic (not forgeable by a token-thief or DB tampering).
+      // A freshly bootstrapped vault is account revision 1, so the signed manifest
+      // must declare that revision.
+      if (!(await verifiedManifest(body.manifest, body.manifest_sig, check.challenge.signaturePublicKey, 1)))
+        return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
 
-    // Serializable + retry, matching the standalone registration route: the
-    // registration writes run first, then the vault writes, all-or-nothing.
-    let result: CompleteTxResult;
+      // Serializable + retry, matching the standalone registration route: the
+      // registration writes run first, then the vault writes, all-or-nothing.
+      let result: CompleteTxResult;
 
-    try {
-      result = await prisma.$transaction(
-        async (tx): Promise<CompleteTxResult> => {
-          // Bootstrap is the SOLE identity minter: create (or re-enable) the
-          // identity first, then register the encryption key under it and create
-          // the vault keyring below, all atomically. completeRegistrationInTx
-          // itself never mints, so it can't be used to register keys with no vault.
-          const minted = await mintIdentityInTx(tx, userId, check.challenge.signaturePublicKey);
-          if (minted.kind !== 'ok') return minted;
+      try {
+        result = await prisma.$transaction(
+          async (tx): Promise<CompleteTxResult> => {
+            // Bootstrap is the SOLE identity minter: create (or re-enable) the
+            // identity first, then register the encryption key under it and create
+            // the vault keyring below, all atomically. completeRegistrationInTx
+            // itself never mints, so it can't be used to register keys with no vault.
+            const minted = await mintIdentityInTx(tx, userId, check.challenge.signaturePublicKey);
+            if (minted.kind !== 'ok') return minted;
 
-          const reg = await completeRegistrationInTx(tx, userId, check.challenge);
-          if (reg.kind !== 'success') return reg;
+            const reg = await completeRegistrationInTx(tx, userId, check.challenge);
+            if (reg.kind !== 'success') return reg;
 
-          // Supersede the current vault (if any) instead of deleting it: mark its
-          // keyring dormant so it stops being the sync target but its content
-          // survives for phrase recovery. This keeps the invariant that at most
-          // one keyring per user is active.
-          await tx.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: new Date() } });
+            // Supersede the current vault (if any) instead of deleting it: mark its
+            // keyring dormant so it stops being the sync target but its content
+            // survives for phrase recovery. This keeps the invariant that at most
+            // one keyring per user is active.
+            await tx.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: new Date() } });
 
-          const keyring = await tx.vaultKeyring.create({
-            data: {
-              userId,
-              identityId: reg.identityId,
-              wrappedVrk: body.keyring.wrapped_vrk,
-              authPublicKey: Buffer.from(base64ToUint8(body.keyring.auth_public_key)),
-              authPubSig: Buffer.from(base64ToUint8(body.keyring.auth_pub_sig)),
-              kdfOps: body.keyring.kdf_ops,
-              kdfMem: body.keyring.kdf_mem,
-              lang: body.keyring.lang,
-            },
-          });
-          await tx.vaultItem.createMany({
-            data: body.items.map((i) => ({
-              vaultId: keyring.id,
-              itemId: i.item_id,
-              type: i.type,
-              ciphertext: i.ciphertext,
-              revisionDate: new Date(i.revision_date_millis),
-            })),
-          });
-          await tx.vaultMeta.create({
-            data: { vaultId: keyring.id, accountRevision: 1, manifest: body.manifest, manifestSig: Buffer.from(base64ToUint8(body.manifest_sig)) },
-          });
+            const keyring = await tx.vaultKeyring.create({
+              data: {
+                userId,
+                identityId: reg.identityId,
+                wrappedVrk: body.keyring.wrapped_vrk,
+                authPublicKey: Buffer.from(base64ToUint8(body.keyring.auth_public_key)),
+                authPubSig: Buffer.from(base64ToUint8(body.keyring.auth_pub_sig)),
+                kdfOps: body.keyring.kdf_ops,
+                kdfMem: body.keyring.kdf_mem,
+                lang: body.keyring.lang,
+              },
+            });
+            await tx.vaultItem.createMany({
+              data: body.items.map((i) => ({
+                vaultId: keyring.id,
+                itemId: i.item_id,
+                type: i.type,
+                ciphertext: i.ciphertext,
+                revisionDate: new Date(i.revision_date_millis),
+              })),
+            });
+            await tx.vaultMeta.create({
+              data: { vaultId: keyring.id, accountRevision: 1, manifest: body.manifest, manifestSig: Buffer.from(base64ToUint8(body.manifest_sig)) },
+            });
 
-          return reg;
-        },
-        { isolationLevel: 'Serializable' }
-      );
-    } catch (err) {
-      if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
-      throw err;
-    }
+            return reg;
+          },
+          { isolationLevel: 'Serializable' }
+        );
+      } catch (err) {
+        if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
+        throw err;
+      }
 
-    if (result.kind !== 'success') {
-      const mapped = completeResultToHttpError(result)!;
+      if (result.kind !== 'success') {
+        const mapped = completeResultToHttpError(result)!;
 
-      return reply.status(mapped.status).send(mapped.params ? { code: mapped.code, params: mapped.params } : { code: mapped.code });
-    }
+        return reply.status(mapped.status).send(mapped.params ? { code: mapped.code, params: mapped.params } : { code: mapped.code });
+      }
 
-    return { revision: 1 };
+      return { revision: 1 };
+    },
   });
 
   // Write-through item update with per-item optimistic concurrency. The client
   // sends the freshly signed manifest with every write, since any item change
   // changes the manifest.
-  app.put<{ Params: { itemId: string } }>('/api/vault/items/:itemId', SIG_ONLY, async (request, reply) => {
-    const body = VaultPutItemBodySchema.parse(request.body);
-    const userId = request.userId!;
+  app.withTypeProvider<ZodTypeProvider>().put('/api/vault/items/:itemId', {
+    ...SIG_ONLY,
+    schema: {
+      params: z.object({ itemId: z.string() }),
+      // A single item write, carrying the last revision the client saw for optimistic
+      body:
+        // concurrency. `null` means the client believes the item is new.
+        z.object({
+          item: VaultItemSchema,
+          last_known_revision_date_millis: z.number().int().nonnegative().nullable(),
+          manifest: z.string().min(1).max(MAX_MANIFEST),
+          manifest_sig: z.string().min(1).max(MAX_KEY_B64),
+          revision: z.number().int().positive(), // the manifest revision; becomes the account revision
+        }),
+      response: { 200: VaultRevisionOnlyResponseSchema, ...errorResponses(400, 404, 409) },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
+      const userId = request.userId!;
 
-    if (body.item.item_id !== request.params.itemId) return reply.status(400).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
+      if (body.item.item_id !== request.params.itemId) return reply.status(400).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
 
-    const keyring = await activeKeyring(userId);
-    if (!keyring) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
-    const vaultId = keyring.id;
+      const keyring = await activeKeyring(userId);
+      if (!keyring) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+      const vaultId = keyring.id;
 
-    // The re-signed manifest that accompanies every item write must verify against
-    // the vault's identity, so a mutation can never store an unauthentic index.
-    // It must also declare the exact revision this write commits to.
-    const identity = await prisma.identity.findUnique({ where: { id: keyring.identityId } });
-    if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+      // The re-signed manifest that accompanies every item write must verify against
+      // the vault's identity, so a mutation can never store an unauthentic index.
+      // It must also declare the exact revision this write commits to.
+      const identity = await prisma.identity.findUnique({ where: { id: keyring.identityId } });
+      if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-    if (!(await verifiedManifest(body.manifest, body.manifest_sig, identity.signaturePublicKey, body.revision)))
-      return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
+      if (!(await verifiedManifest(body.manifest, body.manifest_sig, identity.signaturePublicKey, body.revision)))
+        return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
 
-    const result = await prisma.$transaction(async (tx) => {
-      const current = await tx.vaultItem.findUnique({ where: { vaultId_itemId: { vaultId, itemId: body.item.item_id } } });
+      const result = await prisma.$transaction(async (tx) => {
+        const current = await tx.vaultItem.findUnique({ where: { vaultId_itemId: { vaultId, itemId: body.item.item_id } } });
 
-      if (current) {
-        // Reject a stale write on this item: the client must have last seen the
-        // exact revisionDate the server holds. An echo of the server's own value
-        // round-trips losslessly, so there is no clock skew to tolerate; anything
-        // else (older, newer, or absent) means the client did not see this item's
-        // current state and must re-pull and merge.
-        if (body.last_known_revision_date_millis !== current.revisionDate.getTime()) {
+        if (current) {
+          // Reject a stale write on this item: the client must have last seen the
+          // exact revisionDate the server holds. An echo of the server's own value
+          // round-trips losslessly, so there is no clock skew to tolerate; anything
+          // else (older, newer, or absent) means the client did not see this item's
+          // current state and must re-pull and merge.
+          if (body.last_known_revision_date_millis !== current.revisionDate.getTime()) {
+            return { conflict: true as const };
+          }
+        }
+
+        // Account-level compare-and-set: this write must advance the revision by
+        // exactly one from what is stored. Two devices that both branch from the
+        // same revision therefore cannot both commit; the loser gets a 409, re-pulls,
+        // re-merges, and pushes a manifest that covers the other device's item. This
+        // is what stops a concurrent pair of different-item writes from leaving the
+        // stored items and the surviving manifest permanently incoherent.
+        //
+        // The CAS is expressed as a single conditional updateMany, NOT a findUnique
+        // check followed by an unconditional update: this transaction runs at
+        // Postgres default READ COMMITTED, so a read-then-write would let two racers
+        // both observe revision-1, both pass, and the second silently clobber the
+        // first. updateMany filters on the expected revision inside the write, so the
+        // loser matches 0 rows and the manifest never diverges from the item set.
+        const advanced = await tx.vaultMeta.updateMany({
+          where: { vaultId, accountRevision: body.revision - 1 },
+          data: { accountRevision: body.revision, manifest: body.manifest, manifestSig: Buffer.from(base64ToUint8(body.manifest_sig)) },
+        });
+
+        if (advanced.count === 0) {
           return { conflict: true as const };
         }
-      }
 
-      // Account-level compare-and-set: this write must advance the revision by
-      // exactly one from what is stored. Two devices that both branch from the
-      // same revision therefore cannot both commit; the loser gets a 409, re-pulls,
-      // re-merges, and pushes a manifest that covers the other device's item. This
-      // is what stops a concurrent pair of different-item writes from leaving the
-      // stored items and the surviving manifest permanently incoherent.
-      //
-      // The CAS is expressed as a single conditional updateMany, NOT a findUnique
-      // check followed by an unconditional update: this transaction runs at
-      // Postgres default READ COMMITTED, so a read-then-write would let two racers
-      // both observe revision-1, both pass, and the second silently clobber the
-      // first. updateMany filters on the expected revision inside the write, so the
-      // loser matches 0 rows and the manifest never diverges from the item set.
-      const advanced = await tx.vaultMeta.updateMany({
-        where: { vaultId, accountRevision: body.revision - 1 },
-        data: { accountRevision: body.revision, manifest: body.manifest, manifestSig: Buffer.from(base64ToUint8(body.manifest_sig)) },
+        await tx.vaultItem.upsert({
+          where: { vaultId_itemId: { vaultId, itemId: body.item.item_id } },
+          create: {
+            vaultId,
+            itemId: body.item.item_id,
+            type: body.item.type,
+            ciphertext: body.item.ciphertext,
+            revisionDate: new Date(body.item.revision_date_millis),
+          },
+          update: { type: body.item.type, ciphertext: body.item.ciphertext, revisionDate: new Date(body.item.revision_date_millis) },
+        });
+
+        return { conflict: false as const, revision: body.revision };
       });
 
-      if (advanced.count === 0) {
-        return { conflict: true as const };
-      }
+      if (result.conflict) return reply.status(409).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
 
-      await tx.vaultItem.upsert({
-        where: { vaultId_itemId: { vaultId, itemId: body.item.item_id } },
-        create: {
-          vaultId,
-          itemId: body.item.item_id,
-          type: body.item.type,
-          ciphertext: body.item.ciphertext,
-          revisionDate: new Date(body.item.revision_date_millis),
-        },
-        update: { type: body.item.type, ciphertext: body.item.ciphertext, revisionDate: new Date(body.item.revision_date_millis) },
-      });
+      // Wake this user's other devices so they pull the change (write-through +
+      // server-push together give near-instant cross-device convergence).
+      notifyVaultChanged(userId, result.revision);
 
-      return { conflict: false as const, revision: body.revision };
-    });
-
-    if (result.conflict) return reply.status(409).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
-
-    // Wake this user's other devices so they pull the change (write-through +
-    // server-push together give near-instant cross-device convergence).
-    notifyVaultChanged(userId, result.revision);
-
-    return { revision: result.revision };
+      return { revision: result.revision };
+    },
   });
 
   // Change the recovery phrase: re-wrap only. The vault items are untouched.
-  app.put('/api/vault/keyring', async (request, reply) => {
-    const body = VaultKeyringSchema.parse(request.body);
-    const userId = request.userId!;
+  app.withTypeProvider<ZodTypeProvider>().put('/api/vault/keyring', {
+    schema: { body: VaultKeyringSchema, response: { 200: z.object({ updated: z.boolean() }), ...errorResponses(400, 404) } },
+    handler: async (request, reply) => {
+      const body = request.body;
+      const userId = request.userId!;
 
-    const existing = await activeKeyring(userId);
-    if (!existing) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+      const existing = await activeKeyring(userId);
+      if (!existing) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-    if (!kdfParamsAllowed(body.kdf_ops, body.kdf_mem)) return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
+      if (!kdfParamsAllowed(body.kdf_ops, body.kdf_mem)) return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
 
-    // Same binding check as bootstrap: the new auth verifier must be signed by
-    // this vault's identity, so a token-thief can't swap in one they control.
-    const identity = await prisma.identity.findUnique({ where: { id: existing.identityId } });
-    if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+      // Same binding check as bootstrap: the new auth verifier must be signed by
+      // this vault's identity, so a token-thief can't swap in one they control.
+      const identity = await prisma.identity.findUnique({ where: { id: existing.identityId } });
+      if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-    if (!(await authBindingValid(body.auth_public_key, body.auth_pub_sig, identity.signaturePublicKey)))
-      return reply.status(400).send({ code: API_ERROR_VAULT_AUTH_BINDING_INVALID });
+      if (!(await authBindingValid(body.auth_public_key, body.auth_pub_sig, identity.signaturePublicKey)))
+        return reply.status(400).send({ code: API_ERROR_VAULT_AUTH_BINDING_INVALID });
 
-    await prisma.vaultKeyring.update({
-      where: { id: existing.id },
-      data: {
-        wrappedVrk: body.wrapped_vrk,
-        authPublicKey: Buffer.from(base64ToUint8(body.auth_public_key)),
-        authPubSig: Buffer.from(base64ToUint8(body.auth_pub_sig)),
-        kdfOps: body.kdf_ops,
-        kdfMem: body.kdf_mem,
-        lang: body.lang,
-      },
-    });
+      await prisma.vaultKeyring.update({
+        where: { id: existing.id },
+        data: {
+          wrappedVrk: body.wrapped_vrk,
+          authPublicKey: Buffer.from(base64ToUint8(body.auth_public_key)),
+          authPubSig: Buffer.from(base64ToUint8(body.auth_pub_sig)),
+          kdfOps: body.kdf_ops,
+          kdfMem: body.kdf_mem,
+          lang: body.lang,
+        },
+      });
 
-    return { updated: true };
+      return { updated: true };
+    },
   });
 
   // ----- Device approval (QR enrollment) -------------------------------------
@@ -746,78 +880,115 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     return approval;
   }
 
-  app.post('/api/vault/approvals/request', SKIP_SIG, async (request, reply) => {
-    const body = VaultApprovalRequestBodySchema.parse(request.body);
-    const userId = request.userId!;
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault/approvals/request', {
+    ...SKIP_SIG,
+    schema: {
+      body: z.object({
+        device_public_key: z.string().min(1).max(MAX_DEVICE_KEY_B64),
+      }),
+      response: { 200: z.object({ request_id: z.string(), device_public_key: z.string() }), ...errorResponses(429) },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
+      const userId = request.userId!;
 
-    const now = Date.now();
+      const now = Date.now();
 
-    // Opportunistic cleanup, but ONLY of rows already outside the rate-limit
-    // window, so abandoned requests don't accumulate without a cron. Expired-but-
-    // recent rows are deliberately kept: they can never be collected (an expired
-    // approval is rejected by loadOwnedApproval), yet they must still count toward
-    // the limit. Deleting every expired row here (TTL is 10 min, window is 1 hour)
-    // would let a token grind ~6x the intended rate by waiting out the TTL.
-    await prisma.vaultApproval.deleteMany({
-      where: { userId, expiresAt: { lt: new Date(now) }, createdAt: { lt: new Date(now - APPROVAL_RATE_LIMIT_WINDOW_MS) } },
-    });
+      // Opportunistic cleanup, but ONLY of rows already outside the rate-limit
+      // window, so abandoned requests don't accumulate without a cron. Expired-but-
+      // recent rows are deliberately kept: they can never be collected (an expired
+      // approval is rejected by loadOwnedApproval), yet they must still count toward
+      // the limit. Deleting every expired row here (TTL is 10 min, window is 1 hour)
+      // would let a token grind ~6x the intended rate by waiting out the TTL.
+      await prisma.vaultApproval.deleteMany({
+        where: { userId, expiresAt: { lt: new Date(now) }, createdAt: { lt: new Date(now - APPROVAL_RATE_LIMIT_WINDOW_MS) } },
+      });
 
-    // Bound how many pairing requests a device can open per window.
-    const recent = await prisma.vaultApproval.count({
-      where: { userId, createdAt: { gte: new Date(now - APPROVAL_RATE_LIMIT_WINDOW_MS) } },
-    });
+      // Bound how many pairing requests a device can open per window.
+      const recent = await prisma.vaultApproval.count({
+        where: { userId, createdAt: { gte: new Date(now - APPROVAL_RATE_LIMIT_WINDOW_MS) } },
+      });
 
-    if (recent >= APPROVAL_RATE_LIMIT_MAX) {
-      return reply.status(429).send({ code: API_ERROR_RATE_LIMIT_APPROVALS });
-    }
+      if (recent >= APPROVAL_RATE_LIMIT_MAX) {
+        return reply.status(429).send({ code: API_ERROR_RATE_LIMIT_APPROVALS });
+      }
 
-    const approval = await prisma.vaultApproval.create({
-      data: {
-        userId,
-        requestId: randomUUID(),
-        devicePublicKey: body.device_public_key,
-        expiresAt: new Date(Date.now() + APPROVAL_TTL_SECONDS * 1000),
-      },
-    });
+      const approval = await prisma.vaultApproval.create({
+        data: {
+          userId,
+          requestId: randomUUID(),
+          devicePublicKey: body.device_public_key,
+          expiresAt: new Date(Date.now() + APPROVAL_TTL_SECONDS * 1000),
+        },
+      });
 
-    return { request_id: approval.requestId, device_public_key: approval.devicePublicKey };
+      return { request_id: approval.requestId, device_public_key: approval.devicePublicKey };
+    },
   });
 
-  app.post<{ Params: { requestId: string } }>('/api/vault/approvals/:requestId/approve', async (request, reply) => {
-    const body = VaultApprovalApproveBodySchema.parse(request.body);
-    const approval = await loadOwnedApproval(request.params.requestId, request.userId!);
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault/approvals/:requestId/approve', {
+    schema: {
+      params: RequestIdParamsSchema,
+      body: z.object({
+        wrapped_device_bootstrap: z.string().min(1).max(MAX_WRAPPED_VRK_B64),
+      }),
+      response: { 200: z.object({ approved: z.boolean() }), ...errorResponses(404) },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
+      const approval = await loadOwnedApproval(request.params.requestId, request.userId!);
 
-    // Only the owner can approve their own pending, unexpired device.
-    if (!approval) return reply.status(404).send({ code: API_ERROR_VAULT_APPROVAL_NOT_FOUND });
+      // Only the owner can approve their own pending, unexpired device.
+      if (!approval) return reply.status(404).send({ code: API_ERROR_VAULT_APPROVAL_NOT_FOUND });
 
-    await prisma.vaultApproval.update({ where: { requestId: approval.requestId }, data: { wrappedDeviceBootstrap: body.wrapped_device_bootstrap } });
+      await prisma.vaultApproval.update({
+        where: { requestId: approval.requestId },
+        data: { wrappedDeviceBootstrap: body.wrapped_device_bootstrap },
+      });
 
-    return { approved: true };
+      return { approved: true };
+    },
   });
 
-  app.get<{ Params: { requestId: string } }>('/api/vault/approvals/:requestId', SKIP_SIG, async (request, reply) => {
-    const approval = await loadOwnedApproval(request.params.requestId, request.userId!);
+  app.withTypeProvider<ZodTypeProvider>().get('/api/vault/approvals/:requestId', {
+    ...SKIP_SIG,
+    schema: {
+      params: RequestIdParamsSchema,
+      response: { 200: z.object({ wrapped_device_bootstrap: z.string(), device_public_key: z.string() }), ...errorResponses(404, 425) },
+    },
+    handler: async (request, reply) => {
+      const approval = await loadOwnedApproval(request.params.requestId, request.userId!);
 
-    if (!approval) return reply.status(404).send({ code: API_ERROR_VAULT_APPROVAL_NOT_FOUND });
+      if (!approval) return reply.status(404).send({ code: API_ERROR_VAULT_APPROVAL_NOT_FOUND });
 
-    if (!approval.wrappedDeviceBootstrap) return reply.status(425).send({ code: API_ERROR_VAULT_APPROVAL_NOT_READY });
+      if (!approval.wrappedDeviceBootstrap) return reply.status(425).send({ code: API_ERROR_VAULT_APPROVAL_NOT_READY });
 
-    // One-shot: consume once collected.
-    await prisma.vaultApproval.delete({ where: { requestId: approval.requestId } });
+      // One-shot: consume once collected.
+      await prisma.vaultApproval.delete({ where: { requestId: approval.requestId } });
 
-    return { wrapped_device_bootstrap: approval.wrappedDeviceBootstrap, device_public_key: approval.devicePublicKey };
+      return { wrapped_device_bootstrap: approval.wrappedDeviceBootstrap, device_public_key: approval.devicePublicKey };
+    },
   });
 
   // Enrolled device, no-camera fallback: list this user's pending (not-yet-approved,
   // unexpired) requests so the manual decimal-fingerprint path can find the right
   // key without the user having to type the requestId. Owner-scoped. Static route,
   // so it takes precedence over `/approvals/:requestId`.
-  app.get('/api/vault/approvals/pending', async (request) => {
-    const pending = await prisma.vaultApproval.findMany({
-      where: { userId: request.userId!, wrappedDeviceBootstrap: null, expiresAt: { gt: new Date() } },
-      select: { requestId: true, devicePublicKey: true },
-    });
+  app.withTypeProvider<ZodTypeProvider>().get('/api/vault/approvals/pending', {
+    schema: {
+      response: {
+        200: z.object({
+          approvals: z.array(z.object({ request_id: z.string(), device_public_key: z.string() })),
+        }),
+      },
+    },
+    handler: async (request) => {
+      const pending = await prisma.vaultApproval.findMany({
+        where: { userId: request.userId!, wrappedDeviceBootstrap: null, expiresAt: { gt: new Date() } },
+        select: { requestId: true, devicePublicKey: true },
+      });
 
-    return { approvals: pending.map((a) => ({ request_id: a.requestId, device_public_key: a.devicePublicKey })) };
+      return { approvals: pending.map((a) => ({ request_id: a.requestId, device_public_key: a.devicePublicKey })) };
+    },
   });
 }

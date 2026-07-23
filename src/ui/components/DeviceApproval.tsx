@@ -7,13 +7,13 @@ import { useTranslation } from 'react-i18next';
 
 import { MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import { ApiError, apiDefaults, approveDevicePath, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
 import {
-  approveDeviceOnServer,
-  approveDevicePath,
-  listPendingApprovals,
-  pollDeviceApproval,
-  requestDeviceApproval,
-} from '@encryption/src/ui/api/server-client';
+  getApiVaultApprovalsByRequestId,
+  getApiVaultApprovalsPending,
+  postApiVaultApprovalsByRequestIdApprove,
+  postApiVaultApprovalsRequest,
+} from '@encryption/src/ui/api/generated/sdk.gen';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
@@ -218,8 +218,13 @@ function NewDeviceSide({
     try {
       const { devicePublicKey, decimalFingerprint: dfp } = await startDeviceApproval();
       const requestId = await withFreshToken(getToken, async (token) => {
-        const { request_id } = await requestDeviceApproval(token, devicePublicKey);
-        return request_id;
+        const { data } = await postApiVaultApprovalsRequest({
+          ...apiDefaults,
+          headers: authHeaders(token),
+          body: { device_public_key: devicePublicKey },
+        });
+
+        return data.request_id;
       });
 
       requestIdRef.current = requestId;
@@ -250,7 +255,21 @@ function NewDeviceSide({
 
       try {
         if (wrappedVrkRef.current === null) {
-          const forwarded = await withFreshToken(getToken, (token) => pollDeviceApproval(token, requestIdRef.current!));
+          // 425 means "still pending", which is a normal poll outcome, not a failure.
+          const forwarded = await withFreshToken(getToken, async (token) => {
+            try {
+              const { data } = await getApiVaultApprovalsByRequestId({
+                ...apiDefaults,
+                headers: authHeaders(token),
+                path: { requestId: requestIdRef.current! },
+              });
+
+              return data ?? null;
+            } catch (err) {
+              if (err instanceof ApiError && err.status === 425) return null;
+              throw err;
+            }
+          });
           // Store before the cancellation check: if the effect re-ran mid-poll,
           // the next interval picks the payload up instead of losing it.
           if (forwarded) wrappedVrkRef.current = forwarded.wrapped_device_bootstrap;
@@ -455,7 +474,11 @@ function EnrolledDeviceSide({
 
       try {
         const pendingSig = await signRequest('GET', '/api/vault/approvals/pending');
-        const { approvals } = await withFreshToken(getToken, (token) => listPendingApprovals(token, pendingSig));
+        const { approvals } = await withFreshToken(getToken, async (token) => {
+          const { data } = await getApiVaultApprovalsPending({ ...apiDefaults, headers: signedHeaders(token, pendingSig) });
+
+          return data;
+        });
 
         let matched: { requestId: string; wrappedDeviceBootstrap: string } | null = null;
         for (const a of approvals) {
@@ -479,7 +502,14 @@ function EnrolledDeviceSide({
         // Sign the exact body the request helper will send (same serialization).
         const approveBody = JSON.stringify({ wrapped_device_bootstrap: matched.wrappedDeviceBootstrap });
         const approveSig = await signRequest('POST', approveDevicePath(matched.requestId), approveBody);
-        await withFreshToken(getToken, (token) => approveDeviceOnServer(token, matched!.requestId, matched!.wrappedDeviceBootstrap, approveSig));
+        await withFreshToken(getToken, (token) =>
+          postApiVaultApprovalsByRequestIdApprove({
+            ...apiDefaults,
+            headers: signedHeaders(token, approveSig),
+            path: { requestId: matched!.requestId },
+            body: { wrapped_device_bootstrap: matched!.wrappedDeviceBootstrap },
+          })
+        );
 
         setDone(true);
       } catch (err) {

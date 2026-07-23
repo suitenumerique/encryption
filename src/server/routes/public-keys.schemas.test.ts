@@ -1,4 +1,9 @@
-import { GetPublicKeysQuerySchema, PublicKeySchema } from '@encryption/src/shared/schemas/public-key';
+import { GetPublicKeysQuerySchema, PublicKeySchema } from '@encryption/src/server/routes/public-keys';
+
+// Importing the route module pulls in src/server/env, which validates the
+// process environment at import time and exits when it is missing. These are
+// pure schema assertions, so the module is stubbed rather than provisioned.
+jest.mock('@encryption/src/server/env', () => ({ env: { OIDC_ISSUER: 'https://issuer.example' } }));
 
 describe('public-key schemas', () => {
   const validEntry = {

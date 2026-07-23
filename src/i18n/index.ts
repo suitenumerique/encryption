@@ -36,7 +36,7 @@ export default i18n;
  * The server returns { code: 'error_code', params?: {...} }.
  * This function looks up `errors.api.{code}` in the translations.
  */
-export function translateApiError(error: { code?: string; params?: Record<string, unknown> }): string {
+export function translateApiError(error: { code?: string; params?: Record<string, unknown>; message?: string }): string {
   if (!error.code) {
     return i18n.t('errors.unknown');
   }
@@ -45,6 +45,12 @@ export function translateApiError(error: { code?: string; params?: Record<string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const translated = i18n.t(key as any, error.params ?? {});
 
-  // If the key wasn't found, i18next returns the key itself
-  return translated === key ? i18n.t('errors.unknown') : translated;
+  if (translated !== key) {
+    return translated;
+  }
+
+  // i18next returns the key itself when it is missing. Prefer the server's
+  // English default over a generic "unknown error": most codes are not (yet)
+  // translated, and a precise English sentence beats an empty one.
+  return error.message ?? i18n.t('errors.unknown');
 }

@@ -32,6 +32,15 @@ export function generateMetaDefault<ComponentType>(initialMeta: Meta<ComponentTy
     meta.parameters = {};
   }
 
+  // Auto-stub every `on*` prop as a logged action. Without this an unset handler
+  // is `undefined`, so a button that should navigate (the real app passes a
+  // callback that pushState's) silently does nothing and there is no trace of
+  // the click. With it, the story stays put and the Actions panel shows what
+  // the component tried to do.
+  if (!meta.parameters.actions) {
+    meta.parameters.actions = { argTypesRegex: '^on[A-Z].*' };
+  }
+
   if (!meta.parameters.docs) {
     meta.parameters.docs = {
       description: {
