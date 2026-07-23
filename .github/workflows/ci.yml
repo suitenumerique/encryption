@@ -12,6 +12,7 @@ env:
   CONTAINER_IMAGE: lasuite/encryption
   NODE_OPTIONS: --max_old_space_size=4096
   NODE_VERSION: 24.14.0
+  PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX: .cache/ms-playwright
 concurrency:
   # Prevent parallel builds of the same branch
   group: cicd-${{ github.ref }}
@@ -49,7 +50,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-npm-store-
 
+      - name: Get number of CPU cores for the following test steps
+        uses: SimenB/github-actions-cpu-cores@v2
+        id: cpu-cores
+
       - name: Install dependencies
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ env.STORE_PATH }}/${{ env.PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX }}
         run: npm install
 
       - name: Prepare linting
@@ -68,7 +75,17 @@ jobs:
         run: npm run format:check
 
       - name: Test unit
-        run: npm run test:unit
+        run: npm run test:unit -- --max-workers ${{ steps.cpu-cores.outputs.count }}
+
+      - name: Install `Xvfb` and others to run browsers for end-to-end testing in local CI/CD simulations (https://github.com/nektos/act/issues/1300#issuecomment-1387344639)
+        if: ${{ env.ACT }}
+        run: sudo apt-get update && sudo apt-get install -y xvfb && npx playwright install-deps chromium
+
+      - name: Test end-to-end
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ env.STORE_PATH }}/${{ env.PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX }}
+          JEST_MAX_WORKERS: ${{ steps.cpu-cores.outputs.count }}
+        run: npm run test:e2e:headless
 
       # Consider building without Docker to ensure it works in case it has not to be published (pull requests...)
       - name: Build

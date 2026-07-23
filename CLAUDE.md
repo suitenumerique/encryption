@@ -41,6 +41,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - **All UI text goes through i18next** (`useTranslation('common')`) — translations in `src/i18n/fr/common.json`.
 - **Server API returns error codes** — codes defined in `src/shared/error-codes.ts`, translated on the frontend via `translateApiError()`. Every error body also carries an English `message`, read from the SAME i18n files (`errors.api.{code}`) by a server-side i18next instance (`src/server/i18n.ts`) and injected centrally by `attachApiErrorMessages`. It serves consumers that are not a translated UI: logs, the client SDK, product backends. Add a new code to `src/i18n/{en,fr}/common.json` under `errors.api` — `error-codes.test.ts` fails on a missing or orphan entry in either locale. The **code stays authoritative** — never branch on the message, and the UI only falls back to it for a code it has no translation for.
 - **The typed API surface is generated, never hand-written** — routes declare Zod `schema` (request + response + `errorResponses(...)`), `npm run api:schema:generate` emits `openapi.json` from the live routes, and `npm run api:client:generate` turns it into `src/ui/api/generated/` (types, SDK, MSW handlers). **Run `npm run api:schema:sync` and commit the result whenever you add or change an endpoint** — CI fails if the committed output is stale. The UI calls the generated SDK through `src/ui/api/client.ts`; route tests call the same SDK over `createTestApiClient(app)`, which injects instead of using the network. In Storybook the global MSW handlers answer **501 for every endpoint** on purpose: a story declares the responses it needs itself, so it stays a self-contained description of one state.
+- **A story must assert the state it claims to show.** `npm run test:e2e:headless` (`@storybook/test-runner`, also a CI step) opens every story in Chromium, but it can only fail on a thrown error or a failed `play()` assertion. A story with no `play()` therefore proves only that it does not crash: components catch their own errors, so it can render an error alert instead of its state and still pass. When a state is reached by an action (a click, a step in a flow) or is one of several similar screens, drive it and assert it in `play()`.
 - **Zod schemas live with their only consumer.** `src/shared/schemas/` is reserved for shapes whose _inferred type_ is needed OUTSIDE the server (`VaultItemWire`, `VaultKeyringWire`, post-message, interface-context) — the schema and its type cannot be split, and putting them in a route file would make the vault/crypto bundles import server code. Everything else is route-local: **inline the `z.object({…})` directly in the route's `schema` block when it is used once**, and only lift it to a named const when a second call site (or a unit test) genuinely needs it. Use `src/server/schemas/` when two routes share it. Consumers of a response shape read its type off the generated client, never off a schema.
 - **PostMessage type keys are centralized** in `src/shared/constants.ts` as `MSG_VAULT_*` and `MSG_INTERFACE_*` constants.
 - **Comments and logs in English** — only i18n JSON and MDX user documentation are in French.
@@ -143,6 +144,8 @@ open http://localhost:7202
 npm run dev              # Start server (API + vault + UI) + demos + storybook
 npm run build            # Build server + vault + UI + client SDK
 npm run test:unit        # Run tests
+npm run test:e2e:headless # Render every story in a headless browser
+npm run test:e2e         # Same, with the browser visible
 npm run lint             # ESLint + TypeScript check
 npm run format           # Prettier write
 npm run format:check     # Prettier check
@@ -150,6 +153,13 @@ npm run db:push          # Apply schema to database
 npm run db:studio        # Open Prisma Studio
 npm run dev:storybook    # Start Storybook on port 7204
 ```
+
+`test:e2e` builds Storybook, serves `storybook-static/` on 7204 and runs the stories
+against it, so stop `npm run dev` first (it holds that port). To reuse a Storybook you
+already have running instead, call `npm run test:e2e:storybook:headless:command` alone.
+The browsers come from the `playwright` devDependency at `npm install` time; CI skips
+that download and installs only chromium, from a cache, and the Docker build skips it
+entirely (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`).
 
 ## What's next / known TODOs
 
