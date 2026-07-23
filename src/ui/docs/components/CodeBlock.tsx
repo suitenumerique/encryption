@@ -1,16 +1,36 @@
+import hljs from 'highlight.js/lib/common';
 import type { ReactNode } from 'react';
+
+function textOf(node: ReactNode): string {
+  if (typeof node === 'string') return node;
+  if (Array.isArray(node)) return node.map(textOf).join('');
+  if (node && typeof node === 'object' && 'props' in node) {
+    return textOf((node as { props: { children?: ReactNode } }).props.children);
+  }
+
+  return '';
+}
 
 interface CodeBlockProps {
   children: ReactNode;
   language?: string;
 }
 
+/**
+ * The documentation calls this component DIRECTLY rather than using markdown
+ * fences, so highlighting has to happen here: a `code` renderer wired into the
+ * MDX provider only ever sees fenced blocks and would leave every sample in
+ * these pages unhighlighted.
+ */
 export function CodeBlock({ children, language }: CodeBlockProps) {
+  const source = textOf(children).replace(/\n$/, '');
+  const highlighted = language && hljs.getLanguage(language) ? hljs.highlight(source, { language }).value : hljs.highlightAuto(source).value;
+
   return (
     <pre
       style={{
-        background: 'var(--c--contextuals--background--surface--tertiary, #1e1e1e)',
-        color: 'var(--c--contextuals--content--surface--tertiary, #d4d4d4)',
+        background: 'var(--c--contextuals--background--surface--tertiary)',
+        border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
         padding: 'var(--c--globals--spacings--4, 16px)',
         borderRadius: 4,
         overflow: 'auto',
@@ -22,7 +42,7 @@ export function CodeBlock({ children, language }: CodeBlockProps) {
       {language && (
         <div
           style={{
-            color: 'var(--c--contextuals--content--surface--secondary, #888)',
+            color: 'var(--c--contextuals--content--semantic--neutral--secondary, #888)',
             fontSize: 11,
             marginBottom: 'var(--c--globals--spacings--2, 8px)',
           }}
@@ -30,7 +50,7 @@ export function CodeBlock({ children, language }: CodeBlockProps) {
           {language}
         </div>
       )}
-      <code>{children}</code>
+      <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted }} />
     </pre>
   );
 }

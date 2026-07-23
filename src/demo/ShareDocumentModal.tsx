@@ -156,7 +156,9 @@ function SearchUserRow({
               )}
             </div>
             {user.full_name && (
-              <span style={{ fontSize: 12, marginTop: -2, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>{user.email}</span>
+              <span style={{ fontSize: 12, marginTop: -2, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+                {user.email}
+              </span>
             )}
           </div>
         </div>

@@ -69,6 +69,11 @@ const preview: Preview = {
     },
   },
   parameters: {
+    options: {
+      storySort: {
+        order: ['Docs', ['Architecture'], 'Preview', ['Pages', 'Modals', 'Layouts', 'Forms', 'Components', 'Documents']],
+      },
+    },
     backgrounds: {
       disable: true,
     },
@@ -119,7 +124,7 @@ const preview: Preview = {
               style={{
                 padding: 'var(--c--globals--spacings--4, 16px)',
                 background: 'var(--c--contextuals--background--surface--primary, #fff)',
-                color: 'var(--c--contextuals--content--surface--primary, #161616)',
+                color: 'var(--c--contextuals--content--semantic--neutral--primary, #161616)',
                 minHeight: '100%',
               }}
             >

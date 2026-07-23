@@ -5,24 +5,33 @@ import { type RecipientLabel } from '@encryption/src/shared/schemas/interface-co
 import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 
 /** The human-facing lines for a recipient, falling back to the raw userId. */
-export function recipientLabel(userId: string, label?: RecipientLabel): { primary: string; secondary: string | null } {
-  const primary = label?.name || label?.email || userId;
+export function recipientLabel(label: RecipientLabel): { primary: string; secondary: string | null } {
+  // No userId fallback: a raw OIDC sub tells a user nothing, and the product
+  // always knows at least an email for someone it is sharing with.
+  const primary = label.name || label.email;
   // Show the email underneath only when the primary line is the name (so we
   // never repeat the same value twice).
-  const secondary = label?.name && label?.email ? label.email : null;
+  const secondary = label.name && label.email ? label.email : null;
 
   return { primary, secondary };
 }
 
 /** Recipient identity block: name/email (or the raw userId when unlabelled). */
-export function RecipientIdentity({ userId, label }: { userId: string; label?: RecipientLabel }) {
-  const { primary, secondary } = recipientLabel(userId, label);
+export function RecipientIdentity({ label }: { label: RecipientLabel }) {
+  const { primary, secondary } = recipientLabel(label);
 
   return (
     <div style={{ marginBottom: 4 }}>
       <p style={{ fontSize: 13, fontWeight: 700, margin: 0, wordBreak: 'break-all' }}>{primary}</p>
       {secondary && (
-        <p style={{ fontSize: 12, margin: '2px 0 0', color: 'var(--c--contextuals--content--surface--secondary, #666)', wordBreak: 'break-all' }}>
+        <p
+          style={{
+            fontSize: 12,
+            margin: '2px 0 0',
+            color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+            wordBreak: 'break-all',
+          }}
+        >
           {secondary}
         </p>
       )}

@@ -1,13 +1,8 @@
 import { MDXProvider } from '@mdx-js/react';
 
 import { DocsLayout } from '@encryption/src/ui/docs/DocsLayout';
-import { Alert, CodeBlock } from '@encryption/src/ui/docs/components';
+import { mdxComponents } from '@encryption/src/ui/docs/mdx-components';
 import IntegrationContent from '@encryption/src/ui/docs/technical/integration.mdx';
-
-const mdxComponents = {
-  Alert,
-  CodeBlock,
-};
 
 export function TechnicalDocsPage() {
   return (

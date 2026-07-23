@@ -247,17 +247,18 @@
   },
   "verify": {
     "title": "Verify who you are sharing with",
-    "explanation": "Some recipients have not been verified yet, or their encryption identity has changed. To protect against impersonation, confirm each one before sharing.",
+    "explanation": "The encryption identity of these recipients has changed, or you refused it before. To protect against impersonation, confirm them before sharing.",
     "compare_instruction": "Compare each safety fingerprint below with the one the recipient reads to you out of band (in person, by phone, or over a trusted channel). Only confirm if they match exactly.",
-    "refuse_aborts": "This share only goes through if you trust every recipient below. Refusing any of them, or cancelling, cancels the whole share.",
+    "refuse_aborts": "This share only goes through if you trust each recipient below. Refusing any of them, or cancelling, cancels the whole share.",
     "trusted": "Trusted",
-    "nothing_to_verify": "All recipients are already verified. You can confirm to continue.",
     "note_changed": "This contact's encryption key changed since you last verified it.",
     "note_refused": "You previously refused this contact.",
     "btn_trust": "Trust",
     "btn_refuse": "Refuse",
     "btn_cancel": "Cancel share",
-    "btn_confirm": "Share"
+    "btn_confirm": "Share",
+    "recipients_without_keys": "Some recipients have not enabled encryption yet. The encrypted share cannot proceed until they have a key.",
+    "btn_close": "Close"
   },
   "profile": {
     "title": "Encryption Identity",

@@ -138,7 +138,7 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+          gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 8,
         }}
       >
@@ -147,7 +147,9 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
 
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, color: 'var(--c--contextuals--content--surface--secondary, #888)', width: 18, textAlign: 'right' }}>
+              <span
+                style={{ fontSize: 11, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #888)', width: 18, textAlign: 'right' }}
+              >
                 {i + 1}
               </span>
               <input

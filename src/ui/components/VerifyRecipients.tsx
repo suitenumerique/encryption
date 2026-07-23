@@ -59,7 +59,8 @@ export function VerifyRecipients({
   const { t } = useTranslation('common');
   const { isReady, request } = useEncryptionContext();
 
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error' | 'unreachable'>('loading');
+  const [unreachable, setUnreachable] = useState<string[]>([]);
   const [recipients, setRecipients] = useState<SurfacedRecipient[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -92,10 +93,7 @@ export function VerifyRecipients({
         const subs = recipientKey.length > 0 ? recipientKey.split(',') : [];
 
         if (subs.length === 0) {
-          if (!cancelled) {
-            setRecipients([]);
-            setPhase('ready');
-          }
+          if (!cancelled) onComplete('resolved');
 
           return;
         }
@@ -103,6 +101,21 @@ export function VerifyRecipients({
         // Recipients arrive as subs (from the product via the SDK); the vault
         // translates them to its internal trust keys and echoes the subs back.
         const { users } = (await request(MSG_VAULT_FETCH_PUBLIC_KEYS, { subs })) as { users: Record<string, VaultRegisteredUser> };
+
+        // A recipient with no registered identity cannot be encrypted for at all.
+        // Silently treating them as "nothing to verify" would imply the share is
+        // safe while actually dropping them, so this is a hard stop.
+        const withoutKeys = subs.filter((sub) => !users[sub]?.verified);
+
+        if (withoutKeys.length > 0) {
+          if (!cancelled) {
+            setUnreachable(withoutKeys);
+            setPhase('unreachable');
+          }
+
+          return;
+        }
+
         const userFingerprints = buildUserFingerprints(subs, users);
 
         const { results } = (await request(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints })) as {
@@ -111,7 +124,19 @@ export function VerifyRecipients({
 
         if (cancelled) return;
 
-        setRecipients(surfaceUntrustedRecipients(results));
+        const surfaced = surfaceUntrustedRecipients(results);
+
+        if (surfaced.length === 0) {
+          // Only 'mismatch' and 'refused' block a share (see recipient-trust.ts).
+          // With none of those there is nothing for the user to decide, so the
+          // overlay resolves straight away rather than asking a question whose
+          // answer is already known.
+          if (!cancelled) onComplete('resolved');
+
+          return;
+        }
+
+        setRecipients(surfaced);
         setPhase('ready');
       } catch (err) {
         if (!cancelled) onError(err);
@@ -121,7 +146,7 @@ export function VerifyRecipients({
     return () => {
       cancelled = true;
     };
-  }, [isReady, recipientKey, request, onError]);
+  }, [isReady, recipientKey, request, onError, onComplete]);
 
   const handleTrust = useCallback(
     async (recipient: SurfacedRecipient) => {
@@ -152,6 +177,9 @@ export function VerifyRecipients({
       } catch {
         // Best-effort: abort regardless of whether the refusal persisted.
       } finally {
+        // Released before handing back: the SDK normally tears this iframe down,
+        // but if it does not, leaving `busy` set would freeze every control.
+        setBusy(false);
         onComplete('cancelled');
       }
     },
@@ -178,6 +206,21 @@ export function VerifyRecipients({
           <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--6, 24px)' }}>
             <Loader />
           </div>
+        ) : phase === 'unreachable' ? (
+          // These recipients have no registered identity, so nothing can be
+          // encrypted for them. The share is blocked rather than silently
+          // dropping them: there is no decision for the user to make here.
+          <>
+            <Alert type={VariantType.ERROR}>{t('verify.recipients_without_keys')}</Alert>
+            <ul style={{ fontSize: 13, marginTop: 12, paddingLeft: 20 }}>
+              {unreachable.map((sub) => (
+                <li key={sub}>{sub}</li>
+              ))}
+            </ul>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <Button onClick={() => onComplete('cancelled')}>{t('verify.btn_close')}</Button>
+            </div>
+          </>
         ) : (
           <>
             <p style={{ fontSize: 13 }}>{t('verify.explanation')}</p>
@@ -188,41 +231,48 @@ export function VerifyRecipients({
               </div>
             )}
 
-            {recipients.length === 0 ? (
-              // Nothing left to verify (e.g. all became trusted concurrently): let the
-              // share proceed immediately.
-              <Alert type={VariantType.INFO}>{t('verify.nothing_to_verify')}</Alert>
-            ) : (
-              <>
-                <Alert type={VariantType.WARNING}>{t('verify.refuse_aborts')}</Alert>
-                <p style={{ fontSize: 13, marginTop: 12 }}>{t('verify.compare_instruction')}</p>
+            <>
+              <Alert type={VariantType.WARNING}>{t('verify.refuse_aborts')}</Alert>
+              <p style={{ fontSize: 13, marginTop: 12 }}>{t('verify.compare_instruction')}</p>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-                  {recipients.map((recipient) => (
-                    <div
-                      key={recipient.userId}
-                      style={{
-                        padding: 'var(--c--globals--spacings--3, 12px)',
-                        background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
-                        borderRadius: 4,
-                      }}
-                    >
-                      <RecipientIdentity userId={recipient.userId} label={recipientLabels[recipient.userId]} />
-                      <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--globals--colors--error-500, #ce0500)' }}>
-                        {recipient.status === 'mismatch' ? t('verify.note_changed') : t('verify.note_refused')}
-                      </p>
-                      <RecipientFingerprint fingerprint={recipient.fingerprint} />
-
-                      {recipient.trusted ? (
-                        <Alert type={VariantType.SUCCESS}>{t('verify.trusted')}</Alert>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+                {recipients.map((recipient) => (
+                  <div
+                    key={recipient.userId}
+                    style={{
+                      padding: 'var(--c--globals--spacings--3, 12px)',
+                      background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                      borderRadius: 4,
+                    }}
+                  >
+                    <RecipientIdentity label={recipientLabels[recipient.userId]} />
+                    {/* Why this recipient is blocking, dropped once trusted: the
+                        warning describes a situation the user has just resolved, and
+                        leaving it next to the success alert contradicts it. A CHANGED
+                        identity is the dangerous case (re-enrolment, or a compromised
+                        account), so it gets a full error alert rather than the small
+                        red note used for a plain refusal. */}
+                    {!recipient.trusted &&
+                      (recipient.status === 'mismatch' ? (
+                        <div style={{ margin: '8px 0' }}>
+                          <Alert type={VariantType.ERROR}>{t('verify.note_changed')}</Alert>
+                        </div>
                       ) : (
-                        <TrustRefuseButtons busy={busy} onTrust={() => handleTrust(recipient)} onRefuse={() => handleRefuse(recipient)} />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+                        <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--globals--colors--error-500, #ce0500)' }}>
+                          {t('verify.note_refused')}
+                        </p>
+                      ))}
+                    <RecipientFingerprint fingerprint={recipient.fingerprint} />
+
+                    {recipient.trusted ? (
+                      <Alert type={VariantType.SUCCESS}>{t('verify.trusted')}</Alert>
+                    ) : (
+                      <TrustRefuseButtons busy={busy} onTrust={() => handleTrust(recipient)} onRefuse={() => handleRefuse(recipient)} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 16 }}>
               <Button variant="secondary" disabled={busy} onClick={() => onComplete('cancelled')}>

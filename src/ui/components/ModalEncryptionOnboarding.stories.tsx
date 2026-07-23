@@ -1,4 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
+import { userEvent } from '@storybook/test';
 import React from 'react';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
@@ -12,7 +13,7 @@ type ComponentType = typeof ModalEncryptionOnboarding;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
 
 export default {
-  title: 'Modals/EncryptionOnboarding',
+  title: 'Preview/Pages/EncryptionOnboarding',
   component: ModalEncryptionOnboarding,
   ...generateMetaDefault({
     parameters: {
@@ -24,8 +25,6 @@ export default {
 const Template: StoryFn<ComponentType> = (args) => {
   return <ModalEncryptionOnboarding {...args} />;
 };
-
-// --- New user (no existing keys) ---
 
 const NewUserStory = Template.bind({});
 NewUserStory.args = {
@@ -45,8 +44,6 @@ NewUserStory.play = async ({ canvasElement }) => {
 };
 
 export const NewUser = prepareStory(NewUserStory);
-
-// --- Existing user (has backend key, needs restore or fresh start) ---
 
 const ExistingUserStory = Template.bind({});
 ExistingUserStory.args = {
@@ -75,3 +72,44 @@ ExistingUserStory.play = async ({ canvasElement }) => {
 };
 
 export const ExistingUser = prepareStory(ExistingUserStory);
+
+// No ACTIVE key, but counters past 1: the account registered before and was reset.
+const PreviousIdentityStory = Template.bind({});
+PreviousIdentityStory.args = {
+  ...NewUserStory.args,
+};
+PreviousIdentityStory.parameters = {
+  msw: {
+    handlers: [handleGetApiPublicKeys({ body: { keys: [] } }), handleGetApiPublicKeysNext({ body: { next_version: 3, next_generation: 2 } })],
+  },
+};
+PreviousIdentityStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_previous_identity'));
+};
+
+export const PreviousIdentity = prepareStory(PreviousIdentityStory);
+
+// Internal state, no prop to set it: the click is the only way in.
+const RestoreStory = Template.bind({});
+RestoreStory.args = { ...ExistingUserStory.args };
+RestoreStory.parameters = ExistingUserStory.parameters;
+RestoreStory.play = async ({ canvasElement }) => {
+  const restore = await playFindButton(canvasElement, i18n.t('onboarding.btn_restore_from_backup'));
+
+  await userEvent.click(restore);
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_restore'));
+};
+
+export const Restore = prepareStory(RestoreStory);
+
+const LastResortStory = Template.bind({});
+LastResortStory.args = { ...ExistingUserStory.args };
+LastResortStory.parameters = ExistingUserStory.parameters;
+LastResortStory.play = async ({ canvasElement }) => {
+  const lastResort = await playFindButton(canvasElement, i18n.t('onboarding.btn_last_resort'));
+
+  await userEvent.click(lastResort);
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_last_resort'));
+};
+
+export const LastResort = prepareStory(LastResortStory);

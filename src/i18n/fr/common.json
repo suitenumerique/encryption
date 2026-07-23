@@ -247,17 +247,18 @@
   },
   "verify": {
     "title": "Vérifiez avec qui vous partagez",
-    "explanation": "Certains destinataires n'ont pas encore été vérifiés, ou leur identité de chiffrement a changé. Pour vous protéger contre l'usurpation d'identité, confirmez chacun avant de partager.",
+    "explanation": "L'identité de chiffrement de ces destinataires a changé, ou vous l'aviez refusée. Pour vous protéger contre l'usurpation d'identité, confirmez-les avant de partager.",
     "compare_instruction": "Comparez chaque empreinte de sécurité ci-dessous avec celle que le destinataire vous communique par un autre canal (en personne, par téléphone ou via un canal de confiance). Ne confirmez que si elles correspondent exactement.",
-    "refuse_aborts": "Ce partage n'aboutit que si vous faites confiance à tous les destinataires ci-dessous. En refuser un, ou annuler, annule l'intégralité du partage.",
+    "refuse_aborts": "Ce partage n'aboutit que si vous faites confiance à chaque destinataire ci-dessous. En refuser un, ou annuler, annule l'intégralité du partage.",
     "trusted": "Approuvé",
-    "nothing_to_verify": "Tous les destinataires sont déjà vérifiés. Vous pouvez confirmer pour continuer.",
     "note_changed": "La clé de chiffrement de ce contact a changé depuis votre dernière vérification.",
     "note_refused": "Vous avez précédemment refusé ce contact.",
     "btn_trust": "Faire confiance",
     "btn_refuse": "Refuser",
     "btn_cancel": "Annuler le partage",
-    "btn_confirm": "Partager"
+    "btn_confirm": "Partager",
+    "recipients_without_keys": "Certains destinataires n'ont pas encore activé le chiffrement. Le partage chiffré est impossible tant qu'ils n'ont pas de clé.",
+    "btn_close": "Fermer"
   },
   "profile": {
     "title": "Identité de chiffrement",

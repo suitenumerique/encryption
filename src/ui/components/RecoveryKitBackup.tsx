@@ -148,7 +148,8 @@ export function RecoveryKitBackup({
             padding: 'var(--c--globals--spacings--3, 12px)',
             border: '2px solid var(--c--globals--colors--success-500, #18753c)',
             borderRadius: 4,
-            background: 'var(--c--contextuals--background--semantic--contextual--success, #b8fec9)',
+            background: 'var(--c--contextuals--background--semantic--success--secondary)',
+            color: 'var(--c--contextuals--content--semantic--success--secondary)',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -166,7 +167,7 @@ export function RecoveryKitBackup({
               {t('onboarding.badge_recommended')}
             </span>
           </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--surface--secondary, #333)' }}>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #333)' }}>
             {t('onboarding.backup_option_copy_description')}
           </p>
           <Button
@@ -208,7 +209,7 @@ export function RecoveryKitBackup({
               {t('onboarding.badge_intermediate')}
             </span>
           </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
             {t('onboarding.backup_option_file_description')}
           </p>
           <Button size="small" variant="secondary" onClick={handleSaveFile}>
@@ -240,7 +241,7 @@ export function RecoveryKitBackup({
               {t('onboarding.badge_discouraged')}
             </span>
           </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
             {t('onboarding.backup_option_print_description')}
           </p>
           <Button size="small" variant="tertiary" onClick={handlePrint}>

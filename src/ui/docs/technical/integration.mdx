@@ -1,154 +1,153 @@
 import { Alert } from '@encryption/src/ui/docs/components/Alert';
 import { CodeBlock } from '@encryption/src/ui/docs/components/CodeBlock';
 
-# Guide d'intégration — Service de chiffrement
+# Integration guide — Encryption service
 
 ## Architecture
 
-Le service de chiffrement repose sur **deux domaines isolés** servis par un unique serveur :
+The encryption service is built on **two isolated domains** served by a single server:
 
-| Domaine           | Rôle                                                                | Visibilité           |
-| ----------------- | ------------------------------------------------------------------- | -------------------- |
-| `data.encryption` | **Coffre-fort** — stocke les clés privées, chiffre et déchiffre     | iframe **invisible** |
-| `encryption`      | **Interface** — onboarding, sauvegarde, restauration, documentation | iframe **visible**   |
+| Domain            | Role                                                       | Visibility           |
+| ----------------- | ---------------------------------------------------------- | -------------------- |
+| `data.encryption` | **Vault** — stores private keys, encrypts and decrypts     | **invisible** iframe |
+| `encryption`      | **Interface** — onboarding, backup, restore, documentation | **visible** iframe   |
 
-Les produits de la Suite communiquent avec ces iframes via `postMessage`. Les clés privées **ne quittent jamais** le domaine `data.encryption`.
+Suite products talk to these iframes through `postMessage`. Private keys **never leave** the `data.encryption` domain.
 
-### Identité utilisateur : `suiteUserId`
+### User identity: `suiteUserId`
 
-Chaque produit de la Suite peut avoir ses propres identifiants internes. Le service de chiffrement utilise le **`suiteUserId`** — le claim `sub` du fournisseur d'identité OIDC — comme identifiant utilisateur commun à tous les produits.
+Each Suite product may have its own internal identifiers. The encryption service uses the **`suiteUserId`** — the `sub` claim from the OIDC identity provider — as the user identifier shared across every product.
 
-<Alert severity="warning" title="Identifiant cross-produit">
-  Pour que le `suiteUserId` soit commun à tous les produits, le fournisseur d'identité OIDC doit émettre un `sub` **public** (non _pairwise_),
-  c'est-à-dire `subject_types_supported: ["public"]` : le `sub` est alors **le même pour un utilisateur donné** quel que soit le produit de la Suite
-  (Docs, Drive, Fichier, Visio). Les produits doivent impérativement utiliser ce `suiteUserId` (et non leur ID interne) dans toutes les interactions
-  avec le service de chiffrement.
+<Alert severity="warning" title="Cross-product identifier">
+  For the `suiteUserId` to be shared across products, the OIDC identity provider must issue a **public** (non-_pairwise_) `sub`, that is
+  `subject_types_supported: ["public"]`: the `sub` is then **the same for a given user** whichever Suite product is calling (Docs, Drive, Fichier,
+  Visio). Products must use this `suiteUserId` (and never their internal ID) in every interaction with the encryption service.
 </Alert>
 
-### Authentification de l'interface
+### Interface authentication
 
-L'interface de chiffrement (`encryption`) gère sa propre authentification OIDC, **indépendamment du produit**. Les produits ne transmettent pas de token à l'interface — ils ne transmettent que le `suiteUserId`.
+The encryption interface (`encryption`) handles its own OIDC authentication, **independently of the product**. Products do not pass a token to the interface, they only pass the `suiteUserId`.
 
-Lorsque l'utilisateur ouvre l'onboarding ou les paramètres, le flux est le suivant :
+When the user opens onboarding or the settings, the flow is:
 
-1. L'iframe affiche un écran « Authentification requise » avec un bouton **Continuer**
-2. Le clic sur Continuer ouvre un **nouvel onglet** vers la page de connexion Keycloak (client OIDC `encryption`)
-3. L'utilisateur s'authentifie sur Keycloak (avec éventuellement un second facteur)
-4. Après authentification, l'onglet envoie le token via `window.opener.postMessage()` et se ferme automatiquement
-5. L'iframe reçoit le token et affiche l'interface réelle
+1. The iframe shows an "Authentication required" screen with a **Continue** button
+2. Clicking Continue opens a **new tab** on the Keycloak login page (OIDC client `encryption`)
+3. The user authenticates against Keycloak (possibly with a second factor)
+4. Once authenticated, the tab sends the token through `window.opener.postMessage()` and closes itself
+5. The iframe receives the token and renders the actual interface
 
-<Alert severity="info" title="Pourquoi une authentification séparée ?">
-  L'iframe ne peut pas effectuer de redirection OIDC classique (les redirects sont bloqués par les CSP du fournisseur d'identité, et les popups sont
-  restreintes dans les iframes). L'ouverture dans un nouvel onglet contourne ces limitations tout en conservant l'isolation de sécurité.
+<Alert severity="info" title="Why a separate authentication?">
+  The iframe cannot perform a classic OIDC redirect (redirects are blocked by the identity provider's CSP, and popups are restricted inside iframes).
+  Opening a new tab works around those limitations while preserving the security isolation.
 </Alert>
 
 ---
 
-## Sécurité
+## Security
 
-### Isolation par iframe
+### Iframe isolation
 
-Chaque domaine fonctionne dans un contexte d'origine séparé. Le navigateur garantit que :
+Each domain runs in its own origin context. The browser guarantees that:
 
-- `data.encryption` a son propre IndexedDB, inaccessible depuis les autres domaines
-- Les clés privées (CryptoKey non-extractable dans l'idéal) restent dans le contexte du coffre-fort
-- La communication se fait uniquement par `postMessage` avec validation d'origine
+- `data.encryption` has its own IndexedDB, unreachable from the other domains
+- Private keys (ideally non-extractable CryptoKey objects) stay inside the vault context
+- Communication happens only through `postMessage`, with origin validation
 
-### Headers de sécurité
+### Security headers
 
 <Alert severity="info" title="Content Security Policy">
-  Le coffre-fort utilise les CSP les plus restrictives possibles :<br/>
-  `default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors <domaines autorisés>`<br/>
-  Aucun style, aucune image, aucune police — uniquement le script de chiffrement.
+  The vault uses the most restrictive CSP possible:<br/>
+  `default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors <allowed domains>`<br/>
+  No style, no image, no font — only the encryption script.
 </Alert>
 
-- **SRI (Subresource Integrity)** — le hash du script est vérifié à chaque chargement
-- **Service Worker** — le coffre-fort et le SDK client sont mis en cache par un SW, assurant le fonctionnement hors-ligne et les mises à jour automatiques
-- **X-Frame-Options + frame-ancestors** — seuls les produits autorisés peuvent intégrer les iframes
-- **Validation d'origine runtime** — chaque `postMessage` entrant est vérifié côté JavaScript
-- **Cross-Origin-Embedder-Policy / Cross-Origin-Opener-Policy** — isolation d'origine renforcée sur le coffre-fort, réduit la surface d'attaque des attaques par canal auxiliaire (Spectre, etc.)
+- **SRI (Subresource Integrity)** — the script hash is verified on every load
+- **Service Worker** — the vault and the client SDK are cached by a SW, which provides offline operation and automatic updates
+- **X-Frame-Options + frame-ancestors** — only allowed products can embed the iframes
+- **Runtime origin validation** — every incoming `postMessage` is checked in JavaScript
+- **Cross-Origin-Embedder-Policy / Cross-Origin-Opener-Policy** — reinforced origin isolation on the vault, reducing the attack surface for side-channel attacks (Spectre, etc.)
 
-### Extensions de navigateur
+### Browser extensions
 
-<Alert severity="warning" title="Limitation connue">
-  Les extensions de navigateur disposant de permissions étendues (`<all_urls>`, `activeTab`) peuvent potentiellement accéder au contenu des pages, y compris les iframes cross-origin via l'injection de content scripts. Il n'existe **aucun mécanisme technique dans les navigateurs** pour empêcher cela — c'est une limitation architecturale du modèle de sécurité des extensions.
+<Alert severity="warning" title="Known limitation">
+  Browser extensions holding broad permissions (`<all_urls>`, `activeTab`) can potentially read page content, including cross-origin iframes, by injecting content scripts. **No browser mechanism exists** to prevent this: it is an architectural limitation of the extension security model.
 
-Nous avons appliqué toutes les protections disponibles (CSP, COEP, COOP, CORP, SRI, isolation par iframe) pour élever la barrière technique, mais ces mesures ne bloquent pas les extensions disposant de privilèges élevés. Les utilisateurs manipulant des données sensibles doivent s'assurer que seules des extensions de confiance sont installées dans leur navigateur. Un avertissement est affiché lors de l'onboarding et de la restauration des clés.
+We applied every available protection (CSP, COEP, COOP, CORP, SRI, iframe isolation) to raise the technical bar, but those measures do not stop extensions with elevated privileges. Users handling sensitive data must make sure only trusted extensions are installed in their browser. A warning is shown during onboarding and during key restore.
 
 </Alert>
 
 ### Storage partitioning (Chrome)
 
-<Alert severity="warning" title="Contrainte de domaine : tous les produits doivent partager le même domaine enregistré (eTLD+1)">
-  Depuis Chrome 115, les APIs de stockage (IndexedDB, BroadcastChannel, localStorage, etc.) dans les iframes tierces sont **partitionnées par site de niveau supérieur** (eTLD+1). Le coffre-fort (`data.encryption`) stocke les clés privées dans IndexedDB — si les produits sont sur des domaines enregistrés différents, chaque produit aura **sa propre partition** avec des clés isolées.
+<Alert severity="warning" title="Domain constraint: every product must share the same registrable domain (eTLD+1)">
+  Since Chrome 115, storage APIs (IndexedDB, BroadcastChannel, localStorage, etc.) inside third-party iframes are **partitioned by top-level site** (eTLD+1). The vault (`data.encryption`) stores private keys in IndexedDB, so if products live on different registrable domains each product gets **its own partition** with isolated keys.
 
-**Fonctionne :** `docs.numerique.gouv.fr` et `drive.numerique.gouv.fr` → même eTLD+1 (`numerique.gouv.fr`) → partition partagée → clés accessibles depuis tous les produits.
+**Works:** `docs.numerique.gouv.fr` and `drive.numerique.gouv.fr` → same eTLD+1 (`numerique.gouv.fr`) → shared partition → keys reachable from every product.
 
-**Ne fonctionne pas :** `docs.gouv.fr` et `drive.gouv.fr` → eTLD+1 différents (`docs.gouv.fr` vs `drive.gouv.fr`) → partitions séparées → les clés générées depuis Docs sont invisibles depuis Drive.
+**Does not work:** `docs.gouv.fr` and `drive.gouv.fr` → different eTLD+1 (`docs.gouv.fr` vs `drive.gouv.fr`) → separate partitions → keys generated from Docs are invisible from Drive.
 
-**Piège en développement :** utiliser `localhost` avec des ports différents (ex: `:7203` et `:7204`) **masque ce problème** car tous les ports partagent le même site `localhost`. Pour tester correctement la séparation des stockages, utiliser des sous-domaines partageant un même parent dans `/etc/hosts` (ex: `a.product.localhost` et `b.product.localhost`, qui partagent l'eTLD+1 `product.localhost`).
+**Development pitfall:** using `localhost` with different ports (e.g. `:7203` and `:7204`) **hides this problem**, because every port shares the same `localhost` site. To test storage separation properly, use subdomains sharing a common parent in `/etc/hosts` (e.g. `a.product.localhost` and `b.product.localhost`, which share the eTLD+1 `product.localhost`).
 
 </Alert>
 
-<Alert severity="info" title="Communication OIDC : window.opener.postMessage()">
-  L'authentification OIDC de l'interface utilise `window.opener.postMessage()` (et non `BroadcastChannel`) pour envoyer le token depuis l'onglet
-  callback vers l'iframe. `BroadcastChannel` est aussi affecté par le storage partitioning — un `BroadcastChannel` créé dans une iframe sandboxée
-  (embedded dans `docs.numerique.gouv.fr`) ne peut pas recevoir les messages d'un onglet de niveau supérieur (sur `encryption.numerique.gouv.fr`), car
-  ils sont dans des partitions différentes. `window.opener.postMessage()` utilise une référence directe de fenêtre, non affectée par le partitioning.
+<Alert severity="info" title="OIDC communication: window.opener.postMessage()">
+  The interface's OIDC authentication uses `window.opener.postMessage()` (and not `BroadcastChannel`) to send the token from the callback tab to the
+  iframe. `BroadcastChannel` is also affected by storage partitioning: a `BroadcastChannel` created inside a sandboxed iframe (embedded in
+  `docs.numerique.gouv.fr`) cannot receive messages from a top-level tab (on `encryption.numerique.gouv.fr`), because they sit in different
+  partitions. `window.opener.postMessage()` uses a direct window reference, which partitioning does not affect.
 </Alert>
 
-### Séparation des opérations
+### Operation separation
 
-| Opération                                                         | Accessible depuis                         |
+| Operation                                                         | Reachable from                            |
 | ----------------------------------------------------------------- | ----------------------------------------- |
-| `has-keys`, `get-public-key`, `encrypt`, `decrypt`                | Tous les produits (via `data.encryption`) |
-| `generate-keys`, `export-backup`, `import-backup`, `destroy-keys` | **Uniquement** `encryption`               |
+| `has-keys`, `get-public-key`, `encrypt`, `decrypt`                | Every product (through `data.encryption`) |
+| `generate-keys`, `export-backup`, `import-backup`, `destroy-keys` | **Only** `encryption`                     |
 
-Un produit ne peut **jamais** générer, exporter ou supprimer des clés. Ces actions sensibles passent obligatoirement par l'interface de chiffrement (`encryption`).
+A product can **never** generate, export or delete keys. Those sensitive actions always go through the encryption interface (`encryption`).
 
-### Séparation des appels réseau et des privilèges
+### Network call and privilege separation
 
-La séparation entre les deux domaines crée une **séparation de privilèges** intentionnelle pour les appels au serveur central :
+The split between the two domains creates an intentional **privilege separation** for calls to the central server:
 
-| Domaine                         | Appels réseau                                                               | Authentification                   | Accès                     |
-| ------------------------------- | --------------------------------------------------------------------------- | ---------------------------------- | ------------------------- |
-| `data.encryption` (coffre-fort) | `GET /api/public-keys` uniquement                                           | **Aucune** (endpoint public)       | Lecture de clés publiques |
-| `encryption` (interface)        | `POST /api/public-keys/register/{init,complete}`, `DELETE /api/public-keys` | **JWT OIDC** (client `encryption`) | Écriture/suppression      |
+| Domain                    | Network calls                                                               | Authentication                     | Access             |
+| ------------------------- | --------------------------------------------------------------------------- | ---------------------------------- | ------------------ |
+| `data.encryption` (vault) | `GET /api/public-keys` only                                                 | **None** (public endpoint)         | Public key reads   |
+| `encryption` (interface)  | `POST /api/public-keys/register/{init,complete}`, `DELETE /api/public-keys` | **OIDC JWT** (client `encryption`) | Writes / deletions |
 
-<Alert severity="info" title="Pourquoi cette séparation ?">
-  Le coffre-fort (`data.encryption`) stocke les **clés privées** dans son IndexedDB et ne détient **aucun token authentifié**. L'interface (`encryption`) détient un token OIDC mais n'a **pas accès aux clés privées** (domaine différent, IndexedDB isolé par le navigateur).
+<Alert severity="info" title="Why this separation?">
+  The vault (`data.encryption`) stores the **private keys** in its IndexedDB and holds **no authenticated token**. The interface (`encryption`) holds an OIDC token but has **no access to the private keys** (different domain, IndexedDB isolated by the browser).
 
-**Si le coffre-fort est compromis** : l'attaquant accède aux clés privées locales et pourrait déchiffrer du contenu, mais il ne peut pas modifier le serveur central (pas de token). Il ne peut ni enregistrer de fausses clés publiques, ni supprimer les existantes, ni initier de transferts de clés vers un autre appareil.
+**If the vault is compromised**: the attacker reaches the local private keys and could decrypt content, but cannot alter the central server (no token). They can neither register forged public keys, nor delete existing ones, nor start key transfers to another device.
 
-**Si l'interface est compromise** : l'attaquant a un token et peut modifier les clés publiques sur le serveur, mais il n'a **pas accès aux clés privées** et ne peut donc **pas déchiffrer de contenu existant**.
+**If the interface is compromised**: the attacker has a token and can alter public keys on the server, but has **no access to the private keys** and therefore **cannot decrypt existing content**.
 
-La compromission simultanée des deux domaines serait nécessaire pour à la fois accéder aux clés privées ET manipuler le serveur central. Cette séparation réduit significativement la surface d'attaque.
+Compromising both domains at once would be required to both reach the private keys AND manipulate the central server. This separation significantly reduces the attack surface.
 
 </Alert>
 
-<Alert severity="info" title="Pourquoi les clés publiques ne sont pas protégées par authentification ?">
+<Alert severity="info" title="Why are public keys not behind authentication?">
 
-L'endpoint `GET /api/public-keys` est accessible **sans token**. Ce choix est délibéré :
+The `GET /api/public-keys` endpoint is reachable **without a token**. That choice is deliberate:
 
-- Les clés publiques sont **publiques par nature** — elles sont conçues pour être partagées.
-- La Suite est utilisée par des dizaines de milliers d'utilisateurs. Tout utilisateur authentifié pourrait récupérer les clés publiques des autres. Exiger un token n'ajouterait donc aucune protection réelle.
-- Protéger cet endpoint nécessiterait de propager un token d'authentification dans le coffre-fort (`data.encryption`), ce qui irait à l'encontre du principe de séparation des privilèges sans bénéfice de sécurité.
+- Public keys are **public by nature** — they are meant to be shared.
+- The Suite is used by tens of thousands of users. Any authenticated user could fetch everyone else's public keys, so requiring a token would add no real protection.
+- Protecting this endpoint would mean propagating an authentication token into the vault (`data.encryption`), which would work against the privilege separation principle for no security benefit.
 
 </Alert>
 
 ---
 
-## Intégration rapide
+## Quick integration
 
-### 1. Charger le SDK client
+### 1. Load the client SDK
 
-Le SDK est servi depuis `data.encryption` (même domaine que le coffre-fort). Il est géré par le même Service Worker : mis en cache automatiquement et mis à jour quand une nouvelle version est détectée.
+The SDK is served from `data.encryption` (the same domain as the vault). It is handled by the same Service Worker: cached automatically, and updated whenever a new version is detected.
 
 <CodeBlock language="html">
-{`<!-- Script classique (IIFE, expose window.EncryptionClient) -->
+{`<!-- Classic script (IIFE, exposes window.EncryptionClient) -->
 <script src="https://data.encryption.numerique.gouv.fr/client.js"></script>
 
-<!-- Ou en module ES -->
+<!-- Or as an ES module -->
 
 <script type="module">
   import { VaultClient } from 'https://data.encryption.numerique.gouv.fr/client.mjs';
@@ -156,219 +155,219 @@ Le SDK est servi depuis `data.encryption` (même domaine que le coffre-fort). Il
 
 </CodeBlock>
 
-### 2. Autocomplétion TypeScript (optionnel)
+### 2. TypeScript autocompletion (optional)
 
-Le SDK est chargé par URL, donc TypeScript ne connaît pas les types par défaut. Pour bénéficier de l'autocomplétion et de la vérification de types dans votre IDE, téléchargez le fichier de déclarations :
+The SDK is loaded by URL, so TypeScript does not know its types by default. To get autocompletion and type checking in your IDE, download the declaration file:
 
 <CodeBlock language="bash">
-  {`# Télécharger les types dans votre projet
+  {`# Download the types into your project
 curl -o src/types/encryption-client.d.ts https://data.encryption.numerique.gouv.fr/client.d.ts`}
 </CodeBlock>
 
-Puis référencez-le dans votre code :
+Then reference it from your code:
 
 <CodeBlock language="typescript">
 {`/// <reference path="./types/encryption-client.d.ts" />
 
-// L'autocomplétion fonctionne maintenant :
+// Autocompletion now works:
 const encryption = new EncryptionClient.VaultClient({
-vaultUrl: '...', // ← votre IDE propose les options
+vaultUrl: '...', // ← your IDE suggests the options
 interfaceUrl: '...',
 });
 
-const { hasKeys } = await encryption.hasKeys(); // ← types de retour connus`}
+const { hasKeys } = await encryption.hasKeys(); // ← return types are known`}
 
 </CodeBlock>
 
-<Alert severity="info" title="Mise à jour des types">
-  Quand le service de chiffrement est mis à jour, re-téléchargez le fichier `.d.ts` pour avoir les derniers types. Les types ne sont pas versionnés
-  indépendamment du SDK — ils correspondent toujours à la version servie par `encryption`.
+<Alert severity="info" title="Keeping the types up to date">
+  When the encryption service is updated, download the `.d.ts` file again to get the latest types. Types are not versioned independently from the SDK,
+  they always match the version served by `encryption`.
 </Alert>
 
-### 3. Initialiser le client
+### 3. Initialize the client
 
 <CodeBlock language="javascript">
 {`const encryption = new EncryptionClient.VaultClient({
   vaultUrl: 'https://data.encryption.numerique.gouv.fr',
   interfaceUrl: 'https://encryption.numerique.gouv.fr',
-  theme: 'dsfr',   // Nom de thème Cunningham : "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark"
-  lang: 'fr',      // langue de l'interface (optionnel, détecté automatiquement sinon)
+  theme: 'dsfr',   // Cunningham theme name: "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark"
+  lang: 'fr',      // interface language (optional, auto-detected otherwise)
 });
 
-// Crée l'iframe invisible du coffre-fort et attend qu'il soit prêt
+// Creates the invisible vault iframe and waits for it to be ready
 await encryption.init();`}
 
 </CodeBlock>
 
-### 4. Authentification
+### 4. Authentication
 
-Avant d'utiliser le service, transmettez le contexte d'authentification. Le `token` est utilisé par le coffre-fort (`data.encryption`) pour les opérations serveur. Le `suiteUserId` est le claim `sub` du fournisseur d'identité OIDC — c'est l'identifiant commun à tous les produits de la Suite.
+Before using the service, pass the authentication context. The `token` is used by the vault (`data.encryption`) for server operations. The `suiteUserId` is the `sub` claim from the OIDC identity provider, the identifier shared by every Suite product.
 
-<Alert severity="warning" title="suiteUserId ≠ ID interne">
-  Le `suiteUserId` doit être le `sub` du JWT OIDC, **pas** l'identifiant interne de votre produit. C'est cet identifiant qui permet au service de
-  chiffrement de retrouver les clés d'un utilisateur quel que soit le produit appelant.
+<Alert severity="warning" title="suiteUserId ≠ internal ID">
+  The `suiteUserId` must be the `sub` of the OIDC JWT, **not** your product's internal identifier. It is what lets the encryption service find a
+  user's keys whichever product is calling.
 </Alert>
 
 <CodeBlock language="javascript">
   {`encryption.setAuthContext({
-  token: jwtToken,       // JWT OIDC de l'utilisateur (pour les opérations coffre-fort)
-  suiteUserId: userId,   // Claim "sub" du JWT OIDC — identifiant cross-produit
+  token: jwtToken,       // The user's OIDC JWT (for vault operations)
+  suiteUserId: userId,   // "sub" claim of the OIDC JWT — cross-product identifier
 });`}
 </CodeBlock>
 
-<Alert severity="info" title="L'interface s'authentifie seule">
-  L'interface de chiffrement (`encryption`) obtient son propre token via un flux OIDC séparé (client Keycloak `encryption`). Le produit n'a pas besoin
-  de transmettre de token à l'interface — seul le `suiteUserId` est transmis pour que l'interface puisse associer les clés au bon utilisateur.
+<Alert severity="info" title="The interface authenticates on its own">
+  The encryption interface (`encryption`) obtains its own token through a separate OIDC flow (Keycloak client `encryption`). The product does not need
+  to pass any token to the interface, only the `suiteUserId`, so the interface can attach the keys to the right user.
 </Alert>
 
-### 5. Vérifier les clés et déclencher l'onboarding
+### 5. Check for keys and trigger onboarding
 
 <CodeBlock language="javascript">
 {`const { hasKeys } = await encryption.hasKeys();
 
 if (!hasKeys) {
-// Ouvre l'interface dans un conteneur (votre modale, sidebar, etc.)
+// Opens the interface inside a container (your modal, sidebar, etc.)
 encryption.openOnboarding(document.getElementById('modal-container'));
 
 encryption.on('onboarding:complete', ({ publicKey }) => {
-console.log('Clés générées, clé publique :', publicKey);
-// La clé publique est déjà enregistrée côté serveur par l'interface
+console.log('Keys generated, public key:', publicKey);
+// The public key is already registered server-side by the interface
 });
 }`}
 
 </CodeBlock>
 
-### 6. Chiffrer et déchiffrer
+### 6. Encrypt and decrypt
 
 <CodeBlock language="javascript">
-{`// Chiffrer du contenu (génère une clé symétrique, chiffre, enveloppe pour chaque utilisateur)
+{`// Encrypt content (generates a symmetric key, encrypts, wraps it for each user)
 const { encryptedContent, encryptedKeys } = await encryption.encryptWithoutKey(
-btoa('Contenu sensible'),
+btoa('Sensitive content'),
 {
-'suite-user-id-1': publicKey1,  // suiteUserId → clé publique (ArrayBuffer)
+'suite-user-id-1': publicKey1,  // suiteUserId → public key (ArrayBuffer)
 'suite-user-id-2': publicKey2,
 }
 );
 
-// Déchiffrer avec sa copie de la clé symétrique
+// Decrypt with your own copy of the symmetric key
 const { data } = await encryption.decryptWithKey(
 encryptedContent,
-encryptedKeys['mon-suite-user-id']
+encryptedKeys['my-suite-user-id']
 );
 const plaintext = atob(data);
 
-// Re-chiffrer avec la même clé (collaboration temps réel, auto-save)
+// Re-encrypt with the same key (real-time collaboration, auto-save)
 const { encryptedData } = await encryption.encryptWithKey(
-btoa('Contenu mis à jour'),
-encryptedKeys['mon-suite-user-id']
+btoa('Updated content'),
+encryptedKeys['my-suite-user-id']
 );
 
-// Partager la clé avec de nouveaux utilisateurs
+// Share the key with new users
 const { encryptedKeys: newKeys } = await encryption.shareKeys(
-encryptedKeys['mon-suite-user-id'],
+encryptedKeys['my-suite-user-id'],
 { 'new-user-id': newUserPublicKey }
 );`}
 
 </CodeBlock>
 
-### 7. Mises à jour automatiques
+### 7. Automatic updates
 
-Le coffre-fort et le SDK sont gérés par un Service Worker qui les met en cache et vérifie `GET /api/version` toutes les 5 minutes. Quand une nouvelle version est détectée, le SW met à jour son cache automatiquement et de façon silencieuse (aucun événement n'est émis).
+The vault and the SDK are handled by a Service Worker that caches them and checks `GET /api/version` every 5 minutes. When a new version is detected, the SW updates its cache automatically and silently (no event is emitted).
 
-La mise à jour du cache est atomique : tous les bundles sont récupérés puis écrits en une seule fois. Les nouveaux bundles prennent effet au prochain rechargement naturel de la page. Aucune action n'est requise de votre part.
+The cache update is atomic: every bundle is fetched, then written in one go. New bundles take effect on the next natural page reload. Nothing is required on your side.
 
-<Alert severity="info" title="Cache et hors-ligne">
-  Le Service Worker garantit que le chiffrement continue de fonctionner même hors-ligne. Un cache HTTP de 1h sert de filet de sécurité si le SW n'est
-  pas supporté. La vérification de version échoue silencieusement en cas d'erreur réseau et réessaie toutes les 5 minutes.
+<Alert severity="info" title="Cache and offline">
+  The Service Worker makes sure encryption keeps working even offline. A 1h HTTP cache acts as a safety net when the SW is not supported. The version
+  check fails silently on a network error and retries every 5 minutes.
 </Alert>
 
-### 8. Nettoyage
+### 8. Cleanup
 
 <CodeBlock language="javascript">
-  {`// Supprimer les iframes, arrêter la vérification de version, libérer les ressources
+  {`// Remove the iframes, stop the version check, release the resources
 encryption.destroy();`}
 </CodeBlock>
 
 ---
 
-## API du SDK
+## SDK API
 
-### Opérations produit (via le coffre-fort)
+### Product operations (through the vault)
 
-| Méthode                                                | Description                                             | Retour                                |
-| ------------------------------------------------------ | ------------------------------------------------------- | ------------------------------------- |
-| `hasKeys()`                                            | Vérifie si des clés existent sur cet appareil           | `{ hasKeys: boolean }`                |
-| `getPublicKey()`                                       | Récupère la clé publique                                | `{ publicKey: ArrayBuffer }`          |
-| `encryptWithoutKey(data, userPublicKeys)`              | Chiffre du contenu (génère une nouvelle clé symétrique) | `{ encryptedContent, encryptedKeys }` |
-| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-chiffre avec une clé existante (collab, auto-save)   | `{ encryptedData: ArrayBuffer }`      |
-| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Déchiffre avec une clé symétrique fournie               | `{ data: ArrayBuffer }`               |
-| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Partage la clé avec d'autres utilisateurs               | `{ encryptedKeys: Record }`           |
+| Method                                                 | Description                                         | Returns                               |
+| ------------------------------------------------------ | --------------------------------------------------- | ------------------------------------- |
+| `hasKeys()`                                            | Whether keys exist on this device                   | `{ hasKeys: boolean }`                |
+| `getPublicKey()`                                       | Fetch the public key                                | `{ publicKey: ArrayBuffer }`          |
+| `encryptWithoutKey(data, userPublicKeys)`              | Encrypt content (generates a new symmetric key)     | `{ encryptedContent, encryptedKeys }` |
+| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-encrypt with an existing key (collab, auto-save) | `{ encryptedData: ArrayBuffer }`      |
+| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Decrypt with a provided symmetric key               | `{ data: ArrayBuffer }`               |
+| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Share the key with other users                      | `{ encryptedKeys: Record }`           |
 
 ### Configuration
 
-| Méthode                   | Description                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `setTheme(theme)`         | Change le thème Cunningham de l'interface ("default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark") |
-| `setAuthContext(context)` | Transmet le JWT (pour le coffre-fort) et le `suiteUserId` (claim `sub` OIDC)                            |
+| Method                    | Description                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `setTheme(theme)`         | Change the interface's Cunningham theme ("default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark") |
+| `setAuthContext(context)` | Pass the JWT (for the vault) and the `suiteUserId` (OIDC `sub` claim)                                 |
 
-### Opérations interface (onboarding, sauvegarde)
+### Interface operations (onboarding, backup)
 
-| Méthode                     | Description                                           |
-| --------------------------- | ----------------------------------------------------- |
-| `openOnboarding(container)` | Ouvre l'interface d'onboarding dans le conteneur HTML |
-| `openBackup(container)`     | Ouvre l'interface de sauvegarde des clés              |
-| `openRestore(container)`    | Ouvre l'interface de restauration                     |
-| `closeInterface()`          | Ferme l'iframe d'interface                            |
+| Method                      | Description                                         |
+| --------------------------- | --------------------------------------------------- |
+| `openOnboarding(container)` | Open the onboarding interface in the HTML container |
+| `openBackup(container)`     | Open the key backup interface                       |
+| `openRestore(container)`    | Open the restore interface                          |
+| `closeInterface()`          | Close the interface iframe                          |
 
-### Événements
+### Events
 
-| Événement             | Données         | Description                          |
-| --------------------- | --------------- | ------------------------------------ |
-| `vault:ready`         | —               | Le coffre-fort est initialisé        |
-| `onboarding:complete` | `{ publicKey }` | L'utilisateur a terminé l'onboarding |
-| `interface:closed`    | —               | L'interface a été fermée             |
-| `error`               | `Error`         | Une erreur s'est produite            |
+| Event                 | Payload         | Description                   |
+| --------------------- | --------------- | ----------------------------- |
+| `vault:ready`         | —               | The vault is initialized      |
+| `onboarding:complete` | `{ publicKey }` | The user completed onboarding |
+| `interface:closed`    | —               | The interface was closed      |
+| `error`               | `Error`         | An error occurred             |
 
 ---
 
-## Checklist d'intégration pour les produits
+## Integration checklist for products
 
-Pour intégrer le service de chiffrement, chaque produit de la Suite doit :
+To integrate the encryption service, each Suite product must:
 
-1. **Exposer le `suiteUserId`** — rendre accessible le claim `sub` du fournisseur d'identité OIDC dans l'API utilisateur du produit
-2. **Utiliser le `suiteUserId` dans `setAuthContext`** — ne **jamais** passer l'identifiant interne du produit
-3. **Indexer par `suiteUserId`** — utiliser le `suiteUserId` comme clé dans toutes les maps liées au chiffrement (`fetchPublicKeys`, `encryptWithoutKey`, etc.)
-4. **Ne pas transmettre de token à l'interface** — l'interface (`encryption`) s'authentifie de manière autonome via son propre client OIDC
+1. **Expose the `suiteUserId`** — make the OIDC identity provider's `sub` claim reachable from the product's user API
+2. **Use the `suiteUserId` in `setAuthContext`** — **never** pass the product's internal identifier
+3. **Index by `suiteUserId`** — use the `suiteUserId` as the key in every encryption-related map (`fetchPublicKeys`, `encryptWithoutKey`, etc.)
+4. **Do not pass a token to the interface** — the interface (`encryption`) authenticates on its own through its dedicated OIDC client
 
-### Recommandation : second facteur d'authentification (2FA)
+### Recommendation: second authentication factor (2FA)
 
-Le client OIDC `encryption` devrait idéalement exiger un **second facteur d'authentification** (2FA). Le service de chiffrement protège les clés privées de l'utilisateur — un accès non autorisé à ce service est particulièrement critique.
+The `encryption` OIDC client should ideally require a **second authentication factor** (2FA). The encryption service protects the user's private keys, so unauthorized access to it is particularly critical.
 
-Selon sa configuration, le fournisseur d'identité OIDC peut ou non imposer le 2FA de manière globale. Si ce n'est pas le cas, il est recommandé de le configurer au niveau du client OIDC `encryption`.
+Depending on its configuration, the OIDC identity provider may or may not enforce 2FA globally. If it does not, configuring it on the `encryption` OIDC client is recommended.
 
-<Alert severity="warning" title="2FA sur l'ensemble des produits de la Suite">
-  Même si le service de chiffrement exige le 2FA, un attaquant qui compromet l'accès à un produit de la Suite (par exemple Docs) sans 2FA peut accéder
-  aux **métadonnées du contenu partagé** (titres de documents, listes de collaborateurs, etc.) — même si le contenu chiffré reste protégé. Activer le
-  2FA sur **tous les produits de la Suite**, pas uniquement le service de chiffrement, réduit significativement les vecteurs d'attaque.
+<Alert severity="warning" title="2FA across every Suite product">
+  Even when the encryption service requires 2FA, an attacker who compromises access to a Suite product without 2FA (Docs, for instance) can reach the
+  **metadata of shared content** (document titles, collaborator lists, etc.), even though the encrypted content stays protected. Enabling 2FA on
+  **every Suite product**, not just the encryption service, significantly reduces the attack vectors.
 </Alert>
 
 ---
 
-## Endpoints serveur
+## Server endpoints
 
-| Méthode  | URL                                  | Auth | Description                                                                       |
-| -------- | ------------------------------------ | ---- | --------------------------------------------------------------------------------- |
-| `GET`    | `/api/version`                       | Non  | Identifiant de build unique (hash de tous les bundles)                            |
-| `GET`    | `/api/public-keys?user_ids=...`      | Non  | Récupérer les clés publiques par `suiteUserId`                                    |
-| `DELETE` | `/api/public-keys`                   | JWT  | Désactiver sa clé publique active (« repartir de zéro »)                          |
-| `POST`   | `/api/public-keys/register/init`     | JWT  | Phase 1 de l'enregistrement : recevoir un challenge X-Wing à décapsuler           |
-| `POST`   | `/api/public-keys/register/complete` | JWT  | Phase 2 de l'enregistrement : prouver la possession de la clé privée et persister |
+| Method   | URL                                  | Auth | Description                                                           |
+| -------- | ------------------------------------ | ---- | --------------------------------------------------------------------- |
+| `GET`    | `/api/version`                       | No   | Unique build identifier (hash of every bundle)                        |
+| `GET`    | `/api/public-keys?user_ids=...`      | No   | Fetch public keys by `suiteUserId`                                    |
+| `DELETE` | `/api/public-keys`                   | JWT  | Disable your active public key ("start over")                         |
+| `POST`   | `/api/public-keys/register/init`     | JWT  | Registration phase 1: receive an X-Wing challenge to decapsulate      |
+| `POST`   | `/api/public-keys/register/complete` | JWT  | Registration phase 2: prove possession of the private key and persist |
 
-<Alert severity="info" title="Gestion des erreurs">
-  Les endpoints retournent des codes d'erreur (pas des messages). Votre application traduit ces codes côté client. Exemple de réponse d'erreur : `{"code": "rate_limit_keys", "params": {"max": 10, "days": 30}}`.
+<Alert severity="info" title="Error handling">
+  Endpoints return error codes (not messages). Your application translates those codes client-side. Example error response: `{"code": "rate_limit_keys", "params": {"max": 10, "days": 30}}`.
 </Alert>
 
 <Alert severity="warning" title="Rate limiting">
-  La création de clés publiques est limitée à **10 par utilisateur par période de 30 jours**. Les transferts entre appareils sont limités à **10 par
-  heure**. Ces protections empêchent les abus.
+  Public key creation is limited to **10 per user per 30-day period**. Device transfers are limited to **10 per hour**. Those protections prevent
+  abuse.
 </Alert>

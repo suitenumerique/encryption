@@ -1,6 +1,7 @@
 import mdx from '@mdx-js/rollup';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
+import remarkGfm from 'remark-gfm';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
 import { getMinBrowserVersions } from '../build/generate-min-browser-versions';
@@ -68,6 +69,7 @@ export function getUiViteConfig(): UserConfig {
     plugins: [
       mdx({
         providerImportSource: '@mdx-js/react',
+        remarkPlugins: [remarkGfm],
       }),
       react(),
       spaFallback(),

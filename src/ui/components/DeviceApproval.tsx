@@ -101,7 +101,7 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
         playsInline
         style={{ width: '100%', maxWidth: 320, borderRadius: 8, background: '#000', aspectRatio: '1 / 1', objectFit: 'cover' }}
       />
-      <p style={{ fontSize: 13, textAlign: 'center', color: 'var(--c--contextuals--content--surface--secondary, #666)', margin: 0 }}>
+      <p style={{ fontSize: 13, textAlign: 'center', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)', margin: 0 }}>
         {t('device_approval.scan_hint')}
       </p>
     </div>
@@ -352,7 +352,7 @@ function NewDeviceSide({
                 </Button>
               ) : (
                 <>
-                  <p style={{ fontSize: 12, margin: '0 0 6px', color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+                  <p style={{ fontSize: 12, margin: '0 0 6px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
                     {t('device_approval.new_manual_hint')}
                   </p>
                   {/* 4 groups per row (2 rows of 4), even and bigger. Normal text
@@ -409,7 +409,7 @@ function NewDeviceSide({
             }}
           >
             <Loader />
-            <span style={{ fontSize: 13, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+            <span style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
               {t('device_approval.new_waiting')}
             </span>
           </div>

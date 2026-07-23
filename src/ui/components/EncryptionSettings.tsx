@@ -410,7 +410,7 @@ export function EncryptionSettings({
           </div>
         )}
 
-        <p style={{ margin: '16px 0 8px', fontSize: 13, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>{hint}</p>
+        <p style={{ margin: '16px 0 8px', fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>{hint}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
           {canReenable && (
             <Button fullWidth onClick={handleReactivateIdentity} disabled={reconciling}>
@@ -570,7 +570,12 @@ export function EncryptionSettings({
       <h2>{t('settings.title')}</h2>
 
       {userInfo?.name && (
-        <p style={{ color: 'var(--c--contextuals--content--surface--secondary, #666)', marginBottom: 'var(--c--globals--spacings--3, 12px)' }}>
+        <p
+          style={{
+            color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+            marginBottom: 'var(--c--globals--spacings--3, 12px)',
+          }}
+        >
           {userInfo.name}
           {userInfo.email ? ` (${userInfo.email})` : ''}
         </p>
@@ -608,7 +613,7 @@ export function EncryptionSettings({
                 style={{
                   fontSize: 13,
                   marginTop: 'var(--c--globals--spacings--3, 12px)',
-                  color: 'var(--c--contextuals--content--surface--secondary, #666)',
+                  color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
                 }}
               >
                 {t('settings.safety_fingerprint_hint')}

@@ -3,6 +3,9 @@ import type { GetApiPublicKeysResponses } from '@encryption/src/ui/api/generated
 
 const DEMO_USER_ID = '00000000-0000-0000-0000-000000000000';
 
+/** 128-bit identity fingerprint as 40 decimal digits (the verified-out-of-band value). */
+export const sampleFingerprint = '0031712345678901234567890123456789012345';
+
 export const samplePublicKey: GetApiPublicKeysResponses[200]['keys'][number] = {
   user_id: DEMO_USER_ID,
   encryption_public_key: fakeBase64(1217), // [version:1][xwingPubkey:1216]

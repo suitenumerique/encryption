@@ -20,8 +20,8 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
 interface RecipientProfileProps {
   /** The recipient to inspect (their OIDC sub, passed via the context channel). */
   userId: string | null;
-  /** Product-supplied display label (email, name optional) for the recipient. */
-  label?: RecipientLabel;
+  /** Product-supplied display label. Required: a raw OIDC sub is not a profile. */
+  label: RecipientLabel;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
   currentAccessToken?: string | null;
@@ -148,7 +148,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
     [userId, fingerprint, request, load, onError]
   );
 
-  const { primary, secondary } = userId ? recipientLabel(userId, label) : { primary: '', secondary: null };
+  const { primary, secondary } = userId ? recipientLabel(label) : { primary: '', secondary: null };
 
   return (
     <div style={{ padding: '4px 16px 16px' }}>
@@ -176,7 +176,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
                   style={{
                     fontSize: 13,
                     margin: '2px 0 0',
-                    color: 'var(--c--contextuals--content--surface--secondary, #666)',
+                    color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
                     wordBreak: 'break-all',
                   }}
                 >
@@ -225,7 +225,14 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
               </div>
             </>
           ) : (
-            <p style={{ fontSize: 13, textAlign: 'center', margin: '24px 0 0', color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+            <p
+              style={{
+                fontSize: 13,
+                textAlign: 'center',
+                margin: '24px 0 0',
+                color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+              }}
+            >
               {t('profile.no_key')}
             </p>
           )}

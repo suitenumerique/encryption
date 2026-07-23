@@ -509,7 +509,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <RecipientProfile
           userId={parentContext.recipientProfile?.userId ?? null}
-          label={parentContext.recipientProfile?.label}
+          label={parentContext.recipientProfile?.label ?? { email: '' }}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
@@ -614,7 +614,7 @@ export function App() {
             style={{
               padding: 'var(--c--globals--spacings--8, 32px)',
               textAlign: 'center',
-              color: 'var(--c--contextuals--content--surface--secondary, #666)',
+              color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
             }}
           >
             <p>{t('docs.disabled')}</p>
@@ -636,7 +636,8 @@ export function App() {
             style={{
               padding: 'var(--c--globals--spacings--3, 12px)',
               borderLeft: '4px solid var(--c--globals--colors--error-500, #ce0500)',
-              background: 'var(--c--contextuals--background--semantic--contextual--error, #ffe9e6)',
+              background: 'var(--c--contextuals--background--semantic--error--secondary)',
+              color: 'var(--c--contextuals--content--semantic--error--secondary)',
               borderRadius: '0 4px 4px 0',
               fontSize: 13,
               margin: 'var(--c--globals--spacings--3, 12px)',

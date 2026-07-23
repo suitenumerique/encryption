@@ -610,7 +610,7 @@ export function ModalEncryptionOnboarding({
           )}
           <h2>{t('onboarding.title_enable')}</h2>
           {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
               {userInfo.name}
               {userInfo.email ? ` (${userInfo.email})` : ''}
             </p>
@@ -633,7 +633,7 @@ export function ModalEncryptionOnboarding({
         <>
           <h2>{t('onboarding.title_existing')}</h2>
           {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
               {userInfo.name}
               {userInfo.email ? ` (${userInfo.email})` : ''}
             </p>
@@ -664,7 +664,9 @@ export function ModalEncryptionOnboarding({
             </div>
           )}
 
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>{t('onboarding.existing_recovery_hint')}</p>
+          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+            {t('onboarding.existing_recovery_hint')}
+          </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
             <Button variant="secondary" fullWidth onClick={() => setStep('restore')}>
@@ -689,13 +691,15 @@ export function ModalEncryptionOnboarding({
         <>
           <h2>{t('onboarding.title_previous_identity')}</h2>
           {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>
+            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
               {userInfo.name}
               {userInfo.email ? ` (${userInfo.email})` : ''}
             </p>
           )}
           <Alert type={VariantType.INFO}>{t('onboarding.previous_identity_detected')}</Alert>
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--surface--secondary, #666)' }}>{t('onboarding.previous_identity_hint')}</p>
+          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+            {t('onboarding.previous_identity_hint')}
+          </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
             <Button fullWidth onClick={() => setStep('restore')}>
               {t('onboarding.btn_restore_from_backup')}
