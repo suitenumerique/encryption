@@ -10,17 +10,12 @@ import { I18nextProvider } from 'react-i18next';
 
 import { useNavigationGuard } from '@encryption/.storybook/navigation-guard';
 import i18n from '@encryption/src/i18n';
+import { DEFAULT_LOCALE } from '@encryption/src/shared/locale';
 import type { EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import { defaultHandlers } from '@encryption/src/ui/testing/default-handlers';
 import { MockEncryptionProvider } from '@encryption/src/ui/testing/mock-encryption';
 
 const DARK_MODE_EVENT_NAME = 'DARK_MODE';
-
-// The app's i18n uses LanguageDetector (cookie -> localStorage -> navigator), so
-// in Storybook the rendered language would follow whatever the browser reports.
-// That makes stories non-deterministic: a play() asserting English text fails on
-// an fr-FR browser or in CI. Pin it instead, and expose a toolbar to switch.
-const DEFAULT_LOCALE = 'en';
 
 // Start the MSW worker once. Only warn on UNMOCKED /api calls (so a missing
 // handler is visible) while staying silent for Storybook's own asset requests.
@@ -32,8 +27,18 @@ initialize({
   },
 });
 
+function readPersistedDarkMode(): boolean {
+  try {
+    const raw = window.localStorage.getItem('sb-addon-themes-3');
+
+    return raw ? JSON.parse(raw).current === 'dark' : false;
+  } catch {
+    return false;
+  }
+}
+
 function useStorybookDarkMode(): boolean {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(readPersistedDarkMode);
 
   useEffect(() => {
     const channel = addons.getChannel();
@@ -71,7 +76,7 @@ const preview: Preview = {
   parameters: {
     options: {
       storySort: {
-        order: ['Docs', ['Architecture'], 'Preview', ['Pages', 'Modals', 'Layouts', 'Forms', 'Components', 'Documents']],
+        order: ['Docs', ['Architecture'], 'Preview', ['Pages', 'Modals', 'Layouts', 'Forms', 'Components', 'Emails', 'Documents']],
       },
     },
     backgrounds: {
@@ -117,15 +122,20 @@ const preview: Preview = {
         document.documentElement.classList.toggle('cunningham-theme--default', !isDark);
       }, [isDark]);
 
+      // Fullscreen stories (a document PDF preview, an email, a docs page) only drop
+      // the padding to go edge-to-edge; minHeight (not a fixed height) lets taller
+      // content grow and scroll rather than being clipped.
+      const isFullscreen = context.parameters.layout === 'fullscreen';
+
       return (
         <I18nextProvider i18n={i18n}>
           <CunninghamProvider theme={cunninghamTheme}>
             <div
               style={{
-                padding: 'var(--c--globals--spacings--4, 16px)',
                 background: 'var(--c--contextuals--background--surface--primary, #fff)',
                 color: 'var(--c--contextuals--content--semantic--neutral--primary, #161616)',
                 minHeight: '100%',
+                ...(isFullscreen ? {} : { padding: 'var(--c--globals--spacings--4, 16px)' }),
               }}
             >
               <Story />

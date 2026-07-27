@@ -48,3 +48,12 @@ export async function playFindAlert(parentElement: HTMLElement, text?: string | 
 export async function playFindHeading(parentElement: HTMLElement, name: string | RegExp): Promise<HTMLElement> {
   return await within(parentElement).findByRole('heading', { name });
 }
+
+export async function playFindDocumentStructure(parentElement: HTMLElement): Promise<HTMLElement> {
+  return await within(parentElement).findByTitle(/PDF preview/i);
+}
+
+// The footer copyright is the only text guaranteed on every email, so it acts as the "rendered" marker.
+export async function playFindEmailStructure(parentElement: HTMLElement): Promise<HTMLElement[]> {
+  return await within(parentElement).findAllByText(/©/i);
+}

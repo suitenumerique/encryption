@@ -195,7 +195,7 @@ export function VerifyRecipients({
 
   return (
     <Modal isOpen onClose={close} closeOnClickOutside={!busy} size={ModalSize.MEDIUM} title={t('verify.title')}>
-      <div style={{ paddingBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+      <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
         {sessionExpired && onReconnect && (
           <div style={{ marginBottom: 8 }}>
             <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
@@ -203,7 +203,7 @@ export function VerifyRecipients({
         )}
 
         {phase === 'loading' ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--6, 24px)' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
             <Loader />
           </div>
         ) : phase === 'unreachable' ? (
@@ -240,9 +240,12 @@ export function VerifyRecipients({
                   <div
                     key={recipient.userId}
                     style={{
-                      padding: 'var(--c--globals--spacings--3, 12px)',
-                      background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                      padding: 'var(--c--globals--spacings--sm)',
+                      background: 'var(--c--contextuals--background--surface--secondary)',
                       borderRadius: 4,
+                      borderLeft: `4px solid ${
+                        recipient.trusted ? 'var(--c--globals--colors--success-500)' : 'var(--c--globals--colors--error-500)'
+                      }`,
                     }}
                   >
                     <RecipientIdentity label={recipientLabels[recipient.userId]} />
@@ -258,9 +261,7 @@ export function VerifyRecipients({
                           <Alert type={VariantType.ERROR}>{t('verify.note_changed')}</Alert>
                         </div>
                       ) : (
-                        <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--globals--colors--error-500, #ce0500)' }}>
-                          {t('verify.note_refused')}
-                        </p>
+                        <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--globals--colors--error-500)' }}>{t('verify.note_refused')}</p>
                       ))}
                     <RecipientFingerprint fingerprint={recipient.fingerprint} />
 

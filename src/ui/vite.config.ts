@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
 import { getMinBrowserVersions } from '../build/generate-min-browser-versions';
+import { vendorMarianneFonts } from '../build/marianne-fonts';
+import { parseBrandFont } from '../shared/brand-font';
 
 /**
  * Inject __ENCRYPTION_CONFIG__ into the HTML in dev mode,
@@ -21,6 +23,7 @@ function injectRuntimeConfig(): Plugin {
         vaultUrl: process.env.VAULT_URL,
         apiBaseUrl: '',
         docsEnabled: process.env.DOCS_ENABLED !== 'false',
+        brandFont: parseBrandFont(process.env.BRAND_FONT),
       };
       const script = `<script>Object.defineProperty(window,"__ENCRYPTION_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
 
@@ -74,6 +77,7 @@ export function getUiViteConfig(): UserConfig {
       react(),
       spaFallback(),
       injectRuntimeConfig(),
+      vendorMarianneFonts(),
     ],
     define: {
       __MIN_BROWSER_VERSIONS__: JSON.stringify(minBrowserVersions),

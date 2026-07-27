@@ -18,6 +18,7 @@ import {
   isRetryableRegistrationError,
   loadAndVerifyPossession,
 } from '@encryption/src/server/routes/registration-core';
+import { assertUserId } from '@encryption/src/server/routes/transport-auth';
 import {
   CompleteKeyPossessionBodySchema,
   CompleteKeyPossessionResponseSchema,
@@ -331,7 +332,8 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       await app.verifyJWT(request);
     },
     handler: async (request, reply) => {
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       // Disabling turns off the IDENTITY, not the encryption key. The identity is
       // what makes the user discoverable (directory + TOFU); hiding it removes the
@@ -373,7 +375,8 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       await app.verifyJWT(request);
     },
     handler: async (request) => {
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       const [keyAggregate, identityAggregate] = await Promise.all([
         prisma.encryptionKey.aggregate({ where: { userId }, _max: { version: true } }),
@@ -409,7 +412,8 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       // user_id in the body must match the authenticated INTERNAL user id —
       // safety check against a caller passing the wrong identifier (an OIDC
@@ -506,7 +510,8 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       // Read-only proof checks first, outside the write transaction.
       const check = await loadAndVerifyPossession(userId, body);

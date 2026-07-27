@@ -17,6 +17,7 @@ The system gives each user an encrypted vault so that their keys and trust regis
 9. [Recovery and lifecycle policy](#9-recovery-and-lifecycle-policy)
 10. [Why we model this on password managers](#10-why-we-model-this-on-password-managers)
 11. [Threat model summary](#11-threat-model-summary)
+12. [Emergency access (trusted contacts)](#12-emergency-access-trusted-contacts)
 
 - [Appendix A: Migrating the OIDC provider (subs change)](#appendix-a-migrating-the-oidc-provider-subs-change)
 
@@ -179,6 +180,37 @@ sequenceDiagram
 
 A client keeps a trust decision per contact, keyed on that contact's **identity fingerprint**. On first contact the fingerprint is **recorded as `unknown`** (seen, not verified) and **sharing is allowed**: there is deliberately **no trust-on-first-use** (the contact is not marked `trusted`), but neither is the share blocked. Recording the fingerprint is what lets a later change be caught. Marking a contact `trusted` (or `refused`) is only ever an **explicit user decision** (verify the fingerprint out-of-band, then accept). What is fail-safe is any **change**: a new fingerprint for a **recorded** contact is surfaced as a **mismatch**, which blocks the share and prompts the user to re-verify out-of-band. This is what detects an attacker who reset a victim's account into a new identity, and what detects a registry that substituted a key. A first encounter is not treated as an attack; a change to a known contact is.
 
+The per-contact trust status is a small state machine, and every edge into `trusted` is an explicit human decision:
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontSize':'15px','primaryColor':'#3b5bdb','primaryTextColor':'#fff','primaryBorderColor':'#2942b8','lineColor':'#5b6ee0','tertiaryColor':'#fff','labelBackgroundColor':'#ffffff','edgeLabelBackground':'#ffffff','transitionColor':'#5b6ee0','transitionLabelColor':'#33406b','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800'},'themeCSS':'.edgeLabel p{background-color:#fff;padding:4px 10px;border-radius:5px;margin:0;} .edgeLabel .labelBkg{background:transparent;} .statediagram-state .nodeLabel p{font-size:15px;padding:5px 12px;margin:0;}','stateDiagram':{'nodeSpacing':70,'rankSpacing':110,'useMaxWidth':true}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> unknown: first encounter
+  unknown --> trusted: verify out-of-band,<br/>then accept
+  unknown --> refused: refuse
+  trusted --> mismatch: new fingerprint
+  refused --> mismatch: new fingerprint
+  mismatch --> trusted: continuity walk<br/>reaches the pinned identity
+  mismatch --> refused: same walk,<br/>refusal carried forward
+  mismatch --> unknown: walk fails
+  note right of unknown
+    Fingerprint recorded,
+    sharing allowed, but NEVER
+    trusted on first use: only an
+    explicit user decision leaves
+    this state.
+  end note
+  note right of mismatch
+    Sharing is BLOCKED here.
+    The walk is bounded by
+    MAX_CONTINUITY_HOPS and reads
+    server data only, so a registry
+    can degrade a contact to unknown,
+    never forge an upgrade to trusted.
+  end note
+```
+
 The continuity chain lets a **legitimate** rotation pass without re-verification: the client walks from the contact's current identity back toward the one it trusts, checking at each hop that the newer identity carries a valid `continuitySignature` from its predecessor, and only then carries the old trust status forward to the new fingerprint. This does **not** weaken the detection above, because forging any link requires that predecessor's **private key**, which never touches the server. A compromised registry can only **withhold or roll back** links, whose fail-safe effect is to fall back to unknown and force re-verification, never a false upgrade to trusted. A refused contact is stuck the same way: hiding the link makes them merely unknown (a fresh decision), not trusted, and they cannot fabricate a link from some other trusted identity. So continuity in TOFU propagates trust only along a chain the legitimate key holder actually signed, and stays safe against a database compromise.
 
 The resolution happens **inside the normal fingerprint check**, not as a separate call. When a provided fingerprint mismatches a pinned one, the vault fetches that contact's continuity chain from the registry itself (`GET /api/public-keys/:userId/continuity`, public directory data needing no auth) and walks it: it verifies each link's signature and contiguity, and stops as soon as a link's predecessor is the identity it pinned, re-pinning the current fingerprint and keeping the old status. The walk is bounded by a shared hop cap (`MAX_CONTINUITY_HOPS`): a contact that rotated more times than that since the last verification, or a registry serving a longer fabricated chain, falls back to a fresh out-of-band check. No continuity data crosses the postMessage boundary, so products never handle it. Multiple rotations therefore resolve across several hops in a single check, and the cross-signing columns are the only registry data the walk relies on.
@@ -272,6 +304,8 @@ recovery phrase R          (generated, BIP-39, high entropy, the only long-term 
 - **The VRK indirection** (a random key wrapped by the KEK, mirroring Bitwarden's user key) makes two operations cheap: changing the passphrase re-wraps only the VRK, and enrolling a second device forwards the VRK wrapped to that device's key.
 
 **What "rotation" means here.** A passphrase change re-wraps the VRK only. An encryption-key rotation _appends_ a new key version and re-encrypts nothing (old versions are kept for decryption). The VRK itself is only ever rotated if it is believed leaked, and only that rare case re-encrypts the items. Ordinary use never re-encrypts the vault.
+
+**One vault, several credentials (LUKS-style keyslots).** The unlock material (the wrapped VRK, the passphrase-derived `authPublicKey` with its identity signature, the Argon2 params, the wordlist `lang`) lives in its own `VaultCredential` table rather than on the vault container: exactly one `primary` credential per vault (the owner's phrase, code-enforced), plus any number of `emergency` credentials, each owned by a trusted-contact relationship (Section 12) and each wrapping the SAME VRK under a different phrase. Emergency credentials are **dormant**: the unlock proof is never checked against them until that relationship's recovery is granted. `VaultKeyring` stays the vault container (identity, items, manifest, `disabledAt`); a credential is one way in.
 
 ### 4.3 Local storage and caching
 
@@ -372,6 +406,8 @@ sequenceDiagram
 
 The `is_active` flag drives the last fork. If the phrase unlocked the **current** vault, the client caches it and enrolls straight away. If it unlocked a **dormant** (superseded) vault, nothing is cached: the client shows a modal, and only if the user confirms does it call `/vault/reactivate`, which activates that vault and **demotes the currently active one** (the same phrase-authenticated switch §5.9 uses, and the mechanism behind recovering an older vault or reclaiming a vault after another device replaced the identity).
 
+The candidate set the proof is checked against is every credential the phrase may legitimately unlock right now: the **primary** credential of each of the user's vaults (dormant vaults stay restorable by their own phrase), plus any **emergency** credential whose recovery is currently granted (Section 12). The response's `credential_type` tells the client which kind matched: an emergency match means the phrase was handed over by a trusted contact, and the interface locks into the forced phrase change of 12.5 before anything else.
+
 ### 5.4 Warm sync on an enrolled device
 
 No passphrase, the device authenticates ongoing syncs with its **device key**. The everyday path.
@@ -463,7 +499,7 @@ Turning an enrolled device's refusal into a guided "what happened / how to recov
 
 ### 5.7 Change the recovery phrase
 
-Cheap: re-wrap the VRK; the vault items are not touched. The previously printed Recovery Kit becomes invalid, so the user must re-print.
+Cheap: re-wrap the VRK; the vault items are not touched. The previously printed Recovery Kit becomes invalid, so the user must re-print. One gate applies: when a trusted contact's recovery is currently granted on this vault, the keyring write must atomically carry a **burn + re-arm** payload for every granted escrow (the emergency phrase the contact saw dies, a fresh one replaces it), and the server rejects the write otherwise (12.5).
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
@@ -510,6 +546,27 @@ A user who loses their recovery phrase and has no enrolled device de-onboards. T
 **The vault content is purgeable.** The wrapped VRK and sealed items are the only sensitive material (they hold private keys). A scheduled job deletes them once `disabledAt` exceeds the retention window of one year, which also bounds how long private keys sit at rest.
 
 **Reactivation and reset.** Within the retention window, the correct recovery phrase reactivates the dormant vault: the phrase-derived auth key matches that vault's stored `authPublicKey`, which identifies the vault and proves ownership in one step. After the window, or when no disabled vault matches, the user onboards a fresh vault under a new identity and the old encrypted content is lost.
+
+The vault's own lifecycle, with the two irreversible boundaries (the retention purge, and the fresh onboarding that follows it):
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontSize':'15px','primaryColor':'#3b5bdb','primaryTextColor':'#fff','primaryBorderColor':'#2942b8','lineColor':'#5b6ee0','tertiaryColor':'#fff','labelBackgroundColor':'#ffffff','edgeLabelBackground':'#ffffff','transitionColor':'#5b6ee0','transitionLabelColor':'#33406b','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800'},'themeCSS':'.edgeLabel p{background-color:#fff;padding:4px 10px;border-radius:5px;margin:0;} .edgeLabel .labelBkg{background:transparent;} .statediagram-state .nodeLabel p{font-size:15px;padding:5px 12px;margin:0;}','stateDiagram':{'nodeSpacing':70,'rankSpacing':110,'padding':14,'useMaxWidth':true}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> active: onboarding<br/>(identity + encryption key + vault keyring)
+  active --> dormant: de-onboard<br/>(soft-disable identity and keyring, disabledAt set)
+  dormant --> active: correct recovery phrase within the retention window<br/>(/vault/reactivate, same encryption key restored)
+  dormant --> purged: retention job, disabledAt older than 1 year<br/>(wrapped VRK + sealed items deleted)
+  purged --> active: onboarding a FRESH vault<br/>(new identity generation, old content lost)
+  note right of purged
+    The directory ledger is never purged: identity
+    generations and key versions keep their dates and
+    disabledAt forever, so the counters never reset
+    (a returning user gets ledger max + 1).
+    Emergency escrows follow the vault, so they stay
+    exercisable while dormant and die only here (12.6).
+  end note
+```
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
@@ -614,12 +671,12 @@ Two things authorize a request, and they answer different questions: **transport
 
 **Transport auth comes in four tiers**, chosen by whether the caller can hold the identity key at that moment and how sensitive the operation is. The load-bearing idea: the **vault** iframe (which holds the identity key) is loaded whenever a product uses encryption, but the **interface** iframe (which holds the OIDC JWT) is not — so anything that must run silently is authenticated by the **identity signature alone**, not the JWT. "Silently" still means _while the user has a product window open_ (the vault iframe is live in that page); this is not headless, server-side background work. The point is precisely that we can keep the vault synced in that window **without interrupting the user**: we never want to pop a "your session has expired, please sign in again" modal just to push a TOFU decision or pull a remote change. Signing each request with a private key and verifying it against a registered public key, with no bearer token, is the same pattern as SSH, WireGuard, mTLS and WebAuthn.
 
-| Tier                        | Auth required                        | Driven by              | Why                                                                                                                                                                                                             | Endpoints                                                                                                    |
-| --------------------------- | ------------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Silent / background**     | **Identity signature only** (no JWT) | the vault (autonomous) | must run with no interface and no live JWT; the identity signature proves "an enrolled device of this user", and `userId` travels inside the signed claims so the server targets one identity to verify against | `GET`/`PUT /api/vault/items`, `GET /api/vault/revision`, SSE `/api/vault/events`                             |
-| **Interactive + sensitive** | **JWT + identity signature**         | the interface          | the interface is open (JWT is free) and the op is security-relevant, so keep the OIDC-session assurance on top of the key proof                                                                                 | `PUT /api/vault/keyring` (change phrase), device-approval approve / list                                     |
-| **Cold / no keys yet**      | **JWT (+ passphrase PoP)**           | the interface          | the caller has no identity key yet (restoring / onboarding); the passphrase proof is what gates the `wrappedVRK`                                                                                                | `GET /api/vault/meta`, `POST /api/vault/challenge` `/fetch` `/reactivate` `/vault` (bootstrap), `register/*` |
-| **Lost-password**           | **JWT only**                         | the interface          | must work exactly when the user can sign nothing                                                                                                                                                                | `DELETE /api/public-keys`                                                                                    |
+| Tier                        | Auth required                        | Driven by              | Why                                                                                                                                                                                                             | Endpoints                                                                                                                                             |
+| --------------------------- | ------------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Silent / background**     | **Identity signature only** (no JWT) | the vault (autonomous) | must run with no interface and no live JWT; the identity signature proves "an enrolled device of this user", and `userId` travels inside the signed claims so the server targets one identity to verify against | `GET`/`PUT /api/vault/items`, `GET /api/vault/revision`, SSE `/api/vault/events`, `GET /api/emergency-access/pending` (12.7)                          |
+| **Interactive + sensitive** | **JWT + identity signature**         | the interface          | the interface is open (JWT is free) and the op is security-relevant, so keep the OIDC-session assurance on top of the key proof                                                                                 | `PUT /api/vault/keyring` (change phrase), device-approval approve / list, emergency designate / wait-time change / re-arm / initiate / recover (12.7) |
+| **Cold / no keys yet**      | **JWT (+ passphrase PoP)**           | the interface          | the caller has no identity key yet (restoring / onboarding); the passphrase proof is what gates the `wrappedVRK`                                                                                                | `GET /api/vault/meta`, `POST /api/vault/challenge` `/fetch` `/reactivate` `/vault` (bootstrap), `register/*`                                          |
+| **Lost-password**           | **JWT only**                         | the interface          | must work exactly when the user can sign nothing                                                                                                                                                                | `DELETE /api/public-keys`, the emergency fail-safe actions (accept, cancel, reject, delete, lists, search: 12.7)                                      |
 
 **Why keep the JWT _on top of_ the signature for tier 2.** The signature alone is already strong authentication — it is the SSH / WebAuthn key-possession pattern — so tier 2 does not strictly _need_ the JWT for correctness. We keep it because those operations are **rare and sensitive** (changing the recovery phrase, approving a new device), the interface is already open at that moment so the JWT costs nothing, and it is cheap belt-and-suspenders: were there ever a subtle edge in signature verification, the JWT is a second, independent gate that blinds it. It is the same shape as cold-start pairing the JWT with the passphrase proof (there the passphrase does the cryptographic part). For the frequent, silent data-plane we deliberately do not pay that cost, because requiring the JWT is exactly what would force the re-authentication modal we are trying to avoid.
 
@@ -629,6 +686,7 @@ Exempt from the `X-Signature`, and _only_ these, because the caller structurally
 
 - **cold prerequisites / PoP flows**: `GET /api/vault/meta` (KDF params fetched before any key is derived), `POST /api/vault/challenge` `/fetch` `/reactivate` `/vault` (bootstrap), `register/*`;
 - **lost-password disable**: `DELETE /api/public-keys` — it must work precisely when the user can sign nothing, and only ever _disables_ the identity and keyring (never hard-deletes), so a backup reactivates them;
+- the emergency-access **fail-safe actions** (accept, cancel, reject, delete, the lists and the contact search): a grantor who lost every device must still be able to refuse a recovery from a bare login, and none of these can ever release key material or shorten a wait (12.7);
 - the public directory reads.
 
 The one subtlety is device adoption: a new device must pull `/items` (a covered route) to obtain the very identity key it would sign with. So the enrolled device forwards the **identity secret key alongside the VRK**, both wrapped to the new device's ephemeral key, and the new device signs its own first pull (5.6). No keyless carve-out on `/items`.
@@ -680,7 +738,7 @@ Crucially, **SSE is a latency optimization, not the correctness mechanism**, and
 
 **Retention and reset.** Losing the phrase with no enrolled device is a **soft de-onboard**, never a destructive delete, so a stolen access token cannot cause permanent loss (see 5.9). The **directory ledger** (identities and encryption-key versions) is **permanent**: it is the audit trail and the source of the monotonic counters, so a reset never resets a version to 1, and a new key is always `ledger max + 1`. Only the **sensitive vault content** (wrapped VRK + sealed items) is purged, after a retention window of one year of `disabledAt`, which also bounds how long private keys sit at rest against a future cryptanalytic break. Within that window the correct phrase **reactivates** the dormant vault; after it, the user does a fresh reset under a new identity and the old encrypted content is lost.
 
-**Starting over never destroys the previous vault.** A user can hold several vaults (keyrings) over time: exactly one is **active** (the current sync target) and any others are **dormant** remnants of superseded vaults. A fresh onboarding mints a new identity and a new vault; if an active vault already exists, its keyring is marked dormant and the new one is created alongside it in the same bootstrap transaction. The dormant vault's wrapped VRK and sealed items are kept intact, so its **own** recovery phrase can still recover it within the retention window. This is what keeps the two flows independent: start over is a brand-new vault, and recovery is a separate phrase-driven path.
+**Starting over never destroys the previous vault.** A user can hold several vaults (keyrings) over time: exactly one is **active** (the current sync target) and any others are **dormant** remnants of superseded vaults. A fresh onboarding mints a new identity and a new vault; if an active vault already exists, its keyring is marked dormant and the new one is created alongside it in the same bootstrap transaction. The dormant vault's wrapped VRK and sealed items are kept intact, so its **own** recovery phrase can still recover it within the retention window. This is what keeps the two flows independent: start over is a brand-new vault, and recovery is a separate phrase-driven path. Trusted-contact escrows (Section 12) follow the same rule: they stay bound to the vault they were created for, so a start-over does not erase them (deliberately: a stolen-session reset must not be able to destroy the user's recovery routes), and they die only when that vault's content is purged at retention expiry, through the credential cascade (12.6).
 
 Recovery is by phrase, and the phrase **self-selects** its vault. The proof of possession verifies against exactly the keyring whose `authPublicKey` the phrase derived, so a fetch returns the one vault that phrase unlocks, active or dormant, without the client ever naming a vault id. The sync and write paths always operate on the active vault, so a single active keyring per user keeps them unambiguous.
 
@@ -724,19 +782,28 @@ The server is assumed **honest-but-curious and potentially compromised** for ava
 
 The table below is a **summary**: one line per threat, one line per defense. The rows carrying a section reference are the ones most easily misread as "gaps", so each is worked through in full underneath, in the same order.
 
-| Threat                                                                                                               | Defense                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Detail |
-| -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| **Stolen OIDC token** downloads the vault                                                                            | The items are under a random VRK, so they are inert without it. The one passphrase-brute-forceable artifact, the `wrappedVRK`, is released only after a proof-of-passphrase, so a bare token cannot even retrieve it.                                                                                                                                                                                                                                                        |        |
-| **Server / database leak**, offline brute force                                                                      | The high-entropy recovery phrase is never held by the server (nor the KEK or VRK), so there is nothing to grind.                                                                                                                                                                                                                                                                                                                                                             |        |
-| **Server tampering** (splice, reorder, backdate, rollback)                                                           | The signed manifest, verified against a locally-trusted identity and the public registry with a monotonic revision, detects it. Integrity does not rely on the server.                                                                                                                                                                                                                                                                                                       |        |
-| **Server substitutes a user's identity** (fake vault to a newly enrolled device, attacker keys returned for a share) | A provisioned device fails closed (5.8), and contacts detect a substituted registry out-of-band (TOFU, 3.4). A substituted share becomes a denial of service against the recipient rather than a read for the attacker, because retrieval is gated by the product's own access model.                                                                                                                                                                                        | §11.1  |
-| **Server returns the wrong internal user id** (TOFU is keyed on a server-minted identifier)                          | Barely changes confidentiality: the identifier that keys trust does not decide who the product releases ciphertext to. The internal id is a migration-stability and blast-radius choice, not a confidentiality upgrade over using the sub.                                                                                                                                                                                                                                   | §11.2  |
-| **Hostile `oidc_accounts` edit or email-fallback mislink** (attacker's login mapped to a victim's account)           | Trust-critical for authentication, not for E2EE: no VRK, recovery phrase, or identity secret travels with a mislinked login, the vault stays ciphertext behind the proof-of-passphrase, and any identity the attacker registers shows to every contact as a TOFU fingerprint change. Damage profile is a visible identity reset, never silent decryption. Linking needs operator intent or the flagged verified-email fallback (exactly one match, one-year dormancy guard). |        |
-| **Compromised device while unlocked**                                                                                | Out of scope, as for every vault product; the de-enroll timer and at-rest device-key wrapping limit the cold-disk case.                                                                                                                                                                                                                                                                                                                                                      |        |
-| **Wrong document key / poisoned share**                                                                              | Sharing verifies the recipient's binding signature and the out-of-band-verified fingerprint (TOFU) before wrapping (3.1).                                                                                                                                                                                                                                                                                                                                                    |        |
-| **Compromised product swaps recipients** (its share UI displays "Bob <bob@…>" but hands the SDK a different user)    | ACCEPTED residual risk, deliberately not defended: the product already sits inside the plaintext boundary, so lying about recipients adds nothing beyond what the compromise already yields. Still enforced: wrapping is limited to registered directory identities, trust marking is interface-only, and fingerprints are rendered by the interface from vault data.                                                                                                        | §11.3  |
-| **Compromised _product_ frontend** (XSS / poisoned dependency in Docs, Drive, …)                                     | The high-water mark of content exposure: it reads what its user decrypts and can enumerate the whole corpus, dormant files included. Iframe isolation still denies it the vault's private keys, trust marking, and raw-key injection. Not defendable by crypto; mitigated operationally (per-product hardening, CSP, dependency pinning).                                                                                                                                    | §11.3  |
-| **Compromised vault** (malicious code inside the vault iframe, via a serving-chain or SRI-valid supply-chain breach) | The irreducible trust root, defended in two layers: bundle integrity (isolated origin, build-time SRI, Service Worker pinning) and a `default-src 'none'; connect-src 'self'` CSP that leaves a hash-valid bundle no exfiltration channel on an honest server. Getting data out needs a further serving-chain or backend compromise, and even then stays bounded to in-flight ciphertext plus the keys.                                                                      | §11.4  |
+| Threat                                                                                                               | Defense                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Detail       |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| **Stolen OIDC token** downloads the vault                                                                            | The items are under a random VRK, so they are inert without it. The one passphrase-brute-forceable artifact, the `wrappedVRK`, is released only after a proof-of-passphrase, so a bare token cannot even retrieve it.                                                                                                                                                                                                                                                        |              |
+| **Server / database leak**, offline brute force                                                                      | The high-entropy recovery phrase is never held by the server (nor the KEK or VRK), so there is nothing to grind.                                                                                                                                                                                                                                                                                                                                                             |              |
+| **Server tampering** (splice, reorder, backdate, rollback)                                                           | The signed manifest, verified against a locally-trusted identity and the public registry with a monotonic revision, detects it. Integrity does not rely on the server.                                                                                                                                                                                                                                                                                                       |              |
+| **Server substitutes a user's identity** (fake vault to a newly enrolled device, attacker keys returned for a share) | A provisioned device fails closed (5.8), and contacts detect a substituted registry out-of-band (TOFU, 3.4). A substituted share becomes a denial of service against the recipient rather than a read for the attacker, because retrieval is gated by the product's own access model.                                                                                                                                                                                        | §11.1        |
+| **Server returns the wrong internal user id** (TOFU is keyed on a server-minted identifier)                          | Barely changes confidentiality: the identifier that keys trust does not decide who the product releases ciphertext to. The internal id is a migration-stability and blast-radius choice, not a confidentiality upgrade over using the sub.                                                                                                                                                                                                                                   | §11.2        |
+| **Hostile `oidc_accounts` edit or email-fallback mislink** (attacker's login mapped to a victim's account)           | Trust-critical for authentication, not for E2EE: no VRK, recovery phrase, or identity secret travels with a mislinked login, the vault stays ciphertext behind the proof-of-passphrase, and any identity the attacker registers shows to every contact as a TOFU fingerprint change. Damage profile is a visible identity reset, never silent decryption. Linking needs operator intent or the flagged verified-email fallback (exactly one match, one-year dormancy guard). |              |
+| **Compromised device while unlocked**                                                                                | Out of scope, as for every vault product; the de-enroll timer and at-rest device-key wrapping limit the cold-disk case.                                                                                                                                                                                                                                                                                                                                                      |              |
+| **Wrong document key / poisoned share**                                                                              | Sharing verifies the recipient's binding signature and the out-of-band-verified fingerprint (TOFU) before wrapping (3.1).                                                                                                                                                                                                                                                                                                                                                    |              |
+| **Compromised product swaps recipients** (its share UI displays "Bob <bob@…>" but hands the SDK a different user)    | ACCEPTED residual risk, deliberately not defended: the product already sits inside the plaintext boundary, so lying about recipients adds nothing beyond what the compromise already yields. Still enforced: wrapping is limited to registered directory identities, trust marking is interface-only, and fingerprints are rendered by the interface from vault data.                                                                                                        | §11.3        |
+| **Compromised _product_ frontend** (XSS / poisoned dependency in Docs, Drive, …)                                     | The high-water mark of content exposure: it reads what its user decrypts and can enumerate the whole corpus, dormant files included. Iframe isolation still denies it the vault's private keys, trust marking, and raw-key injection. Not defendable by crypto; mitigated operationally (per-product hardening, CSP, dependency pinning).                                                                                                                                    | §11.3        |
+| **Compromised vault** (malicious code inside the vault iframe, via a serving-chain or SRI-valid supply-chain breach) | The irreducible trust root, defended in two layers: bundle integrity (isolated origin, build-time SRI, Service Worker pinning) and a `default-src 'none'; connect-src 'self'` CSP that leaves a hash-valid bundle no exfiltration channel on an honest server. Getting data out needs a further serving-chain or backend compromise, and even then stays bounded to in-flight ciphertext plus the keys.                                                                      | §11.4        |
+| **Malicious or compromised trusted contact** requests recovery covertly                                              | The waiting period plus escalating out-of-band email notifications: the grantor can refuse from any logged-in session, vault or no vault. Residual risk: a grantor unreachable for the whole wait, bounded by their own choice of wait time and of contact (the feature's premise is a person the user trusts more than they fear losing their data).                                                                                                                        | §12.2        |
+| **Trusted contact alone, even holding a revealed emergency phrase**                                                  | Reads nothing: the server serves vault ciphertext only to the grantor's own authenticated OIDC session, and documents live in product backends behind the grantor's OIDC and the products' sharing tables. Recovery discloses a credential, never content.                                                                                                                                                                                                                   | §12.1        |
+| **Stolen GRANTOR OIDC session** acts on emergency access                                                             | Can reject, revoke, or start over: all denial, never disclosure. Nothing JWT-reachable can shorten the wait (no early-approve endpoint exists), and a vault reset does not erase escrows. It still cannot read the vault: login does not unlock.                                                                                                                                                                                                                             | §12.2, §12.6 |
+| **Stolen CONTACT OIDC session** starts or exercises a recovery                                                       | Cannot even initiate: `initiate` and `recover` require the per-request identity signature (§7.1), produced only by the contact's open vault. With the contact's vault also compromised, the attacker IS the contact for practical purposes, and the grantor-side wait plus notifications still apply.                                                                                                                                                                        | §12.7        |
+| **Server releases the capsule or emergency credential early / colludes with the contact**                            | Not cryptographically prevented, exactly as in Bitwarden: the wait period is server policy, enforced twice (hourly job and lazy arithmetic). Stated honestly: once a contact is designated, confidentiality against contact-plus-server collusion is gone by design. The server alone still reads nothing, and a non-colluding contact gains nothing early.                                                                                                                  | §12.3        |
+| **Server substitutes the contact's public key at designation time**                                                  | Defeated: designation requires the contact's identity fingerprint to be `trusted` (verified out-of-band) in the grantor's TOFU registry, and the wrap targets the binding-verified key of that pinned identity. The equivalent Bitwarden dialog is skippable; ours is not.                                                                                                                                                                                                   | §12.1        |
+| **Server fabricates or alters escrow rows** (fake contact, shortened wait)                                           | The escrow binding signature (grantor identity key) covers the contact, the wait time, the credential's auth-verifier hash and the capsule hash; the grantor's devices audit the list and fail loudly (§5.8 posture), and the server re-verifies it at write. Hiding rows or refusing release remains an availability attack, never a confidentiality one.                                                                                                                   | §12.1        |
+| **Contact served a forged escrow record at reveal time**                                                             | The binding signature is verified against the grantor identity **pinned in the contact's own TOFU registry** at verification time, fail-closed.                                                                                                                                                                                                                                                                                                                              | §12.5        |
+| **Contact retains the phrase after handover**                                                                        | Burned by construction: the first emergency unlock forces a phrase change whose commit atomically deletes the used credential and re-arms a fresh one (the server rejects the write without the burn). Until then the phrase is a credential the grantor knowingly shares for the handover, and it still reads nothing without the grantor's OIDC session.                                                                                                                   | §12.5        |
 
 ### 11.1 A compromised encryption server cannot decrypt, because retrieval is gated by the product, not by us
 
@@ -801,6 +868,178 @@ One calibration worth keeping in mind:
 
 ---
 
+## 12. Emergency access (trusted contacts)
+
+Every recovery route in Section 9 assumes the user still holds an enrolled device or the printed phrase. Emergency access covers the case where both are gone. The model is Bitwarden's Emergency Access, re-based onto this architecture: the user (the **grantor**) designates a **trusted contact**, an already-onboarded user of this service; designation immediately escrows a dormant recovery route to that contact; if the grantor is ever locked out, the contact requests recovery, and a waiting period the grantor chose (7, 15, or 30 days offered, custom up to 90) starts, during which the grantor can refuse from any logged-in session; if the grantor does nothing, the contact receives an emergency recovery phrase, prints it as a kit, and hands it to the grantor in person.
+
+**Organizational escrow was rejected**: LaSuite is deployed by organizations of very different maturity, so a deployment-held recovery key would, in most deployments, be a standing master key in ordinary IT hands, and it concentrates risk (one compromised escrow key or one coerced admin exposes every user's vault). If a deployment ever needs organization-level recovery, it can be layered on top of this same mechanism (an organization recovery identity acting as a mandatory contact) without changing the model. **M-of-N (Shamir) recovery was set aside** for a different reason: splitting the escrow so that no single contact can recover alone sounds stronger, but it multiplies the coordination and comprehension cost for exactly the users this feature serves, and it multiplies the failure modes (one unreachable share-holder blocks everyone). A single well-chosen contact behind a delay is the right amount of machinery, and because the escrow stores one capsule per contact, shares remain an additive change if a deployment ever truly needs them. Recovery of the OIDC login itself is and stays the identity provider's job; this feature covers only the encryption layer, and the printed kit remains the primary, instant, fully user-controlled route: emergency access is its slow, socially anchored complement. A grantor who has also lost the OIDC account is out of scope by the same split (once they can log in again, the flow applies unchanged), and if the grantor is deceased or incapacitated, the contact ends up holding a passphrase but still reads nothing: the server serves the vault only to the grantor's OIDC session, and documents live in the product backends behind that session and the sharing tables, so actual access additionally requires a product-level or legal process (succession, administrator action on the OIDC account). Emergency access makes such a process meaningful (without the keys, granting ciphertext access yields nothing) but does not replace it. No new cryptographic primitive is introduced anywhere: every operation below composes the existing keyring derivation (4.2), the existing wrap-for-user KEM path (3.1), and the existing length-framed Ed25519 binding-signature pattern (3.5).
+
+### 12.1 The escrow: a dormant emergency passphrase, a second credential of the same vault
+
+What is escrowed is neither the grantor's own phrase (an escrow of it would silently die on every phrase change) nor the raw VRK (the contact would then have to open and rebuild the whole vault on their machine, over-disclosing private keys and the TOFU registry). It is a **fresh, dormant emergency passphrase** for the grantor's own vault, exploiting the credential model of 4.2 LUKS-style: one vault, several keyslots.
+
+At designation, in the grantor's open vault iframe:
+
+```
+E          = fresh recovery phrase (32 bytes entropy, 24 BIP-39 words, grantor's wordlist)
+credential = the exact keyring derivation of 5.1 run on E:
+             KEK_E = Argon2id(E, salt = userId), wrappedVrk = seal(VRK, KEK_E),
+             authPublicKey (+ authPubSig by the identity key), kdf params, lang
+capsule    = entropy(E) wrapped to the contact's active X-Wing key
+             (the standard wrap-for-user wire format of 3.1)
+```
+
+The credential mirrors the primary one and unlocks the **same** vault (same VRK, same items), but is stored **dormant**: the unlock proof is never checked against it until the relationship is recovery-approved (12.3). `E` itself is discarded by the vault iframe the moment the credential and capsule are built; it is never stored or displayed anywhere on the grantor's side. The contact's encryption-key **version** used for the wrap is recorded (`granteeKeyVersion`), so the grantor's settings screen can later detect that the capsule targets an outdated key and offer a one-click re-arm (12.6).
+
+What this buys: **the contact never opens the vault.** They only ever end up holding a passphrase, and since the server serves vault ciphertext exclusively to the grantor's own authenticated OIDC session, that passphrase alone reads nothing: no private keys, no documents, no TOFU registry ever reach the contact's machine. Nothing is duplicated either: the grantor keeps their vault, identity, devices, and trust registry untouched, and simply gains one more way in. The handover artifact is a recovery kit, the object users already know.
+
+**Designation is gated on explicit verification.** The vault operation that builds the escrow requires the contact's identity fingerprint to be **`trusted`** in the grantor's TOFU registry: stricter than the share gate of 3.4, where `unknown` passes. Escrowing a way into the whole vault demands a prior out-of-band verification, so `unknown` is rejected. This is precisely what defeats a server that substitutes the contact's key at designation time (the wrap targets the binding-verified key of the pinned, humanly-verified identity).
+
+**The escrow binding signature.** Every escrow is signed by the grantor's identity key over a length-framed canonical payload with the dedicated context `lasuite-encryption/emergency-escrow/v1`, covering: the grantor and contact internal user ids, the pinned contact identity public key, the wait time, the escrow creation time, the SHA-256 of the emergency credential's auth verifier (the verifier itself is never released to any client), and the SHA-256 of the capsule. The server verifies it at write against the grantor's **active** identity (on top of the standard auth-binding check on the credential's verifier, and a check that the pinned identity and wrapped key version are the contact's current ones). It serves three verifiers:
+
+- **the grantor's own devices** audit the `/trusted` list against it in the vault (a row the grantor never created, a swapped contact, an altered wait time, or a substituted credential or capsule fails verification and is surfaced as an integrity warning, §5.8 posture);
+- **the contact at reveal time** verifies the record against the grantor identity **pinned in their own TOFU registry**, fail-closed, confirming the escrow really was created by the grantor, for them, with these parameters;
+- **the server at write time**, as a coherence gate.
+
+What it does **not** do: prevent the server from releasing the capsule early or hiding rows. The wait period is server policy, exactly as in Bitwarden (12.3, and stated honestly in the Section 11 table).
+
+### 12.2 State machine
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontSize':'15px','primaryColor':'#3b5bdb','primaryTextColor':'#fff','primaryBorderColor':'#2942b8','lineColor':'#5b6ee0','tertiaryColor':'#fff','labelBackgroundColor':'#ffffff','edgeLabelBackground':'#ffffff','transitionColor':'#5b6ee0','transitionLabelColor':'#33406b','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800'},'themeCSS':'.edgeLabel p{background-color:#fff;padding:4px 10px;border-radius:5px;margin:0;} .edgeLabel .labelBkg{background:transparent;} .statediagram-state .nodeLabel p{font-size:15px;padding:5px 12px;margin:0;}','stateDiagram':{'nodeSpacing':70,'rankSpacing':110,'padding':14,'useMaxWidth':true}}}%%
+stateDiagram-v2
+  direction TB
+  [*] --> invited: designation<br/>(grantor builds the escrow, one step)
+  invited --> confirmed: accept<br/>(contact, consent only)
+  confirmed --> recovery_requested: initiate<br/>(contact, identity-signed)
+  recovery_requested --> recovery_approved: waitTimeDays elapsed<br/>(lazy arithmetic)
+  recovery_requested --> confirmed: cancel (contact, JWT only)<br/>reject (grantor, JWT only)
+  recovery_approved --> confirmed: reject (grantor, JWT only)<br/>credential re-dormant, escrow kept
+  recovery_approved --> confirmed: grantor emergency unlock<br/>+ forced phrase change<br/>(credential burned, escrow re-armed)
+  note right of confirmed
+    delete (either party, JWT only) applies to
+    EVERY state: it drops the row and its
+    emergency credential, destroying the escrow.
+  end note
+```
+
+**Designation is one step**, a deliberate divergence from Bitwarden's Invite/Accept/Confirm: contacts are existing, onboarded users found by exact-email search in the local base, so their verified keys exist before designation and the escrow is built immediately. Acceptance is pure consent (no invite tokens, no invitee emails, no second trip by the grantor). Another Bitwarden distinction is collapsed too: their View versus Takeover relationship types make no sense here (this server holds no documents, so a View capability would expose the same key material while reading nothing on its own), leaving a single capability, **recover**.
+
+**There is no early-approve, deliberately.** An approve endpoint could only be authenticated by the grantor's OIDC session: by definition, a grantor who needs recovery has no vault left to sign with. That makes approve exactly as strong as a stolen JWT, and it would let a JWT thief who also suborns the contact collapse the wait to zero. The wait is the entire protection, so **nothing reachable by JWT alone may shorten it**. The cooperative case does not need it: a grantor who still has an enrolled device does not need emergency access at all (any open vault already mints a fresh kit via 5.7), and a grantor with no device waits the delay they themselves chose.
+
+**Reject and cancel stay JWT-only because they fail safe**: the worst a stolen session can do with them is deny a recovery, never obtain one. Reject is allowed even from `recovery_approved` (it re-dormants the credential, killing a revealed-but-unused phrase) and returns the relationship to `confirmed`, escrow kept: a grantor who no longer trusts the contact deletes the relationship instead, which destroys the credential and the row. The wait time is offered as 7/15/30-day presets plus a custom field, server-validated 1 to 90 (with a UI hint that a short wait is risky over long holidays); changing it re-signs the escrow binding (the wait time is inside the signature) and is only allowed outside a running recovery.
+
+### 12.3 The wait period: lazy arithmetic is the authority, the hourly job is for humans
+
+Two mechanisms, deliberately layered:
+
+- **The lazy check is for security.** Every release point (the capsule release in `recover`, and the emergency credential's unlock candidacy in the proof check of 5.3) independently re-computes `recoveryRequestedAt + waitTimeDays <= now()` and treats that arithmetic, not the stored status, as authoritative, flipping the status on the fly if the job missed it. A dead job can silence emails; it can never shorten or lengthen the wait itself.
+- **The hourly job runner is for humans.** Under a per-run Postgres advisory lock (so multiple server instances never double-send), it flips overdue requests to `recovery_approved` and emails both parties, sends the escalating reminders below, and purges never-accepted `invited` rows after 90 days.
+
+**Reminder cadence** while a request runs, driven by the time REMAINING until auto-approval and throttled per row: monthly while more than 30 days remain, weekly during the last 30 days, daily during the final 7. This replaces Bitwarden's single final-day reminder, because our waits can span holidays and the grantor's ability to object is the entire security of the scheme. Email is **load-bearing** for the same reason: the notification must reach the grantor outside the app, and refusing requires no vault (reject works from any logged-in OIDC session). The initiate notification is so load-bearing that it is sent before the status flips, and a failed send fails the whole initiate call. Every other step notifies too: designation, acceptance, approval (both parties), rejection, cancellation, revocation, and the completed recovery (both parties). Email links point at an instance-configured product page (`EMAIL_PRODUCT_URL`), with no tokens and no deep routes: after login, the vault fetches the pending actionable state over the silent data plane and the SDK auto-surfaces the right prompt (12.7).
+
+### 12.4 Flows
+
+**Designating a trusted contact (one step).**
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant G as Grantor
+  participant UIg as Interface (grantor)
+  participant API as Encryption server
+  participant UIt as Interface (contact)
+  participant T as Trusted contact
+  G->>UIg: designate a trusted contact
+  UIg->>API: GET /emergency-access/search?email=...
+  API-->>UIg: matching ONBOARDED user (or "must onboard first")
+  Note over G,T: out-of-band fingerprint verification<br/>(QR or spoken digits, existing verify flow)<br/>MANDATORY unless already trusted
+  G->>UIg: choose wait time, designate
+  UIg->>UIg: vault op create-emergency-escrow (privileged)
+  Note over UIg: require TOFU status trusted<br/>generate emergency phrase E (never stored)<br/>derive dormant credential (wrapped VRK, auth key)<br/>wrap entropy(E) to the contact's X-Wing key<br/>sign the escrow binding (identity key)
+  UIg->>API: POST /emergency-access<br/>{credential, capsule, granteeIdentityPub, signature, waitTimeDays}
+  Note over API: verify the auth binding + escrow signature<br/>against the grantor's ACTIVE identity<br/>check the pinned identity and key version<br/>are the contact's CURRENT ones<br/>row {status: invited}, credential DORMANT<br/>(the server can read neither)
+  API-->>T: email, G designated you as trusted contact
+  T->>UIt: open a product, the SDK surfaces the invitation
+  UIt->>API: POST /emergency-access/:id/accept (consent only)
+  Note over API: status: confirmed
+  API-->>G: email, T accepted
+```
+
+**Requesting access, refusal or grant, recovery.**
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant T as Trusted contact
+  participant UIt as Interface (contact)
+  participant API as Encryption server
+  participant UIg as Interface (grantor)
+  participant G as Grantor
+  T->>UIt: request emergency access (confirmation modal)
+  Note over UIt: the request carries the per-request proof<br/>signed with T's IDENTITY key (vault open, 7.1)
+  UIt->>API: POST /emergency-access/:id/initiate
+  Note over API: verify against T's registered identity<br/>email the grantor FIRST (load-bearing:<br/>a failed send fails the call)<br/>status: recovery_requested
+  API-->>G: email, T requested access,<br/>you have N days to refuse
+  alt grantor refuses (JWT only, no vault needed, from the email link or the product modal)
+    G->>API: POST /emergency-access/:id/reject
+    Note over API: back to confirmed, credential re-dormant, escrow kept
+    API-->>T: email, request refused
+  else grantor says nothing
+    Note over API: reminder emails to the grantor: monthly,<br/>then weekly (last 30 days), then daily (last 7)<br/>auto-approve after waitTimeDays<br/>(deadline also re-checked lazily at release)
+    Note over API: status: recovery_approved
+    API-->>T: email, access granted
+    API-->>G: email, access was granted to T
+    T->>UIt: reveal the emergency phrase (identity-signed request)
+    API-->>UIt: {capsule, escrow record, grantor lang}
+    Note over UIt: vault op (privileged), all client-side:<br/>verify the escrow signature against the<br/>PINNED grantor identity (fail-closed)<br/>unwrap the entropy with own private key<br/>render the 24-word phrase, print the kit<br/>repeatable while approved, nothing persisted
+    T->>G: hand over the kit (in person)
+    G->>UIg: normal cold unlock with E<br/>(the server accepts the now-live credential)
+    Note over UIg: forced immediately, before anything else:<br/>set a NEW personal phrase (5.7 flow)
+    UIg->>API: atomic write: new primary credential<br/>+ burn the used emergency credential<br/>+ re-arm ALL approved escrows (fresh E', capsule')
+    Note over API: status back to confirmed<br/>emails both parties
+  end
+```
+
+### 12.5 Recovery, then burn + re-arm
+
+While recovery is granted, the server releases to the contact exactly one thing: the capsule, together with the signed escrow record and the grantor's wordlist `lang`. Never items, never keys. The contact's vault verifies the escrow signature against the grantor identity pinned in the contact's own TOFU registry (fail-closed: if the grantor was never verified out-of-band, this is the moment it is enforced), unwraps the entropy with the contact's own key history (newest first, since the history is grow-only), renders the 24-word phrase, and the interface displays it as a printable recovery kit for the handover. The reveal is **repeatable while granted**: a one-time display over a wait of up to 90 days would lose phrases, the grantor may legitimately take weeks to come back, and the phrase is going to be burned anyway. Nothing about the grantor's vault is downloaded, decrypted, or persisted on the contact's side.
+
+The grantor then performs a completely ordinary cold unlock (5.3) with the handed-over phrase on their own OIDC session: the proof simply matches the now-live emergency credential, and the response's `credential_type` flags it. Because the contact has seen this phrase, it is **burned by design**: the interface forces a phrase change before anything else, and that keyring write (5.7) atomically, in one Serializable transaction:
+
+- replaces the primary credential (new personal phrase, new kit),
+- deletes the used emergency credential and its capsule (the phrase the contact knows is now dead),
+- **re-arms** every relationship that was granted on this vault with a fresh emergency phrase, credential, and capsule (cheap: the vault is open and the contacts are still TOFU-trusted), returning each to `confirmed`,
+- and emails both parties once committed.
+
+The server enforces an **exact cover**: the write must carry one re-arm per granted relationship of this vault and nothing extraneous (each re-arm re-verified like a designation), and it is rejected otherwise. A partial rotation could not leave a revealed phrase alive, nor silently strip the user of their recovery contacts. Until the forced change completes, the relationship stays visibly granted and the reminder emails keep nudging the grantor.
+
+### 12.6 Lifecycle
+
+- **Grantor starts over (§5.9): escrows deliberately survive the reset.** They are bound to the (now dormant) vault they were created for and remain exercisable against it: recovering through one lands on the dormant vault and runs the existing reactivation semantics of 5.3. Rationale: an attacker holding only a stolen OIDC session must not be able to erase the user's recovery routes by resetting the vault; with survival, the worst a JWT thief achieves is denial-by-noise, never permanent lockout. The mirror risk (an old trusted contact can resurrect a vault the user deliberately abandoned) is accepted, bounded by the wait, the notifications, and the contacts being verified people, and it is stated plainly in the user documentation. Escrows die only when the vault content is truly purged at retention expiry: purging the vault deletes its credentials (cascade), which deletes the escrow rows (cascade). A new vault starts with zero contacts, and its empty TOFU registry forces re-verification by construction.
+- **The contact resets to a new identity** (lost their own vault): the capsule targets private keys that no longer exist anywhere. The grantor's escrow audit detects that the pinned identity is no longer the contact's active one and is not continuity-linked to it, and flags `stale-identity`; renewal is revoke + designate again, which re-runs the mandatory verification.
+- **The contact legitimately rotated their identity** (continuity chain): the audit walks the chain exactly as the TOFU check does (3.4) and carries the escrow forward; nothing to do.
+- **The contact rotated their encryption key**: nothing breaks (the old private key is still in the contact's grow-only vault), but the recorded `granteeKeyVersion` lags the directory, so the audit flags `outdated-key` and the settings screen offers a **one-click re-arm** (fresh phrase, credential, and capsule replacing the old ones in place, status unchanged).
+- **Two contacts recover concurrently**: each relationship has its own independent credential for the same VRK, so two live credentials can coexist; the forced rotation burns and re-arms **every** granted row at once, so no revealed phrase survives it.
+- **Phrase revealed but never handed over**: the credential stays live and visible ("access granted"), reminders continue, and the grantor can reject (re-dormant, killing the revealed phrase) or delete at any time from any logged-in session.
+- **Designation never accepted**: the row stays `invited`, visible to both sides, revocable by the grantor, and the job runner purges it after 90 days.
+
+### 12.7 How the emergency routes authenticate
+
+The routes reuse the transport-auth tiers of §7.1, mapped by one rule: anything that can release or create key material is signed by the identity key of an open vault, anything that only ever denies is reachable by a bare login.
+
+| Tier (§7.1)                  | Emergency routes                                                                            | Why                                                                                                                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **JWT + identity signature** | designate (`POST`), wait-time change (`PUT`), `rearm`, `initiate`, `recover`                | all performed with an open vault by construction (grantor building an escrow, contact triggering or exercising a recovery), so a stolen OIDC session alone can neither start a recovery nor fetch a capsule |
+| **JWT only** (fail-safe)     | `accept`, `cancel`, `reject`, `delete`, the `trusted`/`granted` lists, the contact `search` | a grantor who lost every device must still be able to refuse from a bare login; none of these can release key material or shorten a wait (the worst a stolen session does is deny)                          |
+| **Identity signature only**  | `GET /emergency-access/pending`                                                             | fetched by the vault over the silent data plane, so the SDK can auto-surface the pending prompts (a recovery request to refuse, an invitation to accept) on any product page, with no interface and no JWT  |
+
+The designation, re-arm, and burn + re-arm writes run in Serializable transactions (initiate uses a status-guarded update, so concurrent triggers resolve to exactly one running request), and the routes are rate-limited following the repo pattern (10 designations per 24 h per grantor, counted on durable rows; 5 initiates per 24 h per contact and 20 searches per hour, damped per instance). The `search` endpoint necessarily reveals whether an email has an onboarded account; that is accepted inside a collaborative suite (the directory already resolves colleagues), bounded by authentication, exact match only, and the rate limit. An address matching several onboarded users resolves to "nobody designatable" rather than guessing between two humans.
+
+---
+
 ## Appendix A: Migrating the OIDC provider (subs change)
 
 A deployment can replace its identity provider mid-life. The new provider mints new `sub` values for the same humans, and nothing in this service breaks cryptographically when that happens: internal ids, signatures, vaults, and TOFU records never reference a sub (Section 2.1). What the migration DOES affect is how logins and directory lookups reconnect to existing accounts.
@@ -817,3 +1056,15 @@ A deployment can replace its identity provider mid-life. The new provider mints 
 2. Ensure `OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION` is set consistently with LaSuite products, so a user who continues seamlessly in Docs also continues seamlessly here.
 3. Communicate that everyone should sign in again shortly after the switch: each login (in the products AND here) is what refreshes stored subs and re-links credentials.
 4. Old `oidc_accounts` rows are never deleted. They stop resolving and stop authenticating, but remain as the audit trail of which provider minted which credential, and as raw material for after-the-fact operator merges.
+
+---
+
+## Appendix B: Email notifications
+
+Transactional email exists in this service almost entirely for **emergency access** (Section 12): the recovery wait period is the grantor's only window to refuse, so a designation, a recovery request, a reminder, or a completion has to reach the grantor out of band. There is no marketing or general-purpose mail, and the rest of the product notifies in-app.
+
+**Rendering.** Emails are built at send time from developer-authored React components (`src/server/email/templates/`) through `@faire/mjml-react` and `mjml`. No user-controlled template is ever compiled: user data (email addresses, day counts, timestamps) enters only as React props, which React escapes when rendering to markup. The output is static HTML plus a plaintext alternative derived from that final HTML with `html-to-text`; no script survives into the message, and links are limited to the instance-configured product URL (no tokens, no deep routes).
+
+**Supply chain.** The MJML toolchain (`mjml`, `@faire/mjml-react`, `html-to-text`, `nodemailer`) is the main added exposure, as with any npm dependency. It is mitigated the same way as the rest of the tree: every version is pinned exactly (no `^`/`~`), so an upgrade is always an explicit, reviewable diff.
+
+**Delivery reliability.** The mailer supports a primary and an optional fallback SMTP transport and retries once before failing loudly, because the emergency-access design depends on the notification actually arriving: a silently lost email would weaken the opposition window. With no SMTP host configured, emails are still rendered (so template errors surface) but only logged, which is the development fallback.

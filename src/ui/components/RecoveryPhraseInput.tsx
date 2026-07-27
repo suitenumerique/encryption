@@ -126,7 +126,7 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
             border: 'none',
             cursor: 'pointer',
             fontSize: 13,
-            color: 'var(--c--globals--colors--brand-400, #000091)',
+            color: 'var(--c--globals--colors--brand-400)',
           }}
         >
           <span className="material-icons" style={{ fontSize: 18 }}>
@@ -147,9 +147,7 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
 
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{ fontSize: 11, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #888)', width: 18, textAlign: 'right' }}
-              >
+              <span style={{ fontSize: 11, color: 'var(--c--contextuals--content--semantic--neutral--secondary)', width: 18, textAlign: 'right' }}>
                 {i + 1}
               </span>
               <input
@@ -173,7 +171,9 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
                   fontSize: 13,
                   padding: '6px 8px',
                   borderRadius: 4,
-                  border: `1px solid ${invalid ? 'var(--c--globals--colors--error-500, #ce0500)' : 'var(--c--contextuals--border--surface--primary, #e5e5e5)'}`,
+                  border: `1px solid ${invalid ? 'var(--c--globals--colors--error-500)' : 'var(--c--contextuals--border--surface--primary)'}`,
+                  background: 'var(--c--contextuals--background--surface--primary)',
+                  color: 'var(--c--contextuals--content--semantic--neutral--primary)',
                 }}
               />
             </div>
@@ -181,7 +181,7 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
         })}
       </div>
       {hasInvalidWord && (
-        <p style={{ fontSize: 12, color: 'var(--c--globals--colors--error-500, #ce0500)', margin: '8px 0 0' }}>{t('onboarding.invalid_word_hint')}</p>
+        <p style={{ fontSize: 12, color: 'var(--c--globals--colors--error-500)', margin: '8px 0 0' }}>{t('onboarding.invalid_word_hint')}</p>
       )}
     </div>
   );

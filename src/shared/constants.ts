@@ -69,6 +69,11 @@ export const MSG_VAULT_SIGN_REQUEST = 'vault:sign-request';
 export const MSG_VAULT_START_DEVICE_APPROVAL = 'vault:start-device-approval';
 export const MSG_VAULT_COMPLETE_DEVICE_APPROVAL = 'vault:complete-device-approval';
 export const MSG_VAULT_APPROVE_DEVICE = 'vault:approve-device';
+// --- Emergency access (trusted contacts) ---
+export const MSG_VAULT_CREATE_EMERGENCY_ESCROW = 'vault:create-emergency-escrow';
+export const MSG_VAULT_BUILD_EMERGENCY_REARMS = 'vault:build-emergency-rearms';
+export const MSG_VAULT_VERIFY_ESCROWS = 'vault:verify-escrows';
+export const MSG_VAULT_REVEAL_EMERGENCY_PHRASE = 'vault:reveal-emergency-phrase';
 // --- Vault product requests: fingerprint registry ---
 export const MSG_VAULT_CHECK_FINGERPRINTS = 'vault:check-fingerprints';
 export const MSG_VAULT_ACCEPT_FINGERPRINT = 'vault:accept-fingerprint';
@@ -78,6 +83,7 @@ export const MSG_VAULT_GET_KNOWN_FINGERPRINTS = 'vault:get-known-fingerprints';
 // --- Vault responses (data.encryption → parent) ---
 export const MSG_VAULT_READY = 'vault:ready';
 export const MSG_VAULT_RESULT = 'vault:result';
+export const MSG_VAULT_EMERGENCY_PENDING = 'vault:emergency-pending';
 
 // --- BroadcastChannel for cross-tab notifications ---
 export const BROADCAST_CHANNEL_NAME = 'encryption-vault';

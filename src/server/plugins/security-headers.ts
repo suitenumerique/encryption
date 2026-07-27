@@ -14,6 +14,17 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     .join(' ');
 
   app.addHook('onSend', async (request, reply) => {
+    // Public assets are meant to be embedded cross-origin — the logo in a mail
+    // client, the fonts in a generated PDF — so they get a relaxed CORP and skip
+    // the iframe-only CSP. This is the ONLY exception; everything else below stays
+    // same-site / same-origin.
+    if (request.url.startsWith('/public-assets/')) {
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+
+      return;
+    }
+
     // `request.host` keeps the port; env.VAULT_HOST/UI_HOST are derived from
     // new URL(...).host, which also keeps it. Comparing against the port-stripped
     // `request.hostname` would never match on a deployment with an explicit port.

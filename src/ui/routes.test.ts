@@ -9,6 +9,10 @@ describe('interface routes', () => {
     expect(getRouteFromPath('/recipient-profile')).toBe('recipient-profile');
   });
 
+  it('maps /emergency-access to the emergency-access route', () => {
+    expect(getRouteFromPath('/emergency-access')).toBe('emergency-access');
+  });
+
   it('maps the other known interface paths', () => {
     expect(getRouteFromPath('/onboarding')).toBe('onboarding');
     expect(getRouteFromPath('/device-approval')).toBe('device-approval');
@@ -25,5 +29,9 @@ describe('interface routes', () => {
 
   it('exposes a navigable path for recipient-profile', () => {
     expect(PATH_FOR_ROUTE['recipient-profile']).toBe('/recipient-profile');
+  });
+
+  it('exposes a navigable path for emergency-access', () => {
+    expect(PATH_FOR_ROUTE['emergency-access']).toBe('/emergency-access');
   });
 });

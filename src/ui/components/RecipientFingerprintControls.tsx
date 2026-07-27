@@ -28,7 +28,7 @@ export function RecipientIdentity({ label }: { label: RecipientLabel }) {
           style={{
             fontSize: 12,
             margin: '2px 0 0',
-            color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+            color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
             wordBreak: 'break-all',
           }}
         >
@@ -48,8 +48,8 @@ export function RecipientFingerprint({ fingerprint }: { fingerprint: string }) {
         fontSize: 16,
         letterSpacing: '0.05em',
         userSelect: 'all',
-        padding: 'var(--c--globals--spacings--2, 8px)',
-        background: 'var(--c--contextuals--background--surface--primary, #fff)',
+        padding: 'var(--c--globals--spacings--t)',
+        background: 'var(--c--contextuals--background--surface--primary)',
         borderRadius: 4,
         marginBottom: 8,
         wordBreak: 'break-all',

@@ -1,0 +1,16 @@
+{
+  "brandPrimary": "#1167d4",
+  "onBrand": "#eaf1fb",
+  "brandPrimaryDark": "#5693e0",
+  "lightBody": "#f7f8f8",
+  "lightCard": "#ffffff",
+  "darkBody": "#1b1c1d",
+  "darkCard": "#252627",
+  "bodyTextLight": "#3a3b3e",
+  "bodyTextDark": "#d2d4d8",
+  "headingDark": "#ffffff",
+  "footerText": "#686b6f",
+  "dividerLight": "#e1e2e5",
+  "dividerDark": "#3a3b3e",
+  "fontFamily": "Inter, Helvetica, Arial, sans-serif"
+}

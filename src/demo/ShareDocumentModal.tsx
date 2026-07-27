@@ -73,7 +73,7 @@ function VerifyButton({ onClick }: { onClick: () => void }) {
         gap: 3,
         background: 'none',
         border: 'none',
-        color: 'var(--c--globals--colors--brand-400, #000091)',
+        color: 'var(--c--globals--colors--brand-400)',
         padding: '2px 4px',
         fontSize: 12,
         cursor: 'pointer',
@@ -106,14 +106,14 @@ function SearchUserRow({
       alwaysShowRight={!!right}
       right={right}
       left={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--c--globals--spacings--xs, 8px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--c--globals--spacings--xs)' }}>
           <div
             style={{
               width: 32,
               height: 32,
               borderRadius: '50%',
               flexShrink: 0,
-              background: user.encryption_public_key ? 'var(--c--globals--colors--brand-400, #000091)' : 'var(--c--globals--colors--gray-400, #999)',
+              background: user.encryption_public_key ? 'var(--c--globals--colors--brand-400)' : 'var(--c--globals--colors--gray-400)',
               color: 'white',
               display: 'flex',
               alignItems: 'center',
@@ -130,14 +130,14 @@ function SearchUserRow({
               .toUpperCase()}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--c--globals--spacings--3xs, 4px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--c--globals--spacings--3xs)' }}>
               <span style={{ fontSize: 14, fontWeight: 500 }}>{user.full_name || user.email}</span>
               {suffix && (
                 <span
                   style={{
                     fontSize: 11,
                     fontWeight: 600,
-                    color: suffix.color ?? 'var(--c--globals--colors--warning-600, #b34000)',
+                    color: suffix.color ?? 'var(--c--globals--colors--warning-600)',
                     ...(onSuffixClick ? { cursor: 'pointer', textDecoration: 'underline' } : {}),
                   }}
                   onClick={
@@ -156,9 +156,7 @@ function SearchUserRow({
               )}
             </div>
             {user.full_name && (
-              <span style={{ fontSize: 12, marginTop: -2, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
-                {user.email}
-              </span>
+              <span style={{ fontSize: 12, marginTop: -2, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{user.email}</span>
             )}
           </div>
         </div>
@@ -188,7 +186,7 @@ function InviteUserRow({
       right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {onViewProfile && user.encryption_public_key && <VerifyButton onClick={() => onViewProfile(user.id)} />}
-          <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400, #000091)', fontSize: 13 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400)', fontSize: 13 }}>
             Add{' '}
             <span className="material-icons" style={{ fontSize: 18 }}>
               add
@@ -234,7 +232,7 @@ function MemberRow({
             style={{
               padding: '4px 8px',
               borderRadius: 4,
-              border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
+              border: '1px solid var(--c--contextuals--border--surface--primary)',
               fontSize: 12,
             }}
           >
@@ -251,7 +249,7 @@ function MemberRow({
               background: 'none',
               border: 'none',
               cursor: 'pointer',
-              color: 'var(--c--globals--colors--error-500, #ce0500)',
+              color: 'var(--c--globals--colors--error-500)',
               fontSize: 18,
               padding: 0,
               lineHeight: 1,
@@ -303,7 +301,7 @@ function QuickSearchInviteInputSection({
 
   const getUserSuffix = useCallback((user: DemoUser): { text: string; color?: string } | undefined => {
     if (user.encryption_public_key && !user.binding_verified) {
-      return { text: 'INVALID IDENTITY SIGNATURE — DO NOT SHARE', color: 'var(--c--globals--colors--error-500, #ce0500)' };
+      return { text: 'INVALID IDENTITY SIGNATURE — DO NOT SHARE', color: 'var(--c--globals--colors--error-500)' };
     }
 
     if (!user.encryption_public_key) {
@@ -322,7 +320,7 @@ function QuickSearchInviteInputSection({
   );
 
   return (
-    <div style={{ padding: '0 var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px)' }}>
+    <div style={{ padding: '0 var(--c--globals--spacings--base) var(--c--globals--spacings--3xs)' }}>
       <QuickSearchGroup
         group={searchData}
         onSelect={handleSelect}
@@ -359,7 +357,7 @@ function QuickSearchGroupMember({
   if (accesses.length === 0) return null;
 
   return (
-    <div style={{ padding: '0 var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px)' }}>
+    <div style={{ padding: '0 var(--c--globals--spacings--base) var(--c--globals--spacings--3xs)' }}>
       <QuickSearchGroup
         group={membersData}
         renderElement={(access) => (
@@ -540,7 +538,7 @@ export function ShareDocumentModal({
         size={ModalSize.LARGE}
         title={<span style={{ fontSize: 16, fontWeight: 600 }}>Share &ldquo;{documentTitle}&rdquo;</span>}
       >
-        <div style={{ paddingBottom: 'var(--c--globals--spacings--base, 16px)' }}>
+        <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
           {/* Selected users bar — like Docs' DocShareAddMemberList */}
           {selectedUsers.length > 0 && (
             <div
@@ -548,8 +546,8 @@ export function ShareDocumentModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                padding: '8px var(--c--globals--spacings--base, 16px)',
-                borderBottom: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
+                padding: '8px var(--c--globals--spacings--base)',
+                borderBottom: '1px solid var(--c--contextuals--border--surface--primary)',
               }}
             >
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1 }}>
@@ -562,7 +560,7 @@ export function ShareDocumentModal({
                       gap: 4,
                       padding: '4px 10px',
                       borderRadius: 16,
-                      background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                      background: 'var(--c--contextuals--background--surface--secondary)',
                       fontSize: 13,
                     }}
                   >
@@ -577,7 +575,7 @@ export function ShareDocumentModal({
                           cursor: 'pointer',
                           padding: 0,
                           lineHeight: 1,
-                          color: 'var(--c--globals--colors--brand-400, #000091)',
+                          color: 'var(--c--globals--colors--brand-400)',
                           display: 'inline-flex',
                         }}
                       >
@@ -601,7 +599,7 @@ export function ShareDocumentModal({
                 style={{
                   padding: '6px 10px',
                   borderRadius: 4,
-                  border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
+                  border: '1px solid var(--c--contextuals--border--surface--primary)',
                   fontSize: 13,
                 }}
               >

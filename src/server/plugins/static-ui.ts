@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
+import { parseBrandFont } from '@encryption/src/shared/brand-font';
 
 /**
  * Build the runtime config script that is injected into the interface HTML.
@@ -18,6 +19,7 @@ function buildConfigScript(): string {
     vaultUrl: env.VAULT_URL,
     apiBaseUrl: '', // Same origin as the UI in production
     docsEnabled: env.DOCS_ENABLED,
+    brandFont: parseBrandFont(env.BRAND_FONT),
   };
 
   return `<script>Object.defineProperty(window,"__ENCRYPTION_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
@@ -43,7 +45,9 @@ export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
     interfaceHtml = rawHtml.replace('</head>', `${configScript}\n</head>`);
   }
 
-  // Serve static assets (JS, CSS, etc.) for the UI domain
+  // Serve static assets (JS, CSS, etc.) for the UI domain. The vendored Marianne
+  // .woff for the react-pdf Recovery Kit are emitted under assets/fonts at build,
+  // so they are served here too (see src/build/marianne-fonts.ts).
   app.register(fastifyStatic, {
     root: resolve(distDir, 'assets'),
     prefix: '/assets/',
@@ -62,7 +66,7 @@ export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
     const path = request.url.split('?')[0];
 
     // Skip asset and API requests
-    if (path.startsWith('/assets/') || path === '/robots.txt' || path.startsWith('/api/')) {
+    if (path.startsWith('/assets/') || path.startsWith('/public-assets/') || path === '/robots.txt' || path.startsWith('/api/')) {
       return;
     }
 

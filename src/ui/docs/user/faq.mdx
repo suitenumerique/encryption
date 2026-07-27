@@ -12,7 +12,7 @@ Your encryption keys are generated and stored **on your device only**. They neve
 
 ## How do I turn encryption on?
 
-1. Open any product in the Suite (Docs, Fichier, Drive, Visio)
+1. Open any product in LaSuite (Docs, Fichier, Drive, Visio)
 2. Click **Enable encryption** when the system offers it
 3. A key pair (public and private) is generated locally
 4. **Save your recovery phrase** — it is the only way to restore your keys if you change device or clear your data
@@ -85,3 +85,48 @@ If you delete your encryption keys without having backed them up:
 ## Can my employer or an administrator read my encrypted documents?
 
 **No.** End-to-end encryption means only key holders can access the content. Administrators only see metadata (title, creation date, list of collaborators), never the encrypted content.
+
+---
+
+## What is a trusted contact (emergency access)?
+
+A trusted contact is someone you designate to help you regain access to your encrypted data if you lose both your recovery phrase and all your devices. You designate them in one step, from the encryption settings, among users who have **already enabled encryption** (searched by exact email address: if the person has not enabled encryption yet, they must do so first).
+
+Before you can designate someone, you must **verify their safety fingerprint** through another channel (in person, by phone, or over a trusted channel). That verification is mandatory: it guarantees the arrangement targets the right person, and not a substituted key.
+
+<Alert severity="info">
+  The designated contact receives an invitation and has to accept it for the arrangement to become active. Either side can end it at any time: you can
+  revoke a contact, and a contact can withdraw.
+</Alert>
+
+---
+
+## What can my trusted contact do? Can they read my documents?
+
+**No, never.** Your contact cannot read your documents, not before, not during, and not after a recovery. Concretely:
+
+- If they request a recovery, you are **notified by email immediately** and an objection period starts: **7, 15 or 30 days** as you choose (or a custom duration, up to 90 days). During that period, **simply signing in to your account** is enough to refuse the request: no key and no phrase are needed.
+- If you do not refuse, your contact obtains an **emergency recovery phrase**, which they print like a recovery kit and must hand to you **in person**.
+- That phrase alone gives them **nothing**: the vault is only served to your own signed-in session. Without access to your account, your contact can neither read your documents nor reach your keys.
+
+<Alert severity="warning" title="Choose the delay carefully">
+  A short delay reacts faster, but you must be able to see the notification emails and object in time (mind long holidays).
+</Alert>
+
+---
+
+## What happens after a recovery by a trusted contact?
+
+As soon as you unlock your vault with the phrase your contact handed you, the interface immediately requires you to set a **new**, personal one. The phrase your contact saw is **destroyed** at that exact moment, and a new emergency arrangement is automatically put back in place with your contacts. Nobody, not even your contact, keeps a way into your vault.
+
+---
+
+## Does emergency access handle inheritance (death)?
+
+Only partly. Keys alone do not give access to documents: those stay stored in the products (Docs, Drive, and so on) behind their owner's account and its sharing rules. In case of death or incapacity, a step at the product level or a legal procedure (estate settlement, an administrator acting on the account) is still required. Emergency access is what makes that step **worthwhile**: without the keys, getting access to the encrypted files would only yield unreadable data.
+
+---
+
+## I am starting over: what happens to my trusted contacts?
+
+Your trusted contacts stay attached to your **previous** vault, which is kept disabled for the retention period. They can still help recover **that one** (and therefore the data it protects) until it is permanently purged: this is deliberate, so that a stolen session cannot destroy your recovery options by resetting your account. Your **new** vault starts with no contacts at all: you have to designate them again, with a fresh fingerprint verification.

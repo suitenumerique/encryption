@@ -110,18 +110,25 @@ async function seedEncryptionKey(options: {
   });
 }
 
+// A vault with its primary credential: unlock material lives on VaultCredential,
+// the keyring row is only the container.
 async function seedKeyring(options: { userId?: string; identityId: string; disabledAt?: Date | null }) {
   return testPrisma.vaultKeyring.create({
     data: {
       userId: options.userId ?? USER_ID,
       identityId: options.identityId,
-      wrappedVrk: 'd3JhcHBlZA==',
-      authPublicKey: kb('auth-pub'),
-      authPubSig: kb('auth-sig'),
-      kdfOps: 3,
-      kdfMem: 67108864,
-      lang: 'english',
       disabledAt: options.disabledAt ?? null,
+      credentials: {
+        create: {
+          type: 'primary',
+          wrappedVrk: 'd3JhcHBlZA==',
+          authPublicKey: kb('auth-pub'),
+          authPubSig: kb('auth-sig'),
+          kdfOps: 3,
+          kdfMem: 67108864,
+          lang: 'english',
+        },
+      },
     },
   });
 }

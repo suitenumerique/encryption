@@ -7,21 +7,19 @@ import { formatFingerprint } from '@encryption/src/crypto/fingerprint';
 import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import { API_ERROR_CONCURRENT_REGISTRATION, API_ERROR_KEY_VERSION_CONFLICT } from '@encryption/src/shared/error-codes';
+import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultError, VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import type { UserInfo } from '@encryption/src/ui/App';
-import { ApiError, apiDefaults, authHeaders } from '@encryption/src/ui/api/client';
-import {
-  deleteApiPublicKeys,
-  getApiPublicKeys,
-  getApiPublicKeysNext,
-  postApiPublicKeysRegisterInit,
-  postApiVault,
-} from '@encryption/src/ui/api/generated/sdk.gen';
+import { ApiError } from '@encryption/src/ui/api/client';
+import { deletePublicKeys, fetchNextKeyVersion, fetchPublicKeys, registerKeyInit } from '@encryption/src/ui/api/public-keys-client';
+import { createVault } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { UntrustedRearmError } from '@encryption/src/ui/components/emergency-access-logic';
+import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
@@ -35,7 +33,10 @@ type OnboardingStep =
   | 'last-resort'
   | 'generating'
   | 'restore'
-  | 'backup';
+  | 'backup'
+  | 'done'
+  | 'forced-rotation'
+  | 'forced-rotation-done';
 
 /**
  * "Start from scratch" confirmation step.
@@ -66,20 +67,20 @@ function LastResortStep({
 
       <Alert type={VariantType.ERROR}>{t('onboarding.last_resort_warning')}</Alert>
 
-      <ul style={{ fontSize: 13, lineHeight: 1.6, margin: 'var(--c--globals--spacings--3, 12px) 0', paddingLeft: 20 }}>
+      <ul style={{ fontSize: 13, lineHeight: 1.6, margin: 'var(--c--globals--spacings--sm) 0', paddingLeft: 20 }}>
         <li>{t('onboarding.last_resort_consequence_1')}</li>
         <li>{t('onboarding.last_resort_consequence_2')}</li>
         <li>{t('onboarding.last_resort_consequence_3')}</li>
       </ul>
 
       {hasFingerprint && (
-        <div style={{ marginTop: 12, borderTop: '1px solid var(--c--contextuals--border--surface--primary, #ddd)', paddingTop: 12 }}>
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--c--contextuals--border--surface--primary)', paddingTop: 12 }}>
           <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('onboarding.confirm_fingerprint_to_delete')}</p>
           <div
             style={{
               fontSize: 14,
-              padding: 'var(--c--globals--spacings--2, 8px)',
-              background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+              padding: 'var(--c--globals--spacings--t)',
+              background: 'var(--c--contextuals--background--surface--secondary)',
               borderRadius: 4,
               marginBottom: 8,
             }}
@@ -97,9 +98,9 @@ function LastResortStep({
               fontFamily: 'monospace',
               fontSize: 14,
               letterSpacing: '0.05em',
-              padding: 'var(--c--globals--spacings--2, 8px)',
+              padding: 'var(--c--globals--spacings--t)',
               borderRadius: 4,
-              border: `1px solid ${fingerprintMatch ? 'var(--c--globals--colors--success-500, #0d6635)' : 'var(--c--contextuals--border--surface--primary, #e5e5e5)'}`,
+              border: `1px solid ${fingerprintMatch ? 'var(--c--globals--colors--success-500)' : 'var(--c--contextuals--border--surface--primary)'}`,
             }}
           />
         </div>
@@ -128,6 +129,8 @@ interface ModalEncryptionOnboardingProps {
   onClose: () => void;
   /** Navigate to the device-approval flow to receive keys from another device. */
   onUseAnotherDevice?: () => void;
+  /** Open the emergency-access screen (adoption nudge on the final success step). */
+  onOpenEmergencyAccess?: () => void;
   /**
    * Triggered when the user clicks "Reconnect" after a session-expired
    * error. Wire to `oidcAuth.requestAuth` — opens a new tab to /login.
@@ -175,6 +178,7 @@ export function ModalEncryptionOnboarding({
   onSuccess,
   onClose,
   onUseAnotherDevice,
+  onOpenEmergencyAccess,
   onReconnect,
   isAuthenticating = false,
   currentAccessToken = null,
@@ -192,6 +196,7 @@ export function ModalEncryptionOnboarding({
     restoreFromPhrase,
     reactivateVault,
     syncVault,
+    changeRecoveryPhrase,
   } = useEncryptionContext();
 
   // With an active server key -> existing-key-choice. Otherwise DON'T show the
@@ -215,6 +220,17 @@ export function ModalEncryptionOnboarding({
   const [reactivatePrompt, setReactivatePrompt] = useState<{ date: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { sessionExpired, markSessionExpired, clearSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  // MANDATORY phrase rotation after an emergency unlock: the phrase just used
+  // was an escrowed one the trusted contact has seen, so it is burned by
+  // design. The vault is already unlocked/adopted at this point; the new
+  // keyring is held locally and committed (with the required emergency
+  // re-arms) only once the user confirms the new phrase is saved.
+  const [forcedRotation, setForcedRotation] = useState<{ recoveryPhrase: string; keyring: VaultKeyringWire; publicKey: string } | null>(null);
+  const [rotationBusy, setRotationBusy] = useState(false);
+  const [rotationError, setRotationError] = useState<string | null>(null);
+  const [rotationBlocked, setRotationBlocked] = useState<Array<{ id: string; email: string }> | null>(null);
+  const { commitKeyring, revokeContacts } = useKeyringCommit(getToken);
+
   // True when the user has just performed the "delete old key" flow.
   // Used to (a) skip the existing-key-choice auto-redirect below since
   // `hasExistingBackendKey` stays stale-true until the parent refetches,
@@ -256,16 +272,16 @@ export function ModalEncryptionOnboarding({
     historyChecked.current = true;
     (async () => {
       try {
-        const active = await getApiPublicKeys({ ...apiDefaults, query: { user_ids: [userId] } });
+        const active = await fetchPublicKeys({ user_ids: [userId] });
 
-        if (active.data.keys.length > 0) {
+        if (active.keys.length > 0) {
           setStep('existing-key-choice');
 
           return;
         }
 
-        const next = await withFreshToken(getToken, (token) => getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) }));
-        setStep(next.data.next_version > 1 ? 'previous-identity' : 'explanation');
+        const next = await withFreshToken(getToken, (token) => fetchNextKeyVersion(token));
+        setStep(next.next_version > 1 ? 'previous-identity' : 'explanation');
       } catch {
         setStep('explanation');
       }
@@ -284,7 +300,7 @@ export function ModalEncryptionOnboarding({
 
     return withFreshToken(getToken, async (token) => {
       // Count disabled rows too, so a re-onboard after a reset seals `max + 1`.
-      const { data } = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
+      const data = await fetchNextKeyVersion(token);
       const bundle = await prepareOnboarding({ lang, version: data.next_version, generation: data.next_generation });
 
       return { bundle, version: data.next_version };
@@ -324,31 +340,23 @@ export function ModalEncryptionOnboarding({
           await withFreshToken(getToken, async (token) => {
             const reg = await signKeyRegistration(current.version, Date.now());
 
-            const init = await postApiPublicKeysRegisterInit({
-              ...apiDefaults,
-              headers: authHeaders(token),
-              body: {
-                user_id: userId,
-                encryption_public_key: reg.encryptionPublicKey,
-                signature_public_key: reg.signaturePublicKey,
-                version: reg.version,
-                created_at_millis: reg.createdAtMillis,
-                key_binding_signature: reg.keyBindingSignature,
-              },
+            const init = await registerKeyInit(token, {
+              user_id: userId,
+              encryption_public_key: reg.encryptionPublicKey,
+              signature_public_key: reg.signaturePublicKey,
+              version: reg.version,
+              created_at_millis: reg.createdAtMillis,
+              key_binding_signature: reg.keyBindingSignature,
             });
-            const challengeId = init.data.challenge_id;
-            const { response, challengeSignature } = await respondToKeyChallenge(challengeId, init.data.ciphertext);
+            const challengeId = init.challenge_id;
+            const { response, challengeSignature } = await respondToKeyChallenge(challengeId, init.ciphertext);
 
-            await postApiVault({
-              ...apiDefaults,
-              headers: authHeaders(token),
-              body: {
-                registration: { challenge_id: challengeId, response, challenge_signature: challengeSignature },
-                keyring: current.bundle.keyring,
-                items: current.bundle.items,
-                manifest: current.bundle.manifest,
-                manifest_sig: current.bundle.manifestSig,
-              },
+            await createVault(token, {
+              registration: { challenge_id: challengeId, response, challenge_signature: challengeSignature },
+              keyring: current.bundle.keyring,
+              items: current.bundle.items,
+              manifest: current.bundle.manifest,
+              manifest_sig: current.bundle.manifestSig,
             });
 
             // Pull the just-bootstrapped vault so the local cache revision matches the
@@ -367,7 +375,7 @@ export function ModalEncryptionOnboarding({
           // Re-seal at the now-current version, keeping the same phrase/keyring.
           const lang = mnemonicLanguageForLocale(i18n.language);
           const refreshed = await withFreshToken(getToken, async (token) => {
-            const { data } = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
+            const data = await fetchNextKeyVersion(token);
             const bundle = await prepareOnboarding({
               lang,
               version: data.next_version,
@@ -384,10 +392,12 @@ export function ModalEncryptionOnboarding({
       }
 
       // Registration + first sync succeeded: the vault is already committed on
-      // disk (has-keys is now true), nothing more to persist.
+      // disk (has-keys is now true), nothing more to persist. A short success
+      // screen follows (with the trusted-contact suggestion) instead of an
+      // immediate close.
       const { publicKey } = await getPublicKey();
       onSuccess?.(publicKey);
-      onClose();
+      setStep('done');
     } catch (err) {
       // The server round-trip failed after we committed locally: roll the vault
       // back out of IndexedDB so has-keys is false again (the user is not
@@ -422,7 +432,6 @@ export function ModalEncryptionOnboarding({
     prepareOnboarding,
     i18n.language,
     onSuccess,
-    onClose,
     markSessionExpired,
     clearSessionExpired,
     t,
@@ -501,7 +510,7 @@ export function ModalEncryptionOnboarding({
       // encryption modal to create new keys. `withFreshToken` turns a
       // failed OIDC refresh into a recoverable `SessionExpiredError`
       // surfaced via the Reconnect UI.
-      await withFreshToken(getToken, (token) => deleteApiPublicKeys({ ...apiDefaults, headers: authHeaders(token) }));
+      await withFreshToken(getToken, (token) => deletePublicKeys(token));
       setHasJustReset(true);
       setStep('explanation');
       return;
@@ -516,6 +525,22 @@ export function ModalEncryptionOnboarding({
     }
   }, [getToken, markSessionExpired, clearSessionExpired]);
 
+  // Enter the mandatory post-emergency-unlock rotation: derive a fresh phrase +
+  // keyring locally (nothing sent yet) and take over the whole view. The user
+  // cannot skip it: the contact has seen the phrase that just unlocked the vault.
+  const startForcedRotation = useCallback(
+    async (publicKey: string) => {
+      const lang = mnemonicLanguageForLocale(i18n.language);
+      const { recoveryPhrase, keyring } = await changeRecoveryPhrase(lang);
+
+      setForcedRotation({ recoveryPhrase, keyring, publicKey });
+      setRotationError(null);
+      setRotationBlocked(null);
+      setStep('forced-rotation');
+    },
+    [changeRecoveryPhrase, i18n.language]
+  );
+
   const handleRestoreKeys = useCallback(async () => {
     if (!restoreComplete) return;
 
@@ -529,14 +554,25 @@ export function ModalEncryptionOnboarding({
       // Cold-unlock the server vault with the recovery phrase: the phrase both
       // proves possession (PoP gate) and unwraps the VRK. No re-registration —
       // the keys were registered at the original onboarding.
-      const { publicKey, isActiveVault, vaultCreatedAtMillis } = await withFreshToken(getToken, (token) => restoreFromPhrase(phrase, token));
+      const { publicKey, isActiveVault, vaultCreatedAtMillis, emergencyUnlock } = await withFreshToken(getToken, (token) =>
+        restoreFromPhrase(phrase, token)
+      );
 
       // If the phrase resolved to a DORMANT (superseded) vault, nothing has been
       // stored locally yet: bringing it back demotes the current vault, so we ask
       // first (in-app modal), then reactivation is what commits and caches. The
-      // demoted vault stays recoverable with its own phrase.
+      // demoted vault stays recoverable with its own phrase. When the phrase was
+      // an escrowed one, the forced rotation runs AFTER the confirmed reactivation.
       if (!isActiveVault) {
         setReactivatePrompt({ date: new Intl.DateTimeFormat(i18n.language).format(new Date(vaultCreatedAtMillis)) });
+
+        return;
+      }
+
+      // Escrowed (emergency) phrase: the trusted contact has seen it, so it must
+      // be replaced immediately. Success is reported only once the rotation lands.
+      if (emergencyUnlock) {
+        await startForcedRotation(publicKey);
 
         return;
       }
@@ -549,7 +585,19 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [restoreInput, restoreComplete, restoreFromPhrase, getToken, onSuccess, onClose, t, i18n.language, markSessionExpired, clearSessionExpired]);
+  }, [
+    restoreInput,
+    restoreComplete,
+    restoreFromPhrase,
+    startForcedRotation,
+    getToken,
+    onSuccess,
+    onClose,
+    t,
+    i18n.language,
+    markSessionExpired,
+    clearSessionExpired,
+  ]);
 
   // Confirmed reactivation of the dormant vault the phrase unlocked.
   const handleConfirmReactivate = useCallback(async () => {
@@ -559,6 +607,15 @@ export function ModalEncryptionOnboarding({
     try {
       const reactivated = await withFreshToken(getToken, (token) => reactivateVault(restoreInput.trim(), token));
       setReactivatePrompt(null);
+
+      // Dormant-vault emergency unlock: reactivation first (just confirmed),
+      // THEN the mandatory rotation of the now-active keyring.
+      if (reactivated.emergencyUnlock) {
+        await startForcedRotation(reactivated.publicKey);
+
+        return;
+      }
+
       onSuccess?.(reactivated.publicKey);
       onClose();
     } catch (err) {
@@ -567,13 +624,62 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [getToken, reactivateVault, restoreInput, onSuccess, onClose, markSessionExpired, t]);
+  }, [getToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, onClose, markSessionExpired, t]);
 
-  // Warn on tab reload/close while the backup step shows an un-confirmed phrase.
-  useUnsavedPhraseGuard(step === 'backup' && !isCommitting);
+  // Commit the rotated keyring: the moment the escrowed phrase (and the old
+  // primary one) dies. The shared flow burns + re-arms every granted
+  // relationship on the same PUT; the server rejects the write without them.
+  const handleConfirmForcedRotation = useCallback(async () => {
+    if (!forcedRotation) return;
+
+    setRotationBusy(true);
+    setRotationError(null);
+    setRotationBlocked(null);
+    clearSessionExpired();
+
+    try {
+      await commitKeyring(forcedRotation.keyring, mnemonicLanguageForLocale(i18n.language));
+      onSuccess?.(forcedRotation.publicKey);
+      setForcedRotation(null);
+      setStep('forced-rotation-done');
+    } catch (err) {
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else if (err instanceof UntrustedRearmError) setRotationBlocked(err.contacts);
+      else setRotationError((err as Error).message);
+    } finally {
+      setRotationBusy(false);
+    }
+  }, [forcedRotation, commitKeyring, i18n.language, onSuccess, markSessionExpired, clearSessionExpired]);
+
+  // A granted contact is no longer trusted, so their mandatory re-arm cannot be
+  // built: revoke exactly those relationships (user-approved) and retry.
+  const handleRotationRevokeAndRetry = useCallback(async () => {
+    if (!rotationBlocked) return;
+
+    setRotationBusy(true);
+    setRotationError(null);
+
+    try {
+      await revokeContacts(rotationBlocked.map((contact) => contact.id));
+      setRotationBlocked(null);
+    } catch (err) {
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setRotationError((err as Error).message);
+      setRotationBusy(false);
+
+      return;
+    }
+
+    setRotationBusy(false);
+    await handleConfirmForcedRotation();
+  }, [rotationBlocked, revokeContacts, markSessionExpired, handleConfirmForcedRotation]);
+
+  // Warn on tab reload/close while a backup step shows an un-confirmed phrase
+  // (initial onboarding backup, or the forced post-emergency rotation).
+  useUnsavedPhraseGuard((step === 'backup' && !isCommitting) || (step === 'forced-rotation' && !rotationBusy));
 
   return (
-    <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
+    <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
       {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
       {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
 
@@ -610,7 +716,7 @@ export function ModalEncryptionOnboarding({
           )}
           <h2>{t('onboarding.title_enable')}</h2>
           {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
               {userInfo.name}
               {userInfo.email ? ` (${userInfo.email})` : ''}
             </p>
@@ -633,7 +739,7 @@ export function ModalEncryptionOnboarding({
         <>
           <h2>{t('onboarding.title_existing')}</h2>
           {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
               {userInfo.name}
               {userInfo.email ? ` (${userInfo.email})` : ''}
             </p>
@@ -644,18 +750,18 @@ export function ModalEncryptionOnboarding({
           {existingKeyFingerprint && (
             <div
               style={{
-                padding: 'var(--c--globals--spacings--3, 12px)',
-                background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                padding: 'var(--c--globals--spacings--sm)',
+                background: 'var(--c--contextuals--background--surface--secondary)',
                 borderRadius: 4,
-                margin: 'var(--c--globals--spacings--3, 12px) 0',
+                margin: 'var(--c--globals--spacings--sm) 0',
               }}
             >
               <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 4px' }}>{t('settings.fingerprint_label')}</p>
               <div
                 style={{
                   fontSize: 16,
-                  padding: 'var(--c--globals--spacings--2, 8px)',
-                  background: 'var(--c--contextuals--background--surface--primary, #fff)',
+                  padding: 'var(--c--globals--spacings--t)',
+                  background: 'var(--c--contextuals--background--surface--primary)',
                   borderRadius: 4,
                 }}
               >
@@ -664,7 +770,7 @@ export function ModalEncryptionOnboarding({
             </div>
           )}
 
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
             {t('onboarding.existing_recovery_hint')}
           </p>
 
@@ -691,13 +797,13 @@ export function ModalEncryptionOnboarding({
         <>
           <h2>{t('onboarding.title_previous_identity')}</h2>
           {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
               {userInfo.name}
               {userInfo.email ? ` (${userInfo.email})` : ''}
             </p>
           )}
           <Alert type={VariantType.INFO}>{t('onboarding.previous_identity_detected')}</Alert>
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
             {t('onboarding.previous_identity_hint')}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
@@ -786,6 +892,64 @@ export function ModalEncryptionOnboarding({
           />
         </>
       )}
+
+      {/* Success screen after the kit backup is confirmed, with the one-time
+          trusted-contact suggestion (our recommended fallback if the kit is lost). */}
+      {step === 'done' && (
+        <>
+          <h2>{t('emergency.onboarding_done_title')}</h2>
+          <Alert type={VariantType.SUCCESS}>{t('emergency.onboarding_done_text')}</Alert>
+          <p style={{ fontSize: 13, margin: '16px 0 0' }}>{t('emergency.nudge_text')}</p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
+            <Button variant="secondary" onClick={onClose}>
+              {t('settings.close')}
+            </Button>
+            {onOpenEmergencyAccess && <Button onClick={onOpenEmergencyAccess}>{t('emergency.nudge_button')}</Button>}
+          </div>
+        </>
+      )}
+
+      {/* Mandatory rotation after an emergency unlock: no skip, no cancel. */}
+      {step === 'forced-rotation' && forcedRotation && (
+        <>
+          <h2>{t('emergency.rotation_title')}</h2>
+          <Alert type={VariantType.WARNING}>{t('emergency.rotation_explanation')}</Alert>
+          <p style={{ fontSize: 13, margin: '8px 0 0', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
+            {t('emergency.rotation_rearm_note')}
+          </p>
+          {rotationBlocked && (
+            <div style={{ marginTop: 8 }}>
+              <Alert type={VariantType.WARNING}>
+                {t('emergency.rearm_blocked', { emails: rotationBlocked.map((contact) => contact.email).join(', ') })}
+              </Alert>
+              <div style={{ marginTop: 8 }}>
+                <Button size="small" color="error" onClick={handleRotationRevokeAndRetry} disabled={rotationBusy}>
+                  {t('emergency.rearm_revoke_retry')}
+                </Button>
+              </div>
+            </div>
+          )}
+          <RecoveryKitBackup
+            passphrase={forcedRotation.recoveryPhrase}
+            parentOrigin={parentOrigin}
+            onConfirm={handleConfirmForcedRotation}
+            confirmLabel={t('settings.change_phrase_confirm_saved')}
+            busyLabel={t('settings.change_phrase_applying')}
+            isBusy={rotationBusy}
+            error={rotationError}
+          />
+        </>
+      )}
+
+      {step === 'forced-rotation-done' && (
+        <>
+          <h2>{t('emergency.rotation_title')}</h2>
+          <Alert type={VariantType.SUCCESS}>{t('emergency.rotation_done')}</Alert>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <Button onClick={onClose}>{t('settings.close')}</Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -798,7 +962,7 @@ export function ModalEncryptionOnboarding({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function SecurityNotice({ t }: { t: TFunction }) {
   return (
-    <div style={{ marginTop: 'var(--c--globals--spacings--3, 12px)', marginBottom: 'var(--c--globals--spacings--3, 12px)' }}>
+    <div style={{ marginTop: 'var(--c--globals--spacings--sm)', marginBottom: 'var(--c--globals--spacings--sm)' }}>
       <Alert type={VariantType.INFO}>{t('onboarding.extensions_warning')}</Alert>
     </div>
   );

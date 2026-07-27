@@ -3,10 +3,12 @@ import { z } from 'zod';
 import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
   MSG_VAULT_APPROVE_DEVICE,
+  MSG_VAULT_BUILD_EMERGENCY_REARMS,
   MSG_VAULT_CHANGE_RECOVERY_PHRASE,
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_COMMIT_STAGED,
   MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
+  MSG_VAULT_CREATE_EMERGENCY_ESCROW,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_DESTROY_KEYS,
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
@@ -24,6 +26,7 @@ import {
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
+  MSG_VAULT_REVEAL_EMERGENCY_PHRASE,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
@@ -31,8 +34,10 @@ import {
   MSG_VAULT_START_DEVICE_APPROVAL,
   MSG_VAULT_SYNC,
   MSG_VAULT_UNCOMMIT_STAGED,
+  MSG_VAULT_VERIFY_ESCROWS,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
+import { mnemonicLanguageSchema } from '@encryption/src/shared/schemas/mnemonic-language';
 
 // ============================================================================
 // Operations available to ALL callers (suite products via data.encryption)
@@ -130,22 +135,26 @@ export const VaultCheckFingerprintsRequest = z.object({
   }),
 });
 
+// A trust decision names its target EITHER by internal user id (`userId`, held by
+// the flows whose directory lookups already yield internal ids) OR by OIDC sub
+// (`sub`, the boundary form the verify/profile screens hold, resolved through the
+// directory). Exactly one form, never neither: modelled as a union so the schema
+// keeps describing what the dispatcher actually accepts.
+const fingerprintTargetSchema = z.union([
+  z.object({ userId: z.string(), fingerprint: z.string() }),
+  z.object({ sub: z.string(), fingerprint: z.string() }),
+]);
+
 export const VaultAcceptFingerprintRequest = z.object({
   type: z.literal(MSG_VAULT_ACCEPT_FINGERPRINT),
   requestId: z.string(),
-  payload: z.object({
-    userId: z.string(),
-    fingerprint: z.string(),
-  }),
+  payload: fingerprintTargetSchema,
 });
 
 export const VaultRefuseFingerprintRequest = z.object({
   type: z.literal(MSG_VAULT_REFUSE_FINGERPRINT),
   requestId: z.string(),
-  payload: z.object({
-    userId: z.string(),
-    fingerprint: z.string(),
-  }),
+  payload: fingerprintTargetSchema,
 });
 
 export const VaultGetKnownFingerprintsRequest = z.object({
@@ -216,7 +225,7 @@ export const VaultPrepareOnboardingRequest = z.object({
   requestId: z.string(),
   payload: z
     .object({
-      lang: z.enum(['french', 'english']).optional(),
+      lang: mnemonicLanguageSchema.optional(),
       version: z.number().int().positive().optional(),
       generation: z.number().int().positive().optional(),
       // Reproduce the same keyring from an already-shown phrase, so a commit
@@ -231,7 +240,7 @@ export const VaultChangeRecoveryPhraseRequest = z.object({
   requestId: z.string(),
   payload: z
     .object({
-      lang: z.enum(['french', 'english']).optional(),
+      lang: mnemonicLanguageSchema.optional(),
     })
     .optional(),
 });
@@ -289,6 +298,68 @@ export const VaultApproveDeviceRequest = z.object({
   }),
 });
 
+// --- Emergency access (trusted contacts), all privileged ---
+
+export const VaultCreateEmergencyEscrowRequest = z.object({
+  type: z.literal(MSG_VAULT_CREATE_EMERGENCY_ESCROW),
+  requestId: z.string(),
+  payload: z.object({
+    granteeUserId: z.string().uuid(),
+    waitTimeDays: z.number().int().min(1).max(90),
+    lang: z.enum(['french', 'english']).optional(),
+  }),
+});
+
+export const VaultBuildEmergencyRearmsRequest = z.object({
+  type: z.literal(MSG_VAULT_BUILD_EMERGENCY_REARMS),
+  requestId: z.string(),
+  payload: z.object({
+    rearms: z.array(
+      z.object({
+        emergencyAccessId: z.string().uuid(),
+        granteeUserId: z.string().uuid(),
+        waitTimeDays: z.number().int().min(1).max(90),
+      })
+    ),
+    lang: z.enum(['french', 'english']).optional(),
+  }),
+});
+
+const EmergencyEscrowWirePayload = z.object({
+  grantee_identity_public_key: z.string(),
+  grantee_key_version: z.number().int().positive(),
+  wrapped_phrase_for_grantee: z.string(),
+  escrow_signature: z.string(),
+  escrow_created_at_millis: z.number().int().nonnegative(),
+  credential_auth_public_key_hash: z.string(),
+});
+
+export const VaultVerifyEscrowsRequest = z.object({
+  type: z.literal(MSG_VAULT_VERIFY_ESCROWS),
+  requestId: z.string(),
+  payload: z.object({
+    contacts: z.array(
+      z.object({
+        id: z.string().uuid(),
+        grantee_user_id: z.string().uuid(),
+        wait_time_days: z.number().int(),
+        escrow: EmergencyEscrowWirePayload,
+      })
+    ),
+  }),
+});
+
+export const VaultRevealEmergencyPhraseRequest = z.object({
+  type: z.literal(MSG_VAULT_REVEAL_EMERGENCY_PHRASE),
+  requestId: z.string(),
+  payload: z.object({
+    grantorUserId: z.string().uuid(),
+    lang: mnemonicLanguageSchema,
+    waitTimeDays: z.number().int(),
+    escrow: EmergencyEscrowWirePayload,
+  }),
+});
+
 /** Privileged operations only encryption can call */
 export const VaultPrivilegedRequestSchema = z.discriminatedUnion('type', [
   VaultGenerateKeysRequest,
@@ -307,6 +378,10 @@ export const VaultPrivilegedRequestSchema = z.discriminatedUnion('type', [
   VaultApproveDeviceRequest,
   VaultAcceptFingerprintRequest,
   VaultRefuseFingerprintRequest,
+  VaultCreateEmergencyEscrowRequest,
+  VaultBuildEmergencyRearmsRequest,
+  VaultVerifyEscrowsRequest,
+  VaultRevealEmergencyPhraseRequest,
 ]);
 
 // ============================================================================
@@ -343,6 +418,10 @@ export const VaultRequestSchema = z.discriminatedUnion('type', [
   VaultStartDeviceApprovalRequest,
   VaultCompleteDeviceApprovalRequest,
   VaultApproveDeviceRequest,
+  VaultCreateEmergencyEscrowRequest,
+  VaultBuildEmergencyRearmsRequest,
+  VaultVerifyEscrowsRequest,
+  VaultRevealEmergencyPhraseRequest,
 ]);
 
 export type VaultRequest = z.infer<typeof VaultRequestSchema>;
@@ -367,6 +446,10 @@ export const PRIVILEGED_OPERATIONS = new Set<string>([
   MSG_VAULT_APPROVE_DEVICE,
   MSG_VAULT_ACCEPT_FINGERPRINT,
   MSG_VAULT_REFUSE_FINGERPRINT,
+  MSG_VAULT_CREATE_EMERGENCY_ESCROW,
+  MSG_VAULT_BUILD_EMERGENCY_REARMS,
+  MSG_VAULT_VERIFY_ESCROWS,
+  MSG_VAULT_REVEAL_EMERGENCY_PHRASE,
 ]);
 
 // ============================================================================

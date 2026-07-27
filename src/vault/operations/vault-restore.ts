@@ -33,6 +33,7 @@ const API_BASE = '';
 interface VaultContentWire {
   vault_id: string;
   wrapped_vrk: string;
+  credential_type: 'primary' | 'emergency';
   revision: number;
   manifest: string | null;
   manifest_sig: string | null;
@@ -161,7 +162,7 @@ async function openAndCacheVault(
 export async function handleRestoreFromPhrase(
   userId: string,
   payload: { recoveryPhrase: string; token: string }
-): Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number }> {
+): Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }> {
   const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.token, '/api/vault/fetch');
   const vault = body as VaultFetchWire;
 
@@ -171,12 +172,24 @@ export async function handleRestoreFromPhrase(
   // vault (the successful fetch already proved the phrase), changing nothing
   // locally so a cancel leaves this device exactly as it was.
   if (!vault.is_active) {
-    return { publicKey: '', signaturePublicKey: '', isActiveVault: false, vaultCreatedAtMillis: vault.created_at_millis };
+    return {
+      publicKey: '',
+      signaturePublicKey: '',
+      isActiveVault: false,
+      vaultCreatedAtMillis: vault.created_at_millis,
+      emergencyUnlock: vault.credential_type === 'emergency',
+    };
   }
 
   const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, vault);
 
-  return { publicKey, signaturePublicKey, isActiveVault: true, vaultCreatedAtMillis: vault.created_at_millis };
+  return {
+    publicKey,
+    signaturePublicKey,
+    isActiveVault: true,
+    vaultCreatedAtMillis: vault.created_at_millis,
+    emergencyUnlock: vault.credential_type === 'emergency',
+  };
 }
 
 /**
@@ -204,6 +217,7 @@ export async function handleReactivateVault(
   signaturePublicKey: string;
   disabledVaultId: string | null;
   disabledVaultCreatedAtMillis: number | null;
+  emergencyUnlock: boolean;
 }> {
   const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.token, '/api/vault/reactivate');
   const data = body as VaultContentWire & {
@@ -220,5 +234,6 @@ export async function handleReactivateVault(
     signaturePublicKey,
     disabledVaultId: data.disabled_vault_id ?? null,
     disabledVaultCreatedAtMillis: data.disabled_vault_created_at_millis ?? null,
+    emergencyUnlock: data.credential_type === 'emergency',
   };
 }

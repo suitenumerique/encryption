@@ -19,10 +19,10 @@ services:
       - encryption
     restart: unless-stopped
     healthcheck:
-      test: ['CMD-SHELL', 'psql -h localhost -U $${POSTGRES_USER} -c select 1 -d $${POSTGRES_DB}']
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 1s
       timeout: 3s
-      retries: 5
+      retries: 10
 
   keycloak-db:
     container_name: encryption_keycloak_db_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
@@ -38,6 +38,11 @@ services:
     networks:
       - encryption
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 1s
+      timeout: 3s
+      retries: 10
 
   keycloak:
     container_name: encryption_keycloak_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
@@ -55,6 +60,7 @@ services:
       KC_HTTP_ENABLED: 'true'
       KC_HOSTNAME: localhost
       KC_HOSTNAME_PORT: 7203
+      KC_HEALTH_ENABLED: 'true'
     volumes:
       - ./config/development/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     ports:
@@ -62,8 +68,34 @@ services:
     networks:
       - encryption
     depends_on:
-      - keycloak-db
+      keycloak-db:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'exec 3<>/dev/tcp/localhost/9000; echo -e "GET /health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3; grep "HTTP/1.1 200 OK" <&3',
+        ]
+      start_period: 30s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  maildev:
+    container_name: encryption_maildev_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
+    image: maildev/maildev:2.2.1
+    ports:
+      - '7207:1080'
+      - '7208:1025'
+    networks:
+      - encryption
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', '/scripts/docker-healthcheck.sh']
+      interval: 1s
+      timeout: 3s
+      retries: 5
 
 networks:
   encryption:

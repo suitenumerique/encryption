@@ -5,6 +5,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { prisma } from '@encryption/src/prisma/client';
 import { env } from '@encryption/src/server/env';
 import { API_ERROR_EMAIL_CLAIM_REQUIRED, API_ERROR_FORBIDDEN, API_ERROR_UNAUTHORIZED } from '@encryption/src/shared/error-codes';
+import type { Locale } from '@encryption/src/shared/locale';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -63,6 +64,18 @@ function extractEmails(claims: Record<string, unknown>): UsableEmails {
   };
 }
 
+// Map the OIDC `locale` claim (BCP47, e.g. "fr-FR") to a supported UI language.
+// null when the claim is absent or unsupported, so a token that omits it never
+// overwrites a previously stored preference.
+function extractLanguage(claims: Record<string, unknown>): Locale | null {
+  const raw = typeof claims.locale === 'string' ? claims.locale.toLowerCase() : '';
+
+  if (raw.startsWith('fr')) return 'fr';
+  if (raw.startsWith('en')) return 'en';
+
+  return null;
+}
+
 // Discovered lazily from the issuer's metadata, cached only on success so a
 // transient discovery failure is retried the next time an email is needed.
 let userinfoEndpoint: string | null | undefined;
@@ -88,8 +101,10 @@ async function discoverUserinfoEndpoint(): Promise<string | null> {
 // response (application/jwt), so both shapes are handled; the signed one is
 // verified against the same JWKS and issuer as the access token. Any failure
 // resolves to "no email" and surfaces as email_claim_required, never a 500.
-async function fetchUserinfoEmails(accessToken: string): Promise<UsableEmails> {
-  const none: UsableEmails = { email: null, identificationEmail: null };
+type UserinfoResult = UsableEmails & { language: Locale | null };
+
+async function fetchUserinfo(accessToken: string): Promise<UserinfoResult> {
+  const none: UserinfoResult = { email: null, identificationEmail: null, language: null };
 
   try {
     const endpoint = await discoverUserinfoEndpoint();
@@ -98,13 +113,11 @@ async function fetchUserinfoEmails(accessToken: string): Promise<UsableEmails> {
     const response = await fetch(endpoint, { headers: { authorization: `Bearer ${accessToken}` } });
     if (!response.ok) return none;
 
-    if ((response.headers.get('content-type') ?? '').includes('application/jwt')) {
-      const { payload } = await jwtVerify(await response.text(), getJWKS(), { issuer: env.OIDC_ISSUER });
+    const claims = (response.headers.get('content-type') ?? '').includes('application/jwt')
+      ? (await jwtVerify(await response.text(), getJWKS(), { issuer: env.OIDC_ISSUER })).payload
+      : ((await response.json()) as Record<string, unknown>);
 
-      return extractEmails(payload);
-    }
-
-    return extractEmails((await response.json()) as Record<string, unknown>);
+    return { ...extractEmails(claims), language: extractLanguage(claims) };
   } catch {
     return none;
   }
@@ -146,7 +159,8 @@ async function resolveOidcAccount(
   issuer: string,
   subject: string,
   claimEmails: UsableEmails,
-  fetchFallbackEmails: () => Promise<UsableEmails>
+  claimLanguage: Locale | null,
+  fetchFallbackEmails: () => Promise<UserinfoResult>
 ): Promise<{ userId: string; linkedByEmail: boolean }> {
   const account = await prisma.oidcAccount.findUnique({
     where: { issuer_subject: { issuer, subject } },
@@ -165,13 +179,17 @@ async function resolveOidcAccount(
     // refresh (providers that omit the claim will refresh it on the next
     // first-contact-style event instead).
     const staleEmail = claimEmails.email !== null && account.user.email !== claimEmails.email;
+    const staleLanguage = claimLanguage !== null && account.user.language !== claimLanguage;
 
     // Both updates are best-effort metadata; neither gates the request.
     if (staleSeen) {
       await prisma.oidcAccount.update({ where: { id: account.id }, data: { lastSeenAt: new Date(now) } });
     }
-    if (staleEmail) {
-      await prisma.user.update({ where: { id: account.userId }, data: { email: claimEmails.email! } });
+    if (staleEmail || staleLanguage) {
+      await prisma.user.update({
+        where: { id: account.userId },
+        data: { ...(staleEmail ? { email: claimEmails.email! } : {}), ...(staleLanguage ? { language: claimLanguage } : {}) },
+      });
     }
 
     return { userId: account.userId, linkedByEmail: false };
@@ -185,7 +203,14 @@ async function resolveOidcAccount(
   // providers that never emit email_verified), never the presence one. The
   // userinfo endpoint is only consulted when the token claims yielded nothing
   // storable, so steady-state requests never pay for it.
-  const emails = claimEmails.email !== null ? claimEmails : await fetchFallbackEmails();
+  const fallback = claimEmails.email !== null ? null : await fetchFallbackEmails();
+  const emails: UsableEmails = fallback ?? claimEmails;
+
+  // Language: the token claim first, then the userinfo response (only fetched
+  // here when the token also lacked an email). Absent both, the caller stores
+  // nothing and the account keeps its previous language (schema default on first
+  // contact).
+  const effectiveLanguage = claimLanguage ?? fallback?.language ?? null;
 
   if (emails.email === null) {
     const error = new Error('No usable email in the token claims or the userinfo response');
@@ -229,6 +254,7 @@ async function resolveOidcAccount(
     const created = await prisma.user.create({
       data: {
         email: emails.email,
+        ...(effectiveLanguage ? { language: effectiveLanguage } : {}),
         oidcAccounts: { create: { issuer, subject } },
       },
     });
@@ -289,7 +315,8 @@ export const jwtAuthPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // carrying no email claim, and a first contact whose token lacks one falls
     // back to the issuer's userinfo endpoint before failing.
     const claimEmails = extractEmails(payload as Record<string, unknown>);
-    const resolution = await resolveOidcAccount(env.OIDC_ISSUER, payload.sub, claimEmails, () => fetchUserinfoEmails(token));
+    const claimLanguage = extractLanguage(payload as Record<string, unknown>);
+    const resolution = await resolveOidcAccount(env.OIDC_ISSUER, payload.sub, claimEmails, claimLanguage, () => fetchUserinfo(token));
 
     if (resolution.linkedByEmail) {
       // The one mutation of the trust-critical mapping table that happens

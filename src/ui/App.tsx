@@ -9,14 +9,15 @@ import {
   MSG_INTERFACE_SET_THEME,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
-import { apiDefaults, authHeaders } from '@encryption/src/ui/api/client';
-import { getApiMe, getApiPublicKeys } from '@encryption/src/ui/api/generated/sdk.gen';
+import { fetchMe } from '@encryption/src/ui/api/me-client';
+import { fetchPublicKeys } from '@encryption/src/ui/api/public-keys-client';
 import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
 import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
 import { InvalidGrantError, type TokenSet, decodeJwtClaims, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
 import { clearToken, readToken, storeToken } from '@encryption/src/ui/auth/token-storage';
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
+import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
@@ -46,6 +47,17 @@ function getThemeFromHash(): string {
 
 function getLangFromHash(): string | null {
   return getHashParams().get('lang');
+}
+
+/**
+ * Whether the SDK mounted us as a full-viewport overlay over a product page
+ * (rather than inside a product-provided container). Read from the hash so it is
+ * known on the FIRST render: screens that draw their own modal chrome when
+ * overlaid would otherwise paint their page variant until the async context
+ * handshake lands, which shows up as a flash over the product.
+ */
+function isOverlayFromHash(): boolean {
+  return getHashParams().get('overlay') === '1';
 }
 
 /** Send a result back to the parent frame */
@@ -240,9 +252,9 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
       try {
         const token = await getValidToken();
-        const me = token ? await getApiMe({ ...apiDefaults, headers: authHeaders(token) }) : null;
+        const me = token ? await fetchMe(token) : null;
 
-        if (!cancelled && me) setInternalUserId(me.data.user_id);
+        if (!cancelled && me) setInternalUserId(me.user_id);
       } catch (err) {
         // Not an error condition for the page: an expired session only matters
         // if the user turns out to need onboarding, which will ask them to
@@ -294,8 +306,8 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
     // Directory lookup by OIDC sub (unauthenticated, like every directory read):
     // used before /api/me has resolved the internal id.
-    getApiPublicKeys({ ...apiDefaults, query: { subs: [parentContext.suiteUserId] } })
-      .then(async ({ data }) => {
+    fetchPublicKeys({ subs: [parentContext.suiteUserId] })
+      .then(async (data) => {
         const keys = data.keys;
         setHasExistingBackendKey(keys.length > 0);
 
@@ -418,6 +430,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
           onUseAnotherDevice={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
@@ -436,6 +449,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
           onUseAnotherDevice={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
@@ -454,6 +468,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
           onUseAnotherDevice={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
@@ -469,9 +484,23 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
+        />
+      );
+
+    case 'emergency-access':
+      return (
+        <EmergencyAccess
+          getToken={getValidToken}
+          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentAccessToken={oidcAuth.token}
+          emergencyPending={parentContext.emergencyPending}
+          overlayMode={isOverlayFromHash()}
         />
       );
 
@@ -612,9 +641,9 @@ export function App() {
         <CunninghamProvider theme={cunninghamTheme}>
           <div
             style={{
-              padding: 'var(--c--globals--spacings--8, 32px)',
+              padding: 'var(--c--globals--spacings--lg)',
               textAlign: 'center',
-              color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+              color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
             }}
           >
             <p>{t('docs.disabled')}</p>
@@ -634,13 +663,13 @@ export function App() {
           <div
             role="alert"
             style={{
-              padding: 'var(--c--globals--spacings--3, 12px)',
-              borderLeft: '4px solid var(--c--globals--colors--error-500, #ce0500)',
+              padding: 'var(--c--globals--spacings--sm)',
+              borderLeft: '4px solid var(--c--globals--colors--error-500)',
               background: 'var(--c--contextuals--background--semantic--error--secondary)',
               color: 'var(--c--contextuals--content--semantic--error--secondary)',
               borderRadius: '0 4px 4px 0',
               fontSize: 13,
-              margin: 'var(--c--globals--spacings--3, 12px)',
+              margin: 'var(--c--globals--spacings--sm)',
             }}
           >
             {t('browser_warning.message', {

@@ -4,6 +4,9 @@ import { initReactI18next } from 'react-i18next';
 
 import commonEn from '@encryption/src/i18n/en/common.json';
 import commonFr from '@encryption/src/i18n/fr/common.json';
+import { SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
+
+export type { Locale } from '@encryption/src/shared/locale';
 
 export const defaultNamespace = 'common';
 
@@ -12,6 +15,24 @@ export const resources = {
   fr: { common: commonFr },
 } as const;
 
+// Named date styles, resolved per-locale via Intl. A translation references one
+// as `{{ date, long }}`, so templates just pass a Date and the language is applied automatically
+const DATE_STYLES: Record<string, Intl.DateTimeFormatOptions> = {
+  short: { dateStyle: 'short' },
+  shortWithTime: { dateStyle: 'short', timeStyle: 'short' },
+  long: { dateStyle: 'long' },
+  longWithTime: { dateStyle: 'long', timeStyle: 'short' },
+};
+
+// i18next interpolation formatter shared by the UI and server instances.
+export function i18nFormat(value: unknown, format: string | undefined, lng: string | undefined): string {
+  if (value instanceof Date && format && lng && DATE_STYLES[format]) {
+    return new Intl.DateTimeFormat(lng, DATE_STYLES[format]).format(value);
+  }
+
+  return String(value);
+}
+
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
@@ -19,9 +40,10 @@ i18n
     resources,
     defaultNS: defaultNamespace,
     fallbackLng: 'fr',
-    supportedLngs: ['en', 'fr'],
+    supportedLngs: [...SUPPORTED_LOCALES],
     interpolation: {
       escapeValue: false,
+      format: i18nFormat,
     },
     showSupportNotice: false,
     detection: {

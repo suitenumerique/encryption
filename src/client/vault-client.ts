@@ -8,6 +8,7 @@ import {
   MSG_INTERFACE_VERIFY_COMPLETE,
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_DECRYPT_WITH_KEY,
+  MSG_VAULT_EMERGENCY_PENDING,
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITH_KEY,
@@ -128,6 +129,20 @@ type Listener<K extends keyof EncryptionClientEventMap> = (data: EncryptionClien
  *     const { encryptedContent, encryptedKeys } = await encryption.encryptWithoutKey(data, userPublicKeys);
  *   </script>
  */
+// The vault's emergency-pending push is a bare routing signal: which prompt the
+// interface should lead with, nothing identifying. The product forwards it
+// verbatim; the interface renders the actual list from its own JWT fetch.
+interface EmergencyPendingContext {
+  recovery: boolean;
+  invitation: boolean;
+}
+
+// How long the SDK-owned emergency overlay waits for the interface to prove it
+// booted before removing itself (see surfaceEmergencyPending). Generous enough
+// for a cold bundle on a slow connection, short enough that a broken interface
+// does not hold the product page hostage.
+const EMERGENCY_OVERLAY_BOOT_TIMEOUT_MS = 15_000;
+
 export class VaultClient {
   private vaultIframe: HTMLIFrameElement | null = null;
   private interfaceIframe: HTMLIFrameElement | null = null;
@@ -148,6 +163,12 @@ export class VaultClient {
   // the interface iframe and the resolver awaiting its outcome.
   private verifyOverlay: HTMLElement | null = null;
   private verifyResolve: ((outcome: 'resolved' | 'cancelled') => void) | null = null;
+  // SDK-owned overlay for the auto-surfaced emergency-access prompt, plus a
+  // once-per-page-load latch (it reappears on the next load while actionable,
+  // without nagging within a session).
+  private emergencyOverlay: HTMLDivElement | null = null;
+  private emergencySurfaced = false;
+  private emergencyWatchdog: ReturnType<typeof setTimeout> | null = null;
   // The per-flow context owed to the interface iframe, set when a flow opens and
   // cleared on teardown / closeInterface. Ephemeral by design: recipient labels
   // (name/email) are display-only and never persisted, synced, or sent to any
@@ -155,6 +176,7 @@ export class VaultClient {
   private pendingContext: {
     verifyRecipients?: { recipients: Record<string, RecipientLabel> };
     recipientProfile?: { userId: string; label: RecipientLabel };
+    emergencyPending?: EmergencyPendingContext;
   } | null = null;
 
   constructor(options: EncryptionClientOptions) {
@@ -706,6 +728,14 @@ export class VaultClient {
   }
 
   /**
+   * Open the emergency-access (trusted contacts) management screen: designate
+   * contacts, accept a designation, follow or refuse a running recovery.
+   */
+  openEmergencyAccess(container: HTMLElement): void {
+    this.openInterface(container, '/emergency-access');
+  }
+
+  /**
    * Open the per-recipient profile: the recipient's current trust decision, their
    * identity fingerprint (for out-of-band comparison), and Trust / Refuse actions.
    * Opened explicitly by the product (e.g. clicking a person in its share UI), so
@@ -732,6 +762,7 @@ export class VaultClient {
     // Context scoped to a single interface flow — clear it so a later open()
     // of another screen never re-sends a stale flow block.
     this.pendingContext = null;
+    this.teardownEmergencyOverlay();
   }
 
   // =========================================================================
@@ -767,13 +798,23 @@ export class VaultClient {
    * theme/lang hash, context handshake). Mounting is left to the caller so the
    * same setup serves both the product-provided container (openInterface) and
    * the SDK-created full-screen overlay (openVerifyRecipients).
+   *
+   * `overlay` travels in the HASH, not in the postMessage context, precisely
+   * because the context arrives asynchronously: a screen that renders as a page
+   * when embedded and as a modal when overlaid would otherwise paint the page
+   * variant first (full-width and opaque, over the product) and swap to the modal
+   * only once the handshake lands, which reads as a flash.
    */
-  private buildInterfaceIframe(path: string): HTMLIFrameElement {
+  private buildInterfaceIframe(path: string, options: { overlay?: boolean } = {}): HTMLIFrameElement {
     const iframe = document.createElement('iframe');
     const hashParams = new URLSearchParams({ theme: this.theme });
 
     if (this.lang) {
       hashParams.set('lang', this.lang);
+    }
+
+    if (options.overlay) {
+      hashParams.set('overlay', '1');
     }
 
     iframe.src = `${this.interfaceUrl}${path}#${hashParams.toString()}`;
@@ -841,7 +882,7 @@ export class VaultClient {
     const overlay = document.createElement('div');
     overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647'].join(';');
 
-    const iframe = this.buildInterfaceIframe('/verify-recipients');
+    const iframe = this.buildInterfaceIframe('/verify-recipients', { overlay: true });
     // Fill the layer and stay transparent so the interface-drawn backdrop is what
     // the user sees (not an SDK-managed card).
     iframe.style.height = '100%';
@@ -857,6 +898,91 @@ export class VaultClient {
     return new Promise<'resolved' | 'cancelled'>((resolve) => {
       this.verifyResolve = resolve;
     });
+  }
+
+  /**
+   * Auto-open the interface over the product when the vault reports actionable
+   * emergency-access state: a running recovery request against the user's vault
+   * (which they must be able to refuse without hunting for a menu) or a pending
+   * trusted-contact designation to accept. Same transparent-overlay technique
+   * as the verify-recipients flow; at most once per page load, and never while
+   * another interface flow is already open (the settings screen shows the same
+   * state anyway).
+   *
+   * This one is the ONLY flow the SDK opens on its own initiative, so it is held
+   * to a stricter rule than the flows a product asked for: it stays invisible
+   * until the interface says it is up, and if it never says so it is removed
+   * rather than left covering the page. Both halves hang off the same signal:
+   *
+   *  - the interface asks for its context (MSG_INTERFACE_REQUEST_CONTEXT) as soon
+   *    as its React app mounts, so that is "the remote page is ready";
+   *  - until then `visibility: hidden` keeps the blank document, then the app's
+   *    first frames, off the screen;
+   *  - if it never arrives (bundle blocked, offline, a redirect leaving an empty
+   *    document, a crash before mount) the watchdog removes the whole overlay, so
+   *    a broken interface never sits on top of the product swallowing clicks. The
+   *    user loses nothing: the same state is in the settings screen, and the
+   *    load-bearing channel for all of this is email.
+   */
+  private surfaceEmergencyPending(state: EmergencyPendingContext): void {
+    if (this.emergencySurfaced || this.interfaceIframe) return;
+    this.emergencySurfaced = true;
+
+    this.pendingContext = {
+      emergencyPending: { recovery: state.recovery, invitation: state.invitation },
+    };
+
+    const overlay = document.createElement('div');
+    // `visibility: hidden` is load-bearing here, and it is the only one of the
+    // three obvious ways to hide this that does the right thing:
+    //  - `display: none` would stop the iframe laying out, so the app inside can
+    //    mount at zero height and measure itself wrong;
+    //  - `opacity: 0` would keep the layer in the hit-test, so this full-viewport
+    //    element would silently swallow every click on the product underneath;
+    //  - `visibility: hidden` still loads and sizes the iframe, but drops the
+    //    element from hit-testing entirely, so clicks pass through to the product
+    //    until the overlay is revealed. Verified in Chromium.
+    overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647', 'visibility: hidden'].join(';');
+
+    const iframe = this.buildInterfaceIframe('/emergency-access', { overlay: true });
+    iframe.style.height = '100%';
+    iframe.style.background = 'transparent';
+    iframe.setAttribute('allowtransparency', 'true');
+    this.interfaceIframe = iframe;
+    overlay.appendChild(iframe);
+    document.body.appendChild(overlay);
+    this.emergencyOverlay = overlay;
+
+    this.emergencyWatchdog = setTimeout(() => {
+      this.emergencyWatchdog = null;
+      if (this.emergencyOverlay) this.closeInterface();
+    }, EMERGENCY_OVERLAY_BOOT_TIMEOUT_MS);
+  }
+
+  /**
+   * The interface app mounted. Reveal the overlay we kept hidden and stand the
+   * watchdog down. No-op for every other flow (the product owns their container).
+   */
+  private revealEmergencyOverlay(): void {
+    if (this.emergencyWatchdog !== null) {
+      clearTimeout(this.emergencyWatchdog);
+      this.emergencyWatchdog = null;
+    }
+
+    if (this.emergencyOverlay) this.emergencyOverlay.style.visibility = 'visible';
+  }
+
+  private teardownEmergencyOverlay(): void {
+    if (this.emergencyWatchdog !== null) {
+      clearTimeout(this.emergencyWatchdog);
+      this.emergencyWatchdog = null;
+    }
+
+    if (this.emergencyOverlay?.parentNode) {
+      this.emergencyOverlay.parentNode.removeChild(this.emergencyOverlay);
+    }
+
+    this.emergencyOverlay = null;
   }
 
   private completeVerify(outcome: 'resolved' | 'cancelled'): void {
@@ -991,6 +1117,14 @@ export class VaultClient {
       return;
     }
 
+    if ((data as { type?: string }).type === MSG_VAULT_EMERGENCY_PENDING) {
+      const payload = (data as unknown as { payload?: EmergencyPendingContext }).payload;
+
+      if (payload) this.surfaceEmergencyPending(payload);
+
+      return;
+    }
+
     if (data.type === MSG_VAULT_RESULT && 'requestId' in data) {
       const pending = this.pending.get(data.requestId);
 
@@ -1021,8 +1155,11 @@ export class VaultClient {
 
     switch (msg.type) {
       case MSG_INTERFACE_REQUEST_CONTEXT:
-        // Handshake: interface iframe requests its context on mount
+        // Handshake: interface iframe requests its context on mount. That request
+        // is also the proof the remote page came up, which is what the SDK-owned
+        // emergency overlay waits for before showing itself.
         this.sendContext(this.interfaceIframe?.contentWindow);
+        this.revealEmergencyOverlay();
         break;
       case MSG_INTERFACE_RESIZE:
         // Auto-resize: the interface iframe communicates its content height.

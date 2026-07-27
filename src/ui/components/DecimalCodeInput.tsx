@@ -123,7 +123,7 @@ export function DecimalCodeInput({ groupCount = 8, groupSize = 5, onChange }: De
             letterSpacing: '0.12em',
             padding: '10px 10px',
             borderRadius: 4,
-            border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
+            border: '1px solid var(--c--contextuals--border--surface--primary)',
           }}
         />
       ))}

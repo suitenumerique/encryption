@@ -20,6 +20,14 @@ export const interfaceContextSchema = z.object({
   verifyRecipients: z.object({ recipients: z.record(z.string(), recipientLabelSchema) }).optional(),
   // Set only while a /recipient-profile screen is open.
   recipientProfile: z.object({ userId: z.string(), label: recipientLabelSchema }).optional(),
+  // Set when the SDK auto-opened the interface because the vault reported
+  // actionable emergency-access state.
+  emergencyPending: z
+    .object({
+      recovery: z.boolean(),
+      invitation: z.boolean(),
+    })
+    .optional(),
 });
 
 export type InterfaceContext = z.infer<typeof interfaceContextSchema>;

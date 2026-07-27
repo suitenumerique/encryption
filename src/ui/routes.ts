@@ -6,6 +6,7 @@ export type Route =
   | 'backup'
   | 'restore'
   | 'settings'
+  | 'emergency-access'
   | 'device-approval'
   | 'verify-recipients'
   | 'recipient-profile'
@@ -20,6 +21,7 @@ export function getRouteFromPath(path: string): Route | null {
     '/backup': 'backup',
     '/restore': 'restore',
     '/settings': 'settings',
+    '/emergency-access': 'emergency-access',
     '/device-approval': 'device-approval',
     '/verify-recipients': 'verify-recipients',
     '/recipient-profile': 'recipient-profile',
@@ -40,6 +42,7 @@ export const PATH_FOR_ROUTE: Partial<Record<Route, string>> = {
   backup: '/backup',
   restore: '/restore',
   settings: '/settings',
+  'emergency-access': '/emergency-access',
   'device-approval': '/device-approval',
   'verify-recipients': '/verify-recipients',
   'recipient-profile': '/recipient-profile',

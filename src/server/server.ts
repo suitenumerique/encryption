@@ -5,6 +5,7 @@ import { attachApiErrorMessages } from '@encryption/src/server/error-response';
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
 import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
+import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-access';
 import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
@@ -86,6 +87,10 @@ export async function createServer(options: CreateServerOptions = {}) {
   app.register(corsPlugin);
   app.register(jwtAuthPlugin);
 
+  // Cross-origin-fetchable assets (email logo, PDF fonts), served on every host.
+  const { publicAssetsPlugin } = await import('@encryption/src/server/plugins/public-assets');
+  app.register(publicAssetsPlugin);
+
   if (isDev) {
     // In development, embed Vite dev servers as middleware (vault + UI)
     const { viteDevPlugin } = await import('@encryption/src/server/plugins/vite-dev');
@@ -108,6 +113,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   app.register(meRoute);
   app.register(publicKeysRoute);
   app.register(vaultRoute);
+  app.register(emergencyAccessRoute);
 
   // `hide` keeps infrastructure endpoints out of the generated OpenAPI document:
   // they are not part of the API the interface consumes.

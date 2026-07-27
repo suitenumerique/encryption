@@ -7,13 +7,8 @@ import { useTranslation } from 'react-i18next';
 
 import { MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
-import { ApiError, apiDefaults, approveDevicePath, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
-import {
-  getApiVaultApprovalsByRequestId,
-  getApiVaultApprovalsPending,
-  postApiVaultApprovalsByRequestIdApprove,
-  postApiVaultApprovalsRequest,
-} from '@encryption/src/ui/api/generated/sdk.gen';
+import { ApiError, approveDevicePath } from '@encryption/src/ui/api/client';
+import { approveDeviceRequest, fetchDeviceApproval, fetchPendingDeviceApprovals, requestDeviceApproval } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
@@ -101,7 +96,7 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
         playsInline
         style={{ width: '100%', maxWidth: 320, borderRadius: 8, background: '#000', aspectRatio: '1 / 1', objectFit: 'cover' }}
       />
-      <p style={{ fontSize: 13, textAlign: 'center', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)', margin: 0 }}>
+      <p style={{ fontSize: 13, textAlign: 'center', color: 'var(--c--contextuals--content--semantic--neutral--secondary)', margin: 0 }}>
         {t('device_approval.scan_hint')}
       </p>
     </div>
@@ -155,14 +150,14 @@ export function DeviceApproval({
 
   if (role === 'loading') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--6, 24px)' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
         <Loader />
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
+    <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
       {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
       {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
 
@@ -218,11 +213,7 @@ function NewDeviceSide({
     try {
       const { devicePublicKey, decimalFingerprint: dfp } = await startDeviceApproval();
       const requestId = await withFreshToken(getToken, async (token) => {
-        const { data } = await postApiVaultApprovalsRequest({
-          ...apiDefaults,
-          headers: authHeaders(token),
-          body: { device_public_key: devicePublicKey },
-        });
+        const data = await requestDeviceApproval(token, { device_public_key: devicePublicKey });
 
         return data.request_id;
       });
@@ -258,11 +249,7 @@ function NewDeviceSide({
           // 425 means "still pending", which is a normal poll outcome, not a failure.
           const forwarded = await withFreshToken(getToken, async (token) => {
             try {
-              const { data } = await getApiVaultApprovalsByRequestId({
-                ...apiDefaults,
-                headers: authHeaders(token),
-                path: { requestId: requestIdRef.current! },
-              });
+              const data = await fetchDeviceApproval(token, requestIdRef.current!);
 
               return data ?? null;
             } catch (err) {
@@ -338,7 +325,7 @@ function NewDeviceSide({
             <img
               src={qr}
               alt="pairing QR code"
-              style={{ display: 'block', borderRadius: 8, border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)' }}
+              style={{ display: 'block', borderRadius: 8, border: '1px solid var(--c--contextuals--border--surface--primary)' }}
             />
           )}
           <p style={{ fontSize: 13, textAlign: 'center', margin: 0 }}>{t('device_approval.new_code_hint')}</p>
@@ -352,31 +339,38 @@ function NewDeviceSide({
                 </Button>
               ) : (
                 <>
-                  <p style={{ fontSize: 12, margin: '0 0 6px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+                  <p style={{ fontSize: 12, margin: '0 0 6px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
                     {t('device_approval.new_manual_hint')}
                   </p>
-                  {/* 4 groups per row (2 rows of 4), even and bigger. Normal text
-                      selection (not user-select:all, which flickers when dragging
-                      across the grid gaps); the Copy button is the reliable path. */}
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(4, 1fr)',
-                      rowGap: 10,
-                      columnGap: 18,
-                      userSelect: 'text',
-                      padding: 'var(--c--globals--spacings--2, 8px) var(--c--globals--spacings--3, 12px)',
-                      background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
-                      borderRadius: 4,
-                    }}
-                  >
-                    {formatDecimalFingerprint(decimalFingerprint)
-                      .split(' ')
-                      .map((g, i) => (
-                        <span key={i} style={{ fontFamily: 'monospace', fontSize: 20, letterSpacing: '0.08em', textAlign: 'left' }}>
-                          {g}
-                        </span>
-                      ))}
+                  {/* 4 groups per row (2 rows of 4). Content-sized columns centered
+                      in the full-width block (`1fr` tracks can't shrink below the
+                      monospace groups' min-content, so they overflow a narrow panel;
+                      `max-content` + centering can't). */}
+                  <div style={{ containerType: 'inline-size' }}>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(4, max-content)',
+                        justifyContent: 'center',
+                        rowGap: 10,
+                        columnGap: 12,
+                        userSelect: 'text',
+                        padding: 'var(--c--globals--spacings--t) var(--c--globals--spacings--sm)',
+                        background: 'var(--c--contextuals--background--surface--secondary)',
+                        borderRadius: 4,
+                      }}
+                    >
+                      {formatDecimalFingerprint(decimalFingerprint)
+                        .split(' ')
+                        .map((g, i) => (
+                          <span
+                            key={i}
+                            style={{ fontFamily: 'monospace', fontSize: 'clamp(12px, 5.5cqw, 22px)', letterSpacing: '0.06em', textAlign: 'left' }}
+                          >
+                            {g}
+                          </span>
+                        ))}
+                    </div>
                   </div>
                   <Button
                     size="small"
@@ -403,13 +397,13 @@ function NewDeviceSide({
               justifyContent: 'center',
               gap: 10,
               marginTop: 4,
-              padding: 'var(--c--globals--spacings--2, 8px) var(--c--globals--spacings--4, 16px)',
+              padding: 'var(--c--globals--spacings--t) var(--c--globals--spacings--base)',
               borderRadius: 999,
-              background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+              background: 'var(--c--contextuals--background--surface--secondary)',
             }}
           >
             <Loader />
-            <span style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+            <span style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
               {t('device_approval.new_waiting')}
             </span>
           </div>
@@ -474,11 +468,7 @@ function EnrolledDeviceSide({
 
       try {
         const pendingSig = await signRequest('GET', '/api/vault/approvals/pending');
-        const { approvals } = await withFreshToken(getToken, async (token) => {
-          const { data } = await getApiVaultApprovalsPending({ ...apiDefaults, headers: signedHeaders(token, pendingSig) });
-
-          return data;
-        });
+        const { approvals } = await withFreshToken(getToken, (token) => fetchPendingDeviceApprovals(token, pendingSig));
 
         let matched: { requestId: string; wrappedDeviceBootstrap: string } | null = null;
         for (const a of approvals) {
@@ -503,12 +493,7 @@ function EnrolledDeviceSide({
         const approveBody = JSON.stringify({ wrapped_device_bootstrap: matched.wrappedDeviceBootstrap });
         const approveSig = await signRequest('POST', approveDevicePath(matched.requestId), approveBody);
         await withFreshToken(getToken, (token) =>
-          postApiVaultApprovalsByRequestIdApprove({
-            ...apiDefaults,
-            headers: signedHeaders(token, approveSig),
-            path: { requestId: matched!.requestId },
-            body: { wrapped_device_bootstrap: matched!.wrappedDeviceBootstrap },
-          })
+          approveDeviceRequest(token, matched!.requestId, { wrapped_device_bootstrap: matched!.wrappedDeviceBootstrap }, approveSig)
         );
 
         setDone(true);

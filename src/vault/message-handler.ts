@@ -1,10 +1,13 @@
+import type { MnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
   MSG_VAULT_APPROVE_DEVICE,
+  MSG_VAULT_BUILD_EMERGENCY_REARMS,
   MSG_VAULT_CHANGE_RECOVERY_PHRASE,
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_COMMIT_STAGED,
   MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
+  MSG_VAULT_CREATE_EMERGENCY_ESCROW,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_DESTROY_KEYS,
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
@@ -22,6 +25,7 @@ import {
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
+  MSG_VAULT_REVEAL_EMERGENCY_PHRASE,
   MSG_VAULT_REWRAP_NESTED_KEY,
   MSG_VAULT_SHARE_KEYS,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
@@ -29,20 +33,30 @@ import {
   MSG_VAULT_START_DEVICE_APPROVAL,
   MSG_VAULT_SYNC,
   MSG_VAULT_UNCOMMIT_STAGED,
+  MSG_VAULT_VERIFY_ESCROWS,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 import { PRIVILEGED_OPERATIONS, type VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode, classifyVaultError } from '@encryption/src/shared/vault-error';
+import { checkEmergencyPending } from '@encryption/src/vault/emergency-pending';
 import { handleCommitStagedVault, handleUncommitStagedVault } from '@encryption/src/vault/operations/commit-staged';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleDestroyKeys } from '@encryption/src/vault/operations/destroy-keys';
 import { handleApproveDevice, handleCompleteDeviceApproval, handleStartDeviceApproval } from '@encryption/src/vault/operations/device-approval-flow';
+import {
+  handleBuildEmergencyRearms,
+  handleCreateEmergencyEscrow,
+  handleRevealEmergencyPhrase,
+  handleVerifyEscrows,
+} from '@encryption/src/vault/operations/emergency-access';
 import { handleEncryptNestedWithoutKey, handleEncryptWithKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import {
+  handleAcceptFingerprint,
   handleAcceptFingerprintBySub,
   handleCheckFingerprintsBySubs,
   handleGetKnownFingerprints,
+  handleRefuseFingerprint,
   handleRefuseFingerprintBySub,
 } from '@encryption/src/vault/operations/fingerprint-registry';
 import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-keys';
@@ -137,10 +151,28 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       // Callers hold subs; the wrapper resolves them to the internal ids the
       // TOFU store keys on and maps results back.
       return handleCheckFingerprintsBySubs(userId, payload as { userFingerprints: Record<string, string> });
-    case MSG_VAULT_ACCEPT_FINGERPRINT:
-      return handleAcceptFingerprintBySub(userId, payload as { sub: string; fingerprint: string });
-    case MSG_VAULT_REFUSE_FINGERPRINT:
-      return handleRefuseFingerprintBySub(userId, payload as { sub: string; fingerprint: string });
+    // A trust decision names its target either by INTERNAL user id (`userId`,
+    // used by the emergency-access flows whose directory lookups already yield
+    // internal ids) or by sub (`sub`, the boundary form the verify/profile screens
+    // hold, resolved through the directory). Callers send exactly one; a payload
+    // carrying neither is a caller bug and fails loud rather than trusting nobody
+    // (or, worse, resolving `undefined` into the TOFU store).
+    case MSG_VAULT_ACCEPT_FINGERPRINT: {
+      const p = payload as { userId?: string; sub?: string; fingerprint: string };
+
+      if (p.userId) return handleAcceptFingerprint(userId, { userId: p.userId, fingerprint: p.fingerprint });
+      if (p.sub) return handleAcceptFingerprintBySub(userId, { sub: p.sub, fingerprint: p.fingerprint });
+
+      throw new VaultError(VaultErrorCode.INVALID_REQUEST, 'A trust decision must name its target by userId or sub.');
+    }
+    case MSG_VAULT_REFUSE_FINGERPRINT: {
+      const p = payload as { userId?: string; sub?: string; fingerprint: string };
+
+      if (p.userId) return handleRefuseFingerprint(userId, { userId: p.userId, fingerprint: p.fingerprint });
+      if (p.sub) return handleRefuseFingerprintBySub(userId, { sub: p.sub, fingerprint: p.fingerprint });
+
+      throw new VaultError(VaultErrorCode.INVALID_REQUEST, 'A trust decision must name its target by userId or sub.');
+    }
     case MSG_VAULT_GET_KNOWN_FINGERPRINTS:
       return handleGetKnownFingerprints(userId);
 
@@ -165,9 +197,9 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_DESTROY_KEYS:
       return handleDestroyKeys(userId);
     case MSG_VAULT_PREPARE_ONBOARDING:
-      return handlePrepareOnboarding(userId, payload as { lang?: 'french' | 'english'; version?: number; generation?: number; reusePhrase?: string });
+      return handlePrepareOnboarding(userId, payload as { lang?: MnemonicLanguage; version?: number; generation?: number; reusePhrase?: string });
     case MSG_VAULT_CHANGE_RECOVERY_PHRASE:
-      return handleChangeRecoveryPhrase(userId, payload as { lang?: 'french' | 'english' });
+      return handleChangeRecoveryPhrase(userId, payload as { lang?: MnemonicLanguage });
     case MSG_VAULT_RESTORE_FROM_PHRASE:
       return handleRestoreFromPhrase(userId, payload as { recoveryPhrase: string; token: string });
     case MSG_VAULT_REACTIVATE:
@@ -182,6 +214,20 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       return handleCompleteDeviceApproval(userId, payload as { wrappedDeviceBootstrap: string; token?: string | null });
     case MSG_VAULT_APPROVE_DEVICE:
       return handleApproveDevice(userId, payload as { devicePublicKey: string; expectedDecimal: string });
+    case MSG_VAULT_CREATE_EMERGENCY_ESCROW:
+      return handleCreateEmergencyEscrow(userId, payload as { granteeUserId: string; waitTimeDays: number; lang?: MnemonicLanguage });
+    case MSG_VAULT_BUILD_EMERGENCY_REARMS:
+      return handleBuildEmergencyRearms(
+        userId,
+        payload as {
+          rearms: Array<{ emergencyAccessId: string; granteeUserId: string; waitTimeDays: number }>;
+          lang?: MnemonicLanguage;
+        }
+      );
+    case MSG_VAULT_VERIFY_ESCROWS:
+      return handleVerifyEscrows(userId, payload as Parameters<typeof handleVerifyEscrows>[1]);
+    case MSG_VAULT_REVEAL_EMERGENCY_PHRASE:
+      return handleRevealEmergencyPhrase(userId, payload as Parameters<typeof handleRevealEmergencyPhrase>[1]);
   }
 }
 
@@ -251,6 +297,15 @@ export function setupMessageHandler(): void {
       // the vault keeps itself synced (identity-signed, no interface/JWT) as long
       // as any product page is open.
       ensureVaultSyncDriver(userId);
+
+      // One-shot courtesy push (per user, per page load): if this user has
+      // actionable emergency-access state, tell the PRODUCT page so its SDK can
+      // surface it. Products only; the interface has its own authenticated view.
+      if (!isInterfaceOrigin(event.origin)) {
+        const source = event.source;
+        const origin = event.origin;
+        void checkEmergencyPending(userId, (message) => source?.postMessage(message, { targetOrigin: origin }));
+      }
 
       const data = (await dispatch(event.data, userId)) as Record<string, unknown> | undefined;
 

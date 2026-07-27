@@ -12,7 +12,7 @@ Vos clés de chiffrement sont générées et stockées **uniquement sur votre ap
 
 ## Comment activer le chiffrement ?
 
-1. Ouvrez n'importe quel produit de la Suite (Docs, Fichier, Drive, Visio)
+1. Ouvrez n'importe quel produit de LaSuite (Docs, Fichier, Drive, Visio)
 2. Cliquez sur **Activer le chiffrement** quand le système vous le propose
 3. Une paire de clés (publique et privée) est générée localement
 4. **Sauvegardez votre phrase de récupération** — c'est la seule façon de restaurer vos clés si vous changez d'appareil ou effacez vos données
@@ -85,3 +85,48 @@ Si vous supprimez vos clés de chiffrement sans les avoir sauvegardées :
 ## Mon employeur ou l'administrateur peut-il lire mes documents chiffrés ?
 
 **Non.** Le chiffrement de bout en bout signifie que seuls les détenteurs des clés peuvent accéder au contenu. Les administrateurs n'ont accès qu'aux métadonnées (titre, date de création, liste des collaborateurs) mais pas au contenu chiffré.
+
+---
+
+## Qu'est-ce qu'un contact de confiance (accès d'urgence) ?
+
+Un contact de confiance est une personne que vous désignez pour vous aider à retrouver l'accès à vos données chiffrées si vous perdez à la fois votre phrase de récupération et tous vos appareils. La désignation se fait en une seule étape, depuis les réglages de chiffrement, parmi les utilisateurs ayant **déjà activé le chiffrement** (recherche par adresse email exacte : si la personne n'a pas encore activé le chiffrement, elle doit d'abord le faire).
+
+Avant de pouvoir désigner quelqu'un, vous devez **vérifier son empreinte de sécurité** par un autre canal (en personne, par téléphone ou via un canal de confiance). Cette vérification est obligatoire : elle garantit que le dispositif vise bien la bonne personne, et non une clé substituée.
+
+<Alert severity="info">
+  Le contact désigné reçoit une invitation et doit l'accepter pour que le dispositif devienne actif. Chacun peut y mettre fin à tout moment : vous
+  pouvez révoquer un contact, et un contact peut se retirer.
+</Alert>
+
+---
+
+## Que peut faire mon contact de confiance ? Peut-il lire mes documents ?
+
+**Non, jamais.** Votre contact ne peut pas lire vos documents, ni avant, ni pendant, ni après une récupération. Concrètement :
+
+- S'il demande une récupération, vous êtes **prévenu immédiatement par email** et un délai d'opposition démarre : **7, 15 ou 30 jours** au choix (ou une durée personnalisée, jusqu'à 90 jours). Pendant ce délai, une **simple connexion à votre compte** suffit pour refuser la demande : aucune clé ni phrase n'est nécessaire.
+- Si vous ne refusez pas, votre contact obtient une **phrase de récupération d'urgence**, qu'il imprime comme un kit de récupération et doit vous remettre **en main propre**.
+- Cette phrase seule ne donne **rien** : le coffre-fort n'est servi qu'à votre propre session connectée. Sans l'accès à votre compte, votre contact ne peut ni lire vos documents, ni accéder à vos clés.
+
+<Alert severity="warning" title="Choisissez bien le délai">
+  Un délai court est plus réactif, mais vous devez pouvoir voir les emails de notification et vous y opposer à temps (attention aux longues vacances).
+</Alert>
+
+---
+
+## Que se passe-t-il après une récupération par un contact de confiance ?
+
+Dès que vous déverrouillez votre coffre-fort avec la phrase remise par votre contact, l'interface vous impose immédiatement d'en définir une **nouvelle**, personnelle. La phrase que votre contact a vue est **détruite** à ce moment précis, et un nouveau dispositif d'urgence est automatiquement remis en place avec vos contacts. Personne, pas même votre contact, ne conserve donc de moyen d'accès à votre coffre-fort.
+
+---
+
+## L'accès d'urgence permet-il de gérer une succession (décès) ?
+
+En partie seulement. Les clés seules ne donnent pas accès aux documents : ceux-ci restent stockés dans les produits (Docs, Drive, etc.) derrière le compte de leur propriétaire et les règles de partage. En cas de décès ou d'incapacité, une démarche au niveau du produit ou une procédure légale (succession, action de l'administrateur sur le compte) reste nécessaire. L'accès d'urgence rend cette démarche **utile** : sans les clés, obtenir l'accès aux fichiers chiffrés ne donnerait que des données illisibles.
+
+---
+
+## Je repars de zéro : que deviennent mes contacts de confiance ?
+
+Vos contacts de confiance restent attachés à votre **ancien** coffre-fort, conservé désactivé pendant la période de rétention. Ils peuvent toujours aider à récupérer **celui-ci** (et donc les données qu'il protège) tant qu'il n'est pas définitivement purgé : c'est voulu, afin qu'un vol de session ne puisse pas détruire vos possibilités de récupération en réinitialisant votre compte. Votre **nouveau** coffre-fort, lui, démarre sans aucun contact : il faut les désigner à nouveau, avec une nouvelle vérification d'empreinte.

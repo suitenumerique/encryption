@@ -77,7 +77,11 @@ export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // Paths with file extensions under /api/ (e.g. /api/client.ts)
     // are Vite source files that must be served by the Vite middleware.
     const isApiRoute = path.startsWith('/api/') && !path.slice(path.lastIndexOf('/') + 1).includes('.');
-    if (FASTIFY_INFRA_PATHS.has(path) || isApiRoute) {
+    // `/public-assets/` is a Fastify-served, cross-origin asset dir (email logo,
+    // PDF fonts) that must resolve on EVERY host, including the UI/vault hosts
+    // whose other traffic is Vite's. In production the static-ui SPA hook already
+    // skips this prefix; dev must do the same or the email logo 404s here only.
+    if (FASTIFY_INFRA_PATHS.has(path) || isApiRoute || path.startsWith('/public-assets/')) {
       return next();
     }
 

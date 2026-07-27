@@ -1,3 +1,4 @@
+import type { EmergencyDesignateBody } from '@encryption/src/shared/schemas/emergency-access';
 import type { VaultItemWire, VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { GetApiPublicKeysResponses } from '@encryption/src/ui/api/generated/types.gen';
 
@@ -50,3 +51,27 @@ function fakeBase64(byteLength: number): string {
 
   return 'A'.repeat(totalChars - padding) + '='.repeat(padding);
 }
+
+// A grantor-signed designation body: the dormant emergency credential plus the
+// wrapped phrase and binding signature the vault produces for a trusted contact.
+export const sampleEmergencyDesignateBody: EmergencyDesignateBody = {
+  grantee_user_id: '11111111-1111-1111-1111-111111111111',
+  wait_time_days: 15,
+  credential: sampleVaultKeyring,
+  grantee_identity_public_key: fakeBase64(33),
+  grantee_key_version: 1,
+  wrapped_phrase_for_grantee: fakeBase64(256),
+  escrow_signature: fakeBase64(64),
+  escrow_created_at_millis: 1_700_000_000_000,
+};
+
+// The escrow record the server returns for a designated contact (the signed
+// fields plus the credential auth-key hash the client audits).
+export const sampleEmergencyEscrowRecord = {
+  grantee_identity_public_key: fakeBase64(33),
+  grantee_key_version: 1,
+  wrapped_phrase_for_grantee: fakeBase64(256),
+  escrow_signature: fakeBase64(64),
+  escrow_created_at_millis: 1_700_000_000_000,
+  credential_auth_public_key_hash: fakeBase64(32),
+};

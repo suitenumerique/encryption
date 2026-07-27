@@ -47,7 +47,7 @@ function ProfileAvatar({ label }: { label: string }) {
         height: 48,
         borderRadius: '50%',
         flexShrink: 0,
-        background: 'var(--c--globals--colors--brand-400, #000091)',
+        background: 'var(--c--globals--colors--brand-400)',
         color: 'white',
         display: 'flex',
         alignItems: 'center',
@@ -161,7 +161,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
       )}
 
       {phase === 'loading' ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--6, 24px)' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
           <Loader />
         </div>
       ) : (
@@ -176,7 +176,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
                   style={{
                     fontSize: 13,
                     margin: '2px 0 0',
-                    color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+                    color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
                     wordBreak: 'break-all',
                   }}
                 >
@@ -205,8 +205,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
                     fontSize: 13,
                     fontWeight: 600,
                     margin: '16px 0 0',
-                    color:
-                      decision === 'trusted' ? 'var(--c--globals--colors--success-600, #18753c)' : 'var(--c--globals--colors--error-500, #ce0500)',
+                    color: decision === 'trusted' ? 'var(--c--globals--colors--success-600)' : 'var(--c--globals--colors--error-500)',
                   }}
                 >
                   {t(`profile.decision_${decision}`)}
@@ -230,7 +229,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
                 fontSize: 13,
                 textAlign: 'center',
                 margin: '24px 0 0',
-                color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+                color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
               }}
             >
               {t('profile.no_key')}

@@ -19,7 +19,7 @@ export function ModalNoKey({ userName, onClose }: ModalNoKeyProps) {
       rightActions={<Button onClick={onClose}>Understood</Button>}
       title={
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, fontWeight: 700 }}>
-          <span className="material-icons" style={{ color: 'var(--c--globals--colors--warning-500, #b34000)' }}>
+          <span className="material-icons" style={{ color: 'var(--c--globals--colors--warning-500)' }}>
             lock
           </span>
           Encryption not enabled
@@ -27,11 +27,11 @@ export function ModalNoKey({ userName, onClose }: ModalNoKeyProps) {
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-        <p style={{ margin: 0, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+        <p style={{ margin: 0, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
           <strong>{userName}</strong> has not enabled encryption yet. They must activate encryption on their account before you can share encrypted
           documents with them.
         </p>
-        <p style={{ margin: 0, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+        <p style={{ margin: 0, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
           Please ask them to enable encryption first, then try sharing again.
         </p>
       </div>

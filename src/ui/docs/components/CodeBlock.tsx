@@ -30,21 +30,21 @@ export function CodeBlock({ children, language }: CodeBlockProps) {
     <pre
       style={{
         background: 'var(--c--contextuals--background--surface--tertiary)',
-        border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
-        padding: 'var(--c--globals--spacings--4, 16px)',
+        border: '1px solid var(--c--contextuals--border--surface--primary)',
+        padding: 'var(--c--globals--spacings--base)',
         borderRadius: 4,
         overflow: 'auto',
-        fontSize: 'var(--c--globals--font--sizes--s, 13px)',
+        fontSize: 'var(--c--globals--font--sizes--s)',
         lineHeight: 1.5,
-        margin: 'var(--c--globals--spacings--4, 16px) 0',
+        margin: 'var(--c--globals--spacings--base) 0',
       }}
     >
       {language && (
         <div
           style={{
-            color: 'var(--c--contextuals--content--semantic--neutral--secondary, #888)',
+            color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
             fontSize: 11,
-            marginBottom: 'var(--c--globals--spacings--2, 8px)',
+            marginBottom: 'var(--c--globals--spacings--t)',
           }}
         >
           {language}

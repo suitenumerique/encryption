@@ -10,6 +10,7 @@ import {
 } from '@encryption/src/shared/constants';
 import { EncryptionContext, type EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import {
+  sampleEmergencyDesignateBody,
   sampleFingerprint,
   sampleOnboardingBundle,
   samplePublicKey,
@@ -48,12 +49,12 @@ const vaultRequest = async (type: string, payload?: unknown): Promise<unknown> =
 
   switch (type) {
     case MSG_VAULT_FETCH_PUBLIC_KEYS: {
-      const subs = (payload as { subs?: string[] } | undefined)?.subs ?? [];
+      // Callers pass `subs` (recipient subs) OR `userIds` (internal ids); answer both.
+      const p = payload as { subs?: string[]; userIds?: string[] } | undefined;
+      const ids = p?.subs ?? p?.userIds ?? [];
 
       return {
-        users: Object.fromEntries(
-          subs.map((sub) => [sub, { userId: samplePublicKey.user_id, identityFingerprint: sampleFingerprint, verified: true }])
-        ),
+        users: Object.fromEntries(ids.map((id) => [id, { userId: samplePublicKey.user_id, identityFingerprint: sampleFingerprint, verified: true }])),
       };
     }
     case MSG_VAULT_CHECK_FINGERPRINTS: {
@@ -122,7 +123,12 @@ export function createMockEncryption(overrides: Partial<EncryptionContextType> =
       signaturePublicKey: samplePublicKey.signature_public_key,
       disabledVaultId: null,
       disabledVaultCreatedAtMillis: null,
+      emergencyUnlock: false,
     }),
+    createEmergencyEscrow: stub('createEmergencyEscrow', sampleEmergencyDesignateBody),
+    buildEmergencyRearms: stub('buildEmergencyRearms', { rearms: [] }),
+    verifyEscrows: async (contacts: Array<{ id: string }>) => ({ results: contacts.map((c) => ({ id: c.id, status: 'ok' as const })) }),
+    revealEmergencyPhrase: stub('revealEmergencyPhrase', { recoveryPhrase: sampleRecoveryPhrase }),
     syncVault: stub('syncVault', { status: 'ok', revision: 1 }),
     startDeviceApproval: stub('startDeviceApproval', {
       devicePublicKey: samplePublicKey.encryption_public_key,

@@ -12,9 +12,10 @@ import { entropyToMnemonic, mnemonicToEntropy, validateMnemonic } from '@scure/b
 import { wordlist as english } from '@scure/bip39/wordlists/english';
 import { wordlist as french } from '@scure/bip39/wordlists/french';
 
+import { type MnemonicLanguage } from '@encryption/src/shared/schemas/mnemonic-language';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
-export type MnemonicLanguage = 'french' | 'english';
+export type { MnemonicLanguage };
 
 export { french as frenchWordlist, english as englishWordlist };
 

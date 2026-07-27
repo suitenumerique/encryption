@@ -16,6 +16,12 @@ interface ParentContext {
   verifyRecipients: Record<string, RecipientLabel> | null;
   /** The recipient to inspect and its label, set only when the SDK opened /recipient-profile. */
   recipientProfile: InterfaceContext['recipientProfile'] | null;
+  /**
+   * Actionable emergency-access state (pending invitations, running recovery
+   * requests), set only when the SDK auto-opened the interface because of it.
+   * The interface re-fetches the authoritative state; this only leads the prompt.
+   */
+  emergencyPending: InterfaceContext['emergencyPending'] | null;
 }
 
 /**
@@ -30,6 +36,7 @@ export function useParentMessages(): ParentContext {
     parentOrigin: null,
     verifyRecipients: null,
     recipientProfile: null,
+    emergencyPending: null,
   });
 
   useEffect(() => {
@@ -49,6 +56,7 @@ export function useParentMessages(): ParentContext {
         parentOrigin: event.origin,
         verifyRecipients: parsed.data.verifyRecipients?.recipients ?? null,
         recipientProfile: parsed.data.recipientProfile ?? null,
+        emergencyPending: parsed.data.emergencyPending ?? null,
       });
     };
 

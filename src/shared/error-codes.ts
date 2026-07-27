@@ -38,3 +38,12 @@ export const API_ERROR_VAULT_ITEM_OUT_OF_DATE = 'vault_item_out_of_date';
 export const API_ERROR_VAULT_APPROVAL_NOT_FOUND = 'vault_approval_not_found';
 export const API_ERROR_VAULT_APPROVAL_NOT_READY = 'vault_approval_not_ready';
 export const API_ERROR_RATE_LIMIT_APPROVALS = 'rate_limit_approvals';
+
+export const API_ERROR_EMERGENCY_NOT_FOUND = 'emergency_not_found';
+export const API_ERROR_EMERGENCY_BAD_STATUS = 'emergency_bad_status';
+export const API_ERROR_EMERGENCY_SELF_DESIGNATION = 'emergency_self_designation';
+export const API_ERROR_EMERGENCY_ALREADY_EXISTS = 'emergency_already_exists';
+export const API_ERROR_EMERGENCY_CONTACT_NOT_ONBOARDED = 'emergency_contact_not_onboarded';
+export const API_ERROR_EMERGENCY_ESCROW_INVALID = 'emergency_escrow_invalid';
+export const API_ERROR_EMERGENCY_REARM_REQUIRED = 'emergency_rearm_required';
+export const API_ERROR_RATE_LIMIT_EMERGENCY = 'rate_limit_emergency';

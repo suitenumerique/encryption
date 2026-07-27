@@ -3,7 +3,12 @@ import { type HttpHandler, HttpResponse, type HttpResponseResolver, type Request
 
 import type {
   ClientOptions,
+  DeleteApiEmergencyAccessByIdResponses,
   DeleteApiPublicKeysResponses,
+  GetApiEmergencyAccessGrantedResponses,
+  GetApiEmergencyAccessPendingResponses,
+  GetApiEmergencyAccessSearchResponses,
+  GetApiEmergencyAccessTrustedResponses,
   GetApiMeResponses,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdResponses,
@@ -15,6 +20,15 @@ import type {
   GetApiVaultMetaResponses,
   GetApiVaultRevisionResponses,
   GetApiVersionResponses,
+  PostApiEmergencyAccessByIdAcceptResponses,
+  PostApiEmergencyAccessByIdCancelResponses,
+  PostApiEmergencyAccessByIdInitiateResponses,
+  PostApiEmergencyAccessByIdRearmData,
+  PostApiEmergencyAccessByIdRearmResponses,
+  PostApiEmergencyAccessByIdRecoverResponses,
+  PostApiEmergencyAccessByIdRejectResponses,
+  PostApiEmergencyAccessData,
+  PostApiEmergencyAccessResponses,
   PostApiPublicKeysRegisterCompleteData,
   PostApiPublicKeysRegisterCompleteResponses,
   PostApiPublicKeysRegisterInitData,
@@ -30,6 +44,8 @@ import type {
   PostApiVaultReactivateData,
   PostApiVaultReactivateResponses,
   PostApiVaultResponses,
+  PutApiEmergencyAccessByIdData,
+  PutApiEmergencyAccessByIdResponses,
   PutApiVaultItemsByItemIdData,
   PutApiVaultItemsByItemIdResponses,
   PutApiVaultKeyringData,
@@ -846,6 +862,544 @@ export function handleGetApiVaultApprovalsPending(
   );
 }
 
+export type HandleGetApiEmergencyAccessSearchResponse = {
+  body: GetApiEmergencyAccessSearchResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/emergency-access/search` operation.
+ */
+export function handleGetApiEmergencyAccessSearch(
+  response?: HandleGetApiEmergencyAccessSearchResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/search`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiEmergencyAccessPendingResponse = {
+  body: GetApiEmergencyAccessPendingResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/emergency-access/pending` operation.
+ */
+export function handleGetApiEmergencyAccessPending(
+  response?: HandleGetApiEmergencyAccessPendingResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/pending`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiEmergencyAccessTrustedResponse = {
+  body: GetApiEmergencyAccessTrustedResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/emergency-access/trusted` operation.
+ */
+export function handleGetApiEmergencyAccessTrusted(
+  response?: HandleGetApiEmergencyAccessTrustedResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/trusted`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiEmergencyAccessGrantedResponse = {
+  body: GetApiEmergencyAccessGrantedResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/emergency-access/granted` operation.
+ */
+export function handleGetApiEmergencyAccessGranted(
+  response?: HandleGetApiEmergencyAccessGrantedResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/granted`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessResponse = {
+  body: PostApiEmergencyAccessResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access` operation.
+ */
+export function handlePostApiEmergencyAccess(
+  response?: HandlePostApiEmergencyAccessResponse | HttpResponseResolver<never, PostApiEmergencyAccessData['body']>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<never, PostApiEmergencyAccessData['body']>(
+    `${options?.baseUrl ?? '*'}/api/emergency-access`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessByIdAcceptResponse = {
+  body: PostApiEmergencyAccessByIdAcceptResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access/{id}/accept` operation.
+ */
+export function handlePostApiEmergencyAccessByIdAccept(
+  response?:
+    | HandlePostApiEmergencyAccessByIdAcceptResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id/accept`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleDeleteApiEmergencyAccessByIdResponse = {
+  body: DeleteApiEmergencyAccessByIdResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `DELETE /api/emergency-access/{id}` operation.
+ */
+export function handleDeleteApiEmergencyAccessById(
+  response?:
+    | HandleDeleteApiEmergencyAccessByIdResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.delete<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePutApiEmergencyAccessByIdResponse = {
+  body: PutApiEmergencyAccessByIdResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `PUT /api/emergency-access/{id}` operation.
+ */
+export function handlePutApiEmergencyAccessById(
+  response?:
+    | HandlePutApiEmergencyAccessByIdResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        PutApiEmergencyAccessByIdData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.put<
+    {
+      id: string;
+    },
+    PutApiEmergencyAccessByIdData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessByIdRearmResponse = {
+  body: PostApiEmergencyAccessByIdRearmResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access/{id}/rearm` operation.
+ */
+export function handlePostApiEmergencyAccessByIdRearm(
+  response?:
+    | HandlePostApiEmergencyAccessByIdRearmResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        PostApiEmergencyAccessByIdRearmData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    PostApiEmergencyAccessByIdRearmData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id/rearm`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessByIdInitiateResponse = {
+  body: PostApiEmergencyAccessByIdInitiateResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access/{id}/initiate` operation.
+ */
+export function handlePostApiEmergencyAccessByIdInitiate(
+  response?:
+    | HandlePostApiEmergencyAccessByIdInitiateResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id/initiate`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessByIdCancelResponse = {
+  body: PostApiEmergencyAccessByIdCancelResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access/{id}/cancel` operation.
+ */
+export function handlePostApiEmergencyAccessByIdCancel(
+  response?:
+    | HandlePostApiEmergencyAccessByIdCancelResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id/cancel`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessByIdRejectResponse = {
+  body: PostApiEmergencyAccessByIdRejectResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access/{id}/reject` operation.
+ */
+export function handlePostApiEmergencyAccessByIdReject(
+  response?:
+    | HandlePostApiEmergencyAccessByIdRejectResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id/reject`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiEmergencyAccessByIdRecoverResponse = {
+  body: PostApiEmergencyAccessByIdRecoverResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/emergency-access/{id}/recover` operation.
+ */
+export function handlePostApiEmergencyAccessByIdRecover(
+  response?:
+    | HandlePostApiEmergencyAccessByIdRecoverResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/emergency-access/:id/recover`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
 export type MswHandlerFactories = {
   /**
    * Handler for the `GET /api/version` operation.
@@ -935,6 +1489,58 @@ export type MswHandlerFactories = {
    * Handler for the `GET /api/vault/approvals/pending` operation.
    */
   getApiVaultApprovalsPending: typeof handleGetApiVaultApprovalsPending;
+  /**
+   * Handler for the `GET /api/emergency-access/search` operation.
+   */
+  getApiEmergencyAccessSearch: typeof handleGetApiEmergencyAccessSearch;
+  /**
+   * Handler for the `GET /api/emergency-access/pending` operation.
+   */
+  getApiEmergencyAccessPending: typeof handleGetApiEmergencyAccessPending;
+  /**
+   * Handler for the `GET /api/emergency-access/trusted` operation.
+   */
+  getApiEmergencyAccessTrusted: typeof handleGetApiEmergencyAccessTrusted;
+  /**
+   * Handler for the `GET /api/emergency-access/granted` operation.
+   */
+  getApiEmergencyAccessGranted: typeof handleGetApiEmergencyAccessGranted;
+  /**
+   * Handler for the `POST /api/emergency-access` operation.
+   */
+  postApiEmergencyAccess: typeof handlePostApiEmergencyAccess;
+  /**
+   * Handler for the `POST /api/emergency-access/{id}/accept` operation.
+   */
+  postApiEmergencyAccessByIdAccept: typeof handlePostApiEmergencyAccessByIdAccept;
+  /**
+   * Handler for the `DELETE /api/emergency-access/{id}` operation.
+   */
+  deleteApiEmergencyAccessById: typeof handleDeleteApiEmergencyAccessById;
+  /**
+   * Handler for the `PUT /api/emergency-access/{id}` operation.
+   */
+  putApiEmergencyAccessById: typeof handlePutApiEmergencyAccessById;
+  /**
+   * Handler for the `POST /api/emergency-access/{id}/rearm` operation.
+   */
+  postApiEmergencyAccessByIdRearm: typeof handlePostApiEmergencyAccessByIdRearm;
+  /**
+   * Handler for the `POST /api/emergency-access/{id}/initiate` operation.
+   */
+  postApiEmergencyAccessByIdInitiate: typeof handlePostApiEmergencyAccessByIdInitiate;
+  /**
+   * Handler for the `POST /api/emergency-access/{id}/cancel` operation.
+   */
+  postApiEmergencyAccessByIdCancel: typeof handlePostApiEmergencyAccessByIdCancel;
+  /**
+   * Handler for the `POST /api/emergency-access/{id}/reject` operation.
+   */
+  postApiEmergencyAccessByIdReject: typeof handlePostApiEmergencyAccessByIdReject;
+  /**
+   * Handler for the `POST /api/emergency-access/{id}/recover` operation.
+   */
+  postApiEmergencyAccessByIdRecover: typeof handlePostApiEmergencyAccessByIdRecover;
 };
 
 export type CreateMswHandlersResult = {
@@ -974,6 +1580,19 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     postApiVaultApprovalsByRequestIdApprove: wrap(handlePostApiVaultApprovalsByRequestIdApprove),
     getApiVaultApprovalsByRequestId: wrap(handleGetApiVaultApprovalsByRequestId),
     getApiVaultApprovalsPending: wrap(handleGetApiVaultApprovalsPending),
+    getApiEmergencyAccessSearch: wrap(handleGetApiEmergencyAccessSearch),
+    getApiEmergencyAccessPending: wrap(handleGetApiEmergencyAccessPending),
+    getApiEmergencyAccessTrusted: wrap(handleGetApiEmergencyAccessTrusted),
+    getApiEmergencyAccessGranted: wrap(handleGetApiEmergencyAccessGranted),
+    postApiEmergencyAccess: wrap(handlePostApiEmergencyAccess),
+    postApiEmergencyAccessByIdAccept: wrap(handlePostApiEmergencyAccessByIdAccept),
+    deleteApiEmergencyAccessById: wrap(handleDeleteApiEmergencyAccessById),
+    putApiEmergencyAccessById: wrap(handlePutApiEmergencyAccessById),
+    postApiEmergencyAccessByIdRearm: wrap(handlePostApiEmergencyAccessByIdRearm),
+    postApiEmergencyAccessByIdInitiate: wrap(handlePostApiEmergencyAccessByIdInitiate),
+    postApiEmergencyAccessByIdCancel: wrap(handlePostApiEmergencyAccessByIdCancel),
+    postApiEmergencyAccessByIdReject: wrap(handlePostApiEmergencyAccessByIdReject),
+    postApiEmergencyAccessByIdRecover: wrap(handlePostApiEmergencyAccessByIdRecover),
   };
   const all: CreateMswHandlersResult['all'] = (options = {}) => {
     type OverrideValue<R> = R | [response?: R, options?: RequestHandlerOptions];
@@ -990,6 +1609,12 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.putApiVaultItemsByItemId, overrides.putApiVaultItemsByItemId),
       invoke(pick.getApiVaultApprovalsByRequestId, overrides.getApiVaultApprovalsByRequestId),
       invoke(pick.getApiPublicKeysByUserIdContinuity, overrides.getApiPublicKeysByUserIdContinuity),
+      invoke(pick.postApiEmergencyAccessByIdAccept, overrides.postApiEmergencyAccessByIdAccept),
+      invoke(pick.postApiEmergencyAccessByIdRearm, overrides.postApiEmergencyAccessByIdRearm),
+      invoke(pick.postApiEmergencyAccessByIdInitiate, overrides.postApiEmergencyAccessByIdInitiate),
+      invoke(pick.postApiEmergencyAccessByIdCancel, overrides.postApiEmergencyAccessByIdCancel),
+      invoke(pick.postApiEmergencyAccessByIdReject, overrides.postApiEmergencyAccessByIdReject),
+      invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),
       invoke(pick.getApiVaultMeta, overrides.getApiVaultMeta),
       invoke(pick.getApiVaultRevision, overrides.getApiVaultRevision),
@@ -998,12 +1623,19 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiVaultFetch, overrides.postApiVaultFetch),
       invoke(pick.postApiVaultReactivate, overrides.postApiVaultReactivate),
       invoke(pick.putApiVaultKeyring, overrides.putApiVaultKeyring),
+      invoke(pick.getApiEmergencyAccessSearch, overrides.getApiEmergencyAccessSearch),
+      invoke(pick.getApiEmergencyAccessPending, overrides.getApiEmergencyAccessPending),
+      invoke(pick.getApiEmergencyAccessTrusted, overrides.getApiEmergencyAccessTrusted),
+      invoke(pick.getApiEmergencyAccessGranted, overrides.getApiEmergencyAccessGranted),
       invoke(pick.getApiPublicKeysByUserId, overrides.getApiPublicKeysByUserId),
+      invoke(pick.deleteApiEmergencyAccessById, overrides.deleteApiEmergencyAccessById),
+      invoke(pick.putApiEmergencyAccessById, overrides.putApiEmergencyAccessById),
       invoke(pick.getApiVersion, overrides.getApiVersion),
       invoke(pick.getApiMe, overrides.getApiMe),
       invoke(pick.deleteApiPublicKeys, overrides.deleteApiPublicKeys),
       invoke(pick.getApiPublicKeys, overrides.getApiPublicKeys),
       invoke(pick.postApiVault, overrides.postApiVault),
+      invoke(pick.postApiEmergencyAccess, overrides.postApiEmergencyAccess),
     ];
   };
   return { all, pick };

@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { randomBytes } from 'node:crypto';
 
 import { uint8ToBase64 } from '@encryption/src/crypto';
+import { sha256, signEmergencyEscrow } from '@encryption/src/crypto/emergency-escrow';
 import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
 import { encodeIdentityContinuityPayload, encodePopChallengeMessage } from '@encryption/src/crypto/key-registration';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
@@ -13,6 +14,8 @@ import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { notifyVaultChanged } from '@encryption/src/server/vault-notify';
 import {
   API_ERROR_CHALLENGE_NOT_FOUND,
+  API_ERROR_EMERGENCY_ESCROW_INVALID,
+  API_ERROR_EMERGENCY_REARM_REQUIRED,
   API_ERROR_VAULT_AUTH_BINDING_INVALID,
   API_ERROR_VAULT_ITEM_OUT_OF_DATE,
   API_ERROR_VAULT_KDF_PARAMS_INVALID,
@@ -21,6 +24,10 @@ import {
   API_ERROR_VAULT_PROOF_INVALID,
   API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID,
 } from '@encryption/src/shared/error-codes';
+
+// The keyring rewrite fires recovery notifications after a burn + re-arm; the
+// shared manual mock (src/server/email/__mocks__/emergency.ts) makes them inert.
+jest.mock('@encryption/src/server/email/emergency');
 
 // The server-push notifier is exercised as a spy here (does a successful write
 // wake other devices?); the real SSE delivery is covered in the integration test.
@@ -91,7 +98,8 @@ async function seedEncryptionKey(options: { identityId: string; version: number;
   });
 }
 
-// One vault: its keyring plus (optionally) its meta row and its sealed items.
+// One vault: its keyring, its ONE primary credential (the unlock material lives
+// there, not on the keyring), plus (optionally) its meta row and its sealed items.
 async function seedVault(options: {
   identityId: string;
   authPublicKey?: Uint8Array;
@@ -109,14 +117,19 @@ async function seedVault(options: {
     data: {
       userId: USER_ID,
       identityId: options.identityId,
-      wrappedVrk: options.wrappedVrk ?? 'WRAPPED',
-      authPublicKey: Buffer.from(options.authPublicKey ?? new Uint8Array(32)),
-      authPubSig: Buffer.from(new Uint8Array(64)),
-      kdfOps: options.kdfOps ?? KDF.ops,
-      kdfMem: options.kdfMem ?? KDF.mem,
-      lang: 'english',
       disabledAt: options.disabledAt ?? null,
       createdAt: options.createdAt,
+      credentials: {
+        create: {
+          type: 'primary',
+          wrappedVrk: options.wrappedVrk ?? 'WRAPPED',
+          authPublicKey: Buffer.from(options.authPublicKey ?? new Uint8Array(32)),
+          authPubSig: Buffer.from(new Uint8Array(64)),
+          kdfOps: options.kdfOps ?? KDF.ops,
+          kdfMem: options.kdfMem ?? KDF.mem,
+          lang: 'english',
+        },
+      },
     },
   });
 
@@ -144,6 +157,64 @@ async function seedVault(options: {
   }
 
   return keyring;
+}
+
+const GRANTEE_ID = '66666666-6666-4666-8666-666666666666';
+
+// A trusted-contact relationship on `vaultId`: the dormant emergency credential
+// (a second keyslot on the same vault) plus the EmergencyAccess row owning it.
+async function seedEmergencyAccess(options: {
+  vaultId: string;
+  authPublicKey?: Uint8Array;
+  wrappedVrk?: string;
+  kdfOps?: number;
+  kdfMem?: number;
+  status?: 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+  waitTimeDays?: number;
+  recoveryRequestedAt?: Date | null;
+}) {
+  await testPrisma.user.upsert({ where: { id: GRANTEE_ID }, create: { id: GRANTEE_ID, email: 'contact@example.org' }, update: {} });
+  // The contact's pinned identity (its key is fill(9), matching the re-arm test's wire).
+  const granteeIdentity = await testPrisma.identity.upsert({
+    where: { signaturePublicKey: Buffer.from(new Uint8Array(33).fill(9)) },
+    create: { userId: GRANTEE_ID, generation: 1, signaturePublicKey: Buffer.from(new Uint8Array(33).fill(9)) },
+    update: {},
+  });
+
+  const credential = await testPrisma.vaultCredential.create({
+    data: {
+      vaultId: options.vaultId,
+      type: 'emergency',
+      wrappedVrk: options.wrappedVrk ?? 'EMERGENCY',
+      authPublicKey: Buffer.from(options.authPublicKey ?? new Uint8Array(32).fill(1)),
+      authPubSig: Buffer.from(new Uint8Array(64)),
+      kdfOps: options.kdfOps ?? KDF.ops,
+      kdfMem: options.kdfMem ?? KDF.mem,
+      lang: 'english',
+    },
+  });
+
+  const access = await testPrisma.emergencyAccess.create({
+    data: {
+      grantorUserId: USER_ID,
+      granteeUserId: GRANTEE_ID,
+      status: options.status ?? 'recoveryApproved',
+      waitTimeDays: options.waitTimeDays ?? 15,
+      credentialId: credential.id,
+      wrappedPhraseForGrantee: 'CAPSULE',
+      granteeIdentityId: granteeIdentity.id,
+      granteeKeyVersion: 1,
+      escrowSignature: Buffer.from(new Uint8Array(64)),
+      escrowCreatedAt: new Date(1),
+      recoveryRequestedAt: options.recoveryRequestedAt ?? null,
+    },
+  });
+
+  return { credential, access };
+}
+
+async function primaryCredentialOf(vaultId: string) {
+  return testPrisma.vaultCredential.findFirstOrThrow({ where: { vaultId, type: 'primary' } });
 }
 
 async function seedChallenge(nonce: Uint8Array, expiresAt = new Date(Date.now() + 60000)) {
@@ -286,6 +357,46 @@ describe('POST /api/vault/fetch (proof of possession gate)', () => {
     // Nothing of the vault leaked: no wrapped VRK, no items.
     expect(res.json().wrapped_vrk).toBeUndefined();
     expect(res.json().items).toBeUndefined();
+  });
+
+  it('unlocks an emergency credential only once the recovery is granted', async () => {
+    const owner = await authKeys();
+    const contact = await deriveVaultAuthKeyPair(await deriveKek('the emergency phrase held by the trusted contact now', USER_ID, FAST));
+    const identity = await seedRequestIdentity();
+    const vault = await seedVault({ identityId: identity.id, authPublicKey: owner.publicKey, wrappedVrk: 'OWNER', revision: 3 });
+    const { access } = await seedEmergencyAccess({
+      vaultId: vault.id,
+      authPublicKey: contact.publicKey,
+      wrappedVrk: 'EMERGENCY',
+      status: 'confirmed',
+    });
+
+    const nonce = randomBytes(32);
+    const proof = uint8ToBase64(await signVaultChallenge(new Uint8Array(nonce), USER_ID, contact.secretKey));
+
+    // Dormant relationship: the emergency credential is not even a candidate, so
+    // the contact's phrase looks like a wrong phrase.
+    const before = await buildApp().inject({
+      method: 'POST',
+      url: '/api/vault/fetch',
+      payload: { challenge_id: (await seedChallenge(nonce)).id, proof },
+    });
+
+    expect(before.statusCode).toBe(401);
+    expect(before.json().code).toBe(API_ERROR_VAULT_PROOF_INVALID);
+
+    // Once the wait period has elapsed the same phrase opens the SAME vault
+    // through its own keyslot, flagged as emergency so the client burns it.
+    await testPrisma.emergencyAccess.update({ where: { id: access.id }, data: { status: 'recoveryApproved' } });
+
+    const after = await buildApp().inject({
+      method: 'POST',
+      url: '/api/vault/fetch',
+      payload: { challenge_id: (await seedChallenge(nonce)).id, proof },
+    });
+
+    expect(after.statusCode).toBe(200);
+    expect(after.json()).toMatchObject({ vault_id: vault.id, is_active: true, wrapped_vrk: 'EMERGENCY', credential_type: 'emergency', revision: 3 });
   });
 });
 
@@ -736,6 +847,35 @@ describe('GET /api/vault/meta (KDF variants for restore)', () => {
     });
   });
 
+  it('never leaks the params of a dormant emergency credential', async () => {
+    // An emergency credential whose recovery is not granted is not unlockable, so
+    // its (distinct) params must not even hint that the credential exists.
+    const identity = await seedRequestIdentity();
+    const vault = await seedVault({ identityId: identity.id, kdfOps: 3, kdfMem: 64 * 1024 * 1024 });
+
+    await testPrisma.vaultCredential.create({
+      data: {
+        vaultId: vault.id,
+        type: 'emergency',
+        wrappedVrk: 'EMERGENCY',
+        authPublicKey: Buffer.from(new Uint8Array(32).fill(1)),
+        authPubSig: Buffer.from(new Uint8Array(64)),
+        kdfOps: 7,
+        kdfMem: 256 * 1024 * 1024,
+        lang: 'english',
+      },
+    });
+
+    const res = await buildApp().inject({ method: 'GET', url: '/api/vault/meta' });
+
+    // Only the unlockable PRIMARY credential's params (3 / 64MB) come back. The
+    // dormant emergency credential's DISTINCT params (7 / 256MB) are filtered out
+    // by unlockableCredentials, so they must be absent from the response.
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ kdf_variants: [{ kdf_ops: 3, kdf_mem: 64 * 1024 * 1024 }] });
+    expect(res.json().kdf_variants).not.toContainEqual({ kdf_ops: 7, kdf_mem: 256 * 1024 * 1024 });
+  });
+
   it('404s only when the user has NO keyring at all', async () => {
     const res = await buildApp().inject({ method: 'GET', url: '/api/vault/meta' });
 
@@ -848,7 +988,10 @@ describe('POST /api/vault (atomic onboarding)', () => {
     // The fresh vault is the only active one, and carries its own items + meta.
     const fresh = await testPrisma.vaultKeyring.findFirstOrThrow({ where: { userId: USER_ID, disabledAt: null } });
     expect(fresh.id).not.toBe(previousVault.id);
-    expect(fresh.wrappedVrk).toBe('W');
+    // Its ONE primary credential carries the freshly wrapped VRK.
+    const freshCredentials = await testPrisma.vaultCredential.findMany({ where: { vaultId: fresh.id } });
+    expect(freshCredentials).toHaveLength(1);
+    expect(freshCredentials[0]).toMatchObject({ type: 'primary', wrappedVrk: 'W' });
     const freshMeta = await testPrisma.vaultMeta.findUniqueOrThrow({ where: { vaultId: fresh.id } });
     expect(freshMeta.accountRevision).toBe(1);
     expect(freshMeta.manifest).toBe(body.manifest);
@@ -892,5 +1035,202 @@ describe('POST /api/vault (atomic onboarding)', () => {
     expect(res.json().code).toBe(API_ERROR_VAULT_MANIFEST_INVALID);
     expect(await testPrisma.vaultKeyring.count()).toBe(0);
     expect(await testPrisma.identity.count()).toBe(0);
+  });
+});
+
+describe('PUT /api/vault/keyring (phrase change, burn + re-arm gate)', () => {
+  // A keyring body whose auth verifier is genuinely bound to the vault identity
+  // (the request-signing identity doubles as the vault identity here).
+  async function keyringBody() {
+    const authKeyPair = await generateSignatureKeyPair();
+    const authPubSig = await signAuthPublicKeyBinding(authKeyPair.publicKey, requestIdentity.secretKey);
+
+    return {
+      wrapped_vrk: 'W2',
+      auth_public_key: uint8ToBase64(authKeyPair.publicKey),
+      auth_pub_sig: uint8ToBase64(authPubSig),
+      kdf_ops: KDF.ops,
+      kdf_mem: KDF.mem,
+      lang: 'english',
+    };
+  }
+
+  // The account this route operates on: the active vault (its identity is the
+  // request-signing one) carrying its primary credential.
+  async function ownerVault() {
+    const identity = await seedRequestIdentity();
+
+    return seedVault({ identityId: identity.id, wrappedVrk: 'W1', revision: 3 });
+  }
+
+  // A re-arm entry signed by the vault identity with real crypto everywhere the
+  // server verifies (credential binding + escrow signature over the hashes).
+  async function rearmEntry(emergencyAccessId: string, waitTimeDays: number, pinnedIdentityWire?: Uint8Array) {
+    const authKeyPair = await generateSignatureKeyPair();
+    const authPubSig = await signAuthPublicKeyBinding(authKeyPair.publicKey, requestIdentity.secretKey);
+    const capsule = new Uint8Array(randomBytes(64));
+    const escrowCreatedAtMillis = Date.now();
+    const granteeIdentityWire = pinnedIdentityWire ?? new Uint8Array(33).fill(9);
+
+    const signature = await signEmergencyEscrow(
+      {
+        grantorUserId: USER_ID,
+        granteeUserId: GRANTEE_ID,
+        granteeIdentityPublicKeyWire: granteeIdentityWire,
+        waitTimeDays,
+        escrowCreatedAtMillis,
+        credentialAuthPublicKeyHash: await sha256(authKeyPair.publicKey),
+        capsuleHash: await sha256(capsule),
+      },
+      requestIdentity.secretKey
+    );
+
+    return {
+      emergency_access_id: emergencyAccessId,
+      credential: {
+        wrapped_vrk: 'EW',
+        auth_public_key: uint8ToBase64(authKeyPair.publicKey),
+        auth_pub_sig: uint8ToBase64(authPubSig),
+        kdf_ops: KDF.ops,
+        kdf_mem: KDF.mem,
+        lang: 'english',
+      },
+      grantee_identity_public_key: uint8ToBase64(granteeIdentityWire),
+      grantee_key_version: 1,
+      wrapped_phrase_for_grantee: uint8ToBase64(capsule),
+      escrow_signature: uint8ToBase64(signature),
+      escrow_created_at_millis: escrowCreatedAtMillis,
+    };
+  }
+
+  // A relationship whose recovery is granted: the contact has (or may have) seen
+  // the emergency phrase, so this phrase change must burn it.
+  async function grantedEscrow(vaultId: string) {
+    return seedEmergencyAccess({
+      vaultId,
+      wrappedVrk: 'REVEALED',
+      status: 'recoveryApproved',
+      waitTimeDays: 15,
+      recoveryRequestedAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000),
+    });
+  }
+
+  async function putKeyring(payload: object) {
+    return buildApp().inject({
+      method: 'PUT',
+      url: '/api/vault/keyring',
+      payload,
+      headers: await sigHeaders('PUT', '/api/vault/keyring', JSON.stringify(payload)),
+    });
+  }
+
+  it('re-wraps the primary credential in place when no recovery is granted', async () => {
+    const vault = await ownerVault();
+    const body = await keyringBody();
+
+    const res = await putKeyring(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ updated: true, rearmed: 0 });
+    // The same row was rewritten, not replaced, and it is still the only keyslot.
+    const credentials = await testPrisma.vaultCredential.findMany({ where: { vaultId: vault.id } });
+    expect(credentials).toHaveLength(1);
+    expect(credentials[0]).toMatchObject({ type: 'primary', wrappedVrk: 'W2' });
+    expect(uint8ToBase64(credentials[0].authPublicKey)).toBe(body.auth_public_key);
+  });
+
+  it('REFUSES a phrase change that does not burn + re-arm a granted escrow', async () => {
+    const vault = await ownerVault();
+    const { credential } = await grantedEscrow(vault.id);
+
+    const res = await putKeyring(await keyringBody());
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe(API_ERROR_EMERGENCY_REARM_REQUIRED);
+    // Nothing rotated: the old phrase still opens the vault, the revealed
+    // emergency keyslot is still there (the user must re-arm, not lose contacts).
+    expect((await primaryCredentialOf(vault.id)).wrappedVrk).toBe('W1');
+    expect(await testPrisma.vaultCredential.count({ where: { id: credential.id } })).toBe(1);
+  });
+
+  it('burns the revealed credential and re-arms the relationship atomically with the rotation', async () => {
+    const vault = await ownerVault();
+    const { credential, access } = await grantedEscrow(vault.id);
+    const entry = await rearmEntry(access.id, 15);
+    const body = { ...(await keyringBody()), emergency_rearms: [entry] };
+
+    const res = await putKeyring(body);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ updated: true, rearmed: 1 });
+    // The primary keyslot moved to the new phrase...
+    expect((await primaryCredentialOf(vault.id)).wrappedVrk).toBe('W2');
+    // ...the revealed emergency keyslot is destroyed...
+    expect(await testPrisma.vaultCredential.count({ where: { id: credential.id } })).toBe(0);
+    // ...and the relationship survives, re-pointed at a fresh dormant keyslot and
+    // reset to a plain confirmed state (the granted recovery is closed).
+    const row = await testPrisma.emergencyAccess.findUniqueOrThrow({ where: { id: access.id }, include: { credential: true } });
+    expect(row.credentialId).not.toBe(credential.id);
+    expect(row.credential).toMatchObject({ vaultId: vault.id, type: 'emergency', wrappedVrk: 'EW' });
+    expect(row.status).toBe('confirmed');
+    expect(row.recoveryRequestedAt).toBeNull();
+    expect(row.wrappedPhraseForGrantee).toBe(entry.wrapped_phrase_for_grantee);
+  });
+
+  it('accepts a re-arm whose grantee key version alone changed (advisory metadata)', async () => {
+    const vault = await ownerVault();
+    const { access } = await grantedEscrow(vault.id);
+    const entry = await rearmEntry(access.id, 15);
+    // grantee_key_version is NOT inside the binding signature: it only tells the
+    // UI which contact key the capsule targets, so changing it must not fail.
+    const body = { ...(await keyringBody()), emergency_rearms: [{ ...entry, grantee_key_version: 2 }] };
+
+    const res = await putKeyring(body);
+
+    expect(res.statusCode).toBe(200);
+    expect((await testPrisma.emergencyAccess.findUniqueOrThrow({ where: { id: access.id } })).granteeKeyVersion).toBe(2);
+  });
+
+  it('rejects a re-arm whose signed capsule was swapped after signing', async () => {
+    const vault = await ownerVault();
+    const { credential, access } = await grantedEscrow(vault.id);
+    const entry = await rearmEntry(access.id, 15);
+    // The capsule IS covered by the escrow signature (through its hash), so a
+    // server-side swap of what the contact would receive is detected.
+    const tampered = {
+      ...(await keyringBody()),
+      emergency_rearms: [{ ...entry, wrapped_phrase_for_grantee: uint8ToBase64(new Uint8Array(64).fill(1)) }],
+    };
+
+    const res = await putKeyring(tampered);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe(API_ERROR_EMERGENCY_ESCROW_INVALID);
+    // The rotation is refused as a whole: nothing burned, nothing re-wrapped.
+    expect((await primaryCredentialOf(vault.id)).wrappedVrk).toBe('W1');
+    expect(await testPrisma.vaultCredential.count({ where: { id: credential.id } })).toBe(1);
+  });
+
+  it('refuses to pin the relationship to an identity that is not the contact’s', async () => {
+    const vault = await ownerVault();
+    const { access } = await grantedEscrow(vault.id);
+
+    // A registered identity that belongs to a THIRD user. The signature-key column
+    // is globally unique, so an unscoped lookup would resolve it happily and store
+    // it as this relationship's pinned contact identity, after which GET /trusted
+    // would report a stranger's key as the contact's.
+    const strangerId = '99999999-9999-4999-8999-999999999999';
+    const strangerKey = new Uint8Array(33).fill(7);
+    await testPrisma.user.create({ data: { id: strangerId, email: 'stranger@example.org' } });
+    await testPrisma.identity.create({ data: { userId: strangerId, generation: 1, signaturePublicKey: Buffer.from(strangerKey) } });
+
+    // Signed by the vault identity over the stranger's key, so the escrow
+    // signature itself verifies: only the ownership check can catch this.
+    const entry = await rearmEntry(access.id, 15, strangerKey);
+    const res = await putKeyring({ ...(await keyringBody()), emergency_rearms: [entry] });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe(API_ERROR_EMERGENCY_ESCROW_INVALID);
+    expect((await primaryCredentialOf(vault.id)).wrappedVrk).toBe('W1');
   });
 });

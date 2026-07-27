@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { prisma } from '@encryption/src/prisma/client';
+import { assertUserId } from '@encryption/src/server/routes/transport-auth';
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
 
 /**
@@ -27,7 +28,8 @@ export async function meRoute(app: FastifyInstance): Promise<void> {
       await app.verifyJWT(request);
     },
     handler: async (request) => {
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
       const user = await prisma.user.findUnique({ where: { id: userId } });
 
       return { user_id: userId, email: user?.email ?? null };

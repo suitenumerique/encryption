@@ -43,7 +43,7 @@ export interface KeyringBundle {
   keyring: VaultKeyringWire;
 }
 
-async function loadWithIdentity(userId: string): Promise<{ loaded: LoadedVault; identitySecret: SignatureSecretKey }> {
+export async function loadWithIdentity(userId: string): Promise<{ loaded: LoadedVault; identitySecret: SignatureSecretKey }> {
   const loaded = await loadVault(userId);
 
   if (!loaded) {
@@ -65,7 +65,7 @@ async function loadWithIdentity(userId: string): Promise<{ loaded: LoadedVault; 
 // the identity binds its public key so a tampered keyring is detectable. An
 // existing `reusePhrase` reproduces the same keyring (used when a commit retries
 // after a version conflict, so the phrase the user already saved stays valid).
-async function deriveKeyring(
+export async function deriveKeyring(
   userId: string,
   vrk: Uint8Array,
   identitySecret: SignatureSecretKey,

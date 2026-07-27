@@ -2,9 +2,21 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
 import type {
+  DeleteApiEmergencyAccessByIdData,
+  DeleteApiEmergencyAccessByIdErrors,
+  DeleteApiEmergencyAccessByIdResponses,
   DeleteApiPublicKeysData,
   DeleteApiPublicKeysErrors,
   DeleteApiPublicKeysResponses,
+  GetApiEmergencyAccessGrantedData,
+  GetApiEmergencyAccessGrantedResponses,
+  GetApiEmergencyAccessPendingData,
+  GetApiEmergencyAccessPendingResponses,
+  GetApiEmergencyAccessSearchData,
+  GetApiEmergencyAccessSearchErrors,
+  GetApiEmergencyAccessSearchResponses,
+  GetApiEmergencyAccessTrustedData,
+  GetApiEmergencyAccessTrustedResponses,
   GetApiMeData,
   GetApiMeResponses,
   GetApiPublicKeysByUserIdContinuityData,
@@ -30,6 +42,27 @@ import type {
   GetApiVaultRevisionResponses,
   GetApiVersionData,
   GetApiVersionResponses,
+  PostApiEmergencyAccessByIdAcceptData,
+  PostApiEmergencyAccessByIdAcceptErrors,
+  PostApiEmergencyAccessByIdAcceptResponses,
+  PostApiEmergencyAccessByIdCancelData,
+  PostApiEmergencyAccessByIdCancelErrors,
+  PostApiEmergencyAccessByIdCancelResponses,
+  PostApiEmergencyAccessByIdInitiateData,
+  PostApiEmergencyAccessByIdInitiateErrors,
+  PostApiEmergencyAccessByIdInitiateResponses,
+  PostApiEmergencyAccessByIdRearmData,
+  PostApiEmergencyAccessByIdRearmErrors,
+  PostApiEmergencyAccessByIdRearmResponses,
+  PostApiEmergencyAccessByIdRecoverData,
+  PostApiEmergencyAccessByIdRecoverErrors,
+  PostApiEmergencyAccessByIdRecoverResponses,
+  PostApiEmergencyAccessByIdRejectData,
+  PostApiEmergencyAccessByIdRejectErrors,
+  PostApiEmergencyAccessByIdRejectResponses,
+  PostApiEmergencyAccessData,
+  PostApiEmergencyAccessErrors,
+  PostApiEmergencyAccessResponses,
   PostApiPublicKeysRegisterCompleteData,
   PostApiPublicKeysRegisterCompleteErrors,
   PostApiPublicKeysRegisterCompleteResponses,
@@ -53,6 +86,9 @@ import type {
   PostApiVaultReactivateErrors,
   PostApiVaultReactivateResponses,
   PostApiVaultResponses,
+  PutApiEmergencyAccessByIdData,
+  PutApiEmergencyAccessByIdErrors,
+  PutApiEmergencyAccessByIdResponses,
   PutApiVaultItemsByItemIdData,
   PutApiVaultItemsByItemIdErrors,
   PutApiVaultItemsByItemIdResponses,
@@ -260,3 +296,110 @@ export const getApiVaultApprovalsPending = <ThrowOnError extends boolean = false
   options?: Options<GetApiVaultApprovalsPendingData, ThrowOnError>
 ): RequestResult<GetApiVaultApprovalsPendingResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetApiVaultApprovalsPendingResponses, unknown, ThrowOnError>({ url: '/api/vault/approvals/pending', ...options });
+
+export const getApiEmergencyAccessSearch = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiEmergencyAccessSearchData, ThrowOnError>
+): RequestResult<GetApiEmergencyAccessSearchResponses, GetApiEmergencyAccessSearchErrors, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiEmergencyAccessSearchResponses, GetApiEmergencyAccessSearchErrors, ThrowOnError>({
+    url: '/api/emergency-access/search',
+    ...options,
+  });
+
+export const getApiEmergencyAccessPending = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiEmergencyAccessPendingData, ThrowOnError>
+): RequestResult<GetApiEmergencyAccessPendingResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiEmergencyAccessPendingResponses, unknown, ThrowOnError>({ url: '/api/emergency-access/pending', ...options });
+
+export const getApiEmergencyAccessTrusted = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiEmergencyAccessTrustedData, ThrowOnError>
+): RequestResult<GetApiEmergencyAccessTrustedResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiEmergencyAccessTrustedResponses, unknown, ThrowOnError>({ url: '/api/emergency-access/trusted', ...options });
+
+export const getApiEmergencyAccessGranted = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiEmergencyAccessGrantedData, ThrowOnError>
+): RequestResult<GetApiEmergencyAccessGrantedResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiEmergencyAccessGrantedResponses, unknown, ThrowOnError>({ url: '/api/emergency-access/granted', ...options });
+
+export const postApiEmergencyAccess = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessResponses, PostApiEmergencyAccessErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessResponses, PostApiEmergencyAccessErrors, ThrowOnError>({
+    url: '/api/emergency-access',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiEmergencyAccessByIdAccept = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessByIdAcceptData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessByIdAcceptResponses, PostApiEmergencyAccessByIdAcceptErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessByIdAcceptResponses, PostApiEmergencyAccessByIdAcceptErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}/accept',
+    ...options,
+  });
+
+export const deleteApiEmergencyAccessById = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteApiEmergencyAccessByIdData, ThrowOnError>
+): RequestResult<DeleteApiEmergencyAccessByIdResponses, DeleteApiEmergencyAccessByIdErrors, ThrowOnError> =>
+  (options.client ?? client).delete<DeleteApiEmergencyAccessByIdResponses, DeleteApiEmergencyAccessByIdErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}',
+    ...options,
+  });
+
+export const putApiEmergencyAccessById = <ThrowOnError extends boolean = false>(
+  options: Options<PutApiEmergencyAccessByIdData, ThrowOnError>
+): RequestResult<PutApiEmergencyAccessByIdResponses, PutApiEmergencyAccessByIdErrors, ThrowOnError> =>
+  (options.client ?? client).put<PutApiEmergencyAccessByIdResponses, PutApiEmergencyAccessByIdErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiEmergencyAccessByIdRearm = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessByIdRearmData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessByIdRearmResponses, PostApiEmergencyAccessByIdRearmErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessByIdRearmResponses, PostApiEmergencyAccessByIdRearmErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}/rearm',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiEmergencyAccessByIdInitiate = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessByIdInitiateData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessByIdInitiateResponses, PostApiEmergencyAccessByIdInitiateErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessByIdInitiateResponses, PostApiEmergencyAccessByIdInitiateErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}/initiate',
+    ...options,
+  });
+
+export const postApiEmergencyAccessByIdCancel = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessByIdCancelData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessByIdCancelResponses, PostApiEmergencyAccessByIdCancelErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessByIdCancelResponses, PostApiEmergencyAccessByIdCancelErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}/cancel',
+    ...options,
+  });
+
+export const postApiEmergencyAccessByIdReject = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessByIdRejectData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessByIdRejectResponses, PostApiEmergencyAccessByIdRejectErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessByIdRejectResponses, PostApiEmergencyAccessByIdRejectErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}/reject',
+    ...options,
+  });
+
+export const postApiEmergencyAccessByIdRecover = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiEmergencyAccessByIdRecoverData, ThrowOnError>
+): RequestResult<PostApiEmergencyAccessByIdRecoverResponses, PostApiEmergencyAccessByIdRecoverErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiEmergencyAccessByIdRecoverResponses, PostApiEmergencyAccessByIdRecoverErrors, ThrowOnError>({
+    url: '/api/emergency-access/{id}/recover',
+    ...options,
+  });

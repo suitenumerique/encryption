@@ -2,6 +2,8 @@ import type { StorybookConfig } from '@storybook/react-vite';
 import path from 'path';
 import remarkGfm from 'remark-gfm';
 
+import { vendorMarianneFonts } from '../src/build/marianne-fonts';
+
 const config: StorybookConfig = {
   stories: [path.resolve(__dirname, '../src/**/*.stories.@(js|ts|jsx|tsx)')],
   addons: [
@@ -25,11 +27,11 @@ const config: StorybookConfig = {
         },
       },
     },
-    '@storybook/addon-interactions',
     '@storybook/addon-essentials',
+    '@storybook/addon-interactions',
     'storybook-dark-mode',
   ],
-  staticDirs: [path.resolve(__dirname, 'public')],
+  staticDirs: [path.resolve(__dirname, 'public'), { from: path.resolve(__dirname, '../src/server/public-assets'), to: '/public-assets' }],
   framework: {
     name: '@storybook/react-vite',
     options: {},
@@ -43,6 +45,13 @@ const config: StorybookConfig = {
       ...(config.resolve.alias || {}),
       '@encryption': path.resolve(__dirname, '..'),
     };
+
+    config.define = {
+      ...(config.define || {}),
+      'process.env.STORYBOOK_ENVIRONMENT': JSON.stringify('true'),
+    };
+
+    config.plugins = [...(config.plugins ?? []), vendorMarianneFonts()];
 
     return config;
   },

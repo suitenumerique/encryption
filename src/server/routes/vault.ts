@@ -1,15 +1,14 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { base64ToUint8, importPublicKeyFromBytes, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
-import { verifyIdentityContinuity } from '@encryption/src/crypto/key-registration';
-import { REQUEST_SIG_HEADER, readProofSubject, verifyRequestProof } from '@encryption/src/crypto/request-proof';
 import { type VaultManifest, parseManifest, verifyManifest } from '@encryption/src/crypto/vault-manifest';
 import { DEFAULT_KDF_PARAMS, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
 import { errorResponses } from '@encryption/src/server/error-response';
+import { emergencyApprovalHolds, notifyVaultRecovered, verifyEscrowSubmission } from '@encryption/src/server/routes/emergency-core';
 import {
   type CompleteTxResult,
   activateRegistration,
@@ -19,12 +18,14 @@ import {
   loadAndVerifyPossession,
   mintIdentityInTx,
 } from '@encryption/src/server/routes/registration-core';
+import { SIG_ONLY, SKIP_SIG, assertUserId, registerTransportAuth } from '@encryption/src/server/routes/transport-auth';
 import { CompleteKeyPossessionBodySchema } from '@encryption/src/server/schemas/key-possession';
 import { addVaultListener, notifyVaultChanged, removeVaultListener } from '@encryption/src/server/vault-notify';
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
-import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
+  API_ERROR_EMERGENCY_ESCROW_INVALID,
+  API_ERROR_EMERGENCY_REARM_REQUIRED,
   API_ERROR_RATE_LIMIT_APPROVALS,
   API_ERROR_VAULT_APPROVAL_NOT_FOUND,
   API_ERROR_VAULT_APPROVAL_NOT_READY,
@@ -36,8 +37,8 @@ import {
   API_ERROR_VAULT_MANIFEST_INVALID,
   API_ERROR_VAULT_NOT_FOUND,
   API_ERROR_VAULT_PROOF_INVALID,
-  API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID,
 } from '@encryption/src/shared/error-codes';
+import { VaultKeyringUpdateBodySchema } from '@encryption/src/shared/schemas/emergency-access';
 import { VaultItemSchema, VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
 
 // KDF params are BOUNDED (not hard-pinned) on every keyring write: they must be at
@@ -127,6 +128,7 @@ const VaultFetchBodySchema = z.object({
 const VaultContentSchema = z.object({
   vault_id: z.string(),
   wrapped_vrk: z.string(),
+  credential_type: z.enum(['primary', 'emergency']),
   revision: z.number().int().nonnegative(),
   manifest: z.string().nullable(),
   manifest_sig: z.string().nullable(),
@@ -137,167 +139,25 @@ const VaultRevisionOnlyResponseSchema = z.object({ revision: z.number().int().po
 
 const RequestIdParamsSchema = z.object({ requestId: z.string() });
 
-const SKIP_SIG = { config: { skipRequestSignature: true } };
-const SIG_ONLY = { config: { signatureOnly: true } };
-
-// Grace window during which a SUPERSEDED (but not revoked) identity key may still
-// authenticate a lagging device after a migration. Set to the same ~1 year as the
-// superseded-vault content retention (§9), so the two windows reinforce each other.
-const IDENTITY_AUTH_GRACE_MS = 365 * 24 * 60 * 60 * 1000;
-
 export async function vaultRoute(app: FastifyInstance): Promise<void> {
   configureZodValidation(app);
+  registerTransportAuth(app);
   // The user's current vault: exactly one keyring has `disabledAt` null. The
   // sync and write paths operate on it; superseded (dormant) vaults are reachable
   // only through /fetch, which self-selects by the recovery phrase.
   const activeKeyring = (userId: string) => prisma.vaultKeyring.findFirst({ where: { userId, disabledAt: null } });
 
-  // The user's ACTIVE identity WIRE public key (fast path: the overwhelmingly
-  // common signer). Null if the user has no identity at all.
-  async function activeIdentityWireKey(userId: string): Promise<Uint8Array | null> {
-    const active = await prisma.identity.findFirst({ where: { userId, disabledAt: null }, orderBy: { generation: 'desc' } });
+  // Every keyslot the caller may currently open: their own primary credential
+  // always, plus an emergency credential only while its approval actually holds
+  // (accepted, requested, waited out, not revoked). An escrow whose approval
+  // lapsed is therefore unopenable without deleting anything.
+  async function unlockableCredentials(userId: string, nowMs: number) {
+    const credentials = await prisma.vaultCredential.findMany({ where: { vault: { userId } }, include: { vault: true, emergencyAccess: true } });
 
-    return active ? new Uint8Array(active.signaturePublicKey) : null;
+    return credentials.filter((c) => (c.type === 'primary' ? true : c.emergencyAccess !== null && emergencyApprovalHolds(c.emergencyAccess, nowMs)));
   }
 
-  // Continuity-linked PREDECESSORS of the active identity that may still authenticate
-  // a device lagging one (or a few) migrations behind. Walked back from the active
-  // identity and consulted ONLY when the active-key check already failed, so the hot
-  // path never runs this.
-  //
-  // A predecessor is accepted only when it clears BOTH bounds:
-  //   - HOP: within MAX_CONTINUITY_HOPS of the active generation, verifying each
-  //     link's cross-signature (`continuitySignature` on the newer node, signed by
-  //     the older key over the newer identity's canonical bytes). This proves the
-  //     older key really endorsed the newer one, so a forged predecessor — e.g. a
-  //     malicious server injecting a key it controls — fails here.
-  //   - TIME: `now - <when prev was superseded> < IDENTITY_AUTH_GRACE_MS`,
-  //     ABSOLUTE and per-identity (never a chained "each migration within the
-  //     window of the previous" test, which frequent migrations could walk back
-  //     years). A predecessor's "superseded at" needs no column: it is exactly its
-  //     SUCCESSOR's `createdAt` (the successor is minted at the moment the old
-  //     identity is demoted), and while walking down we already hold that successor
-  //     (`node`), so we compare `now - node.createdAt`. This caps cryptographic
-  //     exposure: a retired key stops authenticating anything once its window
-  //     closes. The window equals the superseded-vault content retention (§9), so
-  //     past it the old vault is purged and a lagging device has nothing to sync.
-  //
-  // A DISABLED predecessor (`disabledAt` set = revoked) is never accepted; an
-  // UNLINKED older generation (start-over / reset, no continuity signature) is a
-  // trust break and is never reached (the walk needs a valid cross-signature to
-  // step). Returns EMPTY today: nothing writes continuity links yet (the migration
-  // flow is not wired), so `previousIdentityId` is always null and the loop never
-  // runs — but the check is correct and ready the day it does. See architecture.md §7.1.
-  async function continuityPredecessorWireKeys(userId: string, nowMs: number): Promise<Uint8Array[]> {
-    let node = await prisma.identity.findFirst({ where: { userId, disabledAt: null }, orderBy: { generation: 'desc' } });
-    const keys: Uint8Array[] = [];
-
-    for (let hop = 0; node?.previousIdentityId && node.continuitySignature && hop < MAX_CONTINUITY_HOPS; hop++) {
-      const successorCreatedAt = node.createdAt.getTime(); // = when `prev` was superseded
-      const prev = await prisma.identity.findUnique({ where: { id: node.previousIdentityId } });
-      if (!prev) break;
-
-      const endorsed = await verifyIdentityContinuity(
-        { userId: node.userId, generation: node.generation, algo: node.algo, signaturePublicKeyWire: new Uint8Array(node.signaturePublicKey) },
-        uint8ToBase64(new Uint8Array(prev.signaturePublicKey)),
-        uint8ToBase64(new Uint8Array(node.continuitySignature))
-      );
-      if (!endorsed) break; // broken / forged chain: stop, trust nothing further back
-
-      // Out of window or revoked stops the walk: everything older was superseded
-      // even earlier (against `now`), so it cannot be in-window either.
-      if (prev.disabledAt !== null || nowMs - successorCreatedAt >= IDENTITY_AUTH_GRACE_MS) break;
-
-      keys.push(new Uint8Array(prev.signaturePublicKey));
-      node = prev;
-    }
-
-    return keys;
-  }
-
-  // Keep the RAW JSON body (still parsing it as usual) so the request-signature
-  // middleware can verify the body digest against the exact bytes the client
-  // signed, not a re-serialization. Scoped to the vault plugin only.
-  app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
-    (request as { rawBody?: string }).rawBody = body as string;
-
-    if (body === '') return done(null, undefined);
-
-    try {
-      done(null, JSON.parse(body as string));
-    } catch (err) {
-      done(err as Error);
-    }
-  });
-
-  // Verify the identity X-Signature on a request against `userId`: the active key
-  // first (the common case), then a bounded walk of continuity-linked
-  // predecessors. Shared by the signature-only and JWT+signature tiers.
-  async function verifyIdentityRequest(request: FastifyRequest, userId: string, token: string, nowMs: number): Promise<boolean> {
-    const proof = {
-      token,
-      method: request.method,
-      path: request.url,
-      userId,
-      body: (request as { rawBody?: string }).rawBody ?? '',
-      nowSeconds: Math.floor(nowMs / 1000),
-    };
-
-    const activeKey = await activeIdentityWireKey(userId);
-    if (activeKey && (await verifyRequestProof({ ...proof, acceptableIdentityWireKeys: [activeKey] }))) return true;
-
-    const predecessors = await continuityPredecessorWireKeys(userId, nowMs);
-
-    return predecessors.length > 0 && verifyRequestProof({ ...proof, acceptableIdentityWireKeys: predecessors });
-  }
-
-  // Tiered, secure-by-default transport auth for EVERY vault route (§7.1):
-  //  - SIG_ONLY -> identity signature ONLY, no JWT; userId comes from the signed
-  //    sub (verified against that user's key, so a forged sub cannot pass).
-  //  - SKIP_SIG -> JWT only.
-  //  - default  -> JWT + identity signature, the signature's sub bound to the JWT.
-  // A new route falls under the strictest default (JWT+sig) unless it opts out, so
-  // forgetting fails loud (rejects a legitimate call), never silently open.
-  // `preValidation`, NOT `preHandler`: the body is parsed by then (the hook needs
-  // it for the body digest) but schema validation has not run yet, so an
-  // unauthenticated caller is rejected 401 BEFORE its payload reaches the
-  // validator. On `preHandler` the order inverts and a forged-signature request
-  // with a malformed body answers 400, leaking that the signature was never the
-  // reason it failed.
-  app.addHook('preValidation', async (request, reply) => {
-    const cfg = request.routeOptions.config as { skipRequestSignature?: boolean; signatureOnly?: boolean } | undefined;
-    const token = request.headers[REQUEST_SIG_HEADER];
-    const nowMs = Date.now();
-    const reject = () => reply.status(401).send({ code: API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID });
-
-    if (cfg?.signatureOnly) {
-      // Tier 1: no JWT. Read the claimed subject, verify the signature against
-      // THAT user's identity, and only then adopt it as the authenticated user.
-      if (typeof token !== 'string') return reject();
-
-      const sub = await readProofSubject(token);
-      if (!sub || !(await verifyIdentityRequest(request, sub, token, nowMs))) return reject();
-
-      request.userId = sub;
-
-      return;
-    }
-
-    await app.verifyJWT(request);
-
-    if (cfg?.skipRequestSignature) return; // Tier 3/4: JWT only.
-
-    // Tier 2: JWT + identity signature, which MUST name the same user — a valid
-    // JWT for one account cannot be paired with another account's signature. Bound
-    // two ways, both against `request.userId` (the JWT subject):
-    //  1. the explicit check below: the signature's `sub` must equal the JWT user;
-    //  2. `verifyIdentityRequest` resolves the key via `activeIdentityWireKey(
-    //     request.userId)` and verifies the signature against the JWT user's OWN
-    //     registered key, so a signature made with a different key cannot verify.
-    if (typeof token !== 'string') return reject();
-    if ((await readProofSubject(token)) !== request.userId) return reject();
-    if (!(await verifyIdentityRequest(request, request.userId!, token, nowMs))) return reject();
-  });
+  type Credential = Awaited<ReturnType<typeof unlockableCredentials>>[number];
 
   // The KDF param variants a restoring client must try to derive the key from the
   // recovery phrase. Returns the DISTINCT (kdf_ops, kdf_mem) pairs across ALL of
@@ -319,17 +179,18 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       },
     },
     handler: async (request, reply) => {
-      const keyrings = await prisma.vaultKeyring.findMany({ where: { userId: request.userId! }, select: { kdfOps: true, kdfMem: true } });
+      assertUserId(request);
+      const credentials = await unlockableCredentials(request.userId, Date.now());
 
-      if (keyrings.length === 0) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+      if (credentials.length === 0) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
       const seen = new Set<string>();
       const variants: Array<{ kdf_ops: number; kdf_mem: number }> = [];
-      for (const k of keyrings) {
-        const key = `${k.kdfOps}:${k.kdfMem}`;
+      for (const c of credentials) {
+        const key = `${c.kdfOps}:${c.kdfMem}`;
         if (!seen.has(key)) {
           seen.add(key);
-          variants.push({ kdf_ops: k.kdfOps, kdf_mem: k.kdfMem });
+          variants.push({ kdf_ops: c.kdfOps, kdf_mem: c.kdfMem });
         }
       }
       variants.sort((a, b) => a.kdf_ops * a.kdf_mem - b.kdf_ops * b.kdf_mem);
@@ -343,7 +204,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     ...SIG_ONLY,
     schema: { response: { 200: z.object({ revision: z.number().int().nonnegative() }) } },
     handler: async (request) => {
-      const keyring = await activeKeyring(request.userId!);
+      assertUserId(request);
+      const keyring = await activeKeyring(request.userId);
       const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
 
       return { revision: meta?.accountRevision ?? 0 };
@@ -355,7 +217,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // the vault iframe over the silent data plane, which holds an identity key but
   // no JWT, and it carries no vault data. See src/server/vault-notify.ts.
   app.get('/api/vault/events', { ...SIG_ONLY, schema: { hide: true } }, (request, reply) => {
-    const userId = request.userId!;
+    assertUserId(request);
+    const userId = request.userId;
 
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -402,7 +265,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       },
     },
     handler: async (request, reply) => {
-      const keyring = await activeKeyring(request.userId!);
+      assertUserId(request);
+      const keyring = await activeKeyring(request.userId);
       const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
 
       if (!keyring || !meta) return { revision: 0, manifest: null, manifest_sig: null, items: [] };
@@ -423,14 +287,15 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     ...SKIP_SIG,
     schema: { response: { 200: z.object({ challenge_id: z.string(), nonce: z.string() }) } },
     handler: async (request) => {
+      assertUserId(request);
       // Opportunistic sweep of this user's expired challenges: they are otherwise
       // only deleted when re-presented, so an abandoned-challenge loop would grow
       // the table unbounded with no cron. Scoped to this user, cheap on the index.
-      await prisma.vaultChallenge.deleteMany({ where: { userId: request.userId!, expiresAt: { lt: new Date() } } });
+      await prisma.vaultChallenge.deleteMany({ where: { userId: request.userId, expiresAt: { lt: new Date() } } });
 
       const nonce = randomBytes(32);
       const challenge = await prisma.vaultChallenge.create({
-        data: { userId: request.userId!, nonce, expiresAt: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000) },
+        data: { userId: request.userId, nonce, expiresAt: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000) },
       });
 
       return { challenge_id: challenge.id, nonce: nonce.toString('base64') };
@@ -446,7 +311,9 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   type ProofChallenge = NonNullable<Awaited<ReturnType<typeof prisma.vaultChallenge.findUnique>>>;
   // The failure statuses are a precise union rather than `number` so the routes
   // forwarding them still satisfy the statuses declared in their own schema.
-  type ProofResult = { ok: true; challenge: ProofChallenge; keyring: Keyring } | { ok: false; status: 401 | 404 | 410; code: string };
+  type ProofResult =
+    | { ok: true; challenge: ProofChallenge; credential: Credential; keyring: Keyring }
+    | { ok: false; status: 401 | 404 | 410; code: string };
 
   async function selectVaultByProof(userId: string, body: { challenge_id: string; proof: string }): Promise<ProofResult> {
     const challenge = await prisma.vaultChallenge.findUnique({ where: { id: body.challenge_id } });
@@ -459,16 +326,16 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       return { ok: false, status: 410, code: API_ERROR_VAULT_CHALLENGE_EXPIRED };
     }
 
-    const keyrings = await prisma.vaultKeyring.findMany({ where: { userId } });
+    const candidates = await unlockableCredentials(userId, Date.now());
 
-    if (keyrings.length === 0) return { ok: false, status: 404, code: API_ERROR_VAULT_NOT_FOUND };
+    if (candidates.length === 0) return { ok: false, status: 404, code: API_ERROR_VAULT_NOT_FOUND };
 
     const proof = base64ToUint8(body.proof);
     const nonce = new Uint8Array(challenge.nonce);
 
-    for (const candidate of keyrings) {
+    for (const candidate of candidates) {
       if (await verifyVaultChallenge(nonce, userId, proof, candidate.authPublicKey)) {
-        return { ok: true, challenge, keyring: candidate };
+        return { ok: true, challenge, credential: candidate, keyring: candidate.vault };
       }
     }
 
@@ -477,7 +344,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
 
   // The releasable content of one vault: the wrapped VRK plus sealed items and
   // signed manifest. Shared by /fetch and /reactivate, both PoP-gated.
-  async function loadVaultContent(keyring: Keyring) {
+  async function loadVaultContent(credential: Credential) {
+    const keyring = credential.vault;
     const [meta, items] = await Promise.all([
       prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }),
       prisma.vaultItem.findMany({ where: { vaultId: keyring.id } }),
@@ -485,7 +353,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
 
     return {
       vault_id: keyring.id,
-      wrapped_vrk: keyring.wrappedVrk,
+      wrapped_vrk: credential.wrappedVrk,
+      credential_type: credential.type,
       revision: meta?.accountRevision ?? 0,
       manifest: meta?.manifest ?? null,
       manifest_sig: meta?.manifestSig ? uint8ToBase64(meta.manifestSig) : null,
@@ -510,9 +379,10 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       },
     },
     handler: async (request, reply) => {
+      assertUserId(request);
       const body = request.body;
 
-      const selected = await selectVaultByProof(request.userId!, body);
+      const selected = await selectVaultByProof(request.userId, body);
       if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
 
       const matched = selected.keyring;
@@ -523,7 +393,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
 
       return {
-        ...(await loadVaultContent(matched)),
+        ...(await loadVaultContent(selected.credential)),
         is_active: matched.disabledAt === null,
         created_at_millis: matched.createdAt.getTime(),
       };
@@ -545,13 +415,15 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           reactivated: z.boolean(),
           active_vault_id: z.string(),
           disabled_vault_id: z.string().nullable(),
+          disabled_vault_created_at_millis: z.number().int().nonnegative().nullable(),
         }),
         ...errorResponses(400, 401, 404, 409, 410),
       },
     },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       const selected = await selectVaultByProof(userId, body);
       if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
@@ -563,7 +435,13 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       // Already the current vault: nothing to switch, but still release the content
       // so the caller can cache it in the one path it caches at all.
       if (target.disabledAt === null)
-        return { reactivated: false, active_vault_id: target.id, disabled_vault_id: null, ...(await loadVaultContent(target)) };
+        return {
+          reactivated: false,
+          active_vault_id: target.id,
+          disabled_vault_id: null,
+          disabled_vault_created_at_millis: null,
+          ...(await loadVaultContent(selected.credential)),
+        };
 
       // The vault we are about to demote, so the client can name it to the user.
       const previouslyActive = await activeKeyring(userId);
@@ -600,7 +478,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         active_vault_id: target.id,
         disabled_vault_id: previouslyActive?.id ?? null,
         disabled_vault_created_at_millis: previouslyActive?.createdAt.getTime() ?? null,
-        ...(await loadVaultContent(target)),
+        ...(await loadVaultContent(selected.credential)),
       };
     },
   });
@@ -634,7 +512,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       // Cheap input check before the proof: the keyring's KDF params must be the
       // pinned standard (uniform params keep restore correct for any vault; also
@@ -685,12 +564,17 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
               data: {
                 userId,
                 identityId: reg.identityId,
-                wrappedVrk: body.keyring.wrapped_vrk,
-                authPublicKey: Buffer.from(base64ToUint8(body.keyring.auth_public_key)),
-                authPubSig: Buffer.from(base64ToUint8(body.keyring.auth_pub_sig)),
-                kdfOps: body.keyring.kdf_ops,
-                kdfMem: body.keyring.kdf_mem,
-                lang: body.keyring.lang,
+                credentials: {
+                  create: {
+                    type: 'primary',
+                    wrappedVrk: body.keyring.wrapped_vrk,
+                    authPublicKey: Buffer.from(base64ToUint8(body.keyring.auth_public_key)),
+                    authPubSig: Buffer.from(base64ToUint8(body.keyring.auth_pub_sig)),
+                    kdfOps: body.keyring.kdf_ops,
+                    kdfMem: body.keyring.kdf_mem,
+                    lang: body.keyring.lang,
+                  },
+                },
               },
             });
             await tx.vaultItem.createMany({
@@ -746,7 +630,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       if (body.item.item_id !== request.params.itemId) return reply.status(400).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
 
@@ -824,12 +709,22 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     },
   });
 
-  // Change the recovery phrase: re-wrap only. The vault items are untouched.
+  // Change the recovery phrase: re-wrap only, the vault items are untouched.
+  // When a trusted contact's recovery is currently GRANTED, this write must
+  // atomically burn + re-arm every granted escrow: the contact has (or may have)
+  // seen an emergency phrase, and a phrase change is exactly the moment that burns
+  // it, so the server refuses to let the rotation commit without a replacement
+  // escrow per granted relationship (a partial rotation would leave a revealed
+  // phrase alive, or strip the user of their recovery contacts).
   app.withTypeProvider<ZodTypeProvider>().put('/api/vault/keyring', {
-    schema: { body: VaultKeyringSchema, response: { 200: z.object({ updated: z.boolean() }), ...errorResponses(400, 404) } },
+    schema: {
+      body: VaultKeyringUpdateBodySchema,
+      response: { 200: z.object({ updated: z.boolean(), rearmed: z.number().int().nonnegative() }), ...errorResponses(400, 404, 409) },
+    },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       const existing = await activeKeyring(userId);
       if (!existing) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
@@ -844,19 +739,135 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       if (!(await authBindingValid(body.auth_public_key, body.auth_pub_sig, identity.signaturePublicKey)))
         return reply.status(400).send({ code: API_ERROR_VAULT_AUTH_BINDING_INVALID });
 
-      await prisma.vaultKeyring.update({
-        where: { id: existing.id },
-        data: {
-          wrappedVrk: body.wrapped_vrk,
-          authPublicKey: Buffer.from(base64ToUint8(body.auth_public_key)),
-          authPubSig: Buffer.from(base64ToUint8(body.auth_pub_sig)),
-          kdfOps: body.kdf_ops,
-          kdfMem: body.kdf_mem,
-          lang: body.lang,
-        },
-      });
+      // Escrows are bound to a specific vault: only THIS vault's granted
+      // relationships gate this write (a start-over's dormant vault keeps its own
+      // escrows untouched, see architecture: they die only with the vault).
+      const nowMs = Date.now();
+      const escrowRows = await prisma.emergencyAccess.findMany({ where: { grantorUserId: userId }, include: { credential: true } });
+      const granted = escrowRows.filter((row) => row.credential.vaultId === existing.id && emergencyApprovalHolds(row, nowMs));
 
-      return { updated: true };
+      const rearms = body.emergency_rearms ?? [];
+      const rearmById = new Map(rearms.map((r) => [r.emergency_access_id, r]));
+
+      // Exact cover: one re-arm per granted relationship, nothing extraneous (an
+      // extraneous entry would let a caller swap escrows outside the granted set).
+      if (rearms.length !== granted.length || granted.some((row) => !rearmById.has(row.id)))
+        return reply.status(400).send({ code: API_ERROR_EMERGENCY_REARM_REQUIRED });
+
+      // Resolve each re-armed escrow's pinned contact identity to its registry row,
+      // so it can be stored as an FK. Scoped to THIS relationship's contact: the
+      // signature-key column is globally unique, so an unscoped lookup would
+      // happily resolve another user's identity row and store it as
+      // `granteeIdentityId`, after which GET /trusted would report that stranger's
+      // key as the pinned contact identity.
+      //
+      // Deliberately NOT as strict as the standalone
+      // /api/emergency-access/:id/rearm route, which additionally demands the
+      // contact's CURRENT active identity and key version. This path is the forced
+      // rotation right after an emergency unlock: it is the write that kills a
+      // phrase a contact has already read, so it must not be refusable because the
+      // contact happened to rotate something in the meantime. Staleness here is
+      // advisory (the escrow audit flags it, and the row is re-armed anyway).
+      const granteeIdentityIdByRow = new Map<string, string>();
+
+      for (const row of granted) {
+        const rearm = rearmById.get(row.id)!;
+
+        if (!kdfParamsAllowed(rearm.credential.kdf_ops, rearm.credential.kdf_mem))
+          return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
+
+        const valid = await verifyEscrowSubmission(
+          {
+            grantorUserId: userId,
+            granteeUserId: row.granteeUserId,
+            waitTimeDays: row.waitTimeDays,
+            credential: rearm.credential,
+            escrow: rearm,
+          },
+          identity.signaturePublicKey
+        );
+        if (!valid) return reply.status(400).send({ code: API_ERROR_EMERGENCY_ESCROW_INVALID });
+
+        const granteeIdentityRow = await prisma.identity.findFirst({
+          where: { userId: row.granteeUserId, signaturePublicKey: Buffer.from(base64ToUint8(rearm.grantee_identity_public_key)) },
+        });
+        if (!granteeIdentityRow) return reply.status(400).send({ code: API_ERROR_EMERGENCY_ESCROW_INVALID });
+
+        granteeIdentityIdByRow.set(row.id, granteeIdentityRow.id);
+      }
+
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            const primary = await tx.vaultCredential.findFirstOrThrow({ where: { vaultId: existing.id, type: 'primary' } });
+
+            await tx.vaultCredential.update({
+              where: { id: primary.id },
+              data: {
+                wrappedVrk: body.wrapped_vrk,
+                authPublicKey: Buffer.from(base64ToUint8(body.auth_public_key)),
+                authPubSig: Buffer.from(base64ToUint8(body.auth_pub_sig)),
+                kdfOps: body.kdf_ops,
+                kdfMem: body.kdf_mem,
+                lang: body.lang,
+              },
+            });
+
+            for (const row of granted) {
+              const rearm = rearmById.get(row.id)!;
+
+              // Fresh dormant credential first, re-point the relationship at it
+              // (resetting it to a plain confirmed state), THEN burn the revealed
+              // one: the relationship row must never dangle without a credential
+              // (deleting its credential cascades the row away).
+              const fresh = await tx.vaultCredential.create({
+                data: {
+                  vaultId: existing.id,
+                  type: 'emergency',
+                  wrappedVrk: rearm.credential.wrapped_vrk,
+                  authPublicKey: Buffer.from(base64ToUint8(rearm.credential.auth_public_key)),
+                  authPubSig: Buffer.from(base64ToUint8(rearm.credential.auth_pub_sig)),
+                  kdfOps: rearm.credential.kdf_ops,
+                  kdfMem: rearm.credential.kdf_mem,
+                  lang: rearm.credential.lang,
+                },
+              });
+
+              await tx.emergencyAccess.update({
+                where: { id: row.id },
+                data: {
+                  credentialId: fresh.id,
+                  wrappedPhraseForGrantee: rearm.wrapped_phrase_for_grantee,
+                  granteeIdentityId: granteeIdentityIdByRow.get(row.id)!,
+                  granteeKeyVersion: rearm.grantee_key_version,
+                  escrowSignature: Buffer.from(base64ToUint8(rearm.escrow_signature)),
+                  escrowCreatedAt: new Date(rearm.escrow_created_at_millis),
+                  status: 'confirmed',
+                  recoveryRequestedAt: null,
+                  lastNotifiedAt: null,
+                },
+              });
+
+              await tx.vaultCredential.delete({ where: { id: row.credentialId } });
+            }
+          },
+          { isolationLevel: 'Serializable' }
+        );
+      } catch (err) {
+        if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
+        throw err;
+      }
+
+      // Both sides learn the recovery completed (best-effort: the write above is
+      // already durable, a mail hiccup must not fail it).
+      if (granted.length > 0) {
+        notifyVaultRecovered(
+          userId,
+          granted.map((row) => row.granteeUserId)
+        ).catch((err) => request.log.error({ err }, 'emergency recovered emails failed'));
+      }
+
+      return { updated: true, rearmed: granted.length };
     },
   });
 
@@ -890,7 +901,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const body = request.body;
-      const userId = request.userId!;
+      assertUserId(request);
+      const userId = request.userId;
 
       const now = Date.now();
 
@@ -935,8 +947,9 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       response: { 200: z.object({ approved: z.boolean() }), ...errorResponses(404) },
     },
     handler: async (request, reply) => {
+      assertUserId(request);
       const body = request.body;
-      const approval = await loadOwnedApproval(request.params.requestId, request.userId!);
+      const approval = await loadOwnedApproval(request.params.requestId, request.userId);
 
       // Only the owner can approve their own pending, unexpired device.
       if (!approval) return reply.status(404).send({ code: API_ERROR_VAULT_APPROVAL_NOT_FOUND });
@@ -957,7 +970,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       response: { 200: z.object({ wrapped_device_bootstrap: z.string(), device_public_key: z.string() }), ...errorResponses(404, 425) },
     },
     handler: async (request, reply) => {
-      const approval = await loadOwnedApproval(request.params.requestId, request.userId!);
+      assertUserId(request);
+      const approval = await loadOwnedApproval(request.params.requestId, request.userId);
 
       if (!approval) return reply.status(404).send({ code: API_ERROR_VAULT_APPROVAL_NOT_FOUND });
 
@@ -983,8 +997,9 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       },
     },
     handler: async (request) => {
+      assertUserId(request);
       const pending = await prisma.vaultApproval.findMany({
-        where: { userId: request.userId!, wrappedDeviceBootstrap: null, expiresAt: { gt: new Date() } },
+        where: { userId: request.userId, wrappedDeviceBootstrap: null, expiresAt: { gt: new Date() } },
         select: { requestId: true, devicePublicKey: true },
       });
 

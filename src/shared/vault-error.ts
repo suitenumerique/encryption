@@ -77,6 +77,14 @@ export const VaultErrorCode = {
    */
   SYNC_FAILED: 'SYNC_FAILED',
   /**
+   * The request reached a handler but its payload does not satisfy that
+   * operation's contract (a missing required field, or none of a set of mutually
+   * exclusive ones). A CALLER bug, not a user condition: it is surfaced rather
+   * than defaulted so a malformed call fails loud instead of acting on a
+   * half-specified target.
+   */
+  INVALID_REQUEST: 'INVALID_REQUEST',
+  /**
    * Catch-all for situations the SDK couldn't classify into a more
    * specific code — present so consumers always have something to switch
    * on rather than falling back to message regex.

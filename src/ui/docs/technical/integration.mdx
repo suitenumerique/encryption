@@ -130,7 +130,7 @@ Compromising both domains at once would be required to both reach the private ke
 The `GET /api/public-keys` endpoint is reachable **without a token**. That choice is deliberate:
 
 - Public keys are **public by nature** — they are meant to be shared.
-- The Suite is used by tens of thousands of users. Any authenticated user could fetch everyone else's public keys, so requiring a token would add no real protection.
+- LaSuite is used by tens of thousands of users. Any authenticated user could fetch everyone else's public keys, so requiring a token would add no real protection.
 - Protecting this endpoint would mean propagating an authentication token into the vault (`data.encryption`), which would work against the privilege separation principle for no security benefit.
 
 </Alert>
@@ -350,6 +350,25 @@ Depending on its configuration, the OIDC identity provider may or may not enforc
   **metadata of shared content** (document titles, collaborator lists, etc.), even though the encrypted content stays protected. Enabling 2FA on
   **every Suite product**, not just the encryption service, significantly reduces the attack vectors.
 </Alert>
+
+---
+
+## Emergency access (trusted contacts)
+
+The service lets every user designate a **trusted contact** who can help them recover access to their vault if they lose their recovery phrase and all their devices.
+
+<Alert severity="info" title="No product integration needed">
+  The feature is carried entirely by the encryption service and `client.js`: management screens, email notifications, and the automatic prompts (an
+  invitation to accept, a recovery request to refuse) that the SDK surfaces by itself through an interface overlay whenever a pending state exists.
+  Products have **no code to write**: updating the script is enough.
+</Alert>
+
+The instance operator does have to configure the notification emails, which are an essential channel (the objection delay only protects the owner if they are told a recovery was requested):
+
+- **`EMAIL_PRODUCT_URL`**: the product page the email links point to. The links carry neither a token nor a deep route: once signed in, the pending state resurfaces on its own through the SDK.
+- **`MAILER_*`**: the SMTP configuration (`MAILER_SMTP_HOST`, `MAILER_SMTP_PORT`, `MAILER_SMTP_USER`, `MAILER_SMTP_PASSWORD`), the optional fallback transport (`MAILER_FALLBACK_SMTP_*`) and `MAILER_DEFAULT_DOMAIN`. With no SMTP host configured, the server logs the emails instead of sending them.
+
+In local development a **maildev** container is provided in `docker-compose.yaml`: the emails sent are readable in a web interface on port **7207** (SMTP on port **7208**), and nothing leaves the machine.
 
 ---
 

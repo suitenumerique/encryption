@@ -4,22 +4,23 @@ import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint, formatFingerprint } from '@encryption/src/crypto/fingerprint';
 import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
-import { MSG_VAULT_DESTROY_KEYS, MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
+import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { UserInfo } from '@encryption/src/ui/App';
-import { apiDefaults, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
+import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import {
-  deleteApiPublicKeys,
-  getApiPublicKeys,
-  getApiPublicKeysNext,
-  postApiPublicKeysRegisterComplete,
-  postApiPublicKeysRegisterInit,
-  putApiVaultKeyring,
-} from '@encryption/src/ui/api/generated/sdk.gen';
+  deletePublicKeys,
+  fetchNextKeyVersion,
+  fetchPublicKeys,
+  registerKeyComplete,
+  registerKeyInit,
+} from '@encryption/src/ui/api/public-keys-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { UntrustedRearmError, grantedRearmRows } from '@encryption/src/ui/components/emergency-access-logic';
+import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
@@ -31,6 +32,7 @@ interface EncryptionSettingsProps {
   onClose: () => void;
   onKeysDestroyed: () => void;
   onOpenDeviceApproval?: () => void;
+  onOpenEmergencyAccess?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
   currentAccessToken?: string | null;
@@ -43,6 +45,7 @@ export function EncryptionSettings({
   onClose,
   onKeysDestroyed,
   onOpenDeviceApproval,
+  onOpenEmergencyAccess,
   onReconnect,
   isAuthenticating = false,
   currentAccessToken = null,
@@ -86,21 +89,21 @@ export function EncryptionSettings({
 
   // Commit the new keyring to the server. This is the moment the OLD phrase (and
   // all its backups) stops working, so it runs only after the user confirms.
+  // Goes through the shared keyring-commit flow: while a recovery is granted the
+  // server rejects the rewrite unless the granted escrows are burned + re-armed,
+  // so a routine phrase change carries the mandatory re-arms too.
+  const { commitKeyring, revokeContacts } = useKeyringCommit(getToken);
+  const [rearmBlocked, setRearmBlocked] = useState<Array<{ id: string; email: string }> | null>(null);
+
   const handleConfirmPhraseBackup = useCallback(async () => {
     if (!pendingKeyring) return;
 
     setIsChangingPhrase(true);
     setChangeError(null);
+    setRearmBlocked(null);
 
     try {
-      // Covered route: sign the EXACT body we will send (same serialization the
-      // request helper uses), so the proof's body digest matches, then attach it.
-      const body = JSON.stringify(pendingKeyring);
-      const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'PUT', path: '/api/vault/keyring', body })) as { signature: string };
-
-      await withFreshToken(getToken, (token) =>
-        putApiVaultKeyring({ ...apiDefaults, headers: signedHeaders(token, signature), body: pendingKeyring })
-      );
+      await commitKeyring(pendingKeyring, mnemonicLanguageForLocale(i18n.language));
       setPendingKeyring(null);
       setNewRecoveryPhrase(null);
       // Show the confirmation in context, on its own screen, instead of dropping
@@ -111,13 +114,38 @@ export function EncryptionSettings({
       // the phrase they just saved stays valid.
       if (err instanceof SessionExpiredError) {
         markSessionExpired();
+      } else if (err instanceof UntrustedRearmError) {
+        setRearmBlocked(err.contacts);
       } else {
         setChangeError((err as Error).message);
       }
     } finally {
       setIsChangingPhrase(false);
     }
-  }, [pendingKeyring, getToken, request, markSessionExpired]);
+  }, [pendingKeyring, commitKeyring, i18n.language, markSessionExpired]);
+
+  // A granted contact is no longer trusted, so their mandatory re-arm cannot be
+  // built: revoke exactly those relationships (user-approved) and retry.
+  const handleRevokeBlockedAndRetry = useCallback(async () => {
+    if (!rearmBlocked) return;
+
+    setIsChangingPhrase(true);
+    setChangeError(null);
+
+    try {
+      await revokeContacts(rearmBlocked.map((contact) => contact.id));
+      setRearmBlocked(null);
+    } catch (err) {
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setChangeError((err as Error).message);
+      setIsChangingPhrase(false);
+
+      return;
+    }
+
+    setIsChangingPhrase(false);
+    await handleConfirmPhraseBackup();
+  }, [rearmBlocked, revokeContacts, markSessionExpired, handleConfirmPhraseBackup]);
 
   // Back out before committing: nothing was sent to the server, so just drop the
   // unsaved phrase and re-wrapped keyring. The current phrase keeps working.
@@ -125,6 +153,7 @@ export function EncryptionSettings({
     setPendingKeyring(null);
     setNewRecoveryPhrase(null);
     setChangeError(null);
+    setRearmBlocked(null);
     setChangePhraseStep('idle');
   }, []);
 
@@ -145,27 +174,19 @@ export function EncryptionSettings({
 
     try {
       await withFreshToken(getToken, async (token) => {
-        const next = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
-        const reg = await signKeyRegistration(next.data.next_version, Date.now());
-        const init = await postApiPublicKeysRegisterInit({
-          ...apiDefaults,
-          headers: authHeaders(token),
-          body: {
-            user_id: userId,
-            encryption_public_key: reg.encryptionPublicKey,
-            signature_public_key: reg.signaturePublicKey,
-            version: reg.version,
-            created_at_millis: reg.createdAtMillis,
-            key_binding_signature: reg.keyBindingSignature,
-          },
+        const next = await fetchNextKeyVersion(token);
+        const reg = await signKeyRegistration(next.next_version, Date.now());
+        const init = await registerKeyInit(token, {
+          user_id: userId,
+          encryption_public_key: reg.encryptionPublicKey,
+          signature_public_key: reg.signaturePublicKey,
+          version: reg.version,
+          created_at_millis: reg.createdAtMillis,
+          key_binding_signature: reg.keyBindingSignature,
         });
-        const { response, challengeSignature } = await respondToKeyChallenge(init.data.challenge_id, init.data.ciphertext);
+        const { response, challengeSignature } = await respondToKeyChallenge(init.challenge_id, init.ciphertext);
 
-        await postApiPublicKeysRegisterComplete({
-          ...apiDefaults,
-          headers: authHeaders(token),
-          body: { challenge_id: init.data.challenge_id, response, challenge_signature: challengeSignature },
-        });
+        await registerKeyComplete(token, { challenge_id: init.challenge_id, response, challenge_signature: challengeSignature });
       });
       setRemoteStatus('in-sync');
     } catch (err) {
@@ -216,6 +237,32 @@ export function EncryptionSettings({
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A contact whose recovery is currently GRANTED holds (or can obtain) a working
+  // emergency phrase for this vault. The unlock modal walks the user through the
+  // mandatory rotation right after an emergency unlock, but nothing stops them
+  // closing it: the server keeps the escrow exercisable until the phrase actually
+  // changes. So the state is re-derived here and surfaced persistently, since it
+  // is exactly what `useKeyringCommit` will burn on the next phrase change.
+  const [liveEmergencyPhrases, setLiveEmergencyPhrases] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!keysExist) return;
+
+    let cancelled = false;
+
+    withFreshToken(getToken, (token) => fetchTrustedContacts(token))
+      .then(({ contacts }) => {
+        if (!cancelled) setLiveEmergencyPhrases(grantedRearmRows(contacts, Date.now()).map((row) => row.granteeEmail));
+      })
+      .catch(() => {
+        // Advisory banner only: a failed fetch must not break the settings screen.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [keysExist, getToken, changePhraseStep]);
+
   useEffect(() => {
     if (!isReady) return;
 
@@ -250,8 +297,8 @@ export function EncryptionSettings({
 
     let cancelled = false;
     setRemoteStatus('checking');
-    getApiPublicKeys({ ...apiDefaults, query: { user_ids: [userId] } })
-      .then(async ({ data }) => {
+    fetchPublicKeys({ user_ids: [userId] })
+      .then(async (data) => {
         const remote = data.keys[0];
 
         if (!remote) {
@@ -264,8 +311,8 @@ export function EncryptionSettings({
           // re-register.
           let everRegistered = true;
           try {
-            const next = await withFreshToken(getToken, (token) => getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) }));
-            everRegistered = next.data.next_generation > 1;
+            const next = await withFreshToken(getToken, (token) => fetchNextKeyVersion(token));
+            everRegistered = next.next_generation > 1;
           } catch {
             // Keep the conservative default (offer re-enable, backed by the server guard).
           }
@@ -314,7 +361,7 @@ export function EncryptionSettings({
       // wipe local keys, which would leave this device empty while the server key
       // stays active (and the next screen wrongly reads "existing configuration").
       if (alsoDisableServer) {
-        await withFreshToken(getToken, (token) => deleteApiPublicKeys({ ...apiDefaults, headers: authHeaders(token) }));
+        await withFreshToken(getToken, (token) => deletePublicKeys(token));
       }
 
       // Only now remove this device's local keys + vault cache. The server vault
@@ -345,7 +392,7 @@ export function EncryptionSettings({
     return (
       <div
         style={{
-          padding: 'var(--c--globals--spacings--4, 16px)',
+          padding: 'var(--c--globals--spacings--base)',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -382,7 +429,7 @@ export function EncryptionSettings({
           : t('settings.reconcile_diverged_hint');
 
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
+      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
         <h2>{t('settings.reconcile_title')}</h2>
         {sessionExpired && onReconnect && (
           <div style={{ marginBottom: 8 }}>
@@ -410,7 +457,7 @@ export function EncryptionSettings({
           </div>
         )}
 
-        <p style={{ margin: '16px 0 8px', fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>{hint}</p>
+        <p style={{ margin: '16px 0 8px', fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{hint}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
           {canReenable && (
             <Button fullWidth onClick={handleReactivateIdentity} disabled={reconciling}>
@@ -441,7 +488,7 @@ export function EncryptionSettings({
   // warning is the only part shown as a modal (below).
   if (changePhraseStep === 'backup' && newRecoveryPhrase) {
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
+      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
         <h2>{t('onboarding.title_backup')}</h2>
         {sessionExpired && onReconnect && (
           <div style={{ marginBottom: 8 }}>
@@ -449,6 +496,18 @@ export function EncryptionSettings({
           </div>
         )}
         <Alert type={VariantType.INFO}>{t('settings.change_phrase_success')}</Alert>
+        {rearmBlocked && (
+          <div style={{ marginTop: 8 }}>
+            <Alert type={VariantType.WARNING}>
+              {t('emergency.rearm_blocked', { emails: rearmBlocked.map((contact) => contact.email).join(', ') })}
+            </Alert>
+            <div style={{ marginTop: 8 }}>
+              <Button size="small" color="error" onClick={handleRevokeBlockedAndRetry} disabled={isChangingPhrase}>
+                {t('emergency.rearm_revoke_retry')}
+              </Button>
+            </div>
+          </div>
+        )}
         <RecoveryKitBackup
           passphrase={newRecoveryPhrase}
           parentOrigin={null}
@@ -468,7 +527,7 @@ export function EncryptionSettings({
   // dismissed back to the settings home (no lingering banner there).
   if (changePhraseStep === 'done') {
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
+      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
         <h2>{t('settings.change_phrase')}</h2>
         <Alert type={VariantType.SUCCESS}>{t('settings.change_phrase_committed')}</Alert>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
@@ -482,15 +541,15 @@ export function EncryptionSettings({
   // sitting inside a box on the settings home, since it is a destructive action.
   if (showDangerZone) {
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
-        <h2 style={{ color: 'var(--c--globals--colors--error-500, #ce0500)' }}>{t('settings.delete_title')}</h2>
+      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
+        <h2 style={{ color: 'var(--c--globals--colors--error-500)' }}>{t('settings.delete_title')}</h2>
 
         <Alert type={VariantType.WARNING}>{t('settings.delete_warning_backup')}</Alert>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
           <Checkbox label={t('settings.confirm_data_loss')} checked={confirmDataLoss} onChange={() => setConfirmDataLoss(!confirmDataLoss)} />
 
-          <div style={{ marginTop: 8, borderTop: '1px solid var(--c--contextuals--border--surface--primary, #ddd)', paddingTop: 12 }}>
+          <div style={{ marginTop: 8, borderTop: '1px solid var(--c--contextuals--border--surface--primary)', paddingTop: 12 }}>
             <Checkbox
               label={t('settings.also_disable_server')}
               checked={alsoDisableServer}
@@ -513,14 +572,14 @@ export function EncryptionSettings({
             )}
           </div>
 
-          <div style={{ marginTop: 8, borderTop: '1px solid var(--c--contextuals--border--surface--primary, #ddd)', paddingTop: 12 }}>
+          <div style={{ marginTop: 8, borderTop: '1px solid var(--c--contextuals--border--surface--primary)', paddingTop: 12 }}>
             <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('settings.confirm_fingerprint_prompt')}</p>
             {fingerprint && (
               <div
                 style={{
                   fontSize: 14,
-                  padding: 'var(--c--globals--spacings--2, 8px)',
-                  background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                  padding: 'var(--c--globals--spacings--t)',
+                  background: 'var(--c--contextuals--background--surface--secondary)',
                   borderRadius: 4,
                   marginBottom: 8,
                 }}
@@ -539,9 +598,9 @@ export function EncryptionSettings({
                 fontFamily: 'monospace',
                 fontSize: 14,
                 letterSpacing: '0.05em',
-                padding: 'var(--c--globals--spacings--2, 8px)',
+                padding: 'var(--c--globals--spacings--t)',
                 borderRadius: 4,
-                border: '1px solid var(--c--contextuals--border--surface--primary, #e5e5e5)',
+                border: '1px solid var(--c--contextuals--border--surface--primary)',
               }}
             />
           </div>
@@ -566,14 +625,14 @@ export function EncryptionSettings({
   }
 
   return (
-    <div style={{ padding: 'var(--c--globals--spacings--4, 16px)' }}>
+    <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
       <h2>{t('settings.title')}</h2>
 
       {userInfo?.name && (
         <p
           style={{
-            color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
-            marginBottom: 'var(--c--globals--spacings--3, 12px)',
+            color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
+            marginBottom: 'var(--c--globals--spacings--sm)',
           }}
         >
           {userInfo.name}
@@ -582,8 +641,21 @@ export function EncryptionSettings({
       )}
 
       {!keysExist && (
-        <div style={{ marginBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+        <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
           <Alert type={VariantType.INFO}>{t('settings.no_keys')}</Alert>
+        </div>
+      )}
+
+      {liveEmergencyPhrases.length > 0 && changePhraseStep === 'idle' && (
+        <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
+          <Alert type={VariantType.WARNING}>
+            {t('settings.emergency_phrase_live', { emails: liveEmergencyPhrases.join(', '), count: liveEmergencyPhrases.length })}
+          </Alert>
+          <div style={{ marginTop: 'var(--c--globals--spacings--sm)' }}>
+            <Button size="small" onClick={() => setChangePhraseStep('warning')}>
+              {t('settings.change_phrase')}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -591,19 +663,19 @@ export function EncryptionSettings({
         <>
           {/* Safety fingerprint: an action button like the others. The digits and
               their explanation live in the modal, not inline. */}
-          <div style={{ marginBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+          <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
             <Button variant="secondary" onClick={() => setShowFingerprint(true)}>
               {t('settings.reveal_fingerprint')}
             </Button>
           </div>
 
           <Modal isOpen={showFingerprint} onClose={() => setShowFingerprint(false)} size={ModalSize.MEDIUM} title={t('settings.fingerprint_label')}>
-            <div style={{ paddingBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+            <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
               <div
                 style={{
                   textAlign: 'center',
-                  padding: 'var(--c--globals--spacings--3, 12px)',
-                  background: 'var(--c--contextuals--background--surface--secondary, #f5f5fe)',
+                  padding: 'var(--c--globals--spacings--sm)',
+                  background: 'var(--c--contextuals--background--surface--secondary)',
                   borderRadius: 4,
                 }}
               >
@@ -612,8 +684,8 @@ export function EncryptionSettings({
               <p
                 style={{
                   fontSize: 13,
-                  marginTop: 'var(--c--globals--spacings--3, 12px)',
-                  color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)',
+                  marginTop: 'var(--c--globals--spacings--sm)',
+                  color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
                 }}
               >
                 {t('settings.safety_fingerprint_hint')}
@@ -623,9 +695,18 @@ export function EncryptionSettings({
 
           {/* Add another device via approval (forwards the VRK). */}
           {onOpenDeviceApproval && (
-            <div style={{ marginBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+            <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
               <Button variant="secondary" onClick={onOpenDeviceApproval}>
                 {t('settings.add_device')}
+              </Button>
+            </div>
+          )}
+
+          {/* Emergency access: designate trusted contacts, manage entrusted vaults. */}
+          {onOpenEmergencyAccess && (
+            <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
+              <Button variant="secondary" onClick={onOpenEmergencyAccess}>
+                {t('emergency.settings_entry')}
               </Button>
             </div>
           )}
@@ -633,7 +714,7 @@ export function EncryptionSettings({
           {/* Change the recovery phrase (re-wraps the VRK; documents untouched).
               Stepped so the new phrase is fully backed up before the old one is
               invalidated on the server. */}
-          <div style={{ marginBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+          <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
             <Button
               variant="secondary"
               onClick={() => {
@@ -654,8 +735,24 @@ export function EncryptionSettings({
             size={ModalSize.LARGE}
             title={t('settings.change_phrase')}
           >
-            <div style={{ paddingBottom: 'var(--c--globals--spacings--4, 16px)' }}>
+            <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
               <Alert type={VariantType.WARNING}>{t('settings.change_phrase_warning')}</Alert>
+              {/* There is only ONE flow: this rewrite replaces the owner's phrase
+                  AND, in the same server write, burns every emergency phrase a
+                  contact obtained and re-arms a fresh dormant one. The user never
+                  goes anywhere emergency-specific, so the modal has to say what is
+                  about to happen to their contacts rather than leave them guessing
+                  which phrase this is about. */}
+              {liveEmergencyPhrases.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <Alert type={VariantType.INFO}>
+                    {t('settings.change_phrase_emergency_note', {
+                      emails: liveEmergencyPhrases.join(', '),
+                      count: liveEmergencyPhrases.length,
+                    })}
+                  </Alert>
+                </div>
+              )}
               {changeError && (
                 <div style={{ marginTop: 8 }}>
                   <Alert type={VariantType.ERROR}>{changeError}</Alert>
@@ -679,7 +776,7 @@ export function EncryptionSettings({
         </>
       )}
 
-      <div style={{ marginTop: 'var(--c--globals--spacings--4, 16px)' }}>
+      <div style={{ marginTop: 'var(--c--globals--spacings--base)' }}>
         <Button variant="secondary" onClick={onClose}>
           {t('settings.close')}
         </Button>

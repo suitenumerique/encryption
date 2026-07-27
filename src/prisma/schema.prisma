@@ -51,6 +51,7 @@ enum VaultItemType {
 model User {
   id        String   @id @default(uuid()) @db.Uuid
   email     String   @map("email") // latest email from OIDC claims to be used for notifications (not login), this one is not unique since over time an organization could reallocate an email for a new sub
+  language  String   @default("en") @map("language") // app locale ('fr' | 'en'), refreshed from the OIDC `locale` claim on each login; chooses the language of notification emails
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
@@ -61,6 +62,8 @@ model User {
   vaultKeyrings           VaultKeyring[]
   vaultChallenges         VaultChallenge[]
   vaultApprovals          VaultApproval[]
+  emergencyAccessGranted  EmergencyAccess[]        @relation("emergencyAccessAsGrantor")
+  emergencyAccessReceived EmergencyAccess[]        @relation("emergencyAccessAsGrantee")
 
   @@map("users")
 }
@@ -126,9 +129,10 @@ model Identity {
   nextIdentities      Identity[] @relation("IdentityChain")
   continuitySignature Bytes?     @map("continuity_signature") /// Sign(previousIdentitySecret, canonical(this identity)); Bytes because the server will verify the link when the continuity/migration flow is wired
 
-  user           User            @relation(fields: [userId], references: [id])
-  encryptionKeys EncryptionKey[]
-  vaultKeyrings  VaultKeyring[]
+  user                               User              @relation(fields: [userId], references: [id])
+  encryptionKeys                     EncryptionKey[]
+  vaultKeyrings                      VaultKeyring[]
+  emergencyAccessesAsGranteeIdentity EmergencyAccess[] @relation("emergencyAccessGranteeIdentity")
 
   @@unique([userId, generation])
   @@index([userId, disabledAt])
@@ -246,44 +250,119 @@ model VaultMeta {
   @@map("vault_meta")
 }
 
-/// A vault's unlock material. A user can hold SEVERAL keyrings over time: exactly
-/// one is active (`disabledAt` null, the current vault), and any others are
-/// dormant remnants of superseded vaults, preserved so their recovery phrase can
-/// still recover their content within the retention window. Starting over never
-/// destroys the previous vault; it disables that keyring and creates a new one.
-/// `wrappedVrk` is the only passphrase-brute-forceable artifact, so it is
-/// released only behind a proof of possession of the phrase. `authPublicKey` is a
-/// passphrase-derived verifier used server-side to check that proof (and to
-/// self-select which of the user's vaults a phrase unlocks); it is NEVER returned
-/// to a client. `lang` is non-secret: it only selects the BIP-39 wordlist the
-/// recovery phrase is drawn from, so restore uses the same word list it was
-/// generated with.
+/// A user's vault (container). A user can hold SEVERAL keyrings over time:
+/// exactly one is active (`disabledAt` null, the current vault), and any others
+/// are dormant remnants of superseded vaults, preserved so their recovery phrase
+/// can still recover their content within the retention window. Starting over
+/// never destroys the previous vault; it disables that keyring and creates a new
+/// one. The unlock material itself lives in VaultCredential: one vault can be
+/// opened by several credentials (the owner's phrase, plus dormant emergency
+/// phrases escrowed to trusted contacts).
 model VaultKeyring {
-  id            String    @id @default(uuid()) @db.Uuid
-  userId        String    @map("user_id") @db.Uuid
-  identityId    String    @map("identity_id") @db.Uuid /// the directory identity this vault belongs to; lets reactivation flip the right identity + encryption key active
-  // wrappedVrk is an OPAQUE blob the server never compares or decodes (it is only
-  // released to the client after a proof of possession, then unwrapped client-side),
-  // so it stays base64 to match the wire and avoid a pointless encode/decode.
-  // authPublicKey / authPubSig ARE verified server-side, so they are raw bytes.
-  wrappedVrk    String    @map("wrapped_vrk") /// base64; opaque, never compared server-side
-  authPublicKey Bytes     @map("auth_public_key") /// Ed25519 verifier the unlock/reactivate proof is checked against
-  authPubSig    Bytes     @map("auth_pub_sig") /// the identity's signature over authPublicKey (verified at keyring write)
-  kdfOps        Int       @map("kdf_ops") /// Argon2id opsLimit (time cost) used to derive the KEK from the recovery phrase; stored so the same params reproduce the KEK
-  kdfMem        Int       @map("kdf_mem") /// Argon2id memLimit (memory cost) for the same KEK derivation
-  lang          String    @map("lang") /// BIP-39 wordlist language for the recovery phrase (e.g. "english", "french"); non-secret, only picks the wordlist
-  disabledAt    DateTime? @map("disabled_at") /// null = the user's current (active) vault
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  identityId String    @map("identity_id") @db.Uuid /// the directory identity this vault belongs to; lets reactivation flip the right identity + encryption key active
+  disabledAt DateTime? @map("disabled_at") /// null = the user's current (active) vault
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  user     User        @relation(fields: [userId], references: [id])
-  identity Identity    @relation(fields: [identityId], references: [id])
-  items    VaultItem[]
-  meta     VaultMeta?
+  user        User              @relation(fields: [userId], references: [id])
+  identity    Identity          @relation(fields: [identityId], references: [id])
+  items       VaultItem[]
+  meta        VaultMeta?
+  credentials VaultCredential[]
 
   @@index([userId])
   @@index([userId, disabledAt])
   @@map("vault_keyring")
+}
+
+/// The kind of a vault credential. `primary` is the owner's own recovery phrase
+/// (exactly one per vault, code-enforced); `emergency` is a dormant phrase
+/// escrowed to a trusted contact, owned by an EmergencyAccess row and only a
+/// valid unlock candidate while that row's recovery is approved.
+enum VaultCredentialType {
+  primary
+  emergency
+}
+
+/// One way to unlock a vault (a keyslot, LUKS-style): the material derived from
+/// one recovery phrase. All credentials of a vault wrap the SAME VRK, so they
+/// all open the same content; they differ only in which phrase derives them and
+/// in when the server accepts a proof against them.
+/// `wrappedVrk` is the only passphrase-brute-forceable artifact, so it is
+/// released only behind a proof of possession of the phrase. `authPublicKey` is a
+/// passphrase-derived verifier used server-side to check that proof (and to
+/// self-select which credential a phrase unlocks); it is NEVER returned to a
+/// client. `lang` is non-secret: it only selects the BIP-39 wordlist the
+/// phrase is drawn from, so restore uses the same word list it was generated
+/// with.
+model VaultCredential {
+  id            String              @id @default(uuid()) @db.Uuid
+  vaultId       String              @map("vault_id") @db.Uuid
+  type          VaultCredentialType @map("type")
+  wrappedVrk    String              @map("wrapped_vrk") /// base64; opaque, never compared server-side
+  authPublicKey Bytes               @map("auth_public_key") /// Ed25519 verifier the unlock/reactivate proof is checked against
+  authPubSig    Bytes               @map("auth_pub_sig") /// the identity's signature over authPublicKey (verified at credential write)
+  kdfOps        Int                 @map("kdf_ops") /// Argon2id opsLimit (time cost) used to derive the KEK from the recovery phrase; stored so the same params reproduce the KEK
+  kdfMem        Int                 @map("kdf_mem") /// Argon2id memLimit (memory cost) for the same KEK derivation
+  lang          String              @map("lang") /// BIP-39 wordlist language for the recovery phrase (e.g. "english", "french"); non-secret, only picks the wordlist
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at")
+
+  vault           VaultKeyring     @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  emergencyAccess EmergencyAccess?
+
+  @@index([vaultId])
+  @@map("vault_credentials")
+}
+
+/// Lifecycle of a trusted-contact relationship
+enum EmergencyAccessStatus {
+  invited
+  confirmed
+  recoveryRequested @map("recovery_requested")
+  recoveryApproved  @map("recovery_approved")
+}
+
+/// A trusted-contact (emergency access) relationship. Created in ONE step by
+/// the grantor: the row carries, from designation on, a dormant emergency
+/// credential for the grantor's vault (via `credentialId`) plus the matching
+/// emergency phrase wrapped to the contact's encryption key. The server can
+/// read neither. The wait period (`waitTimeDays`) is enforced lazily against
+/// `recoveryRequestedAt` at every release point; the hourly job only exists to
+/// send notifications and flip the visible status.
+/// The escrow fields are covered by `escrowSignature` (grantor identity key,
+/// context "lasuite-encryption/emergency-escrow/v1"), so the grantor's devices can audit the list
+/// against server tampering; the server also verifies it at write.
+/// Deleting the credential cascades this row away (vault purge, revocation).
+model EmergencyAccess {
+  id                       String                @id @default(uuid()) @db.Uuid
+  grantorUserId            String                @map("grantor_user_id") @db.Uuid
+  granteeUserId            String                @map("grantee_user_id") @db.Uuid
+  status                   EmergencyAccessStatus @map("status")
+  waitTimeDays             Int                   @map("wait_time_days") /// user-chosen opposition window, server-validated 1..90
+  credentialId             String                @unique @map("credential_id") @db.Uuid
+  wrappedPhraseForGrantee  String                @map("wrapped_phrase_for_grantee") /// base64; the emergency phrase entropy wrapped to the contact's X-Wing key; released only while recovery is approved
+  granteeIdentityId        String                @map("grantee_identity_id") @db.Uuid /// FK to the pinned contact identity (identities row) for staleness detection; the raw key itself is still committed inside escrowSignature, so a server cannot repoint it undetectably
+  granteeKeyVersion        Int                   @map("grantee_key_version") /// contact's encryption-key version the capsule targets; lets the UI flag an outdated wrap and offer a re-arm
+  escrowSignature          Bytes                 @map("escrow_signature") /// Ed25519 by the grantor identity key over the canonical escrow payload; verified at write
+  escrowCreatedAt          DateTime              @map("escrow_created_at") /// client-asserted, inside the signature
+  recoveryRequestedAt      DateTime?             @map("recovery_requested_at") /// set at initiate; the wait deadline is recoveryRequestedAt + waitTimeDays
+  lastNotifiedAt           DateTime?             @map("last_notified_at") /// throttles the escalating reminder emails
+  createdAt                DateTime              @default(now()) @map("created_at")
+  updatedAt                DateTime              @default(now()) @updatedAt @map("updated_at")
+
+  grantor         User            @relation("emergencyAccessAsGrantor", fields: [grantorUserId], references: [id])
+  grantee         User            @relation("emergencyAccessAsGrantee", fields: [granteeUserId], references: [id])
+  granteeIdentity Identity        @relation("emergencyAccessGranteeIdentity", fields: [granteeIdentityId], references: [id])
+  credential      VaultCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@unique([grantorUserId, granteeUserId])
+  @@index([granteeUserId])
+  @@index([granteeIdentityId])
+  @@index([status, recoveryRequestedAt])
+  @@map("emergency_access")
 }
 
 /// Single-use nonce issued before a vault fetch or write, signed by the caller's

@@ -1,6 +1,6 @@
 import { createInstance } from 'i18next';
 
-import { defaultNamespace, resources } from '@encryption/src/i18n';
+import { defaultNamespace, i18nFormat, resources } from '@encryption/src/i18n';
 
 /**
  * Server-side i18next instance, sharing the SAME translation files as the
@@ -23,8 +23,24 @@ void serverI18n.init({
   defaultNS: defaultNamespace,
   lng: 'en',
   fallbackLng: 'en',
-  interpolation: { escapeValue: false },
+  interpolation: { escapeValue: false, format: i18nFormat },
 });
+
+/**
+ * Translate a key for a recipient whose language is fixed (emails/documents), so
+ * the locale is passed per call rather than being ambient. `t` is for text
+ * rendered as-is; `tHtml` escapes interpolated values so a translation may carry
+ * inline markup (e.g. <strong>) rendered through dangerouslySetInnerHTML.
+ */
+export function t(locale: string, key: string, params?: Record<string, unknown>): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return serverI18n.t(key as any, { lng: locale, ...params }) as string;
+}
+
+export function tHtml(locale: string, key: string, params?: Record<string, unknown>): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return serverI18n.t(key as any, { lng: locale, ...params, interpolation: { escapeValue: true } }) as string;
+}
 
 /**
  * The English sentence for an API error code, or undefined when the code has no

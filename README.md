@@ -1,4 +1,4 @@
-# La Suite Encryption : End-to-End Encryption Service
+# LaSuite Encryption : End-to-End Encryption Service
 
 A shared end-to-end encryption service for [La Suite numérique](https://lasuite.numerique.gouv.fr/) products (Docs, Drive, Fichier, Visio). It provides encryption capabilities via isolated iframes, ensuring private keys never leave the user's browser.
 

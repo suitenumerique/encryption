@@ -16,6 +16,11 @@ import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { notifyVaultChanged } from '@encryption/src/server/vault-notify';
 
+// vault.ts transitively reaches the emergency notification layer (and, behind
+// it, the env validator the mailer runs at import). The shared manual mock keeps
+// this suite off both; the SSE path sends no mail anyway.
+jest.mock('@encryption/src/server/email/emergency');
+
 jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
 
 useTestDatabase();

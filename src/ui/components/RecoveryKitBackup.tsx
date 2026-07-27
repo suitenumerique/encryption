@@ -1,6 +1,9 @@
 import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { pdf } from '@react-pdf/renderer';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { RecoveryKitDocument } from '@encryption/src/ui/documents/RecoveryKitDocument';
 
 interface RecoveryKitBackupProps {
   passphrase: string;
@@ -12,6 +15,14 @@ interface RecoveryKitBackupProps {
   error?: string | null;
   onCancel?: () => void;
   cancelLabel?: string;
+  /**
+   * 'backup' (default): the OWNER saves their OWN new phrase — full ranked options
+   * (password manager / file / print) + the "this is your backup" warning.
+   * 'handover': a trusted contact is looking at the GRANTOR's phrase to pass on —
+   * the persistent-storage options make no sense (it is not theirs to keep), so it
+   * shows only the phrase + a copy action to send it through a secure channel.
+   */
+  mode?: 'backup' | 'handover';
 }
 
 // Split a space-separated recovery phrase into its words. Recovery phrases are
@@ -39,6 +50,7 @@ export function RecoveryKitBackup({
   error = null,
   onCancel,
   cancelLabel,
+  mode = 'backup',
 }: RecoveryKitBackupProps) {
   const { t, i18n } = useTranslation('common');
   const [showPassphrase, setShowPassphrase] = useState(false);
@@ -68,72 +80,101 @@ export function RecoveryKitBackup({
     URL.revokeObjectURL(url);
   }, [passphrase, t]);
 
-  const handlePrint = useCallback(() => {
-    function escapeHtml(str: string): string {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
+  const handlePrint = useCallback(async () => {
     const domain = parentOrigin ?? window.location.origin;
-    const footer = t('onboarding.print_footer', { domain });
+    const blob = await pdf(<RecoveryKitDocument words={phraseWords(passphrase)} lang={i18n.language} domain={domain} />).toBlob();
+    const url = URL.createObjectURL(blob);
 
-    const wordsHtml = phraseWords(passphrase)
-      .map((w, i) => `<div class="word"><span class="num">${i + 1}.</span> ${escapeHtml(w)}</div>`)
-      .join('');
-
-    // Use a hidden iframe to trigger print without opening a new tab.
-    // This works inside sandboxed iframes (allow-popups not needed).
+    // Print via a hidden iframe pointed at the PDF blob: the browser loads its PDF
+    // viewer in the frame and prints that. A hidden iframe (rather than a new tab)
+    // keeps this working inside the sandboxed interface iframe, with no popup
+    // permission needed.
     const printFrame = document.createElement('iframe');
     printFrame.style.position = 'fixed';
     printFrame.style.left = '-9999px';
     printFrame.style.width = '0';
     printFrame.style.height = '0';
-    document.body.appendChild(printFrame);
-
-    const doc = printFrame.contentDocument ?? printFrame.contentWindow?.document;
-
-    if (!doc) {
-      document.body.removeChild(printFrame);
-
-      return;
-    }
-
-    doc.open();
-    doc.write(`
-      <!DOCTYPE html>
-      <html lang="${escapeHtml(i18n.language)}">
-        <head>
-          <title>${escapeHtml(t('onboarding.print_title'))}</title>
-          <style>
-            body { font-family: system-ui, sans-serif; padding: 40px; max-width: 600px; margin: 0 auto; }
-            h1 { font-size: 18px; margin-bottom: 8px; }
-            .warning { border-left: 4px solid #b34000; background: #ffe9e6; padding: 12px; margin: 16px 0; font-size: 13px; border-radius: 0 4px 4px 0; }
-            .words { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 24px; font-family: monospace; font-size: 13px; border: 1px solid #ccc; padding: 16px; background: #f9f9f9; margin: 16px 0; }
-            .num { color: #888; display: inline-block; width: 22px; text-align: right; margin-right: 6px; }
-            .footer { font-size: 11px; color: #999; margin-top: 32px; }
-          </style>
-        </head>
-        <body>
-          <h1>${escapeHtml(t('onboarding.print_title'))}</h1>
-          <div class="warning">${escapeHtml(t('onboarding.print_warning'))}</div>
-          <p>${escapeHtml(t('onboarding.print_label'))}</p>
-          <div class="words">${wordsHtml}</div>
-          <div class="footer">${escapeHtml(footer)}</div>
-        </body>
-      </html>
-    `);
-    doc.close();
-
-    const triggerPrint = () => {
+    printFrame.src = url;
+    printFrame.onload = () => {
+      printFrame.contentWindow?.focus();
       printFrame.contentWindow?.print();
-      setTimeout(() => printFrame.parentNode?.removeChild(printFrame), 1000);
+      setTimeout(() => {
+        printFrame.parentNode?.removeChild(printFrame);
+        URL.revokeObjectURL(url);
+      }, 1000);
     };
+    document.body.appendChild(printFrame);
+  }, [passphrase, parentOrigin, i18n.language]);
 
-    if (doc.readyState === 'complete') {
-      triggerPrint();
-    } else {
-      printFrame.onload = triggerPrint;
-    }
-  }, [passphrase, parentOrigin, t, i18n.language]);
+  // Handover (a contact revealing the grantor's phrase): no persistent-backup
+  // framing — just show the phrase and a copy action to send it on. The
+  // surrounding RevealView already explains it is the owner's phrase to hand over.
+  if (mode === 'handover') {
+    return (
+      <>
+        <div
+          style={{
+            marginTop: 12,
+            padding: 'var(--c--globals--spacings--sm)',
+            border: '1px solid var(--c--contextuals--border--surface--primary)',
+            borderRadius: 4,
+            background: 'var(--c--contextuals--background--surface--secondary)',
+          }}
+        >
+          <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>{t('emergency.reveal_phrase_label')}</p>
+          <textarea
+            readOnly
+            value={passphrase}
+            rows={4}
+            style={{
+              width: '100%',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              boxSizing: 'border-box',
+              lineHeight: 1.4,
+              userSelect: 'all',
+              borderRadius: 4,
+              border: '1px solid var(--c--contextuals--border--surface--primary)',
+              background: 'var(--c--contextuals--background--surface--primary)',
+              color: 'var(--c--contextuals--content--semantic--neutral--primary)',
+            }}
+          />
+          <div style={{ marginTop: 8 }}>
+            <Button
+              size="small"
+              onClick={handleCopyPassphrase}
+              icon={
+                isCopied ? (
+                  <span className="material-icons" style={{ fontSize: 16 }}>
+                    check
+                  </span>
+                ) : undefined
+              }
+            >
+              {isCopied ? t('onboarding.btn_copied') : t('emergency.reveal_copy_to_send')}
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ marginTop: 12 }}>
+            <Alert type={VariantType.ERROR}>{error}</Alert>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          {onCancel && (
+            <Button variant="secondary" onClick={onCancel} disabled={isBusy}>
+              {cancelLabel}
+            </Button>
+          )}
+          <Button onClick={onConfirm} disabled={isBusy}>
+            {isBusy && busyLabel ? busyLabel : confirmLabel}
+          </Button>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -145,8 +186,8 @@ export function RecoveryKitBackup({
         {/* Option 1: Copy to password manager - Recommended */}
         <div
           style={{
-            padding: 'var(--c--globals--spacings--3, 12px)',
-            border: '2px solid var(--c--globals--colors--success-500, #18753c)',
+            padding: 'var(--c--globals--spacings--sm)',
+            border: '2px solid var(--c--globals--colors--success-500)',
             borderRadius: 4,
             background: 'var(--c--contextuals--background--semantic--success--secondary)',
             color: 'var(--c--contextuals--content--semantic--success--secondary)',
@@ -160,14 +201,14 @@ export function RecoveryKitBackup({
                 fontWeight: 700,
                 padding: '2px 8px',
                 borderRadius: 10,
-                background: 'var(--c--globals--colors--success-500, #18753c)',
-                color: 'white',
+                background: 'var(--c--contextuals--background--semantic--success--primary)',
+                color: 'var(--c--contextuals--content--semantic--success--on-success)',
               }}
             >
               {t('onboarding.badge_recommended')}
             </span>
           </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #333)' }}>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
             {t('onboarding.backup_option_copy_description')}
           </p>
           <Button
@@ -186,30 +227,16 @@ export function RecoveryKitBackup({
           </Button>
         </div>
 
-        {/* Option 2: Save as file - Intermediate */}
+        {/* Option 2: Save as file */}
         <div
           style={{
-            padding: 'var(--c--globals--spacings--3, 12px)',
-            border: '1px solid var(--c--contextuals--border--surface--primary, #ddd)',
+            padding: 'var(--c--globals--spacings--sm)',
+            border: '1px solid var(--c--contextuals--border--surface--primary)',
             borderRadius: 4,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{t('onboarding.backup_option_file')}</span>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '2px 8px',
-                borderRadius: 10,
-                background: 'var(--c--globals--colors--info-500, #0063cb)',
-                color: 'white',
-              }}
-            >
-              {t('onboarding.badge_intermediate')}
-            </span>
-          </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+          <span style={{ fontWeight: 700, fontSize: 14, display: 'block', marginBottom: 4 }}>{t('onboarding.backup_option_file')}</span>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
             {t('onboarding.backup_option_file_description')}
           </p>
           <Button size="small" variant="secondary" onClick={handleSaveFile}>
@@ -217,34 +244,19 @@ export function RecoveryKitBackup({
           </Button>
         </div>
 
-        {/* Option 3: Print on paper - Discouraged */}
+        {/* Option 3: Print on paper */}
         <div
           style={{
-            padding: 'var(--c--globals--spacings--3, 12px)',
-            border: '1px solid var(--c--contextuals--border--surface--primary, #ddd)',
+            padding: 'var(--c--globals--spacings--sm)',
+            border: '1px solid var(--c--contextuals--border--surface--primary)',
             borderRadius: 4,
-            opacity: 0.8,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{t('onboarding.backup_option_print')}</span>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '2px 8px',
-                borderRadius: 10,
-                background: 'var(--c--globals--colors--warning-500, #b34000)',
-                color: 'white',
-              }}
-            >
-              {t('onboarding.badge_discouraged')}
-            </span>
-          </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary, #666)' }}>
+          <span style={{ fontWeight: 700, fontSize: 14, display: 'block', marginBottom: 4 }}>{t('onboarding.backup_option_print')}</span>
+          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
             {t('onboarding.backup_option_print_description')}
           </p>
-          <Button size="small" variant="tertiary" onClick={handlePrint}>
+          <Button size="small" variant="secondary" onClick={handlePrint}>
             {t('onboarding.btn_print')}
           </Button>
         </div>
@@ -252,8 +264,8 @@ export function RecoveryKitBackup({
         {/* Reveal passphrase - hidden by default */}
         <div
           style={{
-            padding: 'var(--c--globals--spacings--3, 12px)',
-            border: '1px solid var(--c--contextuals--border--surface--primary, #ddd)',
+            padding: 'var(--c--globals--spacings--sm)',
+            border: '1px solid var(--c--contextuals--border--surface--primary)',
             borderRadius: 4,
           }}
         >
@@ -278,6 +290,10 @@ export function RecoveryKitBackup({
                   boxSizing: 'border-box',
                   lineHeight: 1.4,
                   userSelect: 'all',
+                  borderRadius: 4,
+                  border: '1px solid var(--c--contextuals--border--surface--primary)',
+                  background: 'var(--c--contextuals--background--surface--primary)',
+                  color: 'var(--c--contextuals--content--semantic--neutral--primary)',
                 }}
               />
             </>

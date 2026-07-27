@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { MnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import {
   MSG_VAULT_APPROVE_DEVICE,
+  MSG_VAULT_BUILD_EMERGENCY_REARMS,
   MSG_VAULT_CHANGE_RECOVERY_PHRASE,
   MSG_VAULT_COMMIT_STAGED,
   MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
+  MSG_VAULT_CREATE_EMERGENCY_ESCROW,
   MSG_VAULT_GENERATE_KEYS,
   MSG_VAULT_GET_PUBLIC_KEY,
   MSG_VAULT_HAS_KEYS,
@@ -15,11 +18,14 @@ import {
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_RESULT,
+  MSG_VAULT_REVEAL_EMERGENCY_PHRASE,
   MSG_VAULT_SIGN_KEY_REGISTRATION,
   MSG_VAULT_START_DEVICE_APPROVAL,
   MSG_VAULT_SYNC,
   MSG_VAULT_UNCOMMIT_STAGED,
+  MSG_VAULT_VERIFY_ESCROWS,
 } from '@encryption/src/shared/constants';
+import type { EmergencyDesignateBody, EmergencyRearmEntry, EmergencyTrustedEntry } from '@encryption/src/shared/schemas/emergency-access';
 import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import type { VaultItemWire, VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultError, type VaultErrorCode } from '@encryption/src/shared/vault-error';
@@ -75,19 +81,14 @@ interface UseEncryptionReturn {
   hasKeys: () => Promise<{ hasKeys: boolean }>;
   getPublicKey: () => Promise<{ publicKey: string; signaturePublicKey?: string }>;
   /** Build the atomic-bootstrap body (recovery phrase, keyring, sealed items, manifest). */
-  prepareOnboarding: (opts?: {
-    lang?: 'french' | 'english';
-    version?: number;
-    generation?: number;
-    reusePhrase?: string;
-  }) => Promise<OnboardingBundle>;
+  prepareOnboarding: (opts?: { lang?: MnemonicLanguage; version?: number; generation?: number; reusePhrase?: string }) => Promise<OnboardingBundle>;
   /** Re-derive the keyring under a new recovery phrase (VRK unchanged). */
-  changeRecoveryPhrase: (lang?: 'french' | 'english') => Promise<{ recoveryPhrase: string; keyring: VaultKeyringWire }>;
-  /** Cold-unlock: rebuild the vault from the server copy using the recovery phrase. */
+  changeRecoveryPhrase: (lang?: MnemonicLanguage) => Promise<{ recoveryPhrase: string; keyring: VaultKeyringWire }>;
+  /** Cold-unlock: rebuild the vault from the server copy using the recovery phrase. `emergencyUnlock` = a trusted contact's escrowed phrase matched, forcing an immediate phrase change. */
   restoreFromPhrase: (
     recoveryPhrase: string,
     token: string
-  ) => Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number }>;
+  ) => Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }>;
   /** Bring the dormant vault a phrase unlocks back as the current one (after user confirmation). */
   reactivateVault: (
     recoveryPhrase: string,
@@ -98,7 +99,26 @@ interface UseEncryptionReturn {
     signaturePublicKey: string;
     disabledVaultId: string | null;
     disabledVaultCreatedAtMillis: number | null;
+    emergencyUnlock: boolean;
   }>;
+  /** Grantor: build a full designation body (fresh emergency phrase, dormant credential, capsule, binding signature). Requires the contact TOFU-trusted. */
+  createEmergencyEscrow: (granteeUserId: string, waitTimeDays: number, lang?: MnemonicLanguage) => Promise<EmergencyDesignateBody>;
+  /** Grantor, forced rotation: one fresh escrow per granted relationship, to carry on the keyring PUT. */
+  buildEmergencyRearms: (
+    rearms: Array<{ emergencyAccessId: string; granteeUserId: string; waitTimeDays: number }>,
+    lang?: MnemonicLanguage
+  ) => Promise<{ rearms: EmergencyRearmEntry[] }>;
+  /** Grantor: audit the server-reported escrow list against the local identity + directory. */
+  verifyEscrows: (
+    contacts: Array<Pick<EmergencyTrustedEntry, 'id' | 'grantee_user_id' | 'wait_time_days' | 'escrow'>>
+  ) => Promise<{ results: Array<{ id: string; status: 'ok' | 'tampered' | 'stale-identity' | 'outdated-key' }> }>;
+  /** Contact: verify the released escrow against the pinned grantor identity and render the phrase for the handover kit. */
+  revealEmergencyPhrase: (input: {
+    grantorUserId: string;
+    lang: string;
+    waitTimeDays: number;
+    escrow: EmergencyTrustedEntry['escrow'];
+  }) => Promise<{ recoveryPhrase: string }>;
   /** Run one pull-merge-push sync pass, authenticating with the given token. */
   syncVault: (token: string | null) => Promise<{ status: string; revision: number }>;
   /** New device: mint an ephemeral key, returning its public key + short fingerprint. */
@@ -299,13 +319,13 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   const getPublicKey = useCallback(() => request(MSG_VAULT_GET_PUBLIC_KEY) as Promise<{ publicKey: string; signaturePublicKey?: string }>, [request]);
 
   const prepareOnboarding = useCallback(
-    (opts?: { lang?: 'french' | 'english'; version?: number; generation?: number }) =>
+    (opts?: { lang?: MnemonicLanguage; version?: number; generation?: number }) =>
       request(MSG_VAULT_PREPARE_ONBOARDING, opts) as Promise<OnboardingBundle>,
     [request]
   );
 
   const changeRecoveryPhrase = useCallback(
-    (lang?: 'french' | 'english') =>
+    (lang?: MnemonicLanguage) =>
       request(MSG_VAULT_CHANGE_RECOVERY_PHRASE, lang ? { lang } : undefined) as Promise<{ recoveryPhrase: string; keyring: VaultKeyringWire }>,
     [request]
   );
@@ -317,6 +337,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
         signaturePublicKey: string;
         isActiveVault: boolean;
         vaultCreatedAtMillis: number;
+        emergencyUnlock: boolean;
       }>,
     [request]
   );
@@ -329,7 +350,34 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
         signaturePublicKey: string;
         disabledVaultId: string | null;
         disabledVaultCreatedAtMillis: number | null;
+        emergencyUnlock: boolean;
       }>,
+    [request]
+  );
+
+  const createEmergencyEscrow = useCallback(
+    (granteeUserId: string, waitTimeDays: number, lang?: MnemonicLanguage) =>
+      request(MSG_VAULT_CREATE_EMERGENCY_ESCROW, { granteeUserId, waitTimeDays, lang }) as Promise<EmergencyDesignateBody>,
+    [request]
+  );
+
+  const buildEmergencyRearms = useCallback(
+    (rearms: Array<{ emergencyAccessId: string; granteeUserId: string; waitTimeDays: number }>, lang?: MnemonicLanguage) =>
+      request(MSG_VAULT_BUILD_EMERGENCY_REARMS, { rearms, lang }) as Promise<{ rearms: EmergencyRearmEntry[] }>,
+    [request]
+  );
+
+  const verifyEscrows = useCallback(
+    (contacts: Array<Pick<EmergencyTrustedEntry, 'id' | 'grantee_user_id' | 'wait_time_days' | 'escrow'>>) =>
+      request(MSG_VAULT_VERIFY_ESCROWS, { contacts }) as Promise<{
+        results: Array<{ id: string; status: 'ok' | 'tampered' | 'stale-identity' | 'outdated-key' }>;
+      }>,
+    [request]
+  );
+
+  const revealEmergencyPhrase = useCallback(
+    (input: { grantorUserId: string; lang: string; waitTimeDays: number; escrow: EmergencyTrustedEntry['escrow'] }) =>
+      request(MSG_VAULT_REVEAL_EMERGENCY_PHRASE, input) as Promise<{ recoveryPhrase: string }>,
     [request]
   );
 
@@ -377,5 +425,9 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
     startDeviceApproval,
     completeDeviceApproval,
     approveDevice,
+    createEmergencyEscrow,
+    buildEmergencyRearms,
+    verifyEscrows,
+    revealEmergencyPhrase,
   };
 }

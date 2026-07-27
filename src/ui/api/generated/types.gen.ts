@@ -504,6 +504,7 @@ export type PostApiVaultFetchResponses = {
   200: {
     vault_id: string;
     wrapped_vrk: string;
+    credential_type: 'primary' | 'emergency';
     revision: number;
     manifest: string | null;
     manifest_sig: string | null;
@@ -592,6 +593,7 @@ export type PostApiVaultReactivateResponses = {
   200: {
     vault_id: string;
     wrapped_vrk: string;
+    credential_type: 'primary' | 'emergency';
     revision: number;
     manifest: string | null;
     manifest_sig: string | null;
@@ -604,6 +606,7 @@ export type PostApiVaultReactivateResponses = {
     reactivated: boolean;
     active_vault_id: string;
     disabled_vault_id: string | null;
+    disabled_vault_created_at_millis: number | null;
   };
 };
 
@@ -788,6 +791,22 @@ export type PutApiVaultKeyringData = {
     kdf_ops: number;
     kdf_mem: number;
     lang: string;
+    emergency_rearms?: Array<{
+      emergency_access_id: string;
+      credential: {
+        wrapped_vrk: string;
+        auth_public_key: string;
+        auth_pub_sig: string;
+        kdf_ops: number;
+        kdf_mem: number;
+        lang: string;
+      };
+      grantee_identity_public_key: string;
+      grantee_key_version: number;
+      wrapped_phrase_for_grantee: string;
+      escrow_signature: string;
+      escrow_created_at_millis: number;
+    }>;
   };
   path?: never;
   query?: never;
@@ -815,6 +834,16 @@ export type PutApiVaultKeyringErrors = {
     };
     message?: string;
   };
+  /**
+   * Default Response
+   */
+  409: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
 };
 
 export type PutApiVaultKeyringError = PutApiVaultKeyringErrors[keyof PutApiVaultKeyringErrors];
@@ -825,6 +854,7 @@ export type PutApiVaultKeyringResponses = {
    */
   200: {
     updated: boolean;
+    rearmed: number;
   };
 };
 
@@ -971,3 +1001,605 @@ export type GetApiVaultApprovalsPendingResponses = {
 };
 
 export type GetApiVaultApprovalsPendingResponse = GetApiVaultApprovalsPendingResponses[keyof GetApiVaultApprovalsPendingResponses];
+
+export type GetApiEmergencyAccessSearchData = {
+  body?: never;
+  path?: never;
+  query?: {
+    email?: string;
+  };
+  url: '/api/emergency-access/search';
+};
+
+export type GetApiEmergencyAccessSearchErrors = {
+  /**
+   * Default Response
+   */
+  429: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type GetApiEmergencyAccessSearchError = GetApiEmergencyAccessSearchErrors[keyof GetApiEmergencyAccessSearchErrors];
+
+export type GetApiEmergencyAccessSearchResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    user: {
+      user_id: string;
+      email: string;
+    } | null;
+    onboarded: boolean;
+  };
+};
+
+export type GetApiEmergencyAccessSearchResponse = GetApiEmergencyAccessSearchResponses[keyof GetApiEmergencyAccessSearchResponses];
+
+export type GetApiEmergencyAccessPendingData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: '/api/emergency-access/pending';
+};
+
+export type GetApiEmergencyAccessPendingResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    invitations: number;
+    recovery_requests: number;
+  };
+};
+
+export type GetApiEmergencyAccessPendingResponse = GetApiEmergencyAccessPendingResponses[keyof GetApiEmergencyAccessPendingResponses];
+
+export type GetApiEmergencyAccessTrustedData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: '/api/emergency-access/trusted';
+};
+
+export type GetApiEmergencyAccessTrustedResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    contacts: Array<{
+      id: string;
+      grantee_user_id: string;
+      grantee_email: string;
+      status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+      wait_time_days: number;
+      created_at_millis: number;
+      recovery_requested_at_millis: number | null;
+      deadline_millis: number | null;
+      vault_active: boolean;
+      escrow: {
+        grantee_identity_public_key: string;
+        grantee_key_version: number;
+        wrapped_phrase_for_grantee: string;
+        escrow_signature: string;
+        escrow_created_at_millis: number;
+        credential_auth_public_key_hash: string;
+      };
+    }>;
+  };
+};
+
+export type GetApiEmergencyAccessTrustedResponse = GetApiEmergencyAccessTrustedResponses[keyof GetApiEmergencyAccessTrustedResponses];
+
+export type GetApiEmergencyAccessGrantedData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: '/api/emergency-access/granted';
+};
+
+export type GetApiEmergencyAccessGrantedResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    grantors: Array<{
+      id: string;
+      grantor_user_id: string;
+      grantor_email: string;
+      status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+      wait_time_days: number;
+      created_at_millis: number;
+      recovery_requested_at_millis: number | null;
+      deadline_millis: number | null;
+    }>;
+  };
+};
+
+export type GetApiEmergencyAccessGrantedResponse = GetApiEmergencyAccessGrantedResponses[keyof GetApiEmergencyAccessGrantedResponses];
+
+export type PostApiEmergencyAccessData = {
+  body: {
+    grantee_user_id: string;
+    wait_time_days: number;
+    credential: {
+      wrapped_vrk: string;
+      auth_public_key: string;
+      auth_pub_sig: string;
+      kdf_ops: number;
+      kdf_mem: number;
+      lang: string;
+    };
+    grantee_identity_public_key: string;
+    grantee_key_version: number;
+    wrapped_phrase_for_grantee: string;
+    escrow_signature: string;
+    escrow_created_at_millis: number;
+  };
+  path?: never;
+  query?: never;
+  url: '/api/emergency-access';
+};
+
+export type PostApiEmergencyAccessErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  429: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessError = PostApiEmergencyAccessErrors[keyof PostApiEmergencyAccessErrors];
+
+export type PostApiEmergencyAccessResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+  };
+};
+
+export type PostApiEmergencyAccessResponse = PostApiEmergencyAccessResponses[keyof PostApiEmergencyAccessResponses];
+
+export type PostApiEmergencyAccessByIdAcceptData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}/accept';
+};
+
+export type PostApiEmergencyAccessByIdAcceptErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessByIdAcceptError = PostApiEmergencyAccessByIdAcceptErrors[keyof PostApiEmergencyAccessByIdAcceptErrors];
+
+export type PostApiEmergencyAccessByIdAcceptResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+  };
+};
+
+export type PostApiEmergencyAccessByIdAcceptResponse = PostApiEmergencyAccessByIdAcceptResponses[keyof PostApiEmergencyAccessByIdAcceptResponses];
+
+export type DeleteApiEmergencyAccessByIdData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}';
+};
+
+export type DeleteApiEmergencyAccessByIdErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type DeleteApiEmergencyAccessByIdError = DeleteApiEmergencyAccessByIdErrors[keyof DeleteApiEmergencyAccessByIdErrors];
+
+export type DeleteApiEmergencyAccessByIdResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    deleted: boolean;
+  };
+};
+
+export type DeleteApiEmergencyAccessByIdResponse = DeleteApiEmergencyAccessByIdResponses[keyof DeleteApiEmergencyAccessByIdResponses];
+
+export type PutApiEmergencyAccessByIdData = {
+  body: {
+    wait_time_days: number;
+    escrow_signature: string;
+    escrow_created_at_millis: number;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}';
+};
+
+export type PutApiEmergencyAccessByIdErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PutApiEmergencyAccessByIdError = PutApiEmergencyAccessByIdErrors[keyof PutApiEmergencyAccessByIdErrors];
+
+export type PutApiEmergencyAccessByIdResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    updated: boolean;
+  };
+};
+
+export type PutApiEmergencyAccessByIdResponse = PutApiEmergencyAccessByIdResponses[keyof PutApiEmergencyAccessByIdResponses];
+
+export type PostApiEmergencyAccessByIdRearmData = {
+  body: {
+    credential: {
+      wrapped_vrk: string;
+      auth_public_key: string;
+      auth_pub_sig: string;
+      kdf_ops: number;
+      kdf_mem: number;
+      lang: string;
+    };
+    grantee_identity_public_key: string;
+    grantee_key_version: number;
+    wrapped_phrase_for_grantee: string;
+    escrow_signature: string;
+    escrow_created_at_millis: number;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}/rearm';
+};
+
+export type PostApiEmergencyAccessByIdRearmErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessByIdRearmError = PostApiEmergencyAccessByIdRearmErrors[keyof PostApiEmergencyAccessByIdRearmErrors];
+
+export type PostApiEmergencyAccessByIdRearmResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    rearmed: boolean;
+  };
+};
+
+export type PostApiEmergencyAccessByIdRearmResponse = PostApiEmergencyAccessByIdRearmResponses[keyof PostApiEmergencyAccessByIdRearmResponses];
+
+export type PostApiEmergencyAccessByIdInitiateData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}/initiate';
+};
+
+export type PostApiEmergencyAccessByIdInitiateErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  429: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessByIdInitiateError = PostApiEmergencyAccessByIdInitiateErrors[keyof PostApiEmergencyAccessByIdInitiateErrors];
+
+export type PostApiEmergencyAccessByIdInitiateResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+    deadline_millis: number;
+  };
+};
+
+export type PostApiEmergencyAccessByIdInitiateResponse =
+  PostApiEmergencyAccessByIdInitiateResponses[keyof PostApiEmergencyAccessByIdInitiateResponses];
+
+export type PostApiEmergencyAccessByIdCancelData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}/cancel';
+};
+
+export type PostApiEmergencyAccessByIdCancelErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessByIdCancelError = PostApiEmergencyAccessByIdCancelErrors[keyof PostApiEmergencyAccessByIdCancelErrors];
+
+export type PostApiEmergencyAccessByIdCancelResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+  };
+};
+
+export type PostApiEmergencyAccessByIdCancelResponse = PostApiEmergencyAccessByIdCancelResponses[keyof PostApiEmergencyAccessByIdCancelResponses];
+
+export type PostApiEmergencyAccessByIdRejectData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}/reject';
+};
+
+export type PostApiEmergencyAccessByIdRejectErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessByIdRejectError = PostApiEmergencyAccessByIdRejectErrors[keyof PostApiEmergencyAccessByIdRejectErrors];
+
+export type PostApiEmergencyAccessByIdRejectResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
+  };
+};
+
+export type PostApiEmergencyAccessByIdRejectResponse = PostApiEmergencyAccessByIdRejectResponses[keyof PostApiEmergencyAccessByIdRejectResponses];
+
+export type PostApiEmergencyAccessByIdRecoverData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/emergency-access/{id}/recover';
+};
+
+export type PostApiEmergencyAccessByIdRecoverErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiEmergencyAccessByIdRecoverError = PostApiEmergencyAccessByIdRecoverErrors[keyof PostApiEmergencyAccessByIdRecoverErrors];
+
+export type PostApiEmergencyAccessByIdRecoverResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    grantor_user_id: string;
+    wait_time_days: number;
+    lang: string;
+    escrow: {
+      grantee_identity_public_key: string;
+      grantee_key_version: number;
+      wrapped_phrase_for_grantee: string;
+      escrow_signature: string;
+      escrow_created_at_millis: number;
+      credential_auth_public_key_hash: string;
+    };
+  };
+};
+
+export type PostApiEmergencyAccessByIdRecoverResponse = PostApiEmergencyAccessByIdRecoverResponses[keyof PostApiEmergencyAccessByIdRecoverResponses];
