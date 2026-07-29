@@ -36,10 +36,10 @@ export async function handleShareKeys(
   if (payload.encryptedKeyChain && payload.encryptedKeyChain.length > 0) {
     // Drive key hierarchy: resolve the chain to get the target item's key
     const chain = payload.encryptedKeyChain.map((buf) => new Uint8Array(buf));
-    symmetricKey = await resolveKeyChain(userId, encryptedKey, chain);
+    symmetricKey = await resolveKeyChain(userId, encryptedKey, chain, 'active');
   } else {
     // Docs flat model: direct key resolution
-    symmetricKey = await resolveSymmetricKey(userId, encryptedKey);
+    symmetricKey = await resolveSymmetricKey(userId, encryptedKey, 'active');
   }
 
   // Convert ArrayBuffer public keys to internal format

@@ -82,6 +82,7 @@ describe('handleRewrapNestedKey', () => {
 
     // Sanity: the file decrypts through the OLD chain.
     const before = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: file.encryptedContent,
       encryptedSymmetricKey: entry,
       encryptedKeyChain: [folderA.wrappedKey, folderA1.wrappedKey, file.wrappedKey],
@@ -102,6 +103,7 @@ describe('handleRewrapNestedKey', () => {
 
     // The file decrypts through the NEW chain.
     const after = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: file.encryptedContent,
       encryptedSymmetricKey: entry,
       encryptedKeyChain: [folderB.wrappedKey, newEncryptedKey],
@@ -111,6 +113,7 @@ describe('handleRewrapNestedKey', () => {
     // And the OLD chain still works: we did NOT re-encrypt content,
     // only changed the wrapping layer over K_file.
     const stillOld = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: file.encryptedContent,
       encryptedSymmetricKey: entry,
       encryptedKeyChain: [folderA.wrappedKey, folderA1.wrappedKey, file.wrappedKey],
@@ -150,6 +153,7 @@ describe('handleRewrapNestedKey', () => {
     });
 
     const after = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: file.encryptedContent,
       encryptedSymmetricKey: entry,
       encryptedKeyChain: [folderB.wrappedKey, newEncryptedKey],
@@ -189,6 +193,7 @@ describe('handleRewrapNestedKey', () => {
     });
 
     const after = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: file.encryptedContent,
       encryptedSymmetricKey: entry,
       encryptedKeyChain: [newEncryptedKey],
@@ -240,6 +245,7 @@ describe('handleRewrapNestedKey', () => {
     });
 
     const back = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: file.encryptedContent,
       encryptedSymmetricKey: entry,
       encryptedKeyChain: [folderA.wrappedKey, ba.newEncryptedKey],

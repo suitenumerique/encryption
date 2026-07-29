@@ -18,14 +18,28 @@ export function serialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * The active identity's key material, projected out of the synchronized vault
- * (sealed items unwrapped with the device-cached VRK). Returns null when this
- * device holds no vault or the vault has no active encryption key.
+ * Which encryption key to project out of the vault:
+ *   - a `number`: the exact retained key VERSION a wrap was produced against —
+ *     used by the READ path, where the product passes the version it stored on
+ *     the access row, so an old-version wrap keeps decrypting after a rotation.
+ *   - `'active'`: the current active key — used by the WRITE paths (re-encrypt,
+ *     share, (re)wrap) that operate on the live document. Exact while a single
+ *     version exists; those call sites pass the stored version like the read
+ *     path once key rotation is implemented.
+ * The identity (signature) key is always the active one regardless.
  */
-export async function getStoredKeyPair(userId: string): Promise<StoredKeyPair | null> {
+export type KeyVersionSelector = number | 'active';
+
+/**
+ * The identity's key material, projected out of the synchronized vault (sealed
+ * items unwrapped with the device-cached VRK), with the ENCRYPTION key selected
+ * by `version` (default `'active'`). Returns null when this device holds no
+ * vault, or the requested encryption-key version is not held on it.
+ */
+export async function getStoredKeyPair(userId: string, version: KeyVersionSelector = 'active'): Promise<StoredKeyPair | null> {
   const loaded = await loadVault(userId);
 
-  return loaded ? deriveStoredKeyPair(loaded.state) : null;
+  return loaded ? deriveStoredKeyPair(loaded.state, version) : null;
 }
 
 /**

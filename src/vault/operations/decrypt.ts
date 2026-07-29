@@ -19,6 +19,7 @@ export async function handleDecryptWithKey(
     encryptedData: ArrayBuffer;
     encryptedSymmetricKey: ArrayBuffer;
     encryptedKeyChain?: ArrayBuffer[];
+    keyVersion: number;
   }
 ): Promise<{ data: ArrayBuffer }> {
   const encryptedContent = new Uint8Array(payload.encryptedData);
@@ -29,10 +30,10 @@ export async function handleDecryptWithKey(
   if (payload.encryptedKeyChain && payload.encryptedKeyChain.length > 0) {
     // Drive key hierarchy: resolve the chain from entry point to target
     const chain = payload.encryptedKeyChain.map((buf) => new Uint8Array(buf));
-    symmetricKey = await resolveKeyChain(userId, encryptedKey, chain);
+    symmetricKey = await resolveKeyChain(userId, encryptedKey, chain, payload.keyVersion);
   } else {
     // Docs flat model: direct key resolution
-    symmetricKey = await resolveSymmetricKey(userId, encryptedKey);
+    symmetricKey = await resolveSymmetricKey(userId, encryptedKey, payload.keyVersion);
   }
 
   const decrypted = await decryptContent(encryptedContent, symmetricKey);

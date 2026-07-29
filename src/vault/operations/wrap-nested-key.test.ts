@@ -72,6 +72,7 @@ describe('handleWrapNestedKey', () => {
 
     // The file content (unchanged) decrypts via the new chain.
     const out = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: fileRoot.encryptedContent,
       encryptedSymmetricKey: destEntry,
       encryptedKeyChain: [destFolder.wrappedKey, newEncryptedKey],
@@ -102,6 +103,7 @@ describe('handleWrapNestedKey', () => {
     });
 
     const out = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: fileRoot.encryptedContent,
       encryptedSymmetricKey: destEntry,
       encryptedKeyChain: [newEncryptedKey],
@@ -137,6 +139,7 @@ describe('handleWrapNestedKey', () => {
 
     // Decrypts at folder1 depth.
     const at1 = await handleDecryptWithKey(USER_ID, {
+      keyVersion: 1,
       encryptedData: fileRoot.encryptedContent,
       encryptedSymmetricKey: destEntry,
       encryptedKeyChain: [folder1.wrappedKey, wrapped.newEncryptedKey],

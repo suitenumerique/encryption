@@ -111,7 +111,7 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_DECRYPT_WITH_KEY:
       return handleDecryptWithKey(
         userId,
-        payload as { encryptedData: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[] }
+        payload as { encryptedData: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[]; keyVersion: number }
       );
     case MSG_VAULT_REWRAP_NESTED_KEY:
       return handleRewrapNestedKey(

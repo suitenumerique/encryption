@@ -351,7 +351,7 @@ export function DemoApp() {
 
         if (!myWrappedKey) throw new Error('No encrypted key for you on this document');
 
-        const { data } = await client.decryptWithKey(base64ToAb(doc.encryptedContent), base64ToAb(myWrappedKey));
+        const { data } = await client.decryptWithKey(base64ToAb(doc.encryptedContent), base64ToAb(myWrappedKey), 1);
         const plaintext = new TextDecoder().decode(data);
 
         log(`Decrypted: '${plaintext}'`);

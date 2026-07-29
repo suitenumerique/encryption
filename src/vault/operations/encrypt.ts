@@ -50,9 +50,10 @@ export async function handleEncryptWithKey(
       ? await resolveKeyChain(
           userId,
           encryptedKey,
-          payload.encryptedKeyChain.map((buf) => new Uint8Array(buf))
+          payload.encryptedKeyChain.map((buf) => new Uint8Array(buf)),
+          'active'
         )
-      : await resolveSymmetricKey(userId, encryptedKey);
+      : await resolveSymmetricKey(userId, encryptedKey, 'active');
 
   const encrypted = await encryptContent(dataBytes, symmetricKey);
 
@@ -115,7 +116,7 @@ export async function handleEncryptNestedWithoutKey(
 ): Promise<{ encryptedContent: ArrayBuffer; wrappedKey: ArrayBuffer }> {
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
   const chain = (payload.encryptedKeyChain ?? []).map((buf) => new Uint8Array(buf));
-  const parentKey = await resolveKeyChain(userId, encryptedKey, chain);
+  const parentKey = await resolveKeyChain(userId, encryptedKey, chain, 'active');
 
   const { newKey, encryptedContent } = await mintKeyAndEncrypt(payload.data);
   const wrappedKey = await encryptContent(newKey, parentKey);

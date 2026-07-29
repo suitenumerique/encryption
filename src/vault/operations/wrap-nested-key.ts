@@ -36,7 +36,7 @@ export async function handleWrapNestedKey(
   }
 ): Promise<{ newEncryptedKey: ArrayBuffer }> {
   // (1) Recover K_item from the per-user wrap.
-  const fileKey = await resolveSymmetricKey(userId, new Uint8Array(payload.userEncryptedKey));
+  const fileKey = await resolveSymmetricKey(userId, new Uint8Array(payload.userEncryptedKey), 'active');
 
   // (2) Resolve the destination chain to its terminal key. Empty
   //     chain means the user's entry already lands on the destination
@@ -47,9 +47,10 @@ export async function handleWrapNestedKey(
       ? await resolveKeyChain(
           userId,
           newEntryKey,
-          payload.newEncryptedKeyChain.map((buf) => new Uint8Array(buf))
+          payload.newEncryptedKeyChain.map((buf) => new Uint8Array(buf)),
+          'active'
         )
-      : await resolveSymmetricKey(userId, newEntryKey);
+      : await resolveSymmetricKey(userId, newEntryKey, 'active');
 
   // (3) Wrap K_item under K_newParent.
   const newEncryptedKey = await encryptContent(fileKey, newParentKey);

@@ -446,12 +446,17 @@ export class VaultClient {
    *
    * @param encryptedData - ArrayBuffer ciphertext to decrypt
    * @param encryptedSymmetricKey - user's encrypted copy of the symmetric key
+   * @param keyVersion - the recipient's encryption-key VERSION this wrap was
+   *   produced against, as stored by the product on the access row. The vault
+   *   unwraps with exactly that retained key (a version this device no longer
+   *   holds throws WRONG_SECRET_KEY).
    * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
    *   When provided, resolves the chain from entry point to target before decrypting.
    */
   async decryptWithKey(
     encryptedData: ArrayBuffer,
     encryptedSymmetricKey: ArrayBuffer,
+    keyVersion: number,
     encryptedKeyChain?: ArrayBuffer[],
     options?: { optimizeMemory?: boolean }
   ): Promise<{ data: ArrayBuffer }> {
@@ -459,6 +464,7 @@ export class VaultClient {
     const payload: Record<string, unknown> = {
       encryptedData,
       encryptedSymmetricKey,
+      keyVersion,
       optimizeMemory: optimize,
     };
 

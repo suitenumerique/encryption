@@ -64,6 +64,7 @@ describe('vault encrypt operations', () => {
       expect(encryptedKeys[USER_ID]).toBeDefined();
 
       const { data } = await handleDecryptWithKey(USER_ID, {
+        keyVersion: 1,
         encryptedData: encryptedContent,
         encryptedSymmetricKey: encryptedKeys[USER_ID],
       });
@@ -104,6 +105,7 @@ describe('vault encrypt operations', () => {
 
       // The recipient resolves entry + [wrappedKey] to get K_child and decrypts.
       const { data } = await handleDecryptWithKey(USER_ID, {
+        keyVersion: 1,
         encryptedData: encryptedContent,
         encryptedSymmetricKey: entry,
         encryptedKeyChain: [wrappedKey],
@@ -142,6 +144,7 @@ describe('vault encrypt operations', () => {
       });
 
       const { data } = await handleDecryptWithKey(USER_ID, {
+        keyVersion: 1,
         encryptedData: file.encryptedContent,
         encryptedSymmetricKey: entry,
         encryptedKeyChain: [sub1.wrappedKey, sub2.wrappedKey, file.wrappedKey],
@@ -168,6 +171,7 @@ describe('vault encrypt operations', () => {
       });
 
       const { data } = await handleDecryptWithKey(USER_ID, {
+        keyVersion: 1,
         encryptedData,
         encryptedSymmetricKey: entry,
       });
@@ -207,6 +211,7 @@ describe('vault encrypt operations', () => {
 
       // Receiver resolves the same chain → same K_file → decrypts cleanly.
       const { data } = await handleDecryptWithKey(USER_ID, {
+        keyVersion: 1,
         encryptedData,
         encryptedSymmetricKey: entry,
         encryptedKeyChain: fileChain,

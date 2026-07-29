@@ -405,7 +405,7 @@ export function BenchmarkApp() {
         let decTotal = 0;
 
         for (const chunk of encryptedChunks) {
-          const { data } = await client.decryptWithKey(chunk, encryptedSymKey);
+          const { data } = await client.decryptWithKey(chunk, encryptedSymKey, 1);
           decTotal += data.byteLength;
         }
 
@@ -429,7 +429,7 @@ export function BenchmarkApp() {
         await new Promise((r) => setTimeout(r, 50));
 
         const pmDecStart = performance.now();
-        const { data: pmDecrypted } = await client.decryptWithKey(pmEncrypted, encryptedSymKey);
+        const { data: pmDecrypted } = await client.decryptWithKey(pmEncrypted, encryptedSymKey, 1);
         const pmDecEnd = performance.now();
         pmDecMs = pmDecEnd - pmDecStart;
         pmDecryptedSize = pmDecrypted.byteLength;

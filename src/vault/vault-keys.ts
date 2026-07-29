@@ -24,6 +24,7 @@ import {
   addEncryptionKey,
   addIdentity,
   emptyVaultState,
+  encryptionKeyByVersion,
 } from '@encryption/src/crypto/vault-state';
 import { generateVrk } from '@encryption/src/crypto/vault-unlock';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
@@ -66,9 +67,14 @@ export async function loadVault(userId: string, opts: { persistedOnly?: boolean 
   return { state, vrk, cache };
 }
 
-/** Project the active identity + encryption key back into raw-libsodium bytes. */
-export function deriveStoredKeyPair(state: VaultState): StoredKeyPair | null {
-  const enc = activeEncryptionKey(state);
+/**
+ * Project the active identity + an encryption key back into raw-libsodium bytes.
+ * The encryption key is the active one by default, or an exact retained version
+ * when `encVersion` is a number (read path, so an old-version wrap still
+ * decrypts after a rotation). The identity is always the active one.
+ */
+export function deriveStoredKeyPair(state: VaultState, encVersion: number | 'active' = 'active'): StoredKeyPair | null {
+  const enc = encVersion === 'active' ? activeEncryptionKey(state) : encryptionKeyByVersion(state, encVersion);
   const id = activeIdentity(state);
 
   if (!enc || !id) return null;

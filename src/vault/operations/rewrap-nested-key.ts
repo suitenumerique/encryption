@@ -40,9 +40,10 @@ export async function handleRewrapNestedKey(
       ? resolveKeyChain(
           userId,
           entryKey,
-          chain.map((buf) => new Uint8Array(buf))
+          chain.map((buf) => new Uint8Array(buf)),
+          'active'
         )
-      : resolveSymmetricKey(userId, entryKey);
+      : resolveSymmetricKey(userId, entryKey, 'active');
 
   const oldParentKey = await resolveChainOrEntry(payload.oldEncryptedKeyChain);
   const fileKey = await decryptContent(oldWrappedKey, oldParentKey);
