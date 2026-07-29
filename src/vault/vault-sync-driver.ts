@@ -43,21 +43,25 @@ export function stopVaultSyncDriver(): void {
 }
 
 async function drive(userId: string, signal: AbortSignal): Promise<void> {
-  await safeSync(userId); // initial catch-up pull
-
   while (!signal.aborted) {
     try {
+      // Only sync a COMMITTED (persisted) vault. During onboarding the vault is
+      // only staged in memory and its identity is not registered server-side
+      // yet, so every request would 401 until the user confirms their backup
+      // (the commit that both persists locally and registers the identity).
+      // `eventsAuthHeader` is null until then — we just wait and re-check on the
+      // next backoff rather than spamming failed requests.
       const headers = await eventsAuthHeader(userId);
 
       if (headers) {
+        // Catch-up pull on (re)connect: a wake could have fired (or another
+        // instance handled the write) while we were disconnected, so the SSE
+        // alone is never trusted to have delivered everything.
+        await safeSync(userId);
+
         const res = await fetch(EVENTS_PATH, { headers, signal });
 
         if (res.ok && res.body) {
-          // Catch up on the reconnect itself: a wake could have fired (or a
-          // different instance handled the write) while we were disconnected, so
-          // the SSE alone is never trusted to have delivered everything.
-          void safeSync(userId);
-
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
@@ -96,11 +100,13 @@ async function safeSync(userId: string): Promise<void> {
   }
 }
 
-// Sign the `GET /api/vault/events` request with the user's identity key. Null when
-// the device isn't enrolled (no identity key), so the driver just backs off until
-// it is.
+// Sign the `GET /api/vault/events` request with the user's identity key. Null
+// when the device holds no COMMITTED vault: `persistedOnly` skips a vault that
+// is only staged in memory (mid-onboarding, before the user confirms their
+// backup), whose identity the server has not registered yet — so the driver
+// stays quiet instead of 401-ing until the commit lands.
 async function eventsAuthHeader(userId: string): Promise<Record<string, string> | null> {
-  const loaded = await loadVault(userId).catch(() => null);
+  const loaded = await loadVault(userId, { persistedOnly: true }).catch(() => null);
   const identity = loaded ? activeIdentity(loaded.state) : undefined;
   if (!identity) return null;
 
