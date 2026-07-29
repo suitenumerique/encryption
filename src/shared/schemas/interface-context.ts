@@ -11,7 +11,20 @@ export const recipientLabelSchema = z.object({
   name: z.string().optional(),
 });
 
-export type RecipientLabel = z.infer<typeof recipientLabelSchema>;
+// Concrete (zod-free) type on purpose: the SDK's generated client.d.ts is
+// vendored verbatim by integrating products, and a `z.infer<...>` would drag a
+// `zod` import into that public declaration (which consumers may not have). The
+// schema stays the runtime source of truth; the assertion below fails to compile
+// if the two ever drift.
+export type RecipientLabel = { email: string; name?: string };
+
+type _RecipientLabelMatchesSchema = z.infer<typeof recipientLabelSchema> extends RecipientLabel
+  ? RecipientLabel extends z.infer<typeof recipientLabelSchema>
+    ? true
+    : never
+  : never;
+const _recipientLabelMatchesSchema: _RecipientLabelMatchesSchema = true;
+void _recipientLabelMatchesSchema;
 
 export const interfaceContextSchema = z.object({
   suiteUserId: z.string(),
