@@ -9,6 +9,7 @@ import {
   MSG_INTERFACE_SET_THEME,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
+import { ApiError } from '@encryption/src/ui/api/client';
 import { fetchMe } from '@encryption/src/ui/api/me-client';
 import { fetchPublicKeys } from '@encryption/src/ui/api/public-keys-client';
 import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
@@ -95,6 +96,8 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // it (nullable userId props).
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
 
+  const [userResolveError, setUserResolveError] = useState<ApiError | null>(null);
+
   // Set auth info on the encryption context FIRST — the vault needs this before
   // we can make any requests (including token restoration). Re-sent when the
   // internal id lands so subsequent vault requests carry it.
@@ -162,6 +165,22 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
     setTokenRestoreAttempted(true);
   }, [parentContext.suiteUserId, oidcAuth.token, updateTokenSet]);
+
+  // If the parent never completes the auth-context handshake (suiteUserId never
+  // arrives), the token-restore effect above never runs, so tokenRestoreAttempted
+  // stays false and the "no user context" warning below would be unreachable —
+  // the UI would spin forever. A bounded wait flips this flag so that state
+  // resolves to the warning instead of an endless loader. Cleared automatically
+  // if the context arrives first (effect cleanup on the dep change).
+  const [handshakeTimedOut, setHandshakeTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (parentContext.suiteUserId || oidcAuth.token) return;
+
+    const timer = setTimeout(() => setHandshakeTimedOut(true), 10000);
+
+    return () => clearTimeout(timer);
+  }, [parentContext.suiteUserId, oidcAuth.token]);
 
   // Persist token set in localStorage after auth or refresh
   useEffect(() => {
@@ -235,6 +254,10 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
     let cancelled = false;
 
     (async () => {
+      // Each fresh attempt starts from a clean slate, so a later success (e.g.
+      // after the user reconnects) clears a previously shown error.
+      setUserResolveError(null);
+
       try {
         const resolved = await resolveInternalUser();
 
@@ -248,17 +271,34 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
         // Vault unavailable: fall through to /api/me below.
       }
 
+      // No token at all: NOT a stuck state — the render falls to the token-wait
+      // branch, which shows a reconnect action rather than a spinner.
       if (!oidcToken) return;
 
       try {
         const token = await getValidToken();
         const me = token ? await fetchMe(token) : null;
 
-        if (!cancelled && me) setInternalUserId(me.user_id);
+        if (cancelled) return;
+
+        if (me) {
+          setInternalUserId(me.user_id);
+        } else {
+          // A live session that still produced no id (e.g. token refresh yielded
+          // nothing): terminal for this render, so surface it instead of leaving
+          // the flow on an endless spinner.
+          setUserResolveError(new ApiError(0, 'unknown'));
+        }
       } catch (err) {
-        // Not an error condition for the page: an expired session only matters
-        // if the user turns out to need onboarding, which will ask them to
-        // sign in through its own flow.
+        if (cancelled) return;
+
+        // ANY failure to resolve the internal id is terminal for this render:
+        // the flow must never sit on an infinite spinner. A server ApiError
+        // carries an already-translated message (falling back to the server's
+        // English default); anything else (network, unexpected) gets the generic
+        // "unexpected error" message via the 'unknown' code. The reconnect action
+        // on the error screen still lets an expired session recover.
+        setUserResolveError(err instanceof ApiError ? err : new ApiError(0, 'unknown'));
         console.warn('[encryption-ui] Failed to resolve internal user id:', err);
       }
     })();
@@ -346,7 +386,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
-  if (!oidcAuth.token && !tokenRestoreAttempted) {
+  if (!oidcAuth.token && !tokenRestoreAttempted && !handshakeTimedOut) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
         <Loader />
@@ -400,9 +440,11 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       );
     }
 
-    // Waiting for parentContext.suiteUserId — if token restore was already
-    // attempted and we still have no userId, the parent didn't send auth context.
-    if (tokenRestoreAttempted && !parentContext.suiteUserId) {
+    // No auth context from the parent: either the token-restore ran (context was
+    // briefly present) or the handshake timed out without it ever arriving. Either
+    // way, show the warning rather than spin — the interface cannot proceed
+    // without knowing which user is authenticated.
+    if ((tokenRestoreAttempted || handshakeTimedOut) && !parentContext.suiteUserId) {
       return (
         <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
           <Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>
@@ -413,6 +455,23 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
         <Loader />
+      </div>
+    );
+  }
+
+  // Any unrecoverable failure to resolve the internal id (a 403 with no usable
+  // email, a 5xx, a network drop, an unexpected error) would otherwise strand
+  // onboarding on its checking-history spinner. Surface the reason (ApiError
+  // carries an already-translated message, generic "unexpected error" as a last
+  // resort) with a reconnect action, so the user always knows what happened and
+  // has a way out instead of an endless loader.
+  if (userResolveError && !internalUserId) {
+    return (
+      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
+        <Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+          <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
+        </div>
       </div>
     );
   }

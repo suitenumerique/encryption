@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import i18n from '@encryption/src/i18n';
 import { OIDC_AUTH_MESSAGE_TYPE, getLoginUrl, isOidcConfigured } from '@encryption/src/ui/auth/oidc-client';
 import type { TokenSet } from '@encryption/src/ui/auth/oidc-client';
 
@@ -77,6 +78,17 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
 
     const loginUrl = getLoginUrl(expectedSuiteUserId);
     const loginWindow = window.open(loginUrl, '_blank');
+
+    // Popup blocked: there is no tab to wait on, so entering the "authenticating"
+    // state would spin forever. Surface it as an error (with the sign-in screen's
+    // Retry) instead of a dead loader, and keep `waitingRef` false so Retry works.
+    if (!loginWindow) {
+      setError(i18n.t('auth.popup_blocked'));
+      setNeedsAuth(true);
+
+      return;
+    }
+
     loginWindowRef.current = loginWindow;
 
     waitingRef.current = true;
@@ -85,21 +97,19 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
     setError(null);
 
     // Poll the login window — if the user closes it manually, stop waiting
-    if (loginWindow) {
-      windowPollRef.current = setInterval(() => {
-        if (loginWindow.closed) {
-          if (windowPollRef.current) clearInterval(windowPollRef.current);
-          windowPollRef.current = null;
-          loginWindowRef.current = null;
+    windowPollRef.current = setInterval(() => {
+      if (loginWindow.closed) {
+        if (windowPollRef.current) clearInterval(windowPollRef.current);
+        windowPollRef.current = null;
+        loginWindowRef.current = null;
 
-          if (waitingRef.current) {
-            waitingRef.current = false;
-            setIsAuthenticating(false);
-            setNeedsAuth(true);
-          }
+        if (waitingRef.current) {
+          waitingRef.current = false;
+          setIsAuthenticating(false);
+          setNeedsAuth(true);
         }
-      }, 500);
-    }
+      }
+    }, 500);
   }, [expectedSuiteUserId]);
 
   // Setting the token set to null makes the effect below flip `needsAuth` back
