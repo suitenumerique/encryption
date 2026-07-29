@@ -64,10 +64,38 @@ export async function createServer(options: CreateServerOptions = {}) {
     logger: {
       level: isDev ? 'debug' : 'info',
     },
+    // Suppress Fastify's automatic per-request access log. In dev this server also
+    // serves every front-end source module through Vite middleware, so the default
+    // logging drowns the API/auth lines in hundreds of file-serve entries. We
+    // re-emit a concise line ourselves in the onResponse hook below, skipping those
+    // dev asset serves.
+    disableRequestLogging: true,
   });
 
   app.setErrorHandler(errorHandler);
   attachApiErrorMessages(app);
+
+  // Concise access log replacing the disabled built-in one. Production logs every
+  // request; dev logs ONLY real API routes and skips the flood of Vite-served
+  // front-end modules. A prefix check is not enough: the UI's own source lives in
+  // `src/ui/api`, so Vite serves it at `/api/client.ts`, `/api/generated/sdk.gen.ts`,
+  // … — under `/api/` too. The reliable distinction is the file extension: a real
+  // API route never carries one (`/api/me`, `/api/vault/events`), a served module
+  // always does. `/@…` covers Vite internals (`/@vite/client`) that have none.
+  app.addHook('onResponse', async (request, reply) => {
+    if (isDev) {
+      const path = request.url.split('?')[0];
+      const lastSegment = path.slice(path.lastIndexOf('/') + 1);
+      const isServedAsset = lastSegment.includes('.') || path.startsWith('/@');
+
+      if (isServedAsset || !path.startsWith('/api/')) return;
+    }
+
+    request.log.info(
+      { method: request.method, url: request.url, statusCode: reply.statusCode, responseTimeMs: Math.round(reply.elapsedTime) },
+      'request completed'
+    );
+  });
 
   if (options.openapi) {
     const fastifySwagger = (await import('@fastify/swagger')).default;
