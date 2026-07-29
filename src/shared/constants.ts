@@ -18,9 +18,10 @@ export const CRYPTO_VERSION = 0x01;
 // fabricated chain.
 export const MAX_CONTINUITY_HOPS = 5;
 
-// IndexedDB constants
+// IndexedDB name. The schema VERSION and its migrations live in encryption-db.ts,
+// where DB_VERSION is DERIVED from the ordered migration list — so adding a store
+// necessarily bumps the version and can never be silently forgotten.
 export const DB_NAME = 'encryption';
-export const DB_VERSION = 1;
 
 // Store for the synchronized vault's local cache, keyed by the INTERNAL user
 // id: the sealed items + manifest + revision, the wrapped VRK, and the
