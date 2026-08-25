@@ -6,4 +6,10 @@ export { VaultClient, VaultError, VaultErrorCode, isVaultError };
 // from vault-client) so the rolled-up client.d.ts keeps them exported and the
 // `export as namespace EncryptionClient` surface carries them — integrating
 // products reference them by name off the vendored declaration.
-export type { AuthContext, EncryptionClientEventMap, EncryptionClientOptions, RecipientLabel, RegisteredUser } from '@encryption/src/client/vault-client';
+export type {
+  AuthContext,
+  EncryptionClientEventMap,
+  EncryptionClientOptions,
+  RecipientLabel,
+  RegisteredUser,
+} from '@encryption/src/client/vault-client';

@@ -1,9 +1,9 @@
-import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
+import 'fake-indexeddb/auto';
 import { type IDBPDatabase, openDB } from 'idb';
 
-import { DB_NAME, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 import { MIGRATIONS } from '@encryption/src/crypto/encryption-db';
+import { DB_NAME, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 
 // Each test starts from an empty IndexedDB and a fresh module, so
 // getEncryptionDB's cached connection promise never leaks a handle (or a stale

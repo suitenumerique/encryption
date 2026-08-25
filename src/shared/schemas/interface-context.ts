@@ -18,11 +18,8 @@ export const recipientLabelSchema = z.object({
 // if the two ever drift.
 export type RecipientLabel = { email: string; name?: string };
 
-type _RecipientLabelMatchesSchema = z.infer<typeof recipientLabelSchema> extends RecipientLabel
-  ? RecipientLabel extends z.infer<typeof recipientLabelSchema>
-    ? true
-    : never
-  : never;
+type _RecipientLabelMatchesSchema =
+  z.infer<typeof recipientLabelSchema> extends RecipientLabel ? (RecipientLabel extends z.infer<typeof recipientLabelSchema> ? true : never) : never;
 const _recipientLabelMatchesSchema: _RecipientLabelMatchesSchema = true;
 void _recipientLabelMatchesSchema;
 
