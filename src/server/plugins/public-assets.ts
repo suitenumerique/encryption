@@ -22,7 +22,7 @@ export async function publicAssetsPlugin(app: FastifyInstance): Promise<void> {
   // content is identical, so we serve it under the friendlier `.d.ts` name.
   const clientTypesPath = resolve(process.cwd(), 'dist/client/client.d.mts');
 
-  app.get('/public-assets/client.d.ts', async (_request, reply) => {
+  app.get('/public-assets/client.d.ts', { schema: { hide: true } }, async (_request, reply) => {
     if (!existsSync(clientTypesPath)) {
       return reply.code(404).type('text/plain; charset=utf-8').send('client.d.ts not built yet - run "npm run build:client"');
     }
