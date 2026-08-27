@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 
 import { env } from '@encryption/src/server/env';
+import { BROWSER_REPORT_PATH } from '@encryption/src/shared/constants';
 
 // Wrapped with fastify-plugin to break encapsulation — otherwise the onSend hook
 // stays scoped to this plugin and never runs for routes registered on the same
@@ -51,12 +52,33 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     // connects to a WebSocket, so it must not widen connect-src there.
     const connectSrc = isDev ? "connect-src 'self' ws:" : "connect-src 'self'";
 
+    // Without reporting, the browser blocks a violation silently and nobody ever
+    // learns it happened. On the vault, whose policy allows no external load at all,
+    // a single production violation is close to proof of a compromised bundle
+    // attempting to fetch a payload or beacon out, so it must be an alert.
+    // `report-to` is the current mechanism and `report-uri` the deprecated one that
+    // is still more widely implemented; both are emitted, and both land on the same
+    // same-origin route, which every host serves.
+    //
+    // The endpoint is declared under the reserved name `default`, not a CSP-specific
+    // one: `default` is where the browser sends the report types that have no header
+    // of their own to name an endpoint with (crash, deprecation, intervention). CSP
+    // can point at any declared name, so one entry serves both.
+    reply.header('Reporting-Endpoints', `default="${request.protocol}://${request.host}${BROWSER_REPORT_PATH}"`);
+
+    const reporting = `; report-to default; report-uri ${BROWSER_REPORT_PATH}`;
+
     if (host === env.VAULT_HOST) {
       // Vault: most restrictive CSP + origin isolation headers. base-uri and
       // form-action are set explicitly because neither falls back to default-src.
+      // `require-trusted-types-for 'script'` neutralizes the DOM injection sinks
+      // (innerHTML, script.src, …) wholesale, and `trusted-types 'none'` forbids
+      // creating a policy that could re-enable them. The vault touches no DOM sink
+      // anywhere in its source, so nothing legitimate can trip this; injected code
+      // trying to build a script node does.
       reply.header(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}; require-trusted-types-for 'script'; trusted-types 'none'${reporting}`
       );
 
       // Cross-Origin isolation headers — reduces attack surface from side-channel attacks
@@ -73,14 +95,14 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.header(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self'; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self'; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}${reporting}`
       );
 
       reply.header('Cross-Origin-Opener-Policy', 'same-origin');
       reply.header('Cross-Origin-Resource-Policy', 'same-site');
     } else {
       // API or unknown host
-      reply.header('Content-Security-Policy', "default-src 'none'");
+      reply.header('Content-Security-Policy', `default-src 'none'${reporting}`);
     }
   });
 });

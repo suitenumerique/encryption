@@ -1,0 +1,52 @@
+name: OpenSSF Scorecard
+
+# A weekly regression check on this repository's own security posture: branch
+# protection, pinned dependencies, token permissions, signed releases, and the rest
+# of the OpenSSF checks. It grades the repository, not the code, which is exactly the
+# part no other job here covers.
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '31 4 * * 1'
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Publishes the findings to the repository's Security tab.
+      security-events: write
+      # Lets the action prove which workflow produced the result, so the public
+      # scorecard badge cannot be forged.
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run the analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload the findings
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          sarif_file: results.sarif

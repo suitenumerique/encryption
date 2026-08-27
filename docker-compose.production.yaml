@@ -1,0 +1,64 @@
+#
+# Reference deployment for the published image.
+#
+# Deployment itself happens outside this repository, so this file is not run by CI.
+# It exists so that the runtime hardening is written down somewhere executable rather
+# than living in a wiki, and so that anyone can reproduce it locally:
+#
+#   docker compose -f docker-compose.production.yaml up
+#
+# Verify the image BEFORE running it. The tag says nothing about who built it; the
+# attestation does, and an image pushed with a stolen registry token has none:
+#
+#   gh attestation verify oci://lasuite/encryption:latest \
+#     --repo numerique-gouv/encryption \
+#     --signer-workflow numerique-gouv/encryption/.github/workflows/ci.yml
+#
+# Inspect what is inside it and how it was built, both attached by the release job:
+#
+#   docker buildx imagetools inspect lasuite/encryption:latest --format '{{ json .SBOM }}'
+#   docker buildx imagetools inspect lasuite/encryption:latest --format '{{ json .Provenance }}'
+#
+
+services:
+  encryption:
+    # Pin the digest of the verified image here rather than following a tag.
+    image: lasuite/encryption:latest
+    restart: unless-stopped
+
+    # The image has no shell and no package manager, and the process is not root.
+    # These flags remove what is left.
+    #
+    # read_only        a code drop or a web shell has nowhere to land
+    # tmpfs /tmp       the only writable path, and it is noexec
+    # cap_drop ALL     no capability is needed: the app binds 7200, not a low port
+    # no-new-privileges  blocks setuid escalation inside the container
+    # pids_limit       caps fork bombs and stray child processes
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+
+    environment:
+      NODE_ENV: production
+      PORT: 7200
+      # Everything else (DATABASE_URL, VAULT_URL, UI_URL, ALLOWED_FRAME_ANCESTORS,
+      # OIDC_*, MAILER_*) comes from the deployment's own secret store. See .env.model.
+      #
+      # SENTRY_DSN is optional and unset here on purpose: with no collector the
+      # service reports nothing and behaves identically.
+
+    ports:
+      - '7200:7200'
+
+    networks:
+      - encryption
+
+networks:
+  encryption:
+    driver: bridge

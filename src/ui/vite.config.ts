@@ -85,8 +85,19 @@ export function getUiViteConfig(): UserConfig {
     build: {
       outDir: resolve(__dirname, '../../dist/ui'),
       emptyOutDir: true,
+      // `hidden`, not `true`: the .map is emitted next to the bundle but NO
+      // `sourceMappingURL` comment is appended, so the shipped bytes are unchanged
+      // (SRI hashes stay stable) and no browser ever fetches it. The map is read
+      // only by our own server, to resolve a reported stack back to source.
+      sourcemap: 'hidden',
       rollupOptions: {
         input: resolve(__dirname, 'interface.html'),
+        output: {
+          // The map carries positions, not the source text. The text would be two
+          // thirds of its bytes, and it is already public in this repository at the
+          // commit the reported `release` names.
+          sourcemapExcludeSources: true,
+        },
       },
     },
     resolve: {

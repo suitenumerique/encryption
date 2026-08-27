@@ -13,7 +13,11 @@ export default defineConfig({
       formats: ['es', 'iife'],
       fileName: (format) => (format === 'es' ? 'client.mjs' : 'client.js'),
     },
-    sourcemap: true,
+    // `hidden`: the SDK is served to products from the vault host, whose allowlist
+    // holds six paths and no `.map`. With `true`, every product's devtools would
+    // chase a `sourceMappingURL` that answers 404. Adding `/client.js.map` to that
+    // allowlist is the one-line alternative, if integrators ever ask for it.
+    sourcemap: 'hidden',
   },
   resolve: {
     alias: {

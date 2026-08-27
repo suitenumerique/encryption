@@ -32,7 +32,11 @@ Since Chrome 115, IndexedDB in third-party iframes is partitioned by the embeddi
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) >= 24.14.0
+- [Node.js](https://nodejs.org/) >= 24.19.0
+- **npm >= 12** (`npm install -g npm@12`). The supply chain policy lives in `.npmrc`
+  and in the `allowScripts` field of `package.json`, and only npm 12 enforces it, so
+  `engine-strict` refuses an older one. npm 12 in turn requires Node >= 24.15.0,
+  which is why the Node floor moved.
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
 
 ### `/etc/hosts` setup
@@ -104,7 +108,20 @@ npm run format:check     # Prettier check
 npm run db:push          # Apply schema to database
 npm run db:studio        # Open Prisma Studio
 npm run dev:storybook    # Start Storybook on port 7204
+
+npm run security:check   # Every supply chain gate CI runs, in one command
+npm run security:audit   # Known vulnerabilities (blocking on production deps)
 ```
+
+### Supply chain
+
+Installs are locked down: **no dependency executes code at install time**. The policy
+is in `.npmrc` and in the `allowScripts` field of `package.json`, which currently
+approves nothing, and the build, the tests and Storybook were all verified to work
+with every install script blocked.
+
+The full reasoning, the threat model, and everything still to do is in
+[plan.md](./plan.md). How to verify a published image is in [SECURITY.md](./SECURITY.md).
 
 ## Tech stack
 

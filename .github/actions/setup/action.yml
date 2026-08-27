@@ -1,0 +1,44 @@
+name: Setup
+description: Node, a pinned npm, and a lockfile-strict install.
+
+inputs:
+  node-version:
+    description: Node.js version
+    required: true
+  npm-version:
+    description: >
+      npm version to install before touching the tree. Pinned because the supply
+      chain policy in .npmrc and package.json (allowScripts, min-release-age)
+      is only enforced from npm 12 onwards.
+    required: true
+  omit-dev:
+    description: Install production dependencies only (the build toolchain, no test tooling)
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        # Caches the npm CACHE (content-addressed tarballs), never node_modules.
+        # A cached node_modules would be restored without any integrity check and a
+        # poisoned tree would survive across runs; a cached tarball is re-verified
+        # against the lockfile hash on every single install.
+        cache: npm
+
+    - name: Pin npm
+      shell: bash
+      run: |
+        npm install -g "npm@${{ inputs.npm-version }}"
+        npm --version
+
+    - name: Install dependencies
+      shell: bash
+      # `npm ci` and never `npm install`: it fails when package.json and the lockfile
+      # disagree, never rewrites the lockfile, and installs exactly the reviewed tree.
+      # Install scripts are governed by `allowScripts` in package.json, which currently
+      # approves none of them.
+      run: npm ci ${{ inputs.omit-dev == 'true' && '--omit=dev' || '' }}

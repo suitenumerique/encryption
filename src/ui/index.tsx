@@ -8,9 +8,13 @@ import '@encryption/src/i18n';
 import { MSG_INTERFACE_RESIZE } from '@encryption/src/shared/constants';
 import { App } from '@encryption/src/ui/App';
 import { applyBrandFont } from '@encryption/src/ui/brand-font';
+import { installErrorReporting } from '@encryption/src/ui/monitoring';
 
 // Point Cunningham at the deployment's brand font (if any) before the first paint.
 applyBrandFont();
+
+// Before anything else can throw. Posts to our own backend only; see the module.
+installErrorReporting();
 
 // Auth routes (/login, /auth/callback) are opened in a new tab, not in an iframe.
 // All other routes must be inside an iframe.

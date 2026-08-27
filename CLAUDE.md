@@ -82,6 +82,26 @@ Two categories of operations:
 
 The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
 
+## Supply chain rules
+
+- **No dependency runs code at install time.** The policy is `.npmrc` plus the
+  `allowScripts` field in `package.json`, which currently approves **nothing**. npm
+  > = 12 is required (`engine-strict`), because only npm 12 enforces `allowScripts`,
+  > `allow-git=none`, `allow-remote=none` and `min-release-age`. Never add an approval
+  > without reading the script; approvals are pinned per version on purpose.
+- **`npm ci`, never `npm install`**, everywhere except when deliberately changing
+  dependencies. `npm install` can resolve outside the lockfile and rewrite it.
+- **`dependencies` = runtime + build toolchain, `devDependencies` = test/lint/Storybook
+  only.** The Docker builder runs `npm ci --omit=dev`, so anything `npm run build`
+  touches must be in `dependencies` or the image build fails. The CI `build` job
+  proves the split holds on every run.
+- **Every GitHub Action is pinned to a full commit SHA** with the version in a
+  trailing comment. `npm run security:actions` fails the build otherwise, and it also
+  requires every workflow to declare a `permissions:` block.
+- **Base images are pinned by digest**, in `Dockerfile` and `docker-compose.yaml`.
+- The checks live in `src/security/` with their tests next to them, and run through
+  `tsx src/security/check.script.ts <command>`.
+
 ## Security measures
 
 - CSP, COEP, COOP, CORP headers (vault is the most restrictive)
@@ -95,6 +115,53 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 - `robots.txt` + `<meta name="robots" content="noindex, nofollow">`
 - Rate limiting: 10 key creations per 30 days, 10 device transfers per hour
 - Device transfer sessions auto-deleted after 1 hour
+- Reporting API endpoint at `/api/browser-reports` (`BROWSER_REPORT_PATH`), declared
+  under the reserved `default` name so it receives every report type, not only CSP.
+  Security types (`csp-violation`, `coop`, `coep`, `integrity-violation`, `crash`)
+  are logged at warn, the rest at info.
+  A violation on the vault host in production is close to proof of a compromised
+  bundle: its policy allows no external load at all.
+- `require-trusted-types-for 'script'` + `trusted-types 'none'` on the vault, which
+  touches no DOM injection sink anywhere in its source
+- Production image is distroless: no shell, no package manager, non-root, and no
+  `node_modules` (esbuild bundles everything into one file)
+
+## Error reporting
+
+Optional, off unless `SENTRY_DSN` is set, and never a dependency of the service.
+
+- **No Sentry SDK anywhere.** `src/server/monitoring.ts` speaks Sentry's public
+  envelope API over `fetch`, in one reviewable file with no package added to the
+  tree. The SDK's value is automatic context capture (request bodies, headers,
+  breadcrumbs, local variables, spans), which on an E2EE service is exactly the
+  behaviour that must not exist: CVE-2025-65944 is that story, where `Authorization`
+  and `Cookie` headers reached Sentry through span attributes and Sentry's own
+  server-side scrubbing missed them too.
+- **Allowlist, not scrubbing.** The event is built field by field: error type,
+  redacted message, stack frames, and six permitted tag names (`route`, `method`,
+  `status`, `host`, `reportType`, `code`). No request, user, breadcrumb, context or
+  extra key is ever constructed. `redact()` removes emails and any 32+ character
+  base64url/hex run (a key, a wrapped blob, a JWT segment) from every string sent.
+- **The vault reports nothing, ever.** Its variables are private keys and plaintext.
+  Its failures already surface as stable error codes through postMessage.
+- **The interface reports through our own backend**, never to a collector directly
+  (`src/ui/monitoring.ts`): the CSP keeps `connect-src 'self'`, an extension blocking
+  analytics cannot suppress a security report, and redaction happens server-side.
+  Only `location.pathname` is sent, never the query string, which on `/auth/callback`
+  carries an authorization code.
+- **Source maps are never uploaded anywhere.** They are built into the image next to
+  the bundles they describe and resolved at error time, inside the container. The
+  server gets this from `--enable-source-maps` in the `Dockerfile`, which also fixes
+  the stacks in the logs; browser frames are resolved by `src/server/symbolicate.ts`
+  using `node:module`'s `SourceMap`, so no package is added for it. This is the shape
+  that fits an image many organizations deploy against their own collector: a CI job
+  uploading maps would upload them to OUR collector, and a deployment needs nothing
+  beyond `SENTRY_DSN`. Maps carry positions only (`sourcemapExcludeSources`,
+  `--sources-content=false`); the source text is already public in this repository.
+  Vite uses `sourcemap: 'hidden'`, so no `sourceMappingURL` comment is appended and
+  the SRI hashes are unaffected. **They are not reachable over HTTP**: the interface's
+  static root refuses `.map` (`isServableAsset`, with a test), and the vault host
+  serves a six-path allowlist that has never included one.
 
 ## Port scheme (local development)
 

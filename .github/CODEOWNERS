@@ -1,0 +1,29 @@
+# Review is the last line of defence for the files a supply chain attack has to
+# touch. Everything listed here needs an explicit approval from an owner, so none of
+# it can be skimmed through in a large diff.
+#
+# TODO: replace the placeholder below with the real team or handles before enabling
+# branch protection. GitHub silently ignores an owner that does not exist, which
+# would turn this file into decoration.
+
+*                           @numerique-gouv/encryption-maintainers
+
+# The pipeline and everything that decides what runs in it.
+/.github/                   @numerique-gouv/encryption-maintainers
+/Dockerfile                 @numerique-gouv/encryption-maintainers
+/.dockerignore              @numerique-gouv/encryption-maintainers
+/docker-compose.yaml        @numerique-gouv/encryption-maintainers
+/docker-compose.production.yaml @numerique-gouv/encryption-maintainers
+
+# The supply chain policy itself.
+/.npmrc                     @numerique-gouv/encryption-maintainers
+/package.json               @numerique-gouv/encryption-maintainers
+/package-lock.json          @numerique-gouv/encryption-maintainers
+/src/security/              @numerique-gouv/encryption-maintainers
+
+# The crown jewels: key handling, the vault boundary, and the headers that contain
+# a compromised bundle.
+/src/crypto/                @numerique-gouv/encryption-maintainers
+/src/vault/                 @numerique-gouv/encryption-maintainers
+/src/server/plugins/        @numerique-gouv/encryption-maintainers
+/src/prisma/schema.prisma   @numerique-gouv/encryption-maintainers

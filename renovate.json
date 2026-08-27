@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>numerique-gouv/renovate-configuration"],
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Cooldown before adopting any new version. Most malicious npm releases are detected and unpublished within hours, so a delay turns the common case into a non-event. This mirrors `min-release-age=7` in .npmrc: one layer at proposal time, one at install time.",
+      "matchManagers": ["npm", "github-actions", "dockerfile", "docker-compose"],
+      "matchPackageNames": ["*"],
+      "minimumReleaseAge": "7 days",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Actions are pinned to a commit SHA, which is what makes them immutable. Without automated bumping a pin rots and stops receiving security fixes, so this is the half of SHA pinning that keeps it honest.",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "groupName": "github actions"
+    },
+    {
+      "description": "Base images are pinned by digest for the same reason. Keep tag and digest in sync.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "pinDigests": true,
+      "groupName": "container images"
+    },
+    {
+      "description": "A dependency that executes code at install time, or that provides an executable on the build's $PATH, deserves an individual review rather than being swept into a group PR. Install-time execution is denied outright by the `allowScripts` policy, and a package that adds an executable changes what every `npm run` script resolves.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["esbuild", "prisma", "@prisma/engines", "@prisma/client", "@swc/core", "msw", "vite", "typescript"],
+      "groupName": null,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Never move off the npm major that enforces the allowScripts policy without a deliberate decision.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["packageManager"],
+      "dependencyDashboardApproval": true
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "description": "A published vulnerability is the one case where waiting out the cooldown is the wrong trade.",
+    "minimumReleaseAge": null,
+    "labels": ["dependencies", "security"]
+  }
+}

@@ -1,0 +1,71 @@
+name: Security review
+
+# An automated security review of the diff, on every pull request. It reads what
+# changed, not what the dependency tree looks like, so it covers the one thing the
+# supply chain gates in ci.yml cannot: a vulnerability written by hand, in our code.
+#
+# It is advisory. Findings are posted as a pull request comment, nothing is required
+# to pass, and a human decides. Two properties keep an AI reviewer from becoming an
+# attack surface of its own:
+#
+#   1. The action is NOT hardened against prompt injection. A pull request diff is
+#      attacker-controlled text that this job feeds to a model holding an API key, so
+#      the job refuses to run on a fork. GitHub already withholds secrets from a
+#      `pull_request` run from a fork, which would make it fail anyway; the explicit
+#      condition states the reason instead of relying on a missing secret.
+#   2. `pull-requests: write` is granted to this job only, and it is the only write
+#      permission in the whole workflow. That is the narrowest scope GitHub offers
+#      for leaving a comment. It also allows closing a pull request or editing labels,
+#      which is why nothing else runs in this job and no other job exists here.
+#
+# Requires the `CLAUDE_API_KEY` repository secret. Without it the job fails loudly
+# rather than silently reviewing nothing.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Review the diff
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      # Leaving the findings as a comment. Nothing else in this workflow writes.
+      pull-requests: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
+        with:
+          # This job talks to the Anthropic API, so its egress list is different from
+          # every other job here. Keep it in `audit` until those reports are read.
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # The action diffs the head against its parent, so one extra commit is enough.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Review
+        # The repository publishes no tags, so the pin is a plain commit SHA: HEAD of
+        # main on 2026-02-11. Renovate cannot bump it, review it by hand.
+        uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda
+        with:
+          claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+          comment-pr: true
+          # Generated output and translations. A finding in any of them is a finding
+          # about the generator or about a French sentence, never about our code.
+          exclude-directories: dist,coverage,storybook-static,src/ui/api/generated,src/i18n

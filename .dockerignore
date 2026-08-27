@@ -1,8 +1,19 @@
-node_modules
-dist
-.git
-.vscode
-.env.local
-.env.*.local
-*.md
-!README.md
+# Deny by default, allow only what the build actually needs. A denylist silently
+# ships every new file at the repository root into the build context; this cannot.
+*
+
+!package.json
+!package-lock.json
+!.npmrc
+!tsconfig.json
+!tsconfig.sw.json
+!prisma.config.ts
+!openapi-ts.config.ts
+!src
+!config
+
+# Nothing under src/ needs to reach the image beyond source.
+src/**/node_modules
+src/**/*.test.ts
+src/**/*.test.tsx
+src/**/*.stories.tsx

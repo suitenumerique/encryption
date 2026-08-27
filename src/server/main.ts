@@ -1,9 +1,37 @@
 import { startEmergencyJobs } from '@encryption/src/server/emergency-jobs';
 import { env } from '@encryption/src/server/env';
+import { captureServerError, flushMonitoring, initMonitoring, isMonitoringEnabled } from '@encryption/src/server/monitoring';
 import { createServer } from '@encryption/src/server/server';
 
 async function main() {
+  // Optional: with no SENTRY_DSN this is a no-op and nothing is ever sent.
+  initMonitoring({
+    dsn: env.SENTRY_DSN,
+    environment: env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? 'production',
+    release: env.SENTRY_RELEASE,
+  });
+
   const app = await createServer();
+
+  if (isMonitoringEnabled()) {
+    app.log.info('Error reporting enabled');
+  }
+
+  // A throw outside a request never reaches the Fastify error handler, and these
+  // are the ones worth waking someone for. Logged and reported, then left to Node's
+  // default behaviour: the process must still die on an uncaught exception rather
+  // than continue in an unknown state.
+  process.on('unhandledRejection', (reason) => {
+    app.log.error(reason);
+    captureServerError(reason, { tags: { code: 'unhandledRejection' } });
+  });
+
+  process.on('uncaughtException', (error) => {
+    app.log.error(error);
+    captureServerError(error, { tags: { code: 'uncaughtException' } });
+
+    void flushMonitoring().finally(() => process.exit(1));
+  });
 
   app.listen({ port: env.PORT, host: env.HOST }, (err, address) => {
     if (err) {
@@ -38,6 +66,7 @@ async function main() {
         try {
           await stopEmergencyJobs();
           await app.close();
+          await flushMonitoring();
         } catch (closeErr) {
           app.log.error(closeErr);
         }

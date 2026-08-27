@@ -1,4 +1,5 @@
 name: Continuous Integration
+
 on:
   push:
     branches:
@@ -6,63 +7,134 @@ on:
     tags:
       - 'v*'
   pull_request:
-env:
-  APP_NAME: encryption
-  CONTAINER_REGISTRY: docker.io
-  CONTAINER_IMAGE: lasuite/encryption
-  NODE_OPTIONS: --max_old_space_size=4096
-  NODE_VERSION: 24.14.0
-  PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX: .cache/ms-playwright
+
+# Least privilege by default. A job that needs more says so itself, and only the
+# release job ever sees a credential. See plan.md, F1 and F5.
+permissions:
+  contents: read
+
 concurrency:
   # Prevent parallel builds of the same branch
   group: cicd-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  APP_NAME: encryption
+  CONTAINER_REGISTRY: docker.io
+  CONTAINER_IMAGE: lasuite/encryption
+  # Dashed spelling, matching the flag the container CMD uses. A GitHub-hosted
+  # runner is a VM, not a memory-limited container, so the percentage form used in
+  # the image would size the heap from the whole machine; here the ceiling is stated
+  # outright. 4 GB fits the standard runner for a PUBLIC repository (4 vCPU, 16 GB)
+  # and still fits the 7 GB runner a private repository gets, so it survives the
+  # repository being made private. It applies to every Node process in the job,
+  # including each Jest worker, which is why it is not raised casually.
+  NODE_OPTIONS: --max-old-space-size=4096
+  # npm 12 requires Node ^24.15.0 on this line, and npm 12 is what enforces the
+  # `allowScripts` policy, so the two versions move together.
+  NODE_VERSION: 24.19.0
+  NPM_VERSION: 12.0.2
+  # `audit` records every outbound connection the runner makes and reports it in the
+  # job summary, without blocking. Read one week of those reports, then switch this to
+  # `block` and add the observed hosts to `allowed-endpoints`. `block` is the only
+  # control here that stops an exfiltration attempt nobody has classified yet.
+  EGRESS_POLICY: audit
+
 jobs:
-  requirements:
-    name: Continuous Integration
+  # ---------------------------------------------------------------------------
+  # Supply chain gate. Runs first and needs nothing but the lockfile, so a
+  # dependency problem fails in under a minute instead of after the test suite.
+  # ---------------------------------------------------------------------------
+  supply-chain:
+    name: Supply chain
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-      issues: write
-      pull-requests: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
         with:
-          fetch-depth: 0
+          egress-policy: ${{ env.EGRESS_POLICY }}
+          disable-sudo: true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          # Nothing here pushes, so the runner must not keep a usable git credential
+          # on disk where an install-time payload could find it.
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
           node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
 
-      - name: Export npm store directory as an environment variable
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(npm config get cache)" >> $GITHUB_ENV
+      - name: Lockfile policy
+        # Every dependency must come from the public registry with an integrity hash.
+        run: npm run security:lockfile
 
-      - uses: actions/cache@v3
-        name: Setup npm cache
+      - name: GitHub Actions pinning policy
+        # Runs locally, with no network and no third-party action, so the rule that
+        # protects the workflows is not itself delivered by a workflow dependency.
+        run: npm run security:actions
+
+      - name: Registry signatures and provenance of everything installed
+        # Verifies the registry's signatures and the Sigstore attestations of the
+        # installed tree. Fails on a package whose signature is missing or invalid.
+        run: npm audit signatures
+
+      - name: Known vulnerabilities
+        run: npm run security:audit
+
+      - name: Scan the dependency tree with OSV
+        # Broader database than `npm audit`, and it reads the lockfile rather than
+        # executing any package code.
+        # NOTE: this action is a container action whose image is referenced by tag
+        # upstream, so the SHA pin freezes the instructions but not the payload. It
+        # runs in this job on purpose: `contents: read`, no secrets, nothing to steal.
+        uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
         with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-npm-store-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-npm-store-
+          scan-args: |-
+            --lockfile=package-lock.json
 
-      - name: Get number of CPU cores for the following test steps
-        uses: SimenB/github-actions-cpu-cores@v2
-        id: cpu-cores
+      - name: Lint the workflows themselves
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          # Findings are reported in the job summary; nothing is uploaded, because
+          # SARIF upload would need `security-events: write` on this job.
+          advanced-security: false
 
-      - name: Install dependencies
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ env.STORE_PATH }}/${{ env.PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX }}
-        run: npm install
+  # ---------------------------------------------------------------------------
+  # Static correctness, plus the generated-artifact and route-surface drift checks.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
+        with:
+          egress-policy: ${{ env.EGRESS_POLICY }}
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
 
       - name: Prepare linting
         run: npm run lint:prepare
 
-      - name: Check the generated API client is synchronized with the routes
+      - name: Check the generated API client is synchronized
         run: |
           npm run api:schema:sync
           git diff --exit-code -- openapi.json src/ui/api/generated \
@@ -74,39 +146,142 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Test unit
-        run: npm run test:unit -- --max-workers ${{ steps.cpu-cores.outputs.count }}
+      - name: Nothing else modified the working tree
+        # Widens the check above to the whole repository. A dependency that writes to
+        # `src/` during install or lint would otherwise reach the release build, since
+        # the image is built from a checkout of the same commit.
+        run: |
+          git status --porcelain
+          git diff --exit-code \
+            || (echo "::error::The working tree was modified during CI. Either a generated file is stale, or something wrote to the repository." && exit 1)
 
-      - name: Install `Xvfb` and others to run browsers for end-to-end testing in local CI/CD simulations (https://github.com/nektos/act/issues/1300#issuecomment-1387344639)
-        if: ${{ env.ACT }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb && npx playwright install-deps chromium
+  # ---------------------------------------------------------------------------
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
+        with:
+          egress-policy: ${{ env.EGRESS_POLICY }}
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Prepare the Prisma client
+        run: npm run lint:prepare
+
+      - name: Test unit
+        run: npm run test:unit -- --max-workers $(nproc)
+
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: Story tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
+        with:
+          egress-policy: ${{ env.EGRESS_POLICY }}
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Install the browser
+        # Explicit rather than implicit: the `playwright` package declares no install
+        # script, so nothing downloads a browser on its own.
+        run: npx playwright install --with-deps chromium
 
       - name: Test end-to-end
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ env.STORE_PATH }}/${{ env.PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX }}
-          JEST_MAX_WORKERS: ${{ steps.cpu-cores.outputs.count }}
-        run: npm run test:e2e:headless
+        run: JEST_MAX_WORKERS=$(nproc) npm run test:e2e:headless
 
-      # Consider building without Docker to ensure it works in case it has not to be published (pull requests...)
+  # ---------------------------------------------------------------------------
+  # Non-Docker build for pull requests. Also proves the dependencies /
+  # devDependencies split holds: the whole build runs on a production-only tree,
+  # with no Storybook, Jest, Playwright, MSW, ESLint or Prettier installed.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (production dependencies only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
+        with:
+          egress-policy: ${{ env.EGRESS_POLICY }}
+          disable-sudo: true
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+          omit-dev: 'true'
+
+      - name: Generate the Prisma client
+        run: npm run db:schema:compile
+
       - name: Build
-        if: ${{ github.event.act || (github.ref_name != 'main' && github.ref_type != 'tag') }}
         run: npm run build
 
-      # Otherwise make a build to be published
-      - name: Set up Docker buildx
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to the Container registry
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        uses: docker/login-action@v2
+  # ---------------------------------------------------------------------------
+  # The only job that holds a credential. Fresh checkout, so the image is built
+  # from a pristine tree rather than from whatever the test jobs left behind.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Release
+    needs: [supply-chain, verify, test, e2e, build]
+    if: ${{ github.ref_name == 'main' || github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Sigstore keyless signing of the build provenance. No key is stored anywhere.
+      id-token: write
+      attestations: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.13.1
         with:
-          registry: ${{ env.CONTAINER_REGISTRY }}
-          username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
-          password: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
+          egress-policy: ${{ env.EGRESS_POLICY }}
+          disable-sudo: true
 
-      - name: Compute Docker image tag
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.11.1
+
+      - name: Compute the image tags
         id: docker-meta
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
@@ -118,15 +293,87 @@ jobs:
 
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
-      - name: Build and push the application Docker image
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        uses: docker/build-push-action@v5
+      - name: Build the image locally
+        # Built and scanned before any credential is on the runner and before anything
+        # is pushed, so a failing scan cannot publish.
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.18.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.CONTAINER_IMAGE }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.CONTAINER_IMAGE }}:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      - name: Generate the application SBOM
+        # BuildKit's own `sbom: true` scans the image FILESYSTEM, and this image has
+        # no node_modules and no package.json: esbuild bundles every dependency into
+        # one .mjs. That scan therefore reports the distroless base and nothing else.
+        # This one is read from the lockfile, so the attested SBOM lists the npm
+        # packages the bundle is actually made of. Runs before any credential exists
+        # on the runner, and installs nothing.
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Write sbom.cdx.json
+        run: |
+          npm sbom --omit=dev --package-lock-only --sbom-format cyclonedx > sbom.cdx.json
+          node -e "console.log('components:', require('./sbom.cdx.json').components.length)"
+
+      - name: Log in to the container registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.6.0
+        with:
+          registry: ${{ env.CONTAINER_REGISTRY }}
+          username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
+
+      - name: Push the image with provenance and an SBOM
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.18.0
         with:
           context: .
           push: true
           tags: ${{ steps.docker-meta.outputs.tags }}
+          # Attached to the image in the registry, so `docker buildx imagetools inspect`
+          # answers "what is in this image" and "how was it built" without trusting us.
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Attest the build provenance
+        # Signed with the workflow's OIDC identity through Sigstore, logged in a public
+        # transparency ledger. Deployment verifies it with:
+        #   gh attestation verify oci://lasuite/encryption:<tag> \
+        #     --repo ${{ github.repository }} \
+        #     --signer-workflow ${{ github.repository }}/.github/workflows/ci.yml
+        # An image pushed with a stolen registry token carries no such attestation.
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ env.CONTAINER_REGISTRY }}/${{ env.CONTAINER_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the SBOM
+        # Attached to the image in the registry as a signed attestation, next to the
+        # provenance. `gh attestation verify` reads both, and an operator holding only
+        # the image can answer "does this contain <package>@<version>" without the repo.
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ env.CONTAINER_REGISTRY }}/${{ env.CONTAINER_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom.cdx.json
+          push-to-registry: true
 
       #
       # Deployment must be handled outside this repository, either by using GitHub hooks, regular checks, or by manually deploying

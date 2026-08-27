@@ -34,12 +34,19 @@ export function getVaultViteConfig(): UserConfig {
     build: {
       outDir: resolve(__dirname, '../../dist/vault'),
       emptyOutDir: true,
+      // `hidden`, not `true`: the .map is emitted next to the bundle but NO
+      // `sourceMappingURL` comment is appended, so the shipped bytes are unchanged
+      // (SRI hashes stay stable) and no browser ever fetches it. The map is read
+      // only by our own server, to resolve a reported stack back to source.
+      sourcemap: 'hidden',
       rollupOptions: {
         input: {
           main: resolve(__dirname, 'bridge.html'),
           sw: resolve(__dirname, 'sw.ts'),
         },
         output: {
+          // Positions only, no source text: see the interface config.
+          sourcemapExcludeSources: true,
           manualChunks: undefined,
           inlineDynamicImports: false,
           entryFileNames: (chunkInfo: { name: string }) => {
@@ -63,9 +70,19 @@ export function getVaultViteConfig(): UserConfig {
   };
 }
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
   const { default: sri } = await import('vite-plugin-sri-gen');
   const config = getVaultViteConfig();
+
+  // `publicDir` above exists to serve the SDK on the vault host in DEV. On a build it
+  // would instead copy dist/client into dist/vault, where nothing reads it: the
+  // server's vault allowlist serves the SDK out of dist/client. Worse, build:client
+  // and build:vault run concurrently, so what got copied was whatever the previous
+  // build had left in dist/client, and the image carried a stale duplicate of the SDK
+  // with its maps.
+  if (command === 'build') {
+    config.publicDir = false;
+  }
 
   config.plugins = [sri({ algorithm: 'sha384' }), ...(config.plugins ?? [])];
 

@@ -45,6 +45,14 @@ const envSchema = z.object({
   EMAIL_PRODUCT_URL: z.string().url(),
   // Optional path to a JSON file overriding email colours (keys of EmailPalette).
   EMAIL_PALETTE_PATH: z.string().optional(),
+  // Optional error reporting to a Sentry-compatible collector (Sentry, GlitchTip).
+  // Leaving SENTRY_DSN unset disables reporting entirely and is a fully supported
+  // deployment mode: nothing in the service depends on a collector existing.
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
+  // Identifies the deployed build in the collector. The /api/version hash is a
+  // reasonable value when no release tag is available.
+  SENTRY_RELEASE: z.string().optional(),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails, the Recovery Kit PDF and the interface UI. Unset = each
   // surface's generic fallback.
