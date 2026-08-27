@@ -11,7 +11,7 @@ env:
   CONTAINER_REGISTRY: docker.io
   CONTAINER_IMAGE: lasuite/encryption
   NODE_OPTIONS: --max_old_space_size=4096
-  NODE_VERSION: 24.14.0
+  NODE_VERSION: 24.19.0
   PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX: .cache/ms-playwright
 concurrency:
   # Prevent parallel builds of the same branch

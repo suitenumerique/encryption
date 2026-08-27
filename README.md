@@ -32,7 +32,7 @@ Since Chrome 115, IndexedDB in third-party iframes is partitioned by the embeddi
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) >= 24.14.0
+- [Node.js](https://nodejs.org/) >= 24.19.0
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
 
 ### `/etc/hosts` setup

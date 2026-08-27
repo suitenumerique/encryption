@@ -1,4 +1,4 @@
-ARG NODE_VERSION=24.14.0
+ARG NODE_VERSION=24.19.0
 
 # ---- Build stage: install deps, bundle server, build vault + UI + client ----
 FROM node:${NODE_VERSION}-alpine AS builder
