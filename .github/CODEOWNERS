@@ -1,0 +1,20 @@
+# Require review from different teams depending on the files sensitivity
+# Catch-all as default, and overwritten by specific rules
+
+*                               @suitenumerique/encryption-dev
+
+/.github/                       @suitenumerique/encryption-security
+
+/Dockerfile                     @suitenumerique/encryption-security
+/.dockerignore                  @suitenumerique/encryption-security
+/docker-compose.yaml            @suitenumerique/encryption-security
+/docker-compose.production.yaml @suitenumerique/encryption-security
+
+/.npmrc                         @suitenumerique/encryption-security
+/package.json                   @suitenumerique/encryption-security
+/package-lock.json              @suitenumerique/encryption-security
+
+/src/crypto/                    @suitenumerique/encryption-security
+/src/vault/                     @suitenumerique/encryption-security
+/src/server/plugins/            @suitenumerique/encryption-security
+/src/prisma/schema.prisma       @suitenumerique/encryption-security
