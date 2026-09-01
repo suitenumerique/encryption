@@ -1,8 +1,19 @@
-node_modules
-dist
-.git
-.vscode
-.env.local
-.env.*.local
-*.md
-!README.md
+# Deny by default, allow only what the build actually needs
+
+*
+
+!package.json
+!package-lock.json
+!.npmrc
+!tsconfig.json
+!tsconfig.sw.json
+!prisma.config.ts
+!openapi-ts.config.ts
+!src
+!config
+
+# Due to `!src`, specify nested files that can be omitted
+src/**/node_modules
+src/**/*.test.ts
+src/**/*.test.tsx
+src/**/*.stories.tsx
