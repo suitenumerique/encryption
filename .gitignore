@@ -9,11 +9,11 @@
 node_modules
 
 # build output
-build/
-dist/
+/build/
+/dist/
 
 # prisma generated client
-src/generated/
+/src/generated/
 
 # storybook
 !/.storybook/**/*
