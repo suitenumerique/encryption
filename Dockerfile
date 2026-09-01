@@ -18,7 +18,7 @@ RUN apk -U upgrade && npm install -g "npm@${NPM_VERSION}"
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 
 # Make sure used version is aligned with the one specified in package.json
 RUN want="$(node -p "require('./package.json').packageManager")"; \
