@@ -5,7 +5,7 @@
 services:
   postgres:
     container_name: encryption_postgres_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
-    image: postgres:16.4
+    image: postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
@@ -26,7 +26,7 @@ services:
 
   keycloak-db:
     container_name: encryption_keycloak_db_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment:
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: keycloak
@@ -46,7 +46,7 @@ services:
 
   keycloak:
     container_name: encryption_keycloak_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
-    image: quay.io/keycloak/keycloak:26.4
+    image: quay.io/keycloak/keycloak:26.4@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007
     command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
@@ -84,7 +84,7 @@ services:
 
   maildev:
     container_name: encryption_maildev_container_${DOCKER_COMPOSE_CONTAINER_NAME_SUFFIX:-default}
-    image: maildev/maildev:2.2.1
+    image: maildev/maildev:2.2.1@sha256:180ef51f65eefebb0e7122d8308813c1fd7bff164bc440ce5a3c2feee167a810
     ports:
       - '7207:1080'
       - '7208:1025'
