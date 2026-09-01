@@ -1,0 +1,49 @@
+#
+# Deployment itself happens outside this repository, so this file is not run by CI.
+# It exists so that the runtime hardening is written down somewhere executable rather
+# than living in a wiki, and so that anyone can reproduce it locally:
+#
+#   docker compose -f docker-compose.production.yaml up
+#
+# Verify before running: the tag says nothing about who built the image, a build
+# provenance attestation does, and an image pushed with a stolen registry token
+# carries none. The attestation is a Sigstore bundle stored next to the image, so
+# read access to the registry is all it takes.
+#
+#   cosign verify-attestation --type slsaprovenance1 \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate-identity-regexp '^https://github\.com/suitenumerique/encryption/\.github/workflows/ci\.yml@' \
+#     lasuite/encryption@<digest>
+#
+
+services:
+  encryption:
+    # Pin the digest of the verified image here rather than following a tag (`:tag@digest`)
+    image: lasuite/encryption:latest
+    restart: unless-stopped
+    mem_limit: 1g # to customize as needed
+
+    # The image has no shell and no package manager, and the process is not root. The following removes what is left:
+    read_only: true # a code drop or a web shell has nowhere to land
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m # the only writable path, and it is noexec
+    cap_drop:
+      - ALL # no capability is needed: the app binds 7200, not a low port
+    security_opt:
+      - no-new-privileges:true # blocks setuid escalation inside the container
+    pids_limit: 256 # caps fork bombs and stray child processes
+
+    environment:
+      NODE_ENV: production
+      PORT: 7200
+      # ... everything else comes from the deployment's own secret store. See .env.model.
+
+    ports:
+      - '7200:7200'
+
+    networks:
+      - encryption
+
+networks:
+  encryption:
+    driver: bridge
