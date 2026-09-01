@@ -157,9 +157,10 @@ npm run dev:storybook    # Start Storybook on port 7204
 `test:e2e` builds Storybook, serves `storybook-static/` on 7204 and runs the stories
 against it, so stop `npm run dev` first (it holds that port). To reuse a Storybook you
 already have running instead, call `npm run test:e2e:storybook:headless:command` alone.
-The browsers come from the `playwright` devDependency at `npm install` time; CI skips
-that download and installs only chromium, from a cache, and the Docker build skips it
-entirely (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`).
+The browsers do not arrive with `npm install`: the `playwright` package declares no
+install script, so one only appears when something runs `npx playwright install`.
+Install chromium once locally (`npx playwright install chromium`); CI does it
+explicitly, from a cache, and the Docker build never runs a browser at all.
 
 ## What's next / known TODOs
 

@@ -28,12 +28,7 @@ RUN want="$(node -p "require('./package.json').packageManager")"; \
   exit 1; \
   }
 
-# `npm ci` installs devDependencies (the build needs them) and playwright is one of
-# them, for the Storybook story tests. Its postinstall would otherwise pull ~400 MB
-# of browsers into a stage that never runs one. Nothing reaches the final image
-# anyway: only `dist/` is copied, and the server bundle carries no node_modules.
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-
+# Despite it installs `devDependencies` here for the build, they won't end into the published image
 RUN npm ci
 
 COPY . .
