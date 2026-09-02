@@ -59,6 +59,7 @@
     "api:schema:generate:unsecure": "tsx src/build/generate-openapi.ts && prettier --write --log-level warn openapi.json",
     "api:schema:generate": "dotenv-run-script .env.test -- api:schema:generate:unsecure",
     "api:client:generate": "openapi-ts",
+    "ci:simulate": "act push --reuse --concurrent-jobs 1 --eventpath .github/act/event.json -P ubuntu-latest=catthehacker/ubuntu:act-latest",
     "clean": "rm -rf dist && rm -rf node_modules"
   },
   "prisma": {

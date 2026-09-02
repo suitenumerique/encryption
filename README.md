@@ -104,7 +104,15 @@ npm run format:check     # Prettier check
 npm run db:push          # Apply schema to database
 npm run db:studio        # Open Prisma Studio
 npm run dev:storybook    # Start Storybook on port 7204
+npm run ci:simulate      # Run the CI pipeline locally with `act`
 ```
+
+### Running the pipeline locally
+
+`npm run ci:simulate` runs `.github/workflows/ci.yml` in Docker with
+[act](https://github.com/nektos/act), which has to be installed separately.
+
+It's not designed to release a new version, but to test most of the pipeline (packages, tests, build). Note the flags stay in the npm script rather than in `.actrc`, so they do not leak into other `act` invocations. Also, we cannot use concurrent jobs feature here due to our setup upgrading npm (jobs share the same folders and there is a conflict). Lastly, `act` copies the working tree without its `.git`, so the steps comparing against committed files are skipped locally: a green local run does not prove the generated API client is in sync.
 
 ## Tech stack
 
