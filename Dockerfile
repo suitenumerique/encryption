@@ -1,12 +1,12 @@
 ARG NODE_VERSION=24.19.0
-ARG NODE_DIGEST=sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+ARG NODE_DIGEST=sha256:ab3eebe934147fee049b5eb83c570f68c849a13c930bdfa482de99fcdfa3b3de
 ARG NPM_VERSION=12.0.2
 
 ARG NODE_DISTROLESS_IMAGE=gcr.io/distroless/nodejs24-debian13:nonroot
 ARG NODE_DISTROLESS_DIGEST=sha256:774b7d020b24214835769e24c3544835526cd0288f0b094eae48e8b2c2429a79
 
 # ---- Build stage: install deps, bundle server, build vault + UI + client ----
-FROM node:${NODE_VERSION}-alpine@${NODE_DIGEST} AS builder
+FROM node:${NODE_VERSION}-trixie-slim@${NODE_DIGEST} AS builder
 
 ARG NODE_VERSION
 ARG NPM_VERSION
@@ -17,7 +17,10 @@ RUN node -v | grep -qx "v${NODE_VERSION}" || { \
   exit 1; \
   }
 
-RUN apk -U upgrade && npm install -g "npm@${NPM_VERSION}"
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g "npm@${NPM_VERSION}"
 
 WORKDIR /app
 
