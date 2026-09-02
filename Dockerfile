@@ -37,6 +37,9 @@ RUN want="$(node -p "require('./package.json').packageManager")"; \
 # Despite it installs `devDependencies` here for the build, they won't end into the published image
 RUN npm ci
 
+# The application is one .mjs without dependency list, so we attach a SBOM file to help security scanners
+RUN npm sbom --omit=dev --package-lock-only --sbom-format cyclonedx > sbom.cdx.json
+
 COPY . .
 
 # Generate Prisma client
@@ -59,6 +62,7 @@ WORKDIR /app
 # - dist/ui/               (HTML + JS for encryption)
 # - dist/client/           (SDK served from encryption)
 COPY --from=builder --chown=nonroot:nonroot /app/dist ./dist
+COPY --from=builder --chown=nonroot:nonroot /app/sbom.cdx.json ./sbom.cdx.json
 
 EXPOSE 7200
 
