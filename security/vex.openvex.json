@@ -1,0 +1,9 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/suitenumerique/encryption/vex",
+  "author": "Suite numérique",
+  "role": "Maintainers of suitenumerique/encryption",
+  "timestamp": "2026-09-02T00:00:00Z",
+  "version": 1,
+  "statements": []
+}
