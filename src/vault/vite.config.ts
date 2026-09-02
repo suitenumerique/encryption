@@ -1,4 +1,5 @@
 import { resolve } from 'path';
+import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
 /**
@@ -30,7 +31,14 @@ function injectRuntimeConfig(): Plugin {
 export function getVaultViteConfig(): UserConfig {
   return {
     root: resolve(__dirname),
-    plugins: [injectRuntimeConfig()],
+    plugins: [
+      injectRuntimeConfig(),
+      sbom({
+        outDir: '.',
+        outFilename: 'sbom.cdx',
+        includeWellKnown: false,
+      }),
+    ],
     build: {
       outDir: resolve(__dirname, '../../dist/vault'),
       emptyOutDir: true,

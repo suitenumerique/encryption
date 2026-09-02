@@ -1,5 +1,6 @@
 import { appendFileSync } from 'fs';
 import { resolve } from 'path';
+import sbom from 'rollup-plugin-sbom';
 import { defineConfig } from 'vite';
 import dts from 'vite-plugin-dts';
 
@@ -21,6 +22,11 @@ export default defineConfig({
     },
   },
   plugins: [
+    sbom({
+      outDir: '.',
+      outFilename: 'sbom.cdx',
+      includeWellKnown: false,
+    }),
     // Generate a single self-contained client.d.ts from the TypeScript source
     // (VaultClient + shared/vault-error), so the public type contract can never
     // drift from the implementation. Emitted into dist/client, never committed.

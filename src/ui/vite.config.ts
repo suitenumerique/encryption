@@ -2,6 +2,7 @@ import mdx from '@mdx-js/rollup';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import remarkGfm from 'remark-gfm';
+import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
 import { getMinBrowserVersions } from '../build/generate-min-browser-versions';
@@ -70,6 +71,11 @@ export function getUiViteConfig(): UserConfig {
   return {
     root: resolve(__dirname),
     plugins: [
+      sbom({
+        outDir: '.',
+        outFilename: 'sbom.cdx',
+        includeWellKnown: false,
+      }),
       mdx({
         providerImportSource: '@mdx-js/react',
         remarkPlugins: [remarkGfm],
