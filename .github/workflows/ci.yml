@@ -1,4 +1,5 @@
 name: Continuous Integration
+
 on:
   push:
     branches:
@@ -6,65 +7,85 @@ on:
     tags:
       - 'v*'
   pull_request:
-env:
-  APP_NAME: encryption
-  CONTAINER_REGISTRY: docker.io
-  CONTAINER_IMAGE: lasuite/encryption
-  NODE_OPTIONS: --max_old_space_size=4096
-  NODE_VERSION: 24.19.0
-  PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX: .cache/ms-playwright
+
+permissions: # Default permissions
+  contents: read
+
 concurrency:
   # Prevent parallel builds of the same branch
   group: cicd-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  CONTAINER_REGISTRY: docker.io
+  CONTAINER_IMAGE: lasuite/encryption
+  NODE_OPTIONS: --max-old-space-size=4096
+  NODE_VERSION: 24.19.0
+  NPM_VERSION: 12.0.2
+
 jobs:
-  requirements:
-    name: Continuous Integration
+  # TODO: add egress filter when GitHub releases it end of 2026, and maybe scopes on events that trigger the pipeline
+  supply-chain:
+    name: Supply chain
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
-      packages: write
-      issues: write
-      pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
           node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
 
-      - name: Export npm store directory as an environment variable
-        shell: bash
+      - name: Registry signatures and provenance of everything installed
+        run: npm audit signatures
+
+      - name: Known vulnerabilities
         run: |
-          echo "STORE_PATH=$(npm config get cache)" >> $GITHUB_ENV
+          npm audit --omit=dev --audit-level=critical
+          npm audit --audit-level=high || true
 
-      - uses: actions/cache@v3
-        name: Setup npm cache
+      - name: Lint the workflows themselves
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
         with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-npm-store-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-npm-store-
+          min-severity: medium # to be compatible with "act" and allowing npm upgrade
+          online-audits: ${{ !github.event.act }} # they need a token, and "act" has none
+          token: ${{ github.event.act && 'unused-offline' || github.token }} # the action always passes one and rejects an empty value
+          advanced-security: false # issues reported in the job, so not requiring `security-events: write` permission
 
-      - name: Get number of CPU cores for the following test steps
-        uses: SimenB/github-actions-cpu-cores@v2
-        id: cpu-cores
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
 
-      - name: Install dependencies
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ env.STORE_PATH }}/${{ env.PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX }}
-        run: npm install
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
 
       - name: Prepare linting
         run: npm run lint:prepare
 
-      - name: Check the generated API client is synchronized with the routes
+      - name: Regenerate the API client
+        run: npm run api:schema:sync
+
+      - name: Check the generated API client is synchronized with routes # local "act" does not have `.git` folder
+        if: ${{ !github.event.act }}
         run: |
-          npm run api:schema:sync
           git diff --exit-code -- openapi.json src/ui/api/generated \
             || (echo "::error::openapi.json / src/ui/api/generated are stale. Run 'npm run api:schema:sync' and commit the result." && exit 1)
 
@@ -74,59 +95,217 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Test unit
-        run: npm run test:unit -- --max-workers ${{ steps.cpu-cores.outputs.count }}
+      - name: Ensure no working tree change from dependencies # same `.git` requirement for "act"
+        if: ${{ !github.event.act }}
+        run: |
+          git status --porcelain
+          git diff --exit-code \
+            || (echo "::error::The working tree was modified during CI. Either a generated file is stale, or something wrote to the repository." && exit 1)
 
-      - name: Install `Xvfb` and others to run browsers for end-to-end testing in local CI/CD simulations (https://github.com/nektos/act/issues/1300#issuecomment-1387344639)
-        if: ${{ env.ACT }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb && npx playwright install-deps chromium
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Prepare testing
+        run: npm run test:prepare
+
+      - name: Test unit
+        run: npm run test:unit -- --max-workers $(nproc)
+
+  e2e:
+    name: Story tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Resolve the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('./node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the browser
+        id: browser-cache
+        # zizmor: ignore[cache-poisoning]
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install the browser
+        # on a cache hit only the apt-level dependencies are installed since not cacheable.
+        env:
+          CACHE_HIT: ${{ steps.browser-cache.outputs.cache-hit }}
+        run: |
+          if [ "${CACHE_HIT}" = "true" ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: Test end-to-end
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ env.STORE_PATH }}/${{ env.PLAYWRIGHT_BROWSERS_CACHE_FOLDER_SUFFIX }}
-          JEST_MAX_WORKERS: ${{ steps.cpu-cores.outputs.count }}
-        run: npm run test:e2e:headless
+        run: JEST_MAX_WORKERS=$(nproc) npm run test:e2e:headless
 
-      # Consider building without Docker to ensure it works in case it has not to be published (pull requests...)
+  build:
+    name: Build
+    # when releasing the build will be done with docker, so only target pull requests here
+    if: ${{ github.event.act || github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Prepare building
+        run: npm run build:prepare
+
       - name: Build
-        if: ${{ github.event.act || (github.ref_name != 'main' && github.ref_type != 'tag') }}
         run: npm run build
 
-      # Otherwise make a build to be published
-      - name: Set up Docker buildx
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        uses: docker/setup-buildx-action@v3
+  release:
+    name: Release
+    needs: [supply-chain, verify, test, e2e]
+    if: ${{ github.event.act || github.ref_name == 'main' || github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
 
-      - name: Log in to the Container registry
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        uses: docker/login-action@v2
+      - name: Set up Docker
+        if: ${{ !github.event.act }} # reconfigures the daemon, which act reaches through a mounted socket
+        uses: docker/setup-docker-action@77e84dbf09b47d1e29270283c22f16145aa85ca1 # v5.4.0
+        with:
+          version: v29.7.2 # pinned like the rest, this job is the one holding a credential
+          # containerd store needed to let the build be scanned (provenance and SBOM) and then pushed
+          daemon-config: |
+            {
+              "features": {
+                "containerd-snapshotter": true
+              }
+            }
+
+      - name: Make sure the containerd image store is active # needed to ensure `load: true` because otherwise attestation and provenance are dropped silently
+        if: ${{ !github.event.act }} # asserts the runner daemon, not whatever a developer happens to run
+        run: |
+          docker info --format '{{json .DriverStatus}}' | grep -q 'io.containerd.snapshotter' \
+            || (echo "::error::The containerd image store is not active, attestations would be dropped." && exit 1)
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.11.1
+
+      - name: Compute the image tags
+        id: docker-meta
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            PRIMARY="${CONTAINER_IMAGE}:${VERSION}"
+            TAGS="${PRIMARY},${CONTAINER_IMAGE}:latest"
+          else
+            PRIMARY="${CONTAINER_IMAGE}:main"
+            TAGS="${PRIMARY}"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "primary-tag=${PRIMARY}" >> $GITHUB_OUTPUT
+
+      - name: Build the image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.18.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          provenance: mode=max # attach repository info to the image
+          sbom: true # store attestation manifest inside the image index (including info from application `.cdx.json` files)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan the image
+        # It will scan the Docker attached SBOM, but also the npm ones copied inside as `.cdx.json`
+        # "act" cannot support this since trivy action is doing `actions/checkout`, which needs a token act has none of
+        if: ${{ !github.event.act }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_VEX: security/vex.openvex.json # allow bypass some if documented (opt-in file for external scanners, so fine if manipulated)
+        with:
+          image-ref: ${{ steps.docker-meta.outputs.primary-tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      - name: Log in to the container registry
+        if: ${{ !github.event.act }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.6.0
         with:
           registry: ${{ env.CONTAINER_REGISTRY }}
           username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
           password: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
 
-      - name: Compute Docker image tag
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        id: docker-meta
+      - name: Push the scanned image
+        id: push
+        if: ${{ !github.event.act }}
+        env:
+          TAGS: ${{ steps.docker-meta.outputs.tags }}
+          PRIMARY_TAG: ${{ steps.docker-meta.outputs.primary-tag }}
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            TAGS="${CONTAINER_IMAGE}:${VERSION},${CONTAINER_IMAGE}:latest"
-          else
-            TAGS="${CONTAINER_IMAGE}:main"
-          fi
+          IFS=',' read -ra TAG_LIST <<< "${TAGS}"
+          for tag in "${TAG_LIST[@]}"; do
+            docker push "${tag}"
+          done
 
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${PRIMARY_TAG}" | cut -d'@' -f2)"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push the application Docker image
-        if: ${{ !github.event.act && (github.ref_name == 'main' || github.ref_type == 'tag') }}
-        uses: docker/build-push-action@v5
+      - name: Publish the build provenance
+        if: ${{ !github.event.act }}
+        # Signed through Sigstore and logged in the GitHub transparency ledger (see `docker-compose.production.yaml` for how to check the attestation)
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
-          context: .
-          push: true
-          tags: ${{ steps.docker-meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          subject-name: ${{ env.CONTAINER_REGISTRY }}/${{ env.CONTAINER_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
       #
       # Deployment must be handled outside this repository, either by using GitHub hooks, regular checks, or by manually deploying

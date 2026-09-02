@@ -1,0 +1,30 @@
+name: Setup
+description: Node, a pinned npm, and a lockfile-strict install.
+
+inputs:
+  node-version:
+    description: Node.js version
+    required: true
+  npm-version:
+    description: npm version to install before touching the tree (base image has not the latest)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm # npm cache is better than caching node_modules because it will check integrity on each run
+
+    - name: Pin npm
+      shell: bash
+      env:
+        NPM_VERSION: ${{ inputs.npm-version }}
+      run: |
+        npm install -g "npm@${NPM_VERSION}"
+        npm --version
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci

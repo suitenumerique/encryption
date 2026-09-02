@@ -4,6 +4,7 @@
 *                               @suitenumerique/encryption-dev
 
 /.github/                       @suitenumerique/encryption-security
+/security/                      @suitenumerique/encryption-security
 
 /Dockerfile                     @suitenumerique/encryption-security
 /.dockerignore                  @suitenumerique/encryption-security
