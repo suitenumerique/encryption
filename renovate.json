@@ -1,0 +1,68 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>numerique-gouv/renovate-configuration"],
+  "dependencyDashboard": true,
+  "labels": ["dependencies", "noChangeLog"],
+  "description": [
+    "The shared preset only enables npm, GitHub Actions and the two Python managers. `enabledManagers` is not mergeable, so re-declaring it replaces that list entirely: Python goes away since there is none here, and Docker plus the custom managers below come in. Without this the base images and their digests would never be proposed for update, silently.",
+    "No pull request for an npm dependency, ever, advisory or not. A version bump is a supply chain event, so it needs a reason, and `min-release-age` plus `allowScripts` exist precisely because a new release is the risky moment. The npm manager stays enabled rather than removed so the dependency dashboard keeps listing what is held back: the drift stays visible, it just never becomes a pull request.",
+    "The preset also groups majors with minors. A major is where a behaviour change hides, and every version here is pinned exactly, so a major has to be read rather than merged on a green pipeline."
+  ],
+  "enabledManagers": ["npm", "github-actions", "dockerfile", "docker-compose", "custom.regex"],
+  "separateMajorMinor": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The Node version is repeated in the workflow env and in the Dockerfile, where a build-time assertion checks it against NODE_DIGEST. Renovate only sees the Dockerfile, so without this the two drift apart and the pipeline ends up testing on a different runtime than the image ships.",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["NODE_VERSION: (?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
+    {
+      "customType": "regex",
+      "description": "Same duplication for npm, which the workflow installs globally because the base image does not carry the version `packageManager` pins.",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["NPM_VERSION: (?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "npm",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Routine npm updates raise nothing. The dependency dashboard still lists everything held back, so the drift stays visible without a pull request per package. `vulnerabilityAlerts` below force-overrides this, which is how a fix still gets through.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["*"],
+      "enabled": false
+    },
+    {
+      "description": "Base images and GitHub Actions stay on the schedule instead. Neither is covered by a vulnerability alert: GitHub's dependency graph reads manifests, not base image OS packages, and the OSV integration is limited to the language datasources, which exclude `docker` and `github-actions`. Trivy fails the release on a HIGH in the base image, so nothing would ever offer the fix. A SHA-pinned action has the same problem: the pin is what makes it immutable, and an immutable pin that nobody moves stops receiving security fixes.",
+      "matchManagers": ["github-actions", "dockerfile", "docker-compose", "custom.regex"],
+      "minimumReleaseAge": "7 days",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Base images are referenced by tag and by digest, with a build-time assertion that the two agree. Bumping the tag without the digest would break that check, so the digest has to move with it.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "pinDigests": true,
+      "groupName": "container images"
+    },
+    {
+      "description": "The Node version lives in four places: the builder image, the distroless runtime image, the workflow env and the `engines` field. They only make sense moved together. Note the distroless tag carries the major (nodejs24), so a major bump still needs a hand.",
+      "matchPackageNames": ["node", "gcr.io/distroless/nodejs*"],
+      "groupName": "node runtime"
+    },
+    {
+      "description": "Our own image, published by this very pipeline. There is no upstream to follow.",
+      "matchManagers": ["docker-compose"],
+      "matchPackageNames": ["lasuite/encryption"],
+      "enabled": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "description": "Renovate raises nothing for an advisory either. A bump only changes the version, it does not adapt the call sites a breaking fix requires, so the investigation and the fix are done by hand. Notification is GitHub's job instead: enable the Dependency graph and Dependabot alerts in the repository settings, and leave Dependabot SECURITY UPDATES off, which is the separate toggle that would open pull requests. Alerts then reach the Security tab and the usual emails, they cover transitive dependencies, and they keep working if Renovate ever goes away.",
+    "enabled": false
+  }
+}
