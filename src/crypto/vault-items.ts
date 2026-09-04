@@ -18,6 +18,7 @@ import {
   tofuEntrySchema,
 } from '@encryption/src/crypto/vault-state';
 import { VaultItemTypeSchema } from '@encryption/src/shared/schemas/vault';
+import '@encryption/src/shared/zod-jitless';
 
 // Single source of truth lives in the shared wire schema; re-exported here under
 // the name the crypto layer (and the manifest) already use.

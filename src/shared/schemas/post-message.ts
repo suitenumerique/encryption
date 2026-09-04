@@ -38,6 +38,7 @@ import {
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 import { mnemonicLanguageSchema } from '@encryption/src/shared/schemas/mnemonic-language';
+import '@encryption/src/shared/zod-jitless';
 
 // ============================================================================
 // Operations available to ALL callers (suite products via data.encryption)

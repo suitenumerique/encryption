@@ -6,7 +6,6 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { env } from '@encryption/src/server/env';
-import { buildSecurityHeaders } from '@encryption/src/server/security-headers';
 
 /**
  * Development-only plugin that embeds Vault and UI Vite dev servers
@@ -84,17 +83,6 @@ export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // skips this prefix; dev must do the same or the email logo 404s here only.
     if (FASTIFY_INFRA_PATHS.has(path) || isApiRoute || path.startsWith('/public-assets/')) {
       return next();
-    }
-
-    // Vite's connect middleware writes to the raw response, so Fastify's `onSend`
-    // hook never runs and the security headers would be missing. Development then
-    // enforces NO policy at all, which is exactly how a CSP-blocked runtime config and
-    // a CSP-blocked WebAssembly compilation both reached production unnoticed. Emit
-    // the same headers here, from the same function, so dev fails where prod fails.
-    if (host === env.VAULT_HOST || host === env.UI_HOST) {
-      for (const [name, value] of Object.entries(buildSecurityHeaders(host, path))) {
-        res.setHeader(name, value);
-      }
     }
 
     if (host === env.VAULT_HOST) {

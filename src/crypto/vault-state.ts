@@ -14,6 +14,8 @@
  */
 import { z } from 'zod';
 
+import '@encryption/src/shared/zod-jitless';
+
 export const VAULT_SCHEMA_VERSION = 1;
 
 // 'unknown' is a real, persisted state: a contact seen (their fingerprint

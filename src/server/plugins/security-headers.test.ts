@@ -1,4 +1,6 @@
+import middie from '@fastify/middie';
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
 import { UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLICY } from '@encryption/src/shared/constants';
@@ -36,6 +38,28 @@ async function headersFor(host: string) {
 }
 
 describe('securityHeadersPlugin', () => {
+  // The failure this guards against: in development the Vite middleware answers by
+  // writing to the raw response and never calls reply.send(), so an `onSend` hook is
+  // skipped entirely and those responses carried no policy at all. That is how a
+  // CSP-blocked runtime config and a CSP-blocked WebAssembly compilation both reached
+  // production unnoticed, since the policy only existed on a path nobody runs locally.
+  it('still applies to a response a middleware wrote directly, as Vite does in dev', async () => {
+    const app = Fastify();
+
+    await app.register(securityHeadersPlugin);
+    await app.register(middie);
+    app.use((_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html>');
+    });
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/', headers: { host: VAULT_HOST } });
+
+    expect(response.headers['content-security-policy']).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+  });
+
   const originalNodeEnv = process.env.NODE_ENV;
 
   afterEach(() => {

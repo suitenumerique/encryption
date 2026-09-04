@@ -15,6 +15,7 @@ import { ensureSodium } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { type SignaturePublicKey, type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
 import { itemTypeSchema } from '@encryption/src/crypto/vault-items';
+import '@encryption/src/shared/zod-jitless';
 
 export const sealedItemSchema = z.object({
   id: z.string(),

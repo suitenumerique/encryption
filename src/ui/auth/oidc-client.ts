@@ -15,6 +15,7 @@
 import { User, UserManager, WebStorageStateStore } from 'oidc-client-ts';
 import { z } from 'zod';
 
+import '@encryption/src/shared/zod-jitless';
 import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 
 // There is no build-time fallback — OIDC config must always come from the server.
