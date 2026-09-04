@@ -1,6 +1,6 @@
 import { Font } from '@react-pdf/renderer';
 
-import type { BrandFont } from '@encryption/src/shared/brand-font';
+import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 
 // react-pdf ships NO custom fonts, but it DOES provide the standard PDF fonts, so
 // the default (`Helvetica`) embeds no file and needs no download. Marianne is
@@ -8,7 +8,7 @@ import type { BrandFont } from '@encryption/src/shared/brand-font';
 // to it (or wanting its own brand font) sets the BRAND_FONT env, which the server
 // injects as `brandFont` in the runtime config, and we register it here. See
 // src/shared/brand-font.ts. `RECOVERY_KIT_FONT_FAMILY` is what the doc styles use.
-const brandFont = (window as unknown as { __ENCRYPTION_CONFIG__?: { brandFont?: BrandFont } }).__ENCRYPTION_CONFIG__?.brandFont;
+const brandFont = runtimeConfig.brandFont;
 
 export const RECOVERY_KIT_FONT_FAMILY = brandFont?.family ?? 'Helvetica';
 

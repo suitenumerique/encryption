@@ -1,27 +1,33 @@
-import { BROADCAST_KEYS_CHANGED, BROADCAST_KEYS_DESTROYED, MSG_VAULT_READY } from '@encryption/src/shared/constants';
+import {
+  BROADCAST_KEYS_CHANGED,
+  BROADCAST_KEYS_DESTROYED,
+  MSG_VAULT_READY,
+  VAULT_SERVICE_WORKER_PATH,
+  VAULT_TRUSTED_TYPES_POLICY,
+} from '@encryption/src/shared/constants';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { setupMessageHandler } from '@encryption/src/vault/message-handler';
 import { initOriginGuard, validateIframeContext } from '@encryption/src/vault/origin-guard';
+import { runtimeConfig } from '@encryption/src/vault/runtime-config';
 import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cache';
 
 /**
  * Runtime config injected by the server into bridge.html.
  * In dev mode, falls back to defaults for localhost.
  */
-interface VaultConfig {
-  allowedOrigins: string[];
-  interfaceOrigin: string;
-}
+const ALLOWED_ORIGINS: string[] = runtimeConfig.allowedOrigins ?? [];
 
-const runtimeConfig = (window as unknown as { __ENCRYPTION_VAULT_CONFIG__?: VaultConfig }).__ENCRYPTION_VAULT_CONFIG__;
-
-const ALLOWED_ORIGINS: string[] = runtimeConfig?.allowedOrigins ?? [];
-
-const INTERFACE_ORIGIN: string | null = runtimeConfig?.interfaceOrigin ?? null;
+const INTERFACE_ORIGIN: string | null = runtimeConfig.interfaceOrigin ?? null;
 
 try {
   validateIframeContext();
 } catch {
+  // Revealing the warning used to be an inline <script> in bridge.html; doing it here
+  // keeps `script-src` a bare `'self'` with nothing inline to authorize.
+  const accessError = document.getElementById('access-error');
+
+  if (accessError) accessError.style.display = 'block';
+
   if (import.meta.env.DEV) {
     console.warn('Vault loaded outside of iframe - allowed in development mode');
   } else {
@@ -65,7 +71,19 @@ if (bc) {
 // Skip in dev mode — the SW precaches vault files which conflicts with
 // Vite's on-the-fly module transformation.
 if ('serviceWorker' in navigator && !import.meta.env.DEV) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {
+  const policy = window.trustedTypes?.createPolicy(VAULT_TRUSTED_TYPES_POLICY, {
+    createScriptURL: (url) => {
+      if (url !== VAULT_SERVICE_WORKER_PATH) {
+        throw new TypeError(`the vault Trusted Types policy only produces ${VAULT_SERVICE_WORKER_PATH}`);
+      }
+
+      return url;
+    },
+  });
+
+  const scriptUrl = policy ? policy.createScriptURL(VAULT_SERVICE_WORKER_PATH) : VAULT_SERVICE_WORKER_PATH;
+
+  navigator.serviceWorker.register(scriptUrl as string & TrustedScriptURL).catch(() => {
     // SW registration may fail in some iframe contexts — vault still works without it
   });
 }

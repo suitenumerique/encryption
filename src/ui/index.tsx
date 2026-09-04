@@ -17,6 +17,17 @@ applyBrandFont();
 const isAuthRoute = window.location.pathname === '/login' || window.location.pathname === '/auth/callback';
 const isIframe = window.self !== window.top;
 
+// Revealing the direct-access warning used to be an inline <script> in the HTML.
+// It lives here so nothing inline has to execute, which is what keeps `script-src`
+// a bare `'self'` and every executed byte inside the SRI-pinned bundle.
+if (!isIframe && !isAuthRoute) {
+  const accessError = document.getElementById('access-error');
+  const root = document.getElementById('root');
+
+  if (accessError) accessError.style.display = 'block';
+  if (root) root.style.display = 'none';
+}
+
 if (isIframe || isAuthRoute) {
   const rootElement = document.getElementById('root');
 

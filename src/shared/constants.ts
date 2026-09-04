@@ -36,6 +36,10 @@ export const STORE_VAULT_CACHE = 'vaultCache';
 // call is independently authenticated.
 export const STORE_USER_ALIAS = 'userAlias';
 
+// Trusted Types constants to be used by policies since `require-trusted-types-for` CSP enabled
+export const VAULT_TRUSTED_TYPES_POLICY = 'vault-service-worker';
+export const VAULT_SERVICE_WORKER_PATH = '/sw.js';
+
 // ============================================================================
 // PostMessage type keys — shared between iframes and their parents
 // ============================================================================
@@ -99,3 +103,10 @@ export const MSG_INTERFACE_SET_THEME = 'interface:set-theme';
 export const MSG_INTERFACE_ONBOARDING_COMPLETE = 'interface:onboarding-complete';
 export const MSG_INTERFACE_CLOSED = 'interface:closed';
 export const MSG_INTERFACE_VERIFY_COMPLETE = 'interface:verify-complete';
+
+// The interface CSP sets the same `require-trusted-types-for 'script'`. Unlike the
+// vault it does render markup it did not build node by node: syntax-highlighted code
+// and, in the internal architecture doc only, a rendered diagram. This is the single
+// policy name allowed, so every one of those conversions goes through one reviewed
+// function instead of being spread across components.
+export const UI_TRUSTED_TYPES_POLICY = 'interface-markup';

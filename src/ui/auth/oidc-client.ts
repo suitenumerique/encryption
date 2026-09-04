@@ -15,25 +15,13 @@
 import { User, UserManager, WebStorageStateStore } from 'oidc-client-ts';
 import { z } from 'zod';
 
-/**
- * Read OIDC config from window.__ENCRYPTION_CONFIG__ (injected by the server at runtime).
- * The config is frozen and non-writable (Object.defineProperty with writable:false)
- * to prevent malicious scripts from tampering with the values.
- *
- * There is no build-time fallback — OIDC config must always come from the server.
- * In dev mode, the Vite proxy forwards to the Fastify server which injects the config.
- */
-interface EncryptionConfig {
-  oidcIssuer: string;
-  oidcClientId: string;
-  oidcRedirectUri: string;
-}
+import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 
-const runtimeConfig = (window as unknown as { __ENCRYPTION_CONFIG__?: EncryptionConfig }).__ENCRYPTION_CONFIG__;
-
-const OIDC_ISSUER = runtimeConfig?.oidcIssuer;
-const OIDC_CLIENT_ID = runtimeConfig?.oidcClientId;
-const OIDC_REDIRECT_URI = runtimeConfig?.oidcRedirectUri;
+// There is no build-time fallback — OIDC config must always come from the server.
+// In dev mode, the Vite proxy forwards to the Fastify server which injects the block.
+const OIDC_ISSUER = runtimeConfig.oidcIssuer;
+const OIDC_CLIENT_ID = runtimeConfig.oidcClientId;
+const OIDC_REDIRECT_URI = runtimeConfig.oidcRedirectUri;
 
 export const OIDC_AUTH_MESSAGE_TYPE = 'encryption-oidc-auth-complete';
 

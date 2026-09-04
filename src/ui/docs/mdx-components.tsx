@@ -2,6 +2,7 @@ import hljs from 'highlight.js/lib/common';
 import type { ReactNode } from 'react';
 
 import { Alert, CodeBlock } from '@encryption/src/ui/docs/components';
+import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
 
 function textOf(node: ReactNode): string {
   if (typeof node === 'string') return node;
@@ -40,7 +41,7 @@ function makeCode(renderMermaid?: (chart: string) => ReactNode) {
 
     const highlighted = hljs.getLanguage(language) ? hljs.highlight(source, { language }).value : hljs.highlightAuto(source).value;
 
-    return <code className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: highlighted }} />;
+    return <code className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: toTrustedMarkup(highlighted) }} />;
   };
 }
 

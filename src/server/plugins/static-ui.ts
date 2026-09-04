@@ -5,11 +5,12 @@ import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
 import { parseBrandFont } from '@encryption/src/shared/brand-font';
+import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
 
 /**
- * Build the runtime config script that is injected into the interface HTML.
- * Uses Object.defineProperty with writable:false + configurable:false
- * so a malicious library cannot overwrite the values.
+ * Build the runtime config block injected into the interface HTML. It is data, not
+ * script: the bundle parses and freezes it, so the tamper protection now lives in
+ * SRI-pinned code rather than in an inline script no build-time hash could cover.
  */
 function buildConfigScript(): string {
   const config = {
@@ -22,7 +23,7 @@ function buildConfigScript(): string {
     brandFont: parseBrandFont(env.BRAND_FONT),
   };
 
-  return `<script>Object.defineProperty(window,"__ENCRYPTION_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
+  return buildRuntimeConfigBlock(config);
 }
 
 export async function staticUiPlugin(app: FastifyInstance): Promise<void> {

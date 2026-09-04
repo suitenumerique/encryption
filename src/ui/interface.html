@@ -45,14 +45,6 @@
       </p>
     </div>
     <div id="root"></div>
-    <script>
-      // Auth routes (/login, /auth/callback) are opened in a new tab, not in an iframe.
-      var isAuthRoute = window.location.pathname === '/login' || window.location.pathname === '/auth/callback';
-      if (window.self === window.top && !isAuthRoute) {
-        document.getElementById('access-error').style.display = 'block';
-        document.getElementById('root').style.display = 'none';
-      }
-    </script>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

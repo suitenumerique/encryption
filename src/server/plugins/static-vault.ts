@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
+import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
 
 /**
- * Build the runtime config script for the vault HTML.
- * Frozen and non-writable to prevent tampering.
+ * Same as the interface: data rather than script, frozen by the bundle that reads it.
  */
 function buildVaultConfigScript(): string {
   const config = {
@@ -14,7 +14,7 @@ function buildVaultConfigScript(): string {
     interfaceOrigin: env.UI_URL,
   };
 
-  return `<script>Object.defineProperty(window,"__ENCRYPTION_VAULT_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
+  return buildRuntimeConfigBlock(config);
 }
 
 export async function staticVaultPlugin(app: FastifyInstance): Promise<void> {

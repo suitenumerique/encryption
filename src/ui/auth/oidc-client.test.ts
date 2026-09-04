@@ -1,6 +1,7 @@
 /**
  * @jest-environment jsdom
  */
+import { RUNTIME_CONFIG_ELEMENT_ID } from '@encryption/src/shared/runtime-config';
 import type { refreshTokenWithLock as RefreshTokenWithLock, TokenSet } from '@encryption/src/ui/auth/oidc-client';
 
 // A JWT whose payload segment base64-decodes to the given claims (signature not verified).
@@ -13,12 +14,23 @@ describe('refreshTokenWithLock', () => {
   let fetchMock: jest.Mock;
 
   beforeAll(async () => {
-    // The module reads OIDC config from window.__ENCRYPTION_CONFIG__ at load time.
-    (window as unknown as { __ENCRYPTION_CONFIG__: unknown }).__ENCRYPTION_CONFIG__ = {
+    // The module reads the OIDC config off the runtime-config data block at load time,
+    // so the document has to carry one before the import.
+    const block = document.createElement('script');
+
+    block.type = 'application/json';
+    block.id = RUNTIME_CONFIG_ELEMENT_ID;
+    // The schema validates a served block in full, so the fixture is a whole config
+    // even though this suite only exercises the OIDC fields.
+    block.textContent = JSON.stringify({
       oidcIssuer: 'https://keycloak.test/realms/test',
       oidcClientId: 'encryption',
       oidcRedirectUri: 'https://encryption.test/auth/callback',
-    };
+      vaultUrl: 'https://data.encryption.test',
+      apiBaseUrl: '',
+      docsEnabled: true,
+    });
+    document.head.appendChild(block);
 
     ({ refreshTokenWithLock } = await import('@encryption/src/ui/auth/oidc-client'));
   });

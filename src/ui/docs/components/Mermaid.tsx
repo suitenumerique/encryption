@@ -1,6 +1,8 @@
 import mermaid from 'mermaid';
 import { useEffect, useRef, useState } from 'react';
 
+import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
+
 interface MermaidProps {
   chart: string;
 }
@@ -34,7 +36,7 @@ export function Mermaid({ chart }: MermaidProps) {
       .then(({ svg }) => {
         if (cancelled || !containerRef.current) return;
 
-        containerRef.current.innerHTML = svg;
+        containerRef.current.innerHTML = toTrustedMarkup(svg);
         setError(null);
       })
       .catch((err: unknown) => {
