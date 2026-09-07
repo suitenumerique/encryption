@@ -19,9 +19,10 @@ import { env } from '@encryption/src/server/env';
 // since Fastify runs onRequest hooks in registration order.
 export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const isDev = process.env.NODE_ENV === 'development';
-  const frameAncestors = env.ALLOWED_FRAME_ANCESTORS.split(',')
+  const productFrameAncestors = env.ALLOWED_FRAME_ANCESTORS.split(',')
     .map((s) => s.trim())
-    .join(' ');
+    .join(' '); // The products allowed to embed either iframe.
+  const vaultFrameAncestors = `${productFrameAncestors} ${env.UI_URL}`; // The vault has one embedder the interface does not: the interface itself.
 
   app.addHook('onRequest', async (request, reply) => {
     // Public assets are meant to be embedded cross-origin — the logo in a mail
@@ -66,7 +67,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       // form-action are set explicitly because neither falls back to default-src.
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}`
       );
 
       // Cross-Origin isolation headers — reduces attack surface from side-channel attacks
@@ -83,7 +84,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self'; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self'; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}`
       );
 
       reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');

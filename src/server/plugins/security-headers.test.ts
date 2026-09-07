@@ -12,6 +12,7 @@ jest.mock('@encryption/src/server/env', () => ({
     VAULT_HOST: 'data.encryption.localhost:7200',
     UI_HOST: 'encryption.localhost:7200',
     VAULT_URL: 'https://data.encryption.localhost:7200',
+    UI_URL: 'https://encryption.localhost:7200',
     ALLOWED_FRAME_ANCESTORS: 'https://product-a.example, https://product-b.example',
   },
 }));
@@ -113,6 +114,14 @@ describe('securityHeadersPlugin', () => {
         // not slip in alongside it.
         expect(scriptSrc).toBe("script-src 'self' 'wasm-unsafe-eval'");
       }
+    });
+
+    it('lets the interface frame the vault, not only the products', async () => {
+      const csp = (await headersFor(VAULT_HOST))['content-security-policy'] as string;
+
+      // The interface drives every privileged operation through its own vault iframe.
+      // Without its origin here the vault refuses to load and the interface hangs.
+      expect(csp).toContain('frame-ancestors https://product-a.example https://product-b.example https://encryption.localhost:7200');
     });
 
     it('omits ws: from connect-src and pins base-uri/form-action on the vault CSP', async () => {
