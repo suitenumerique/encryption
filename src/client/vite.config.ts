@@ -4,12 +4,14 @@ import sbom from 'rollup-plugin-sbom';
 import { defineConfig } from 'vite';
 import dts from 'vite-plugin-dts';
 
+const configDir = import.meta.dirname;
+
 export default defineConfig({
   build: {
-    outDir: resolve(__dirname, '../../dist/client'),
+    outDir: resolve(configDir, '../../dist/client'),
     emptyOutDir: true,
     lib: {
-      entry: resolve(__dirname, 'index.ts'),
+      entry: resolve(configDir, 'index.ts'),
       name: 'EncryptionClient',
       formats: ['es', 'iife'],
       fileName: (format) => (format === 'es' ? 'client.mjs' : 'client.js'),
@@ -18,7 +20,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@encryption': resolve(__dirname, '../..'),
+      '@encryption': resolve(configDir, '../..'),
     },
   },
   plugins: [
@@ -28,14 +30,14 @@ export default defineConfig({
         outFilename: 'sbom.cdx',
         includeWellKnown: false,
       }),
-      apply: (config) => !config.build?.watch, // Skipped under `vite build --watch`  (also remove warning about missing "rolldown" dependency)
+      apply: (config) => !config.build?.watch, // An SBOM is a release artifact, so skip it under `vite build --watch`
     },
     // Generate a single self-contained client.d.ts from the TypeScript source
     // (VaultClient + shared/vault-error), so the public type contract can never
     // drift from the implementation. Emitted into dist/client, never committed.
     dts({
-      rollupTypes: true,
-      tsconfigPath: resolve(__dirname, '../../tsconfig.json'),
+      bundleTypes: true,
+      tsconfigPath: resolve(configDir, '../../tsconfig.json'),
       // The SDK only depends on src/client + src/shared; scoping the declaration
       // pass to those (and dropping tests/stories) keeps it off unrelated files.
       include: ['src/client/**/*.ts', 'src/shared/**/*.ts'],
@@ -44,7 +46,7 @@ export default defineConfig({
       // namespace declaration that types the <script>-tag `EncryptionClient`
       // global (products loading client.js get `EncryptionClient.VaultClient`).
       afterBuild: () => {
-        appendFileSync(resolve(__dirname, '../../dist/client/client.d.mts'), '\nexport as namespace EncryptionClient;\n');
+        appendFileSync(resolve(configDir, '../../dist/client/client.d.mts'), '\nexport as namespace EncryptionClient;\n');
       },
     }),
   ],

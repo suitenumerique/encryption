@@ -5,10 +5,12 @@ import remarkGfm from 'remark-gfm';
 import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
-import { getMinBrowserVersions } from '../build/generate-min-browser-versions';
-import { vendorMarianneFonts } from '../build/marianne-fonts';
-import { parseBrandFont } from '../shared/brand-font';
-import { buildRuntimeConfigBlock } from '../shared/runtime-config';
+import { getMinBrowserVersions } from '../build/generate-min-browser-versions.ts';
+import { vendorMarianneFonts } from '../build/marianne-fonts.ts';
+import { parseBrandFont } from '../shared/brand-font.ts';
+import { buildRuntimeConfigBlock } from '../shared/runtime-config.ts';
+
+const configDir = import.meta.dirname;
 
 /**
  * Inject the runtime config data block into the HTML in dev mode,
@@ -71,7 +73,7 @@ export function getUiViteConfig(): UserConfig {
   const minBrowserVersions = getMinBrowserVersions();
 
   return {
-    root: resolve(__dirname),
+    root: resolve(configDir),
     plugins: [
       {
         ...sbom({
@@ -79,7 +81,7 @@ export function getUiViteConfig(): UserConfig {
           outFilename: 'sbom.cdx',
           includeWellKnown: false,
         }),
-        apply: 'build' as const, // SBOM is meaningless in dev mode (also remove warning about missing "rolldown" dependency)
+        apply: 'build' as const, // SBOM is meaningless in dev mode
       },
       mdx({
         providerImportSource: '@mdx-js/react',
@@ -94,18 +96,18 @@ export function getUiViteConfig(): UserConfig {
       __MIN_BROWSER_VERSIONS__: JSON.stringify(minBrowserVersions),
     },
     build: {
-      outDir: resolve(__dirname, '../../dist/ui'),
+      outDir: resolve(configDir, '../../dist/ui'),
       emptyOutDir: true,
       rollupOptions: {
-        input: resolve(__dirname, 'interface.html'),
+        input: resolve(configDir, 'interface.html'),
       },
     },
     resolve: {
       alias: {
-        '@encryption': resolve(__dirname, '../..'),
+        '@encryption': resolve(configDir, '../..'),
       },
     },
-    cacheDir: resolve(__dirname, '../../node_modules/.vite/ui'),
+    cacheDir: resolve(configDir, '../../node_modules/.vite/ui'),
   };
 }
 

@@ -2,7 +2,9 @@ import { resolve } from 'path';
 import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
-import { buildRuntimeConfigBlock } from '../shared/runtime-config';
+import { buildRuntimeConfigBlock } from '../shared/runtime-config.ts';
+
+const configDir = import.meta.dirname;
 
 /**
  * Inject the runtime config data block into bridge.html in dev mode,
@@ -33,7 +35,7 @@ function injectRuntimeConfig(): Plugin {
  */
 export function getVaultViteConfig(): UserConfig {
   return {
-    root: resolve(__dirname),
+    root: resolve(configDir),
     plugins: [
       injectRuntimeConfig(),
       {
@@ -42,16 +44,16 @@ export function getVaultViteConfig(): UserConfig {
           outFilename: 'sbom.cdx',
           includeWellKnown: false,
         }),
-        apply: 'build' as const, // SBOM is meaningless in dev mode (also remove warning about missing "rolldown" dependency)
+        apply: 'build' as const, // SBOM is meaningless in dev mode
       },
     ],
     build: {
-      outDir: resolve(__dirname, '../../dist/vault'),
+      outDir: resolve(configDir, '../../dist/vault'),
       emptyOutDir: true,
       rollupOptions: {
         input: {
-          main: resolve(__dirname, 'bridge.html'),
-          sw: resolve(__dirname, 'sw.ts'),
+          main: resolve(configDir, 'bridge.html'),
+          sw: resolve(configDir, 'sw.ts'),
         },
         output: {
           manualChunks: undefined,
@@ -66,14 +68,14 @@ export function getVaultViteConfig(): UserConfig {
     },
     resolve: {
       alias: {
-        '@encryption': resolve(__dirname, '../..'),
+        '@encryption': resolve(configDir, '../..'),
       },
     },
     // In dev mode, serve the built client SDK files (client.js, client.mjs, client.d.ts)
     // from dist/client/ so products can load them via <script> tag.
     // Run `npm run build:client` first, or `npm run build` to generate these files.
-    publicDir: resolve(__dirname, '../../dist/client'),
-    cacheDir: resolve(__dirname, '../../node_modules/.vite/vault'),
+    publicDir: resolve(configDir, '../../dist/client'),
+    cacheDir: resolve(configDir, '../../node_modules/.vite/vault'),
   };
 }
 
