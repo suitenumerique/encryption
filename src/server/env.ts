@@ -10,7 +10,7 @@ const envSchema = z.object({
   OIDC_JWKS_URL: z.string(),
   OIDC_SERVER_CLIENT_ID: z.string(),
   // OIDC configuration for the encryption interface (injected into the HTML at runtime)
-  OIDC_ISSUER: z.string(),
+  OIDC_ISSUER: z.string().url(),
   OIDC_CLIENT_ID: z.string(),
   OIDC_REDIRECT_URI: z.string(),
   OIDC_ACCEPT_UNVERIFIED_EMAIL: z.stringbool().default(false),

@@ -23,6 +23,10 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     .map((s) => s.trim())
     .join(' '); // The products allowed to embed either iframe.
   const vaultFrameAncestors = `${productFrameAncestors} ${env.UI_URL}`; // The vault has one embedder the interface does not: the interface itself.
+  // Only the interface talks to the OIDC provider: oidc-client-ts fetches its discovery
+  // document and JWKS, and the lazy token refresh POSTs to its token endpoint. The
+  // vault never does, so it must not get this.
+  const oidcOrigin = new URL(env.OIDC_ISSUER).origin;
 
   app.addHook('onRequest', async (request, reply) => {
     // Public assets are meant to be embedded cross-origin — the logo in a mail
@@ -60,14 +64,14 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     const scriptSrc = isDev ? "'self' 'unsafe-inline' 'wasm-unsafe-eval'" : "'self' 'wasm-unsafe-eval'";
     // ws: is only needed for the Vite HMR WebSocket in dev; production never
     // connects to a WebSocket, so it must not widen connect-src there.
-    const connectSrc = isDev ? "connect-src 'self' ws:" : "connect-src 'self'";
+    const connectSrc = isDev ? "'self' ws:" : "'self'";
 
     if (host === env.VAULT_HOST) {
       // Vault: most restrictive CSP + origin isolation headers. base-uri and
       // form-action are set explicitly because neither falls back to default-src.
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; connect-src ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}`
       );
 
       // Cross-Origin isolation headers — reduces attack surface from side-channel attacks
@@ -85,7 +89,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}`
       );
 
       reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');

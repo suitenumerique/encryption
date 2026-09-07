@@ -12,6 +12,7 @@ jest.mock('@encryption/src/server/env', () => ({
     VAULT_HOST: 'data.encryption.localhost:7200',
     UI_HOST: 'encryption.localhost:7200',
     VAULT_URL: 'https://data.encryption.localhost:7200',
+    OIDC_ISSUER: 'https://keycloak.example:8443/realms/encryption',
     UI_URL: 'https://encryption.localhost:7200',
     ALLOWED_FRAME_ANCESTORS: 'https://product-a.example, https://product-b.example',
   },
@@ -122,6 +123,18 @@ describe('securityHeadersPlugin', () => {
       // The interface drives every privileged operation through its own vault iframe.
       // Without its origin here the vault refuses to load and the interface hangs.
       expect(csp).toContain('frame-ancestors https://product-a.example https://product-b.example https://encryption.localhost:7200');
+    });
+
+    it('lets the interface reach the OIDC provider, by origin and not by issuer path', async () => {
+      const uiCsp = (await headersFor(UI_HOST))['content-security-policy'] as string;
+      const vaultCsp = (await headersFor(VAULT_HOST))['content-security-policy'] as string;
+
+      // The origin, so discovery/JWKS/token all resolve; the issuer's /realms path
+      // would only authorize that one path prefix.
+      expect(uiCsp).toContain("connect-src 'self' https://keycloak.example:8443;");
+      // The vault never talks to the provider, so it keeps the narrow set.
+      expect(vaultCsp).toContain("connect-src 'self';");
+      expect(vaultCsp).not.toContain('keycloak.example');
     });
 
     it('omits ws: from connect-src and pins base-uri/form-action on the vault CSP', async () => {
