@@ -1,12 +1,13 @@
 import { CunninghamProvider } from '@gouvfr-lasuite/cunningham-react';
 import '@gouvfr-lasuite/cunningham-react/icons';
 import '@gouvfr-lasuite/cunningham-react/style';
-import { addons } from '@storybook/preview-api';
 import type { Preview } from '@storybook/react';
-import { themes } from '@storybook/theming';
-import { initialize, mswLoader } from 'msw-storybook-addon';
+import { mswLoader } from 'msw-storybook-addon/csf3';
+import { setupWorker } from 'msw/browser';
 import React, { useEffect, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
+import { addons } from 'storybook/preview-api';
+import { themes } from 'storybook/theming';
 
 import { useNavigationGuard } from '@encryption/.storybook/navigation-guard';
 import i18n from '@encryption/src/i18n';
@@ -16,16 +17,6 @@ import { defaultHandlers } from '@encryption/src/ui/testing/default-handlers';
 import { MockEncryptionProvider } from '@encryption/src/ui/testing/mock-encryption';
 
 const DARK_MODE_EVENT_NAME = 'DARK_MODE';
-
-// Start the MSW worker once. Only warn on UNMOCKED /api calls (so a missing
-// handler is visible) while staying silent for Storybook's own asset requests.
-initialize({
-  onUnhandledRequest(request, print) {
-    if (new URL(request.url).pathname.startsWith('/api/')) {
-      print.warning();
-    }
-  },
-});
 
 function readPersistedDarkMode(): boolean {
   try {
@@ -58,7 +49,24 @@ function useStorybookDarkMode(): boolean {
 }
 
 const preview: Preview = {
-  loaders: [mswLoader],
+  // Start the MSW worker once. Only warn on UNMOCKED /api calls (so a missing
+  // handler is visible) while staying silent for Storybook's own asset requests.
+  loaders: [
+    mswLoader(async () => {
+      const worker = setupWorker();
+
+      await worker.start({
+        quiet: true,
+        onUnhandledRequest(request, print) {
+          if (new URL(request.url).pathname.startsWith('/api/')) {
+            print.warning();
+          }
+        },
+      });
+
+      return worker;
+    }),
+  ],
   globalTypes: {
     locale: {
       description: 'Interface language',

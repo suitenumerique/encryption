@@ -1,4 +1,4 @@
-import { waitFor, within } from '@storybook/test';
+import { waitFor, within } from 'storybook/test';
 
 export async function playFindMain(parentElement: HTMLElement): Promise<HTMLElement> {
   return await within(parentElement).findByRole('main');

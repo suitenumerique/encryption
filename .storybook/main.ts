@@ -1,11 +1,15 @@
 import type { StorybookConfig } from '@storybook/react-vite';
+import { fileURLToPath } from 'node:url';
 import path from 'path';
 import remarkGfm from 'remark-gfm';
 
-import { vendorMarianneFonts } from '../src/build/marianne-fonts';
+import { vendorMarianneFonts } from '../src/build/marianne-fonts.ts';
+
+// Storybook 10 loads this config as ESM, where `__dirname` does not exist.
+const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 const config: StorybookConfig = {
-  stories: [path.resolve(__dirname, '../src/**/*.stories.@(js|ts|jsx|tsx)')],
+  stories: [path.resolve(configDir, '../src/**/*.stories.@(js|ts|jsx|tsx)')],
   addons: [
     '@storybook/addon-a11y',
     {
@@ -27,11 +31,9 @@ const config: StorybookConfig = {
         },
       },
     },
-    '@storybook/addon-essentials',
-    '@storybook/addon-interactions',
     'storybook-dark-mode',
   ],
-  staticDirs: [path.resolve(__dirname, 'public'), { from: path.resolve(__dirname, '../src/server/public-assets'), to: '/public-assets' }],
+  staticDirs: [path.resolve(configDir, 'public'), { from: path.resolve(configDir, '../src/server/public-assets'), to: '/public-assets' }],
   framework: {
     name: '@storybook/react-vite',
     options: {},
@@ -43,7 +45,7 @@ const config: StorybookConfig = {
     config.resolve = config.resolve || {};
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
-      '@encryption': path.resolve(__dirname, '..'),
+      '@encryption': path.resolve(configDir, '..'),
     };
 
     config.define = {

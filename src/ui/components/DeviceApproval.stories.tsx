@@ -1,6 +1,6 @@
 import { Decorator, Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent, within } from '@storybook/test';
 import React, { useEffect, useRef } from 'react';
+import { expect, userEvent, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindAlert, playFindButton } from '@encryption/.storybook/testing';
