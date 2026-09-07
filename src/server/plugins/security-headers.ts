@@ -81,10 +81,11 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     } else if (host === env.UI_HOST) {
       // UI: allows styles, fonts, and framing the vault. Camera is granted to
       // self so navigator.mediaDevices.getUserMedia can drive the QR-scan pairing.
+      // `data:` in font-src: Cunningham inlines its icon font inside its own stylesheet.
       reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self'; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}`
       );
 
       reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
