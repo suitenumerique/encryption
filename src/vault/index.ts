@@ -12,11 +12,6 @@ const INTERFACE_ORIGIN: string | null = runtimeConfig.interfaceOrigin ?? null;
 try {
   validateIframeContext();
 } catch {
-  // Revealing the direct-access warning.
-  const accessError = document.getElementById('access-error');
-
-  if (accessError) accessError.style.display = 'block';
-
   if (import.meta.env.DEV) {
     console.warn('Vault loaded outside of iframe - allowed in development mode');
   } else {
