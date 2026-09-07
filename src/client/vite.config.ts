@@ -22,11 +22,14 @@ export default defineConfig({
     },
   },
   plugins: [
-    sbom({
-      outDir: '.',
-      outFilename: 'sbom.cdx',
-      includeWellKnown: false,
-    }),
+    {
+      ...sbom({
+        outDir: '.',
+        outFilename: 'sbom.cdx',
+        includeWellKnown: false,
+      }),
+      apply: (config) => !config.build?.watch, // Skipped under `vite build --watch`  (also remove warning about missing "rolldown" dependency)
+    },
     // Generate a single self-contained client.d.ts from the TypeScript source
     // (VaultClient + shared/vault-error), so the public type contract can never
     // drift from the implementation. Emitted into dist/client, never committed.

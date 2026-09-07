@@ -36,11 +36,14 @@ export function getVaultViteConfig(): UserConfig {
     root: resolve(__dirname),
     plugins: [
       injectRuntimeConfig(),
-      sbom({
-        outDir: '.',
-        outFilename: 'sbom.cdx',
-        includeWellKnown: false,
-      }),
+      {
+        ...sbom({
+          outDir: '.',
+          outFilename: 'sbom.cdx',
+          includeWellKnown: false,
+        }),
+        apply: 'build' as const, // SBOM is meaningless in dev mode (also remove warning about missing "rolldown" dependency)
+      },
     ],
     build: {
       outDir: resolve(__dirname, '../../dist/vault'),

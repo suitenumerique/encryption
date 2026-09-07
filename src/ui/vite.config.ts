@@ -73,11 +73,14 @@ export function getUiViteConfig(): UserConfig {
   return {
     root: resolve(__dirname),
     plugins: [
-      sbom({
-        outDir: '.',
-        outFilename: 'sbom.cdx',
-        includeWellKnown: false,
-      }),
+      {
+        ...sbom({
+          outDir: '.',
+          outFilename: 'sbom.cdx',
+          includeWellKnown: false,
+        }),
+        apply: 'build' as const, // SBOM is meaningless in dev mode (also remove warning about missing "rolldown" dependency)
+      },
       mdx({
         providerImportSource: '@mdx-js/react',
         remarkPlugins: [remarkGfm],

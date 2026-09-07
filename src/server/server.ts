@@ -1,4 +1,4 @@
-import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest, LogController } from 'fastify';
 import { ZodError } from 'zod';
 
 import { attachApiErrorMessages } from '@encryption/src/server/error-response';
@@ -69,7 +69,7 @@ export async function createServer(options: CreateServerOptions = {}) {
     // logging drowns the API/auth lines in hundreds of file-serve entries. We
     // re-emit a concise line ourselves in the onResponse hook below, skipping those
     // dev asset serves.
-    disableRequestLogging: true,
+    logController: new LogController({ disableRequestLogging: true }),
   });
 
   app.setErrorHandler(errorHandler);

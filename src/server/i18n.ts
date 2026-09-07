@@ -19,6 +19,7 @@ import { defaultNamespace, i18nFormat, resources } from '@encryption/src/i18n';
 const serverI18n = createInstance();
 
 void serverI18n.init({
+  showSupportNotice: false,
   resources,
   defaultNS: defaultNamespace,
   lng: 'en',
