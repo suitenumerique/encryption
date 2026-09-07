@@ -5,13 +5,12 @@ import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
 import { parseBrandFont } from '@encryption/src/shared/brand-font';
+import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
 
 /**
- * Build the runtime config script that is injected into the interface HTML.
- * Uses Object.defineProperty with writable:false + configurable:false
- * so a malicious library cannot overwrite the values.
+ * Build the runtime config block injected into the interface HTML.
  */
-function buildConfigScript(): string {
+function buildConfigBlock(): string {
   const config = {
     oidcIssuer: env.OIDC_ISSUER,
     oidcClientId: env.OIDC_CLIENT_ID,
@@ -22,7 +21,7 @@ function buildConfigScript(): string {
     brandFont: parseBrandFont(env.BRAND_FONT),
   };
 
-  return `<script>Object.defineProperty(window,"__ENCRYPTION_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
+  return buildRuntimeConfigBlock(config);
 }
 
 export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
@@ -39,10 +38,10 @@ export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
 
   if (existsSync(htmlPath)) {
     const rawHtml = readFileSync(htmlPath, 'utf-8');
-    // Inject the runtime config script before </head> so it's available
-    // before any module script executes.
-    const configScript = buildConfigScript();
-    interfaceHtml = rawHtml.replace('</head>', `${configScript}\n</head>`);
+    // Inject the runtime config block before </head> so it is in the DOM before any
+    // module script executes and reads it.
+    const configBlock = buildConfigBlock();
+    interfaceHtml = rawHtml.replace('</head>', `${configBlock}\n</head>`);
   }
 
   // Serve static assets (JS, CSS, etc.) for the UI domain. The vendored Marianne

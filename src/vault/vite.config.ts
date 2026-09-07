@@ -2,13 +2,16 @@ import { resolve } from 'path';
 import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
+import { buildRuntimeConfigBlock } from '../shared/runtime-config';
+
 /**
- * Inject __ENCRYPTION_VAULT_CONFIG__ into bridge.html in dev mode,
+ * Inject the runtime config data block into bridge.html in dev mode,
  * mimicking what the Fastify server does in production.
  */
 function injectRuntimeConfig(): Plugin {
   return {
     name: 'inject-vault-config',
+    apply: 'serve', // Without it it would bake one in at build time and would leave the document with two (reading the first one)
     transformIndexHtml(html) {
       const config = {
         allowedOrigins: (process.env.ALLOWED_FRAME_ANCESTORS ?? '')
@@ -17,9 +20,9 @@ function injectRuntimeConfig(): Plugin {
           .filter(Boolean),
         interfaceOrigin: process.env.UI_URL ?? '',
       };
-      const script = `<script>Object.defineProperty(window,"__ENCRYPTION_VAULT_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
+      const block = buildRuntimeConfigBlock(config);
 
-      return html.replace('</head>', `${script}\n</head>`);
+      return html.replace('</head>', `${block}\n</head>`);
     },
   };
 }

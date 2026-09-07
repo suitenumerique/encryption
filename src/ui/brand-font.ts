@@ -1,4 +1,5 @@
-import { type BrandFont, brandFontFaceCss } from '@encryption/src/shared/brand-font';
+import { brandFontFaceCss } from '@encryption/src/shared/brand-font';
+import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 
 // The interface's default open font, matching the rest of La Suite: Inter (loaded
 // via `@fontsource-variable/inter` in index.tsx), then Cunningham's own default,
@@ -13,7 +14,7 @@ const DEFAULT_UI_FONT_STACK = 'Inter, "Roboto Flex Variable", sans-serif';
  * Inter as the loaded fallback. Marianne stays opt-in.
  */
 export function applyBrandFont(): void {
-  const brandFont = (window as unknown as { __ENCRYPTION_CONFIG__?: { brandFont?: BrandFont } }).__ENCRYPTION_CONFIG__?.brandFont;
+  const brandFont = runtimeConfig.brandFont;
 
   const stack = brandFont ? `"${brandFont.family}", ${DEFAULT_UI_FONT_STACK}` : DEFAULT_UI_FONT_STACK;
   const faces = brandFont ? brandFontFaceCss(brandFont, window.location.origin) : '';

@@ -3,18 +3,18 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
+import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
 
 /**
- * Build the runtime config script for the vault HTML.
- * Frozen and non-writable to prevent tampering.
+ * Same as the interface: data rather than script, parsed and frozen by the bundle.
  */
-function buildVaultConfigScript(): string {
+function buildVaultConfigBlock(): string {
   const config = {
     allowedOrigins: env.ALLOWED_FRAME_ANCESTORS.split(',').map((s) => s.trim()),
     interfaceOrigin: env.UI_URL,
   };
 
-  return `<script>Object.defineProperty(window,"__ENCRYPTION_VAULT_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
+  return buildRuntimeConfigBlock(config);
 }
 
 export async function staticVaultPlugin(app: FastifyInstance): Promise<void> {
@@ -46,8 +46,8 @@ export async function staticVaultPlugin(app: FastifyInstance): Promise<void> {
       if (path === '/bridge.html') {
         // Inject runtime config into the vault HTML
         const rawHtml = readFileSync(filePath, 'utf-8');
-        const configScript = buildVaultConfigScript();
-        files.set(path, { content: rawHtml.replace('</head>', `${configScript}\n</head>`), type: info.type });
+        const configBlock = buildVaultConfigBlock();
+        files.set(path, { content: rawHtml.replace('</head>', `${configBlock}\n</head>`), type: info.type });
       } else {
         files.set(path, { content: readFileSync(filePath), type: info.type });
       }

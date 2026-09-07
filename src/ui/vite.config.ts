@@ -8,14 +8,16 @@ import { type Plugin, type UserConfig, defineConfig } from 'vite';
 import { getMinBrowserVersions } from '../build/generate-min-browser-versions';
 import { vendorMarianneFonts } from '../build/marianne-fonts';
 import { parseBrandFont } from '../shared/brand-font';
+import { buildRuntimeConfigBlock } from '../shared/runtime-config';
 
 /**
- * Inject __ENCRYPTION_CONFIG__ into the HTML in dev mode,
+ * Inject the runtime config data block into the HTML in dev mode,
  * mimicking what the Fastify server does in production.
  */
 function injectRuntimeConfig(): Plugin {
   return {
     name: 'inject-encryption-config',
+    apply: 'serve', // Without it it would bake one in at build time and would leave the document with two (reading the first one)
     transformIndexHtml(html) {
       const config = {
         oidcIssuer: process.env.OIDC_ISSUER,
@@ -26,9 +28,9 @@ function injectRuntimeConfig(): Plugin {
         docsEnabled: process.env.DOCS_ENABLED !== 'false',
         brandFont: parseBrandFont(process.env.BRAND_FONT),
       };
-      const script = `<script>Object.defineProperty(window,"__ENCRYPTION_CONFIG__",{value:Object.freeze(${JSON.stringify(config)}),writable:false,enumerable:true,configurable:false});</script>`;
+      const block = buildRuntimeConfigBlock(config);
 
-      return html.replace('</head>', `${script}\n</head>`);
+      return html.replace('</head>', `${block}\n</head>`);
     },
   };
 }

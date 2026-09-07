@@ -2,22 +2,12 @@ import { BROADCAST_KEYS_CHANGED, BROADCAST_KEYS_DESTROYED, MSG_VAULT_READY } fro
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { setupMessageHandler } from '@encryption/src/vault/message-handler';
 import { initOriginGuard, validateIframeContext } from '@encryption/src/vault/origin-guard';
+import { runtimeConfig } from '@encryption/src/vault/runtime-config';
 import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cache';
 
-/**
- * Runtime config injected by the server into bridge.html.
- * In dev mode, falls back to defaults for localhost.
- */
-interface VaultConfig {
-  allowedOrigins: string[];
-  interfaceOrigin: string;
-}
+const ALLOWED_ORIGINS: string[] = runtimeConfig.allowedOrigins ?? [];
 
-const runtimeConfig = (window as unknown as { __ENCRYPTION_VAULT_CONFIG__?: VaultConfig }).__ENCRYPTION_VAULT_CONFIG__;
-
-const ALLOWED_ORIGINS: string[] = runtimeConfig?.allowedOrigins ?? [];
-
-const INTERFACE_ORIGIN: string | null = runtimeConfig?.interfaceOrigin ?? null;
+const INTERFACE_ORIGIN: string | null = runtimeConfig.interfaceOrigin ?? null;
 
 try {
   validateIframeContext();

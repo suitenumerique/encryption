@@ -29,9 +29,9 @@ import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
 import { useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
+import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 
-const runtimeAppConfig = (window as unknown as { __ENCRYPTION_CONFIG__?: { docsEnabled?: boolean } }).__ENCRYPTION_CONFIG__;
-const DOCS_ENABLED = runtimeAppConfig?.docsEnabled ?? true;
+const DOCS_ENABLED = runtimeConfig.docsEnabled ?? true;
 
 function getHashParams(): URLSearchParams {
   return new URLSearchParams(window.location.hash.slice(1));

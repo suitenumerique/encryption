@@ -7,8 +7,8 @@
 // by pointing BRAND_FONT at woff files it serves.
 //
 // The server reads BRAND_FONT once and (1) stashes it here for email rendering and
-// (2) injects it into the interface runtime config (window.__ENCRYPTION_CONFIG__)
-// for the PDF and the UI.
+// (2) injects it into the interface runtime config data block (see
+// src/shared/runtime-config.ts) for the PDF and the UI.
 
 export interface BrandFont {
   family: string;
