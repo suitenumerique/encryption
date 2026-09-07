@@ -143,7 +143,7 @@ RecoveryPromptStory.parameters = {
 // running request, so assert the fetched contact's email and the refuse action
 // surface (the modal renders in a portal on document.body).
 RecoveryPromptStory.play = async () => {
-  const dialog = await playFindDialog(document.body);
+  const dialog = await playFindDialog(document.body, i18n.t('emergency.prompt_recovery_title'));
   await within(dialog).findByText(trustedContact.grantee_email);
   await playFindButton(dialog, i18n.t('emergency.btn_prompt_refuse'));
 };

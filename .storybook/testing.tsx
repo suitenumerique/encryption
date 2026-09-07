@@ -12,8 +12,9 @@ export async function playFindButton(parentElement: HTMLElement, name: string | 
   return await within(parentElement).findByRole('button', { name });
 }
 
-export async function playFindDialog(parentElement: HTMLElement): Promise<HTMLElement> {
-  return await within(parentElement).findByRole('dialog');
+export async function playFindDialog(parentElement: HTMLElement, name?: string | RegExp): Promise<HTMLElement> {
+  // `name` is useful when multiple dialogs mounted
+  return await within(parentElement).findByRole('dialog', name === undefined ? undefined : { name });
 }
 
 /**
