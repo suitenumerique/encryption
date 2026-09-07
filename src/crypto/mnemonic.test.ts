@@ -20,6 +20,31 @@ describe('mnemonic', () => {
     expect(keyToMnemonic(key1)).not.toBe(keyToMnemonic(key2));
   });
 
+  // Pinned vectors, NOT a round-trip. Every other test here encodes and decodes with
+  // the same code, so all of them would still pass if the encoding itself moved, while
+  // every recovery phrase a user already wrote down stopped working. These fix the
+  // mapping to exact bytes so a library upgrade cannot change it silently.
+  //
+  // The French phrase is written with \u0301 escapes because BIP-39 mandates NFKD:
+  // the wordlist emits "agre" + combining acute, not the precomposed "agréable" a
+  // keyboard produces. The two are indistinguishable on screen, so the escapes keep
+  // the distinction alive through editors, copy-paste and review.
+  const KNOWN_KEY = new Uint8Array(Array.from({ length: 32 }, (_, index) => index));
+  const KNOWN_ENGLISH =
+    'abandon amount liar amount expire adjust cage candy arch gather drum bullet absurd math era live bid rhythm alien crouch range attend journey unaware';
+  const KNOWN_FRENCH =
+    'abaisser agre\u0301able inductif agre\u0301able e\u0301ligible achat bolide boucle amateur exister de\u0301rober bison abrasif justice e\u0301charpe inonder avancer piano adulte cobra papaye anonyme hangar tomate';
+
+  it('encodes a known key to the exact phrases users have written down', () => {
+    expect(keyToMnemonic(KNOWN_KEY, 'english')).toBe(KNOWN_ENGLISH);
+    expect(keyToMnemonic(KNOWN_KEY, 'french')).toBe(KNOWN_FRENCH);
+  });
+
+  it('decodes those same phrases back to the known key', () => {
+    expect(mnemonicToKey(KNOWN_ENGLISH, 'english')).toEqual(KNOWN_KEY);
+    expect(mnemonicToKey(KNOWN_FRENCH, 'french')).toEqual(KNOWN_KEY);
+  });
+
   it('should support French and English', () => {
     const key = crypto.getRandomValues(new Uint8Array(32));
     const fr = keyToMnemonic(key, 'french');

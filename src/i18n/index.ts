@@ -24,13 +24,13 @@ const DATE_STYLES: Record<string, Intl.DateTimeFormatOptions> = {
   longWithTime: { dateStyle: 'long', timeStyle: 'short' },
 };
 
-// i18next interpolation formatter shared by the UI and server instances.
-export function i18nFormat(value: unknown, format: string | undefined, lng: string | undefined): string {
-  if (value instanceof Date && format && lng && DATE_STYLES[format]) {
-    return new Intl.DateTimeFormat(lng, DATE_STYLES[format]).format(value);
+// Registers the named date styles on an instance, shared by the UI and the server.
+export function registerDateFormatters(instance: typeof i18n): void {
+  for (const [name, dateStyle] of Object.entries(DATE_STYLES)) {
+    instance.services.formatter?.add(name, (value, lng) =>
+      value instanceof Date && lng ? new Intl.DateTimeFormat(lng, dateStyle).format(value) : String(value)
+    );
   }
-
-  return String(value);
 }
 
 i18n
@@ -43,13 +43,13 @@ i18n
     supportedLngs: [...SUPPORTED_LOCALES],
     interpolation: {
       escapeValue: false,
-      format: i18nFormat,
     },
-    showSupportNotice: false,
     detection: {
       order: ['cookie', 'localStorage', 'navigator'],
     },
   });
+
+registerDateFormatters(i18n);
 
 export default i18n;
 
@@ -65,7 +65,7 @@ export function translateApiError(error: { code?: string; params?: Record<string
 
   const key = `errors.api.${error.code}` as const;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const translated = i18n.t(key as any, error.params ?? {});
+  const translated = i18n.t(key as any, (error.params ?? {}) as any);
 
   if (translated !== key) {
     return translated;

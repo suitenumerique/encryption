@@ -1,6 +1,6 @@
 import { createInstance } from 'i18next';
 
-import { defaultNamespace, i18nFormat, resources } from '@encryption/src/i18n';
+import { defaultNamespace, registerDateFormatters, resources } from '@encryption/src/i18n';
 
 /**
  * Server-side i18next instance, sharing the SAME translation files as the
@@ -19,13 +19,15 @@ import { defaultNamespace, i18nFormat, resources } from '@encryption/src/i18n';
 const serverI18n = createInstance();
 
 void serverI18n.init({
-  showSupportNotice: false,
   resources,
   defaultNS: defaultNamespace,
   lng: 'en',
   fallbackLng: 'en',
-  interpolation: { escapeValue: false, format: i18nFormat },
+  interpolation: { escapeValue: false },
 });
+
+// Named date formatters, registered after init exactly as the interface does.
+registerDateFormatters(serverI18n);
 
 /**
  * Translate a key for a recipient whose language is fixed (emails/documents), so
@@ -33,14 +35,17 @@ void serverI18n.init({
  * rendered as-is; `tHtml` escapes interpolated values so a translation may carry
  * inline markup (e.g. <strong>) rendered through dangerouslySetInnerHTML.
  */
+// The options cast below is i18next 26 narrowing interpolation values to
+// string | number. Ours are unknown, and a Date has to arrive intact for the named
+// date formatters, so the value is passed through rather than coerced.
 export function t(locale: string, key: string, params?: Record<string, unknown>): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return serverI18n.t(key as any, { lng: locale, ...params }) as string;
+  return serverI18n.t(key as any, { lng: locale, ...params } as any) as string;
 }
 
 export function tHtml(locale: string, key: string, params?: Record<string, unknown>): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return serverI18n.t(key as any, { lng: locale, ...params, interpolation: { escapeValue: true } }) as string;
+  return serverI18n.t(key as any, { lng: locale, ...params, interpolation: { escapeValue: true } } as any) as string;
 }
 
 /**
@@ -53,7 +58,7 @@ export function apiErrorMessage(code: string, params?: Record<string, unknown>):
   // Cast for the same reason as translateApiError in src/i18n: the code is only
   // known at runtime, so it cannot satisfy i18next's literal-union key type.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const translated = serverI18n.t(key as any, params ?? {}) as string;
+  const translated = serverI18n.t(key as any, (params ?? {}) as any) as string;
 
   // i18next echoes the key back when it is missing, which would be worse than
   // sending nothing at all.

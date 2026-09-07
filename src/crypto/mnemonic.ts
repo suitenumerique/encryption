@@ -9,8 +9,8 @@
  * dependencies end up in the final bundle.
  */
 import { entropyToMnemonic, mnemonicToEntropy, validateMnemonic } from '@scure/bip39';
-import { wordlist as english } from '@scure/bip39/wordlists/english';
-import { wordlist as french } from '@scure/bip39/wordlists/french';
+import { wordlist as english } from '@scure/bip39/wordlists/english.js';
+import { wordlist as french } from '@scure/bip39/wordlists/french.js';
 
 import { type MnemonicLanguage } from '@encryption/src/shared/schemas/mnemonic-language';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
