@@ -3,24 +3,34 @@ import fp from 'fastify-plugin';
 
 import { env } from '@encryption/src/server/env';
 
-// Wrapped with fastify-plugin to break encapsulation — otherwise the onSend hook
-// stays scoped to this plugin and never runs for routes registered on the same
-// app instance (API, health, static, vault/UI), so no response would carry these
-// headers.
+// Wrapped with fastify-plugin to break encapsulation — otherwise the hook stays scoped
+// to this plugin and never runs for routes registered on the same app instance (API,
+// health, static, vault/UI), so no response would carry these headers.
+//
+// `onRequest` writing to `reply.raw`, NOT `onSend` writing to `reply`. In development
+// the Vite middleware (via @fastify/middie, which itself runs in the onRequest phase)
+// answers by writing to the raw response and never calls `reply.send()`, so the whole
+// reply lifecycle including `onSend` is skipped and those responses carried no policy
+// at all. Development therefore enforced nothing, which is how a CSP-blocked runtime
+// config and a CSP-blocked WebAssembly compilation both reached production unnoticed.
+// Setting them on the raw response before any middleware runs covers both paths: Node
+// merges headers set with `setHeader()` into the later `writeHead()` Fastify does for
+// its own replies. This plugin must therefore stay registered BEFORE the Vite plugin,
+// since Fastify runs onRequest hooks in registration order.
 export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const isDev = process.env.NODE_ENV === 'development';
   const frameAncestors = env.ALLOWED_FRAME_ANCESTORS.split(',')
     .map((s) => s.trim())
     .join(' ');
 
-  app.addHook('onSend', async (request, reply) => {
+  app.addHook('onRequest', async (request, reply) => {
     // Public assets are meant to be embedded cross-origin — the logo in a mail
     // client, the fonts in a generated PDF — so they get a relaxed CORP and skip
     // the iframe-only CSP. This is the ONLY exception; everything else below stays
     // same-site / same-origin.
     if (request.url.startsWith('/public-assets/')) {
-      reply.header('X-Content-Type-Options', 'nosniff');
-      reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+      reply.raw.setHeader('X-Content-Type-Options', 'nosniff');
+      reply.raw.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
       return;
     }
@@ -31,18 +41,18 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     const host = request.host;
 
     // Common security headers
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Referrer-Policy', 'no-referrer');
+    reply.raw.setHeader('X-Content-Type-Options', 'nosniff');
+    reply.raw.setHeader('Referrer-Policy', 'no-referrer');
 
     // HSTS only makes sense over HTTPS; emitting it on dev plain-HTTP is noise
     // (and can pin the wrong scheme for localhost).
     if (!isDev) {
-      reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+      reply.raw.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
     }
 
     // Deny powerful features everywhere by default; the UI host re-grants camera
     // below for the QR-scan device-pairing flow.
-    reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    reply.raw.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 
     // In dev mode, Vite injects inline scripts for HMR — relax CSP to allow them.
     // The routing logic is still exercised so host-based dispatch is tested.
@@ -54,7 +64,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     if (host === env.VAULT_HOST) {
       // Vault: most restrictive CSP + origin isolation headers. base-uri and
       // form-action are set explicitly because neither falls back to default-src.
-      reply.header(
+      reply.raw.setHeader(
         'Content-Security-Policy',
         `default-src 'none'; script-src ${scriptSrc}; ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}`
       );
@@ -63,24 +73,24 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       // (Spectre, etc.) and restricts how other origins can interact with the vault.
       // Note: browser extensions can still bypass these, but it raises the bar.
       if (!isDev) {
-        reply.header('Cross-Origin-Embedder-Policy', 'require-corp');
+        reply.raw.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
       }
-      reply.header('Cross-Origin-Opener-Policy', 'same-origin');
-      reply.header('Cross-Origin-Resource-Policy', 'same-origin');
+      reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      reply.raw.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     } else if (host === env.UI_HOST) {
       // UI: allows styles, fonts, and framing the vault. Camera is granted to
       // self so navigator.mediaDevices.getUserMedia can drive the QR-scan pairing.
-      reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
-      reply.header(
+      reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+      reply.raw.setHeader(
         'Content-Security-Policy',
         `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self'; ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${frameAncestors}`
       );
 
-      reply.header('Cross-Origin-Opener-Policy', 'same-origin');
-      reply.header('Cross-Origin-Resource-Policy', 'same-site');
+      reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      reply.raw.setHeader('Cross-Origin-Resource-Policy', 'same-site');
     } else {
       // API or unknown host
-      reply.header('Content-Security-Policy', "default-src 'none'");
+      reply.raw.setHeader('Content-Security-Policy', "default-src 'none'");
     }
   });
 });
