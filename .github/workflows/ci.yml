@@ -168,7 +168,7 @@ jobs:
           fi
 
       - name: Test end-to-end
-        run: JEST_MAX_WORKERS=$(nproc) npm run test:e2e:headless
+        run: npm run test:e2e:headless -- --max-workers $(nproc)
 
   build:
     name: Build

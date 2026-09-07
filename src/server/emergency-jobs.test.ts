@@ -1,3 +1,5 @@
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import {
   sendEmergencyRecoveryApprovedContact,
@@ -6,14 +8,16 @@ import {
 } from '@encryption/src/server/email/emergency';
 import { reminderDue, runEmergencyJobsOnce } from '@encryption/src/server/emergency-jobs';
 
-jest.mock('@encryption/src/server/env', () => ({ env: { EMAIL_PRODUCT_URL: 'http://localhost:7201' } }));
+vi.mock('@encryption/src/server/env', () => ({ env: { EMAIL_PRODUCT_URL: 'http://localhost:7201' } }));
 
-// Shared manual mock: every send is an inert jest.fn this suite asserts on.
-jest.mock('@encryption/src/server/email/emergency');
+// Shared manual mock: every send is an inert vi.fn this suite asserts on.
+vi.mock('@encryption/src/server/email/emergency');
 
 // The database is real (in-process Postgres), so the jobs run their actual
 // queries and the cascade that purges a designation is the database's own.
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -134,7 +138,7 @@ async function seedRelationship(options: RelationshipOptions) {
 describe('runEmergencyJobsOnce', () => {
   useTestDatabase();
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => vi.clearAllMocks());
 
   it('flips overdue requests and emails both parties', async () => {
     const { relationship } = await seedRelationship({
@@ -205,8 +209,8 @@ describe('runEmergencyJobsOnce', () => {
       lastNotifiedAt,
     });
 
-    (sendEmergencyRecoveryReminder as jest.Mock).mockRejectedValueOnce(new Error('smtp down'));
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    (sendEmergencyRecoveryReminder as Mock).mockRejectedValueOnce(new Error('smtp down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await runEmergencyJobsOnce(NOW);
 

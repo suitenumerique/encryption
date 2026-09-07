@@ -1,5 +1,6 @@
 import { renderToMjml } from '@faire/mjml-react/utils/renderToMjml';
 import mjml2html from 'mjml';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { StandardLayout } from '@encryption/src/server/email/layout';
 import { EmailPalette, applyEmailPaletteOverride, emailPalette } from '@encryption/src/server/email/palette';
@@ -15,7 +16,7 @@ describe('applyEmailPaletteOverride', () => {
 
   afterEach(() => {
     Object.assign(emailPalette, defaults);
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('re-themes the rendered email, in both the inline colours and the generated CSS', async () => {
@@ -41,7 +42,7 @@ describe('applyEmailPaletteOverride', () => {
   });
 
   it('ignores unknown keys and non-string values, keeping the defaults', () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     applyEmailPaletteOverride({ notAColour: '#000000', brandPrimary: 42 as unknown as string });
 

@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import type { EmergencyDesignateBody } from '@encryption/src/shared/schemas/emergency-access';
 import {
   MAX_WAIT_DAYS,

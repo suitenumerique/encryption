@@ -1,6 +1,7 @@
 import { IDBFactory } from 'fake-indexeddb';
 import 'fake-indexeddb/auto';
 import { type IDBPDatabase, openDB } from 'idb';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MIGRATIONS } from '@encryption/src/crypto/encryption-db';
 import { DB_NAME, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
@@ -10,7 +11,7 @@ import { DB_NAME, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/sh
 // schema) across cases.
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
-  jest.resetModules();
+  vi.resetModules();
 });
 
 function importDb() {
@@ -58,7 +59,7 @@ describe('encryption IndexedDB schema', () => {
 
   beforeAll(async () => {
     globalThis.indexedDB = new IDBFactory();
-    jest.resetModules();
+    vi.resetModules();
     const { getEncryptionDB } = await importDb();
     const db = await getEncryptionDB();
     targetSchema = storeNames(db);

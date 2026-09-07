@@ -1,6 +1,7 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import Fastify from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { generateUserKeyPair, hybridDecapsulate, uint8ToBase64 } from '@encryption/src/crypto';
 import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
@@ -28,7 +29,7 @@ import {
 
 // env is mocked so importing the route (which reads the active issuer for the
 // `subs=` directory form) does not pull the real env validator under test.
-jest.mock('@encryption/src/server/env', () => ({
+vi.mock('@encryption/src/server/env', () => ({
   env: {
     OIDC_ISSUER: 'https://issuer.example',
   },
@@ -38,9 +39,11 @@ jest.mock('@encryption/src/server/env', () => ({
 // against the actual unique constraints, joins and cascades. Two tests spy on
 // `$transaction` to inject an interleaving PGlite cannot produce (see their
 // comments); everything else runs untouched.
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
-const mockVerifyJWT = jest.fn();
+const mockVerifyJWT = vi.fn();
 
 function buildApp() {
   const app = Fastify();
@@ -189,8 +192,8 @@ describe('public-keys routes', () => {
   useTestDatabase();
 
   beforeEach(() => {
-    jest.restoreAllMocks();
-    jest.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
     // clearAllMocks clears call history but NOT implementations set via
     // mockResolvedValue / mockRejectedValue, so a value from one test would leak
     // into the next.
@@ -896,7 +899,7 @@ describe('public-keys routes', () => {
       // both run for real against the database.
       const client = testPrismaClient();
 
-      jest.spyOn(client, '$transaction').mockImplementationOnce((async (...args: unknown[]) => {
+      vi.spyOn(client, '$transaction').mockImplementationOnce((async (...args: unknown[]) => {
         await testPrisma.keyPossessionChallenge.delete({ where: { id: FAKE_CHALLENGE_ID } });
 
         return (client.$transaction as unknown as (...forwarded: unknown[]) => Promise<unknown>)(...args);
@@ -928,7 +931,7 @@ describe('public-keys routes', () => {
       // queued rather than raced and the conflict can never happen; we deliberately
       // do not pull in testcontainers/Docker for it, and raise the error Prisma
       // would surface instead.
-      jest.spyOn(testPrismaClient(), '$transaction').mockImplementationOnce((async () => {
+      vi.spyOn(testPrismaClient(), '$transaction').mockImplementationOnce((async () => {
         throw new PrismaClientKnownRequestError('serialization_failure', { code: 'P2034', clientVersion: 'test' });
       }) as never);
 

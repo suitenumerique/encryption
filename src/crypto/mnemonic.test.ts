@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { englishWordlist, frenchWordlist, keyToMnemonic, mnemonicLanguageForLocale, mnemonicToKey } from '@encryption/src/crypto/mnemonic';
 
 describe('mnemonic', () => {

@@ -1,3 +1,5 @@
+import { describe, expect, it, vi } from 'vitest';
+
 import type { SealedItem } from '@encryption/src/crypto/vault-manifest';
 import type { PutItemInput } from '@encryption/src/vault/operations/vault-sync';
 import { createHttpSyncTransport } from '@encryption/src/vault/operations/vault-sync-transport';
@@ -11,7 +13,7 @@ const SEALED: SealedItem = { id: 'tofu:bob', type: 'tofu', revisionDate: 42, cip
 describe('http sync transport', () => {
   it('sends the JWT and maps the items response to a PulledVault', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetchImpl = jest.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init });
 
       return jsonResponse({
@@ -31,7 +33,7 @@ describe('http sync transport', () => {
   });
 
   it('treats a never-bootstrapped vault (revision 0) as no remote state', async () => {
-    const fetchImpl = jest.fn(async () => jsonResponse({ revision: 0, manifest: null, manifest_sig: null, items: [] })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => jsonResponse({ revision: 0, manifest: null, manifest_sig: null, items: [] })) as unknown as typeof fetch;
 
     expect(await createHttpSyncTransport({ fetchImpl }).fetch()).toBeNull();
   });
@@ -39,7 +41,7 @@ describe('http sync transport', () => {
   it('PUTs an item to its id route and returns the new revision', async () => {
     let putUrl = '';
     let putBody: Record<string, unknown> = {};
-    const fetchImpl = jest.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       putUrl = String(url);
       putBody = JSON.parse(init!.body as string);
 
@@ -56,7 +58,7 @@ describe('http sync transport', () => {
   });
 
   it('maps a 409 to a conflict outcome without throwing', async () => {
-    const fetchImpl = jest.fn(async () => jsonResponse({ code: 'vault_item_out_of_date' }, 409)) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => jsonResponse({ code: 'vault_item_out_of_date' }, 409)) as unknown as typeof fetch;
 
     const input: PutItemInput = { item: SEALED, lastKnownRevisionDate: null, manifest: 'M', manifestSig: 'S', revision: 2 };
 

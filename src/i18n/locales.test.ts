@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { resources } from '@encryption/src/i18n';
 import commonEn from '@encryption/src/i18n/en/common.json';
 import commonFr from '@encryption/src/i18n/fr/common.json';

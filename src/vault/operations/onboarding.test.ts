@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import sodium from 'libsodium-wrappers-sumo';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { verifyManifest } from '@encryption/src/crypto/vault-manifest';

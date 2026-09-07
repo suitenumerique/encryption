@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { addEncryptionKey, emptyVaultState, mergeVaultState, setTofu } from '@encryption/src/crypto/vault-state';
 import { hasLocalChanges, planPush } from '@encryption/src/vault/operations/vault-sync-planner';
 

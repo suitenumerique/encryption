@@ -1,17 +1,19 @@
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import { handleCheckFingerprints } from '@encryption/src/vault/operations/fingerprint-registry';
 import { resolveTrustedRecipientKeys } from '@encryption/src/vault/operations/recipient-trust';
 
-jest.mock('@encryption/src/vault/operations/fetch-public-keys', () => ({
-  handleFetchPublicKeys: jest.fn(),
+vi.mock('@encryption/src/vault/operations/fetch-public-keys', () => ({
+  handleFetchPublicKeys: vi.fn(),
 }));
-jest.mock('@encryption/src/vault/operations/fingerprint-registry', () => ({
-  handleCheckFingerprints: jest.fn(),
+vi.mock('@encryption/src/vault/operations/fingerprint-registry', () => ({
+  handleCheckFingerprints: vi.fn(),
 }));
 
-const mockFetch = handleFetchPublicKeys as jest.Mock;
-const mockCheck = handleCheckFingerprints as jest.Mock;
+const mockFetch = handleFetchPublicKeys as Mock;
+const mockCheck = handleCheckFingerprints as Mock;
 
 const buf = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
 
@@ -31,7 +33,7 @@ function checks(map: Record<string, 'trusted' | 'refused' | 'unknown' | 'mismatc
 }
 
 describe('resolveTrustedRecipientKeys (wrap-time trust gate)', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => vi.clearAllMocks());
 
   it('returns the encryption key for a verified, TOFU-trusted recipient', async () => {
     mockFetch.mockResolvedValue({ users: { bob: entry('bob', { verified: true, key: buf('bobkey'), fingerprint: 'fp-bob' }) } });

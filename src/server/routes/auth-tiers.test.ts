@@ -1,11 +1,12 @@
 import Fastify from 'fastify';
+import { describe, expect, it, vi } from 'vitest';
 
 import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { versionRoute } from '@encryption/src/server/routes/versions';
 
-jest.mock('@encryption/src/server/env', () => ({ env: { OIDC_ISSUER: 'https://issuer.example' } }));
+vi.mock('@encryption/src/server/env', () => ({ env: { OIDC_ISSUER: 'https://issuer.example' } }));
 
 /**
  * The complete authentication surface of the API, asserted as data.

@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { generateUserKeyPair } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, exportPublicKeyAsBase64, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import {

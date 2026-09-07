@@ -8,6 +8,7 @@
  */
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 
 import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
@@ -19,9 +20,11 @@ import { notifyVaultChanged } from '@encryption/src/server/vault-notify';
 // vault.ts transitively reaches the emergency notification layer (and, behind
 // it, the env validator the mailer runs at import). The shared manual mock keeps
 // this suite off both; the SSE path sends no mail anyway.
-jest.mock('@encryption/src/server/email/emergency');
+vi.mock('@encryption/src/server/email/emergency');
 
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
 useTestDatabase();
 
@@ -95,7 +98,7 @@ it('delivers a "changed" wake to a signature-authenticated (no JWT) SSE connecti
   notifyVaultChanged(userId, 7);
 
   // The deadline timer MUST be cleared once the wake arrives. Left pending it
-  // outlives the suite, and jest then force-exits the worker with "a worker
+  // outlives the suite, and the runner then force-exits the worker with "a worker
   // process has failed to exit gracefully".
   let deadline: NodeJS.Timeout | undefined;
 

@@ -1,8 +1,9 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { describe, expect, it, vi } from 'vitest';
 
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
 
-jest.mock('@encryption/src/server/env', () => ({
+vi.mock('@encryption/src/server/env', () => ({
   env: {
     VAULT_HOST: 'data.encryption.localhost:7200',
     UI_HOST: 'encryption.localhost:7200',

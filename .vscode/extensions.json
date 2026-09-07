@@ -6,7 +6,7 @@
     "esbenp.prettier-vscode",
     "formulahendry.auto-rename-tag",
     "ms-vsliveshare.vsliveshare",
-    "Orta.vscode-jest",
+    "vitest.explorer",
     "Prisma.prisma"
   ]
 }

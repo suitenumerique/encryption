@@ -1,4 +1,5 @@
 import sodium from 'libsodium-wrappers-sumo';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { detectMnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';

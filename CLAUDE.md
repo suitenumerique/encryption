@@ -31,7 +31,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - **Server**: Fastify (plain), Prisma 7 + PostgreSQL, esbuild bundle (single .mjs, zero node_modules in production)
 - **Frontend**: React, Cunningham + UI Kit, i18next, MDX docs
 - **Build**: Vite (vault, UI, client SDK, demo), esbuild (server), vite-plugin-sri-gen
-- **Tests**: Jest + ts-jest
+- **Tests**: Vitest (unit, Node) + Vitest browser mode via `@storybook/addon-vitest` (stories, Chromium/Playwright)
 - **Auth**: Keycloak (local dev), OIDC provider JWT (production). Local Keycloak access tokens expire after **5 minutes**, refresh tokens after **1080 seconds** (18 min). The interface refreshes tokens lazily (only when an API call needs a valid token and it expires within 1 minute), using Web Locks to prevent concurrent refreshes across tabs.
 - **Package manager**: npm with all versions pinned (no ^ or ~)
 
@@ -41,7 +41,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - **All UI text goes through i18next** (`useTranslation('common')`) — translations in `src/i18n/fr/common.json`.
 - **Server API returns error codes** — codes defined in `src/shared/error-codes.ts`, translated on the frontend via `translateApiError()`. Every error body also carries an English `message`, read from the SAME i18n files (`errors.api.{code}`) by a server-side i18next instance (`src/server/i18n.ts`) and injected centrally by `attachApiErrorMessages`. It serves consumers that are not a translated UI: logs, the client SDK, product backends. Add a new code to `src/i18n/{en,fr}/common.json` under `errors.api` — `error-codes.test.ts` fails on a missing or orphan entry in either locale. The **code stays authoritative** — never branch on the message, and the UI only falls back to it for a code it has no translation for.
 - **The typed API surface is generated, never hand-written** — routes declare Zod `schema` (request + response + `errorResponses(...)`), `npm run api:schema:generate` emits `openapi.json` from the live routes, and `npm run api:client:generate` turns it into `src/ui/api/generated/` (types, SDK, MSW handlers). **Run `npm run api:schema:sync` and commit the result whenever you add or change an endpoint** — CI fails if the committed output is stale. The UI calls the generated SDK through `src/ui/api/client.ts`; route tests call the same SDK over `createTestApiClient(app)`, which injects instead of using the network. In Storybook the global MSW handlers answer **501 for every endpoint** on purpose: a story declares the responses it needs itself, so it stays a self-contained description of one state.
-- **A story must assert the state it claims to show.** `npm run test:e2e:headless` (`@storybook/test-runner`, also a CI step) opens every story in Chromium, but it can only fail on a thrown error or a failed `play()` assertion. A story with no `play()` therefore proves only that it does not crash: components catch their own errors, so it can render an error alert instead of its state and still pass. When a state is reached by an action (a click, a step in a flow) or is one of several similar screens, drive it and assert it in `play()`.
+- **A story must assert the state it claims to show.** `npm run test:e2e:headless` (Vitest browser mode via `@storybook/addon-vitest`, also a CI step) opens every story in Chromium, but it can only fail on a thrown error or a failed `play()` assertion. A story with no `play()` therefore proves only that it does not crash: components catch their own errors, so it can render an error alert instead of its state and still pass. When a state is reached by an action (a click, a step in a flow) or is one of several similar screens, drive it and assert it in `play()`.
 - **Zod schemas live with their only consumer.** `src/shared/schemas/` is reserved for shapes whose _inferred type_ is needed OUTSIDE the server (`VaultItemWire`, `VaultKeyringWire`, post-message, interface-context) — the schema and its type cannot be split, and putting them in a route file would make the vault/crypto bundles import server code. Everything else is route-local: **inline the `z.object({…})` directly in the route's `schema` block when it is used once**, and only lift it to a named const when a second call site (or a unit test) genuinely needs it. Use `src/server/schemas/` when two routes share it. Consumers of a response shape read its type off the generated client, never off a schema.
 - **PostMessage type keys are centralized** in `src/shared/constants.ts` as `MSG_VAULT_*` and `MSG_INTERFACE_*` constants.
 - **Comments and logs in English** — only i18n JSON and MDX user documentation are in French.
@@ -154,9 +154,11 @@ npm run db:studio        # Open Prisma Studio
 npm run dev:storybook    # Start Storybook on port 7204
 ```
 
-`test:e2e` builds Storybook, serves `storybook-static/` on 7204 and runs the stories
-against it, so stop `npm run dev` first (it holds that port). To reuse a Storybook you
-already have running instead, call `npm run test:e2e:storybook:headless:command` alone.
+`test:e2e` renders the stories through Vite directly, so there is nothing to build or
+serve first and it does not need port 7204. It opens a real browser to watch;
+`test:e2e:headless` passes `--browser.headless` for CI (Vitest already defaults to
+headless whenever `CI` is set). `start:storybook` still serves a built
+`storybook-static/` on 7204 if you want to browse one.
 The browsers do not arrive with `npm install`: the `playwright` package declares no
 install script, so one only appears when something runs `npx playwright install`.
 Install chromium once locally (`npx playwright install chromium`); CI does it

@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+
 import { initOriginGuard, isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
 
 describe('origin-guard', () => {

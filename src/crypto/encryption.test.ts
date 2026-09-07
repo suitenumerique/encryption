@@ -3,6 +3,7 @@
  * X-Wing hybrid KEM (X25519 + ML-KEM-768) + XChaCha20-Poly1305 symmetric encryption.
  */
 import sodium from 'libsodium-wrappers-sumo';
+import { describe, expect, it } from 'vitest';
 
 import {
   decryptContent,

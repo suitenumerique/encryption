@@ -1,6 +1,7 @@
 /**
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
+import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { RUNTIME_CONFIG_ELEMENT_ID, buildRuntimeConfigBlock, readRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';

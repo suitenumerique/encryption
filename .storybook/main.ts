@@ -9,7 +9,7 @@ import { vendorMarianneFonts } from '../src/build/marianne-fonts.ts';
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 const config: StorybookConfig = {
-  stories: [path.resolve(configDir, '../src/**/*.stories.@(js|ts|jsx|tsx)')],
+  stories: ['../src/**/*.stories.@(js|ts|jsx|tsx)'],
   addons: [
     '@storybook/addon-a11y',
     {
@@ -31,6 +31,7 @@ const config: StorybookConfig = {
         },
       },
     },
+    '@storybook/addon-vitest',
     'storybook-dark-mode',
   ],
   staticDirs: [path.resolve(configDir, 'public'), { from: path.resolve(configDir, '../src/server/public-assets'), to: '/public-assets' }],

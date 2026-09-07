@@ -1,13 +1,14 @@
 import middie from '@fastify/middie';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
 
 // env is mocked so the hosts carry an explicit port, exercising the port-aware
 // host matching (the real bug: comparing port-stripped request.hostname against
 // a port-carrying env host never matched on a ported deployment).
-jest.mock('@encryption/src/server/env', () => ({
+vi.mock('@encryption/src/server/env', () => ({
   env: {
     VAULT_HOST: 'data.encryption.localhost:7200',
     UI_HOST: 'encryption.localhost:7200',

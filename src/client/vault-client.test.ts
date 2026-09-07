@@ -1,6 +1,8 @@
 /**
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
+import { describe, expect, it, vi } from 'vitest';
+
 import { VaultClient } from '@encryption/src/client/vault-client';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
@@ -38,10 +40,10 @@ describe('VaultClient recipient verification', () => {
   it('opens the verify modal and retries shareKeys once when the user trusts all', async () => {
     const { client, internal } = makeClient();
     const encryptedKeys = { u1: new ArrayBuffer(4) };
-    const vaultRequest = jest.fn().mockRejectedValueOnce(untrusted()).mockResolvedValueOnce({ encryptedKeys });
+    const vaultRequest = vi.fn().mockRejectedValueOnce(untrusted()).mockResolvedValueOnce({ encryptedKeys });
     internal.vaultRequest = vaultRequest;
-    const openVerify = jest.spyOn(internal, 'openVerifyRecipients').mockResolvedValue('resolved');
-    const fingerprintChanged = jest.fn();
+    const openVerify = vi.spyOn(internal, 'openVerifyRecipients').mockResolvedValue('resolved');
+    const fingerprintChanged = vi.fn();
     client.on('fingerprint-changed', fingerprintChanged);
 
     const result = await client.shareKeys(key, recipients);
@@ -55,9 +57,9 @@ describe('VaultClient recipient verification', () => {
   it('rethrows the original error and does not retry when the user cancels', async () => {
     const { client, internal } = makeClient();
     const original = untrusted();
-    const vaultRequest = jest.fn().mockRejectedValue(original);
+    const vaultRequest = vi.fn().mockRejectedValue(original);
     internal.vaultRequest = vaultRequest;
-    jest.spyOn(internal, 'openVerifyRecipients').mockResolvedValue('cancelled');
+    vi.spyOn(internal, 'openVerifyRecipients').mockResolvedValue('cancelled');
 
     await expect(client.shareKeys(key, recipients)).rejects.toBe(original);
     expect(vaultRequest).toHaveBeenCalledTimes(1);
@@ -66,8 +68,8 @@ describe('VaultClient recipient verification', () => {
   it('does not open the modal for a non-trust error', async () => {
     const { client, internal } = makeClient();
     const original = new VaultError(VaultErrorCode.WRONG_SECRET_KEY, 'nope');
-    internal.vaultRequest = jest.fn().mockRejectedValue(original);
-    const openVerify = jest.spyOn(internal, 'openVerifyRecipients');
+    internal.vaultRequest = vi.fn().mockRejectedValue(original);
+    const openVerify = vi.spyOn(internal, 'openVerifyRecipients');
 
     await expect(client.shareKeys(key, recipients)).rejects.toBe(original);
     expect(openVerify).not.toHaveBeenCalled();
@@ -76,9 +78,9 @@ describe('VaultClient recipient verification', () => {
   it('also guards encryptWithoutKey (retry on resolved)', async () => {
     const { client, internal } = makeClient();
     const encrypted = { encryptedContent: new ArrayBuffer(4), encryptedKeys: { u1: new ArrayBuffer(4) } };
-    const vaultRequest = jest.fn().mockRejectedValueOnce(untrusted()).mockResolvedValueOnce(encrypted);
+    const vaultRequest = vi.fn().mockRejectedValueOnce(untrusted()).mockResolvedValueOnce(encrypted);
     internal.vaultRequest = vaultRequest;
-    const openVerify = jest.spyOn(internal, 'openVerifyRecipients').mockResolvedValue('resolved');
+    const openVerify = vi.spyOn(internal, 'openVerifyRecipients').mockResolvedValue('resolved');
 
     const result = await client.encryptWithoutKey(new ArrayBuffer(8), recipients);
 
@@ -97,7 +99,7 @@ describe('VaultClient per-flow context', () => {
 
     // Simulate the verify overlay being open for a labeled map.
     internal.pendingContext = { verifyRecipients: { recipients: { u1: { email: 'alice@example.test', name: 'Alice' } } } };
-    const target = { postMessage: jest.fn() };
+    const target = { postMessage: vi.fn() };
     internal.sendContext(target);
 
     expect(target.postMessage).toHaveBeenCalledWith(
@@ -113,7 +115,7 @@ describe('VaultClient per-flow context', () => {
     const { client, internal } = makeClient();
     client.setAuthContext({ suiteUserId: 'me' });
 
-    const target = { postMessage: jest.fn() };
+    const target = { postMessage: vi.fn() };
     internal.sendContext(target);
 
     const [payload] = target.postMessage.mock.calls[0];
@@ -146,7 +148,7 @@ describe('VaultClient.openRecipientProfile', () => {
 
     client.openRecipientProfile(container, 'u1', { email: 'alice@example.test', name: 'Alice' });
 
-    const target = { postMessage: jest.fn() };
+    const target = { postMessage: vi.fn() };
     internal.sendContext(target);
 
     expect(target.postMessage).toHaveBeenCalledWith(

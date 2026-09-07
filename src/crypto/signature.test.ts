@@ -1,4 +1,5 @@
 import sodium from 'libsodium-wrappers-sumo';
+import { describe, expect, it } from 'vitest';
 
 import { assertValidSignaturePublicKey, generateSignatureKeyPair, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
 

@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import commonEn from '@encryption/src/i18n/en/common.json';
 import commonFr from '@encryption/src/i18n/fr/common.json';
 import * as errorCodes from '@encryption/src/shared/error-codes';

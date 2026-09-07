@@ -3,6 +3,8 @@
  * caller subs to the internal ids the trust store keys on, and the mapping of
  * verdicts back to the caller's id space.
  */
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { type VaultState, emptyVaultState, setTofu } from '@encryption/src/crypto/vault-state';
 import { VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
@@ -14,22 +16,22 @@ import {
 import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
 import { loadVault, mutateVault } from '@encryption/src/vault/vault-keys';
 
-jest.mock('@encryption/src/vault/operations/fetch-public-keys', () => ({
-  handleFetchPublicKeys: jest.fn(),
-  fetchContinuityChain: jest.fn().mockResolvedValue([]),
+vi.mock('@encryption/src/vault/operations/fetch-public-keys', () => ({
+  handleFetchPublicKeys: vi.fn(),
+  fetchContinuityChain: vi.fn().mockResolvedValue([]),
 }));
-jest.mock('@encryption/src/vault/vault-keys', () => ({
-  loadVault: jest.fn(),
-  mutateVault: jest.fn(),
+vi.mock('@encryption/src/vault/vault-keys', () => ({
+  loadVault: vi.fn(),
+  mutateVault: vi.fn(),
 }));
-jest.mock('@encryption/src/vault/operations/vault-sync-run', () => ({
-  handleSync: jest.fn(),
+vi.mock('@encryption/src/vault/operations/vault-sync-run', () => ({
+  handleSync: vi.fn(),
 }));
 
-const mockFetchKeys = handleFetchPublicKeys as jest.Mock;
-const mockLoadVault = loadVault as jest.Mock;
-const mockMutateVault = mutateVault as jest.Mock;
-const mockSync = handleSync as jest.Mock;
+const mockFetchKeys = handleFetchPublicKeys as Mock;
+const mockLoadVault = loadVault as Mock;
+const mockMutateVault = mutateVault as Mock;
+const mockSync = handleSync as Mock;
 
 const OWNER = 'internal-alice';
 
@@ -51,7 +53,7 @@ function stateWithTofu(entries: Record<string, { fingerprint: string; status: 't
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   mockLoadVault.mockResolvedValue({ state: emptyVaultState() });
   mockMutateVault.mockResolvedValue(emptyVaultState());
 });

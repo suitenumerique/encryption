@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { generateDeviceKey, unwrapVrkForDevice, wrapVrkForDevice } from '@encryption/src/crypto/device-cache';
 
 describe('device-key VRK cache', () => {

@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { errorHandler } from '@encryption/src/server/server';
@@ -6,7 +7,7 @@ import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/s
 
 // env / prisma are mocked so importing server.ts (which pulls the routes) does
 // not run the real env validator or instantiate a database client under test.
-jest.mock('@encryption/src/server/env', () => ({
+vi.mock('@encryption/src/server/env', () => ({
   env: {
     VAULT_HOST: 'data.encryption.localhost',
     UI_HOST: 'encryption.localhost',
@@ -21,11 +22,7 @@ jest.mock('@encryption/src/server/env', () => ({
 // This suite only exercises the error handler, it never reaches a query, so it
 // stubs the client rather than booting the in-process database of the
 // route suites (src/prisma/testing.ts).
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: {} }));
-
-// jose is ESM-only and cannot be required by ts-jest (CommonJS); server.ts pulls
-// it in transitively via the jwt-auth plugin, so stub it out.
-jest.mock('jose', () => ({ createRemoteJWKSet: jest.fn(() => ({})), jwtVerify: jest.fn() }));
+vi.mock('@encryption/src/prisma/client', () => ({ prisma: {} }));
 
 function buildApp() {
   const app = Fastify();

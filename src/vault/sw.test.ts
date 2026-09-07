@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  *
  * The service worker keeps its logic internal (no exports, since it is
  * registered as a classic script and exports would break it). We therefore
@@ -8,6 +8,7 @@
  * `activate` event which schedules the version check and runs it once
  * immediately.
  */
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const VERSION_KEY = '/__internal__/known-version';
 const PRECACHE_URLS = ['/bridge.html', '/vault.js', '/client.js', '/client.mjs', '/client.d.ts'];
@@ -51,7 +52,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 describe('sw version check + atomic refresh', () => {
   let handlers: Record<string, (event: unknown) => void>;
   let cache: FakeCache;
-  let fetchMock: jest.Mock;
+  let fetchMock: Mock;
   let originalAddEventListener: typeof window.addEventListener;
 
   const activate = async () => {
@@ -69,7 +70,7 @@ describe('sw version check + atomic refresh', () => {
   };
 
   beforeEach(async () => {
-    jest.resetModules();
+    vi.resetModules();
 
     handlers = {};
     cache = new FakeCache();
@@ -81,23 +82,22 @@ describe('sw version check + atomic refresh', () => {
     };
 
     // Neutralize the 5-minute interval; checkForUpdate() still runs once directly.
-    jest.spyOn(window, 'setInterval').mockReturnValue(0 as unknown as ReturnType<typeof setInterval>);
+    vi.spyOn(window, 'setInterval').mockReturnValue(0 as unknown as ReturnType<typeof setInterval>);
 
     (window as unknown as { clients: unknown }).clients = { claim: () => Promise.resolve() };
     (globalThis as unknown as { caches: unknown }).caches = { open: async () => cache };
     (globalThis as unknown as { Response: unknown }).Response = MockResponse;
 
-    fetchMock = jest.fn();
+    fetchMock = vi.fn();
     (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
 
-    await jest.isolateModulesAsync(async () => {
-      await import('@encryption/src/vault/sw');
-    });
+    vi.resetModules();
+    await import('@encryption/src/vault/sw');
   });
 
   afterEach(() => {
     (window as unknown as { addEventListener: unknown }).addEventListener = originalAddEventListener;
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   const versionResponse = (version: string) => new MockResponse(JSON.stringify({ version }), { ok: true });

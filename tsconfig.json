@@ -10,7 +10,7 @@
       "@encryption/*": ["./*"]
     },
     "typeRoots": ["node_modules/@types", "./src/@types"],
-    "types": ["jest", "node"],
+    "types": ["node"],
     "allowJs": true,
     "sourceMap": true,
     "declaration": false,

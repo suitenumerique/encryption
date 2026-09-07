@@ -19,7 +19,7 @@ const isDev = process.env.NODE_ENV === 'development';
 // rather than an opaque 500.
 function isBase64DecodeError(error: unknown): boolean {
   // Structural check (not instanceof): atob throws a DOMException, which does not
-  // reliably satisfy `instanceof Error` across VM realms (e.g. under Jest).
+  // reliably satisfy `instanceof Error` across VM realms (e.g. under the test runner).
   return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'InvalidCharacterError';
 }
 

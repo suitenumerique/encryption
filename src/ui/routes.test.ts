@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { PATH_FOR_ROUTE, getRouteFromPath } from '@encryption/src/ui/routes';
 
 describe('interface routes', () => {

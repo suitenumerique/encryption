@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { PrismaPGlite } from 'pglite-prisma-adapter';
+import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { PrismaClient } from '@encryption/src/generated/prisma/client';
 import { TEST_DATABASE_SNAPSHOT_PATH } from '@encryption/src/prisma/testing-schema';
@@ -12,7 +13,7 @@ import { TEST_DATABASE_SNAPSHOT_PATH } from '@encryption/src/prisma/testing-sche
  * engine (enums, cascades, unique constraints, transactions, `@db.Uuid`) with
  * no Docker and no daemon. Each SUITE restores the schema-only snapshot built
  * by the global setup (~120 ms) and empties its tables between tests (~7 ms),
- * so files stay independent and jest keeps scheduling them across workers with
+ * so files stay independent and the runner keeps scheduling them across workers with
  * no coordination, which is what makes `--maxWorkers` still worth raising in CI.
  *
  * Sharing one engine per worker instead was measured and rejected: the engine
@@ -43,7 +44,7 @@ function requireClient(): PrismaClient {
 }
 
 /**
- * The client itself, for the rare test that must spy on it (`jest.spyOn` needs
+ * The client itself, for the rare test that must spy on it (`vi.spyOn` needs
  * the real object, the proxy below hands back bound copies). Use `testPrisma`
  * everywhere else.
  */
@@ -52,7 +53,7 @@ export function testPrismaClient(): PrismaClient {
 }
 
 // Stands in for the `prisma` singleton so a suite can mock the client module
-// before the database exists (jest.mock factories run at import time, the
+// before the database exists (vi.mock factories run at import time, the
 // database is restored in beforeAll).
 export const testPrisma = new Proxy({} as PrismaClient, {
   get(_target, property) {

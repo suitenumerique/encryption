@@ -1,6 +1,8 @@
 /**
- * @jest-environment jsdom
+ * @vitest-environment jsdom
  */
+import { type Mock, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { RUNTIME_CONFIG_ELEMENT_ID } from '@encryption/src/shared/runtime-config';
 import type { refreshTokenWithLock as RefreshTokenWithLock, TokenSet } from '@encryption/src/ui/auth/oidc-client';
 
@@ -11,7 +13,7 @@ function makeJwt(claims: Record<string, unknown>): string {
 
 describe('refreshTokenWithLock', () => {
   let refreshTokenWithLock: typeof RefreshTokenWithLock;
-  let fetchMock: jest.Mock;
+  let fetchMock: Mock;
 
   beforeAll(async () => {
     // The module reads the OIDC config off the runtime-config data block at load
@@ -36,7 +38,7 @@ describe('refreshTokenWithLock', () => {
   });
 
   beforeEach(() => {
-    fetchMock = jest.fn();
+    fetchMock = vi.fn();
     (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
 
     // Web Locks: run the callback immediately (single-tab test).
@@ -98,7 +100,7 @@ describe('refreshTokenWithLock', () => {
       sub: 'user-1',
     };
 
-    const persistToken = jest.fn();
+    const persistToken = vi.fn();
     const readStoredToken = async () => fresh;
 
     const result = await refreshTokenWithLock(staleToken(), readStoredToken, persistToken);
@@ -130,7 +132,7 @@ describe('refreshTokenWithLock', () => {
       }),
     });
 
-    const persistToken = jest.fn();
+    const persistToken = vi.fn();
     const readStoredToken = async () => storedExpired;
 
     await refreshTokenWithLock(staleToken(), readStoredToken, persistToken);
@@ -146,16 +148,16 @@ describe('refreshTokenWithLock', () => {
   it('reports a definitively rejected refresh token as InvalidGrantError', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'invalid_grant' }) });
 
-    await expect(refreshTokenWithLock(staleToken(), async () => null, jest.fn())).rejects.toMatchObject({ name: 'InvalidGrantError' });
+    await expect(refreshTokenWithLock(staleToken(), async () => null, vi.fn())).rejects.toMatchObject({ name: 'InvalidGrantError' });
   });
 
   it('does NOT report a transient failure as InvalidGrantError', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
 
-    await expect(refreshTokenWithLock(staleToken(), async () => null, jest.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
+    await expect(refreshTokenWithLock(staleToken(), async () => null, vi.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
 
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
-    await expect(refreshTokenWithLock(staleToken(), async () => null, jest.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
+    await expect(refreshTokenWithLock(staleToken(), async () => null, vi.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
   });
 });

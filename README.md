@@ -120,7 +120,7 @@ It's not designed to release a new version, but to test most of the pipeline (pa
 - **Server**: Fastify, Prisma 7 + PostgreSQL, esbuild (single .mjs bundle in production)
 - **Frontend**: React, Cunningham (French gov design system) + UI Kit, i18next, MDX docs
 - **Build**: Vite (vault, UI, client SDK, demo), esbuild (server)
-- **Tests**: Jest + ts-jest
+- **Tests**: Vitest (unit, Node) + Vitest browser mode via `@storybook/addon-vitest` (stories, Chromium/Playwright)
 - **Auth**: OIDC provider JWT (production), Keycloak (local dev)
 
 ## Security model

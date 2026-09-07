@@ -15,14 +15,16 @@
  * decrypts the same bytes (we did not re-encrypt content; only the
  * wrapping changed).
  */
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleEncryptNestedWithoutKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { handleRewrapNestedKey } from '@encryption/src/vault/operations/rewrap-nested-key';
 
-jest.mock('@encryption/src/vault/operations/key-management', () => {
-  return { getStoredKeyPair: jest.fn() };
+vi.mock('@encryption/src/vault/operations/key-management', () => {
+  return { getStoredKeyPair: vi.fn() };
 });
 
 const USER_ID = 'user-alice';
@@ -36,13 +38,13 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 async function setupKeyPair(): Promise<ArrayBuffer> {
   const pair = await generateUserKeyPair();
-  (getStoredKeyPair as jest.Mock).mockResolvedValue(pair);
+  (getStoredKeyPair as Mock).mockResolvedValue(pair);
   return base64ToArrayBuffer(exportPublicKeyAsBase64(pair.publicKey));
 }
 
 describe('handleRewrapNestedKey', () => {
   beforeEach(() => {
-    (getStoredKeyPair as jest.Mock).mockReset();
+    (getStoredKeyPair as Mock).mockReset();
   });
 
   it('moves a deep file under a sibling: file content stays decryptable through the new chain', async () => {

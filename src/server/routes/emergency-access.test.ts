@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { type Mock, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type EmergencyEscrowRecord, sha256, signEmergencyEscrow } from '@encryption/src/crypto/emergency-escrow';
 import { base64ToUint8, exportPublicKeyAsBase64, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
@@ -19,13 +20,15 @@ import {
   API_ERROR_RATE_LIMIT_EMERGENCY,
 } from '@encryption/src/shared/error-codes';
 
-jest.mock('@encryption/src/server/env', () => ({ env: { EMAIL_PRODUCT_URL: 'http://localhost:7201' } }));
+vi.mock('@encryption/src/server/env', () => ({ env: { EMAIL_PRODUCT_URL: 'http://localhost:7201' } }));
 
-// Shared manual mock: every send is an inert jest.fn; several cases here assert
+// Shared manual mock: every send is an inert vi.fn; several cases here assert
 // on whether a notification was attempted, or make one fail on purpose.
-jest.mock('@encryption/src/server/email/emergency');
+vi.mock('@encryption/src/server/email/emergency');
 
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
 useTestDatabase();
 
@@ -192,7 +195,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
 
   const grantor = await seedOnboardedUser(GRANTOR_ID, 'grantor@mail.test', grantorIdentity, 'french');
   await seedOnboardedUser(GRANTEE_ID, 'grantee@mail.test', granteeIdentity, 'english');
@@ -453,7 +456,7 @@ describe('POST /:id/initiate (contact-signed)', () => {
   it('fails the whole call, leaving the row untouched, when the grantor cannot be notified', async () => {
     const app = buildApp(GRANTEE_ID);
     await seedRelationship(grantorVaultId, { status: 'confirmed' });
-    (sendEmergencyRecoveryRequested as jest.Mock).mockRejectedValueOnce(new Error('smtp down'));
+    (sendEmergencyRecoveryRequested as Mock).mockRejectedValueOnce(new Error('smtp down'));
 
     const url = `/api/emergency-access/${ROW_ID}/initiate`;
     const res = await app.inject({ method: 'POST', url, headers: await sigHeaders(granteeIdentity, GRANTEE_ID, 'POST', url) });

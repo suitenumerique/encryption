@@ -1,15 +1,17 @@
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { STORE_USER_ALIAS } from '@encryption/src/shared/constants';
 import { VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { rememberUserAlias, resolveBoundaryUser, resolveInternalUserId } from '@encryption/src/vault/user-resolution';
 
-const mockDbGet = jest.fn();
-const mockDbPut = jest.fn();
+const mockDbGet = vi.fn();
+const mockDbPut = vi.fn();
 
-jest.mock('@encryption/src/crypto/encryption-db', () => ({
+vi.mock('@encryption/src/crypto/encryption-db', () => ({
   getEncryptionDB: async () => ({ get: mockDbGet, put: mockDbPut }),
 }));
 
-const mockFetch = jest.fn();
+const mockFetch = vi.fn();
 
 // The registry answer for one sub, as /api/public-keys?subs= would shape it.
 function registryHit(sub: string, userId: string) {
@@ -26,7 +28,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   mockDbGet.mockResolvedValue(undefined);
   mockDbPut.mockResolvedValue(undefined);
   mockFetch.mockResolvedValue(registryMiss);

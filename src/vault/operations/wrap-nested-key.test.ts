@@ -7,14 +7,16 @@
  * encrypted subtree, so `K_item` must be wrapped under the destination
  * parent's chain instead.
  */
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleEncryptNestedWithoutKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 
-jest.mock('@encryption/src/vault/operations/key-management', () => {
-  return { getStoredKeyPair: jest.fn() };
+vi.mock('@encryption/src/vault/operations/key-management', () => {
+  return { getStoredKeyPair: vi.fn() };
 });
 
 const USER_ID = 'user-alice';
@@ -28,13 +30,13 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 async function setupKeyPair(): Promise<ArrayBuffer> {
   const pair = await generateUserKeyPair();
-  (getStoredKeyPair as jest.Mock).mockResolvedValue(pair);
+  (getStoredKeyPair as Mock).mockResolvedValue(pair);
   return base64ToArrayBuffer(exportPublicKeyAsBase64(pair.publicKey));
 }
 
 describe('handleWrapNestedKey', () => {
   beforeEach(() => {
-    (getStoredKeyPair as jest.Mock).mockReset();
+    (getStoredKeyPair as Mock).mockReset();
   });
 
   it('wraps a self-rooted file under a destination parent chain', async () => {

@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { jwtVerify } from 'jose';
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { testPrisma, testPrismaClient, useTestDatabase } from '@encryption/src/prisma/testing';
 import { env } from '@encryption/src/server/env';
@@ -7,14 +8,14 @@ import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 
 // jose is mocked so the plugin's control flow (issuer/azp/sub checks) is tested
 // without a real JWKS fetch or signature verification.
-jest.mock('jose', () => ({
-  createRemoteJWKSet: jest.fn(() => ({})),
-  jwtVerify: jest.fn(),
+vi.mock('jose', () => ({
+  createRemoteJWKSet: vi.fn(() => ({})),
+  jwtVerify: vi.fn(),
 }));
 
 // env is mocked so importing the plugin does not pull the real env validator
 // (which would exit the process when the vars are absent under test).
-jest.mock('@encryption/src/server/env', () => ({
+vi.mock('@encryption/src/server/env', () => ({
   env: {
     OIDC_JWKS_URL: 'https://issuer.example/.well-known/jwks.json',
     OIDC_ISSUER: 'https://issuer.example',
@@ -24,15 +25,17 @@ jest.mock('@encryption/src/server/env', () => ({
   },
 }));
 
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
 const mutableEnv = env as unknown as Record<string, unknown>;
 
-const mockJwtVerify = jwtVerify as jest.Mock;
+const mockJwtVerify = jwtVerify as Mock;
 
 // The plugin's userinfo fallback (discovery + userinfo endpoint) goes through
 // global fetch; default to "network down" so only tests that opt in exercise it.
-const mockFetch = jest.fn();
+const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
 const ISSUER = 'https://issuer.example';
@@ -97,8 +100,8 @@ describe('jwtAuthPlugin', () => {
   useTestDatabase();
 
   beforeEach(() => {
-    jest.restoreAllMocks();
-    jest.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
     mockFetch.mockReset().mockRejectedValue(new Error('no network in unit tests'));
     mutableEnv.OIDC_ACCEPT_UNVERIFIED_EMAIL = false;
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = false;
@@ -289,7 +292,7 @@ describe('jwtAuthPlugin', () => {
 
     // Only the FIRST lookup misses; the spy calls through afterwards, so the
     // recovery path reads the winner from the database like it would in life.
-    jest.spyOn(testPrismaClient().oidcAccount, 'findUnique').mockImplementationOnce((async () => null) as never);
+    vi.spyOn(testPrismaClient().oidcAccount, 'findUnique').mockImplementationOnce((async () => null) as never);
 
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'racer' }) });
 
@@ -304,7 +307,7 @@ describe('jwtAuthPlugin', () => {
   it('403s (not 500) when the race winner is a retired credential', async () => {
     await seedAccount({ subject: 'racer-retired', disabledAt: new Date() });
 
-    jest.spyOn(testPrismaClient().oidcAccount, 'findUnique').mockImplementationOnce((async () => null) as never);
+    vi.spyOn(testPrismaClient().oidcAccount, 'findUnique').mockImplementationOnce((async () => null) as never);
 
     mockJwtVerify.mockResolvedValue({ payload: tokenPayload({ sub: 'racer-retired' }) });
 

@@ -1,4 +1,5 @@
 import sodium from 'libsodium-wrappers-sumo';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import type { SealedItem } from '@encryption/src/crypto/vault-manifest';

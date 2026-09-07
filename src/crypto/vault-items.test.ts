@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { itemsToState, stateToItems } from '@encryption/src/crypto/vault-items';
 import { addEncryptionKey, addIdentity, emptyVaultState, mergeVaultState, setTofu } from '@encryption/src/crypto/vault-state';
 

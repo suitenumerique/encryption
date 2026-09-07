@@ -1,10 +1,11 @@
 import nodemailer, { Transporter } from 'nodemailer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type EmailServerSettings, Mailer } from '@encryption/src/server/email/mailer';
 import { EmergencyAcceptedEmail } from '@encryption/src/server/email/templates/EmergencyAccepted';
 
 // The module singleton reads the server env at import time; tests build their own instances
-jest.mock('@encryption/src/server/env', () => ({ env: {} }));
+vi.mock('@encryption/src/server/env', () => ({ env: {} }));
 
 const defaultSender = 'Chiffrement <noreply@example.com>';
 const smtpSettings = { host: 'primary.example.com', port: 25, user: '', password: '' };
@@ -21,7 +22,7 @@ function sendOptions() {
 describe('Mailer', () => {
   it('sends a rendered email with both html and text bodies', async () => {
     const transport = nodemailer.createTransport({ jsonTransport: true });
-    const sendMailSpy = jest.spyOn(transport, 'sendMail');
+    const sendMailSpy = vi.spyOn(transport, 'sendMail');
 
     const mailer = new Mailer({ defaultSender, smtp: smtpSettings, createTransport: () => transport });
 
@@ -40,10 +41,10 @@ describe('Mailer', () => {
   });
 
   it('retries on the fallback transport when the primary fails', async () => {
-    const failing = { sendMail: jest.fn().mockRejectedValue(new Error('primary is down')) } as unknown as Transporter;
+    const failing = { sendMail: vi.fn().mockRejectedValue(new Error('primary is down')) } as unknown as Transporter;
     const recording = nodemailer.createTransport({ jsonTransport: true });
-    const recordingSpy = jest.spyOn(recording, 'sendMail');
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const recordingSpy = vi.spyOn(recording, 'sendMail');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const mailer = new Mailer({
       defaultSender,
@@ -59,8 +60,8 @@ describe('Mailer', () => {
   });
 
   it('retries on the primary transport when no fallback is configured, then rethrows', async () => {
-    const failing = { sendMail: jest.fn().mockRejectedValue(new Error('primary is down')) } as unknown as Transporter;
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const failing = { sendMail: vi.fn().mockRejectedValue(new Error('primary is down')) } as unknown as Transporter;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const mailer = new Mailer({ defaultSender, smtp: smtpSettings, createTransport: () => failing });
 
@@ -74,7 +75,7 @@ describe('Mailer', () => {
     // multipart assembly or a mis-encoded accented subject. Neither needs a
     // server: nodemailer's own SMTP client is not our code to test.
     const transport = nodemailer.createTransport({ streamTransport: true, buffer: true });
-    const sendMailSpy = jest.spyOn(transport, 'sendMail');
+    const sendMailSpy = vi.spyOn(transport, 'sendMail');
     const mailer = new Mailer({ defaultSender, smtp: smtpSettings, createTransport: () => transport });
 
     await mailer.send({ ...sendOptions(), subject: 'Accès d’urgence accepté' });
@@ -120,6 +121,6 @@ describe('Mailer', () => {
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 });

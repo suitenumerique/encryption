@@ -1,13 +1,16 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { meRoute } from '@encryption/src/server/routes/me';
 import { createTestApiClient } from '@encryption/src/server/testing/inject-client';
 import { getApiMe } from '@encryption/src/ui/api/generated/sdk.gen';
 
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
-const mockVerifyJWT = jest.fn();
+const mockVerifyJWT = vi.fn();
 
 describe('GET /api/me', () => {
   useTestDatabase();
@@ -29,7 +32,7 @@ describe('GET /api/me', () => {
     await app.close();
   });
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => vi.clearAllMocks());
 
   it('returns the INTERNAL user id and email resolved by verifyJWT', async () => {
     const user = await testPrisma.user.create({ data: { email: 'user@example.org' } });

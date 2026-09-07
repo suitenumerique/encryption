@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 
 describe('interfaceContextSchema', () => {

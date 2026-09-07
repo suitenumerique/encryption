@@ -1,4 +1,5 @@
 import sodium from 'libsodium-wrappers-sumo';
+import { describe, expect, it } from 'vitest';
 
 import { ensureSodium, generateUserKeyPair, hybridDecapsulate } from '@encryption/src/crypto/encryption';
 import { computeChallengeResponse, createKeyPossessionChallenge, verifyChallengeResponse } from '@encryption/src/crypto/key-possession-challenge';

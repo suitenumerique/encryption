@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+
 import { generateUserKeyPair } from '@encryption/src/crypto';
 import { exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
 import { deviceKeyDecimalFingerprint, unwrapBootstrapOnNewDevice, wrapBootstrapForNewDevice } from '@encryption/src/vault/operations/device-approval';

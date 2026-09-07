@@ -1,6 +1,7 @@
 import { renderToMjml } from '@faire/mjml-react/utils/renderToMjml';
 import mjml2html from 'mjml';
 import { ReactElement } from 'react';
+import { describe, expect, it } from 'vitest';
 
 import { EmergencyAcceptedEmail, subject as acceptedSubject } from '@encryption/src/server/email/templates/EmergencyAccepted';
 import { EmergencyDeclinedEmail, subject as declinedSubject } from '@encryption/src/server/email/templates/EmergencyDeclined';

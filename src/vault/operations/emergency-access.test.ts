@@ -1,3 +1,5 @@
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import {
   type EmergencyEscrowRecord,
   sha256,
@@ -18,20 +20,20 @@ import { fetchContinuityChain, handleFetchPublicKeys } from '@encryption/src/vau
 import { handleCheckFingerprints } from '@encryption/src/vault/operations/fingerprint-registry';
 import { deriveKeyring, loadWithIdentity } from '@encryption/src/vault/operations/onboarding';
 
-jest.mock('@encryption/src/vault/operations/fetch-public-keys');
-jest.mock('@encryption/src/vault/operations/fingerprint-registry');
+vi.mock('@encryption/src/vault/operations/fetch-public-keys');
+vi.mock('@encryption/src/vault/operations/fingerprint-registry');
 // The real deriveKeyring runs the full Argon2id KDF (64 MiB); the fake keeps
 // the identical CONTRACT (fresh phrase, identity-bound auth key) at test speed.
-jest.mock('@encryption/src/vault/operations/onboarding', () => ({
-  loadWithIdentity: jest.fn(),
-  deriveKeyring: jest.fn(),
+vi.mock('@encryption/src/vault/operations/onboarding', () => ({
+  loadWithIdentity: vi.fn(),
+  deriveKeyring: vi.fn(),
 }));
 
-const mockFetchPublicKeys = handleFetchPublicKeys as jest.Mock;
-const mockCheckFingerprints = handleCheckFingerprints as jest.Mock;
-const mockFetchContinuityChain = fetchContinuityChain as jest.Mock;
-const mockLoadWithIdentity = loadWithIdentity as jest.Mock;
-const mockDeriveKeyring = deriveKeyring as jest.Mock;
+const mockFetchPublicKeys = handleFetchPublicKeys as Mock;
+const mockCheckFingerprints = handleCheckFingerprints as Mock;
+const mockFetchContinuityChain = fetchContinuityChain as Mock;
+const mockLoadWithIdentity = loadWithIdentity as Mock;
+const mockDeriveKeyring = deriveKeyring as Mock;
 
 const GRANTOR_ID = 'grantor-user';
 const GRANTEE_ID = 'grantee-user';
@@ -63,7 +65,7 @@ function directoryEntry(identity: SigKeyPair, kem: KemKeyPair, userId: string, o
 }
 
 beforeEach(async () => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   grantorIdentity = await generateSignatureKeyPair();
   granteeIdentity = await generateSignatureKeyPair();
   granteeKem = await generateUserKeyPair();

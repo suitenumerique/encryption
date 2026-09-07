@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import sodium from 'libsodium-wrappers-sumo';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { generateUserKeyPair } from '@encryption/src/crypto/encryption';
 import { exportPublicKeyAsBase64, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
@@ -22,11 +23,11 @@ import { createVault, deriveStoredKeyPair, loadVault } from '@encryption/src/vau
 // Accept/refuse fingerprint are write-through (they push via the sync engine).
 // Unit tests have no server, so stand in a `handleSync` that just applies the
 // write-through mutation locally (as a successful push would) and reports ok.
-jest.mock('@encryption/src/vault/operations/vault-sync-run', () => {
-  const actual = jest.requireActual('@encryption/src/vault/vault-keys');
+vi.mock('@encryption/src/vault/operations/vault-sync-run', async () => {
+  const actual = await vi.importActual<typeof import('@encryption/src/vault/vault-keys')>('@encryption/src/vault/vault-keys');
 
   return {
-    handleSync: async (userId: string, payload?: { mutate?: (s: unknown) => unknown }) => {
+    handleSync: async (userId: string, payload?: { mutate?: Parameters<(typeof import('@encryption/src/vault/vault-keys'))['mutateVault']>[1] }) => {
       if (payload?.mutate) await actual.mutateVault(userId, payload.mutate);
 
       return { status: 'ok', revision: 0 };
@@ -39,7 +40,7 @@ beforeAll(async () => {
 });
 
 // generate/import broadcast on a shared BroadcastChannel; close it so the open
-// handle doesn't keep jest alive.
+// handle doesn't keep the runner alive.
 afterAll(() => {
   closeVaultBroadcastChannel();
 });

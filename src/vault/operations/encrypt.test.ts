@@ -8,17 +8,19 @@
  *   - handleEncryptWithKey (symmetric use of an existing key, flat + chain)
  *
  * The handlers normally read the user's key pair from IndexedDB. Since
- * IndexedDB isn't available in the Jest node environment, we stub the
+ * IndexedDB isn't available in the node test environment, we stub the
  * key-management module to return a freshly-generated pair.
  */
+import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleEncryptNestedWithoutKey, handleEncryptWithKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 
-// Mock BEFORE importing the handlers (Jest hoists jest.mock to the top of the file).
-jest.mock('@encryption/src/vault/operations/key-management', () => {
-  return { getStoredKeyPair: jest.fn() };
+// Mock BEFORE importing the handlers (Vitest hoists vi.mock to the top of the file).
+vi.mock('@encryption/src/vault/operations/key-management', () => {
+  return { getStoredKeyPair: vi.fn() };
 });
 
 const USER_ID = 'user-alice';
@@ -33,7 +35,7 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 async function setupKeyPair(): Promise<ArrayBuffer> {
   const pair = await generateUserKeyPair();
-  (getStoredKeyPair as jest.Mock).mockResolvedValue(pair);
+  (getStoredKeyPair as Mock).mockResolvedValue(pair);
   return base64ToArrayBuffer(exportPublicKeyAsBase64(pair.publicKey));
 }
 
@@ -48,7 +50,7 @@ function asBuffer(view: ArrayBuffer | Uint8Array): ArrayBuffer {
 
 describe('vault encrypt operations', () => {
   beforeEach(() => {
-    (getStoredKeyPair as jest.Mock).mockReset();
+    (getStoredKeyPair as Mock).mockReset();
   });
 
   describe('handleEncryptWithoutKey (root)', () => {
@@ -73,7 +75,7 @@ describe('vault encrypt operations', () => {
     });
 
     it('rejects when no key pair is stored', async () => {
-      (getStoredKeyPair as jest.Mock).mockResolvedValue(null);
+      (getStoredKeyPair as Mock).mockResolvedValue(null);
 
       await expect(
         handleEncryptWithoutKey(USER_ID, {

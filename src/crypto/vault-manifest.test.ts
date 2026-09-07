@@ -1,4 +1,5 @@
 import sodium from 'libsodium-wrappers-sumo';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';

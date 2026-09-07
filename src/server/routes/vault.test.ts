@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { randomBytes } from 'node:crypto';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { uint8ToBase64 } from '@encryption/src/crypto';
 import { sha256, signEmergencyEscrow } from '@encryption/src/crypto/emergency-escrow';
@@ -27,17 +28,19 @@ import {
 
 // The keyring rewrite fires recovery notifications after a burn + re-arm; the
 // shared manual mock (src/server/email/__mocks__/emergency.ts) makes them inert.
-jest.mock('@encryption/src/server/email/emergency');
+vi.mock('@encryption/src/server/email/emergency');
 
 // The server-push notifier is exercised as a spy here (does a successful write
 // wake other devices?); the real SSE delivery is covered in the integration test.
-jest.mock('@encryption/src/server/vault-notify', () => ({
-  addVaultListener: jest.fn(),
-  removeVaultListener: jest.fn(),
-  notifyVaultChanged: jest.fn(),
+vi.mock('@encryption/src/server/vault-notify', () => ({
+  addVaultListener: vi.fn(),
+  removeVaultListener: vi.fn(),
+  notifyVaultChanged: vi.fn(),
 }));
 
-jest.mock('@encryption/src/prisma/client', () => ({ prisma: jest.requireActual('@encryption/src/prisma/testing').testPrisma }));
+vi.mock('@encryption/src/prisma/client', async () => ({
+  prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
+}));
 
 useTestDatabase();
 
@@ -241,7 +244,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   await testPrisma.user.create({ data: { id: USER_ID, email: 'vault@example.org' } });
 });
 
