@@ -152,19 +152,18 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
   // Restore token from interface's own localStorage (not the vault).
   // This avoids re-authentication when the iframe is recreated (page refresh, modal close/open).
-  const [tokenRestoreAttempted, setTokenRestoreAttempted] = useState(false);
+  const [restoreAttemptedFor, setRestoreAttemptedFor] = useState<string | null>(null);
+  const tokenRestoreAttempted = restoreAttemptedFor !== null;
 
-  useEffect(() => {
-    if (!parentContext.suiteUserId || oidcAuth.token) return;
+  if (parentContext.suiteUserId && !oidcAuth.token && restoreAttemptedFor !== parentContext.suiteUserId) {
+    setRestoreAttemptedFor(parentContext.suiteUserId);
 
     const stored = readToken(parentContext.suiteUserId);
 
     if (stored && stored.sub === parentContext.suiteUserId) {
       updateTokenSet(stored);
     }
-
-    setTokenRestoreAttempted(true);
-  }, [parentContext.suiteUserId, oidcAuth.token, updateTokenSet]);
+  }
 
   // If the parent never completes the auth-context handshake (suiteUserId never
   // arrives), the token-restore effect above never runs, so tokenRestoreAttempted

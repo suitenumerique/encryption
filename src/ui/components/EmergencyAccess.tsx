@@ -656,9 +656,7 @@ export function EmergencyAccess({
     return () => clearInterval(interval);
   }, []);
 
-  const loadLists = useCallback(async () => {
-    setLoadError(null);
-
+  const fetchLists = useCallback(async () => {
     try {
       const [trustedRes, grantedRes] = await withFreshToken(getToken, (token) =>
         Promise.all([fetchTrustedContacts(token), fetchGrantedVaults(token)])
@@ -677,9 +675,20 @@ export function EmergencyAccess({
     }
   }, [getToken, markSessionExpired]);
 
+  const loadLists = useCallback(async () => {
+    setLoadError(null);
+
+    await fetchLists();
+  }, [fetchLists]);
+
   useEffect(() => {
-    loadLists();
-  }, [loadLists]);
+    // Wrapped in an async function rather than called directly: that puts the state
+    // writes behind an await, so the effect itself writes nothing synchronously and
+    // React does not have to render a second time before painting.
+    void (async () => {
+      await fetchLists();
+    })();
+  }, [fetchLists]);
 
   // Audit the escrow list in the vault (signature + pinned identity + key
   // version against the directory). Only rows on the ACTIVE vault are
@@ -711,28 +720,15 @@ export function EmergencyAccess({
     };
   }, [isReady, trusted, verifyEscrows]);
 
-  // Lead with the prompt when the SDK auto-opened the interface on actionable
-  // state. Handled once per delivery (the context can be re-sent).
-  const [prompt, setPrompt] = useState<'recovery' | 'invite' | null>(null);
-  const promptHandled = useRef(false);
-
-  useEffect(() => {
-    if (promptHandled.current || !emergencyPending) return;
-
-    // The vault signal only says WHICH prompt to lead with; the content always
-    // comes from OUR authenticated lists. Both branches wait for the relevant
-    // list and open only if it truly shows the state, so a spoofed signal can
-    // conjure neither prompt.
-    if (emergencyPending.recovery) {
-      if (trusted === null) return;
-      promptHandled.current = true;
-      if (trusted.some((c) => c.status === 'recoveryRequested' || c.status === 'recoveryApproved')) setPrompt('recovery');
-    } else if (emergencyPending.invitation) {
-      if (granted === null) return;
-      promptHandled.current = true;
-      if (granted.some((g) => g.status === 'invited')) setPrompt('invite');
-    }
-  }, [emergencyPending, trusted, granted]);
+  // Lead with the prompt when the SDK auto-opened the interface on actionable state.
+  const [promptDismissed, setPromptDismissed] = useState(false);
+  const prompt: 'recovery' | 'invite' | null = promptDismissed
+    ? null
+    : emergencyPending?.recovery && trusted?.some((c) => c.status === 'recoveryRequested' || c.status === 'recoveryApproved')
+      ? 'recovery'
+      : emergencyPending?.invitation && granted?.some((g) => g.status === 'invited')
+        ? 'invite'
+        : null;
 
   const runRowAction = useCallback(
     async (id: string, action: () => Promise<void>) => {
@@ -849,15 +845,15 @@ export function EmergencyAccess({
         }
       });
       setNotice(t('emergency.reject_done', { email: requests.map((r) => r.grantee_email).join(', ') }));
-      setPrompt(null);
+      setPromptDismissed(true);
       await loadLists();
     } catch (err) {
       if (err instanceof SessionExpiredError) {
         markSessionExpired();
-        setPrompt(null);
+        setPromptDismissed(true);
       } else {
         setActionError((err as Error).message);
-        setPrompt(null);
+        setPromptDismissed(true);
       }
     } finally {
       setBusyId(null);
@@ -973,7 +969,7 @@ export function EmergencyAccess({
 
       <Modal
         isOpen={prompt === 'invite'}
-        onClose={() => setPrompt(null)}
+        onClose={() => setPromptDismissed(true)}
         closeOnClickOutside={false}
         size={ModalSize.MEDIUM}
         title={t('emergency.prompt_invite_title')}
@@ -981,7 +977,7 @@ export function EmergencyAccess({
         <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
           <p style={{ fontSize: 14 }}>{t('emergency.prompt_invite_body')}</p>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button onClick={() => setPrompt(null)}>{t('emergency.btn_prompt_see_invite')}</Button>
+            <Button onClick={() => setPromptDismissed(true)}>{t('emergency.btn_prompt_see_invite')}</Button>
           </div>
         </div>
       </Modal>

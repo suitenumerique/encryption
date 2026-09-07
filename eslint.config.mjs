@@ -33,9 +33,6 @@ export default tseslint.config(
         version: '19.1.2',
       },
     },
-    rules: {
-      'react-hooks/set-state-in-effect': 'off',
-    },
   },
   prettier,
   {

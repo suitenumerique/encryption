@@ -238,16 +238,18 @@ export function ModalEncryptionOnboarding({
   // step so the user sees the deletion happened.
   const [hasJustReset, setHasJustReset] = useState(false);
 
-  // Update the step when hasExistingBackendKey changes (e.g., context
-  // message arrives after mount). Skip the redirect right after a reset —
-  // the parent hasn't refetched yet so `hasExistingBackendKey` would
-  // bounce the user back to the existing-key-choice step they just chose
-  // to leave behind.
-  useEffect(() => {
-    if (hasExistingBackendKey && (step === 'explanation' || step === 'checking-history' || step === 'previous-identity') && !hasJustReset) {
-      setStep('existing-key-choice');
-    }
-  }, [hasExistingBackendKey, step, hasJustReset]);
+  // Update the step when hasExistingBackendKey changes (e.g., context message
+  // arrives after mount). Skip the redirect right after a reset — the parent hasn't
+  // refetched yet so `hasExistingBackendKey` would bounce the user back to the
+  // existing-key-choice step they just chose to leave behind.
+  if (hasExistingBackendKey && (step === 'explanation' || step === 'checking-history' || step === 'previous-identity') && !hasJustReset) {
+    setStep('existing-key-choice');
+  }
+
+  // Right after a reset there is nothing to look up: go straight to enable.
+  if (!hasExistingBackendKey && step === 'checking-history' && hasJustReset) {
+    setStep('explanation');
+  }
 
   // Resolve the checking-history step AUTHORITATIVELY from the server (the
   // `hasExistingBackendKey` prop arrives async and may still be a stale false):
@@ -262,12 +264,9 @@ export function ModalEncryptionOnboarding({
   useEffect(() => {
     if (hasExistingBackendKey || step !== 'checking-history') return;
 
-    if (hasJustReset) {
-      setStep('explanation');
-
-      return;
-    }
-    if (historyChecked.current || !userId) return;
+    // The reset case is handled above, while rendering.
+    // Not done in the `useEffect` to have `useState` outside as expected by eslint
+    if (hasJustReset || historyChecked.current || !userId) return;
 
     historyChecked.current = true;
     (async () => {

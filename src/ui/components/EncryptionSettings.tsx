@@ -292,11 +292,22 @@ export function EncryptionSettings({
   //   - remote-diverged: the active key belongs to a different identity than
   //     this device (another device rotated/recreated it).
   // A network error is treated as in-sync so we never raise a false alarm.
+
+  // Re-enter the checking state when the identity under comparison changes.Done while rendering rather than from the effect:
+  // Not done in the `useEffect` to have `useState` outside as expected by eslint
+  const identityUnderCheck = `${userId ?? ''}|${fingerprint ?? ''}`;
+  const [checkedIdentity, setCheckedIdentity] = useState(identityUnderCheck);
+
+  if (identityUnderCheck !== checkedIdentity) {
+    setCheckedIdentity(identityUnderCheck);
+    setRemoteStatus('checking');
+  }
+
   useEffect(() => {
     if (!fingerprint || !userId) return;
 
     let cancelled = false;
-    setRemoteStatus('checking');
+
     fetchPublicKeys({ user_ids: [userId] })
       .then(async (data) => {
         const remote = data.keys[0];
