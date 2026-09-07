@@ -74,6 +74,23 @@ describe('securityHeadersPlugin', () => {
       expect(headers['strict-transport-security']).toBe('max-age=63072000; includeSubDomains');
     });
 
+    it('grants the narrow wasm-unsafe-eval on both iframe hosts', async () => {
+      for (const host of [VAULT_HOST, UI_HOST]) {
+        const csp = (await headersFor(host))['content-security-policy'] as string;
+        const scriptSrc = csp
+          .split(';')
+          .map((directive) => directive.trim())
+          .find((directive) => directive.startsWith('script-src'));
+
+        // Asserted whole rather than with toContain: libsodium compiles WebAssembly and
+        // its asm.js backup does not rescue a CSP refusal, so dropping this leaves the
+        // service unable to do any crypto, while `'unsafe-eval'` is a substring of
+        // `'wasm-unsafe-eval'` and only an equality check can prove the wider grant did
+        // not slip in alongside it.
+        expect(scriptSrc).toBe("script-src 'self' 'wasm-unsafe-eval'");
+      }
+    });
+
     it('omits ws: from connect-src and pins base-uri/form-action on the vault CSP', async () => {
       const headers = await headersFor(VAULT_HOST);
       const csp = headers['content-security-policy'] as string;
@@ -105,6 +122,12 @@ describe('securityHeadersPlugin', () => {
       const headers = await headersFor(VAULT_HOST);
 
       expect(headers['content-security-policy']).toContain("connect-src 'self' ws:");
+    });
+
+    it('keeps wasm-unsafe-eval alongside the HMR inline exception', async () => {
+      const headers = await headersFor(VAULT_HOST);
+
+      expect(headers['content-security-policy']).toContain("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'");
     });
 
     it('does not emit HSTS over dev plain-HTTP', async () => {

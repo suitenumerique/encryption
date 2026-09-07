@@ -57,8 +57,10 @@ Each domain runs in its own origin context. The browser guarantees that:
 
 <Alert severity="info" title="Content Security Policy">
   The vault uses the most restrictive CSP possible:<br/>
-  `default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors <allowed domains>`<br/>
-  No style, no image, no font — only the encryption script.
+  `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors <allowed domains>`<br/>
+  No style, no image, no font — only the encryption script. `'wasm-unsafe-eval'` is what lets the libsodium
+  WebAssembly module compile; it authorizes compiling WebAssembly and nothing else, and grants no network or DOM reach
+  of its own.
 </Alert>
 
 - **SRI (Subresource Integrity)** — the script hash is verified on every load

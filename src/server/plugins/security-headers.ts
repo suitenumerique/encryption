@@ -46,7 +46,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
 
     // In dev mode, Vite injects inline scripts for HMR — relax CSP to allow them.
     // The routing logic is still exercised so host-based dispatch is tested.
-    const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
+    const scriptSrc = isDev ? "'self' 'unsafe-inline' 'wasm-unsafe-eval'" : "'self' 'wasm-unsafe-eval'";
     // ws: is only needed for the Vite HMR WebSocket in dev; production never
     // connects to a WebSocket, so it must not widen connect-src there.
     const connectSrc = isDev ? "connect-src 'self' ws:" : "connect-src 'self'";
