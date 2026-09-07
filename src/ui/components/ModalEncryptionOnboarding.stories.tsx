@@ -1,5 +1,4 @@
 import { Meta, StoryFn } from '@storybook/react';
-import React from 'react';
 import { userEvent } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';

@@ -1,5 +1,5 @@
 import { Decorator, Meta, StoryFn } from '@storybook/react';
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';

@@ -157,6 +157,15 @@ export function EncryptionSettings({
     setChangePhraseStep('idle');
   }, []);
 
+  // Divergence between this device's identity and the server directory. The
+  // settings screen otherwise shows only the LOCAL key, so a disable/rotation
+  // performed from another device would go unnoticed here.
+  // remote-disabled: an identity was registered then disabled elsewhere (re-enable
+  // is legitimate). remote-never: no identity was EVER registered for this user
+  // (an orphaned local vault) — re-enabling would push a directory entry with no
+  // vault, so we only offer a clean re-onboard.
+  const [remoteStatus, setRemoteStatus] = useState<'checking' | 'in-sync' | 'remote-disabled' | 'remote-never' | 'remote-diverged'>('checking');
+  const [remoteFingerprint, setRemoteFingerprint] = useState<string | null>(null);
   const [reconciling, setReconciling] = useState(false);
   const [reconcileError, setReconcileError] = useState<string | null>(null);
 
@@ -218,15 +227,6 @@ export function EncryptionSettings({
 
   const [keysExist, setKeysExist] = useState<boolean | null>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
-  // Divergence between this device's identity and the server directory. The
-  // settings screen otherwise shows only the LOCAL key, so a disable/rotation
-  // performed from another device would go unnoticed here.
-  // remote-disabled: an identity was registered then disabled elsewhere (re-enable
-  // is legitimate). remote-never: no identity was EVER registered for this user
-  // (an orphaned local vault) — re-enabling would push a directory entry with no
-  // vault, so we only offer a clean re-onboard.
-  const [remoteStatus, setRemoteStatus] = useState<'checking' | 'in-sync' | 'remote-disabled' | 'remote-never' | 'remote-diverged'>('checking');
-  const [remoteFingerprint, setRemoteFingerprint] = useState<string | null>(null);
   const [showDangerZone, setShowDangerZone] = useState(false);
   // The safety fingerprint is revealed on demand, not shown by default.
   const [showFingerprint, setShowFingerprint] = useState(false);

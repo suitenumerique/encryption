@@ -124,7 +124,7 @@ export async function loadAndVerifyPossession(
 
   // Signature-key PoP: an Ed25519 signature over the challenge id, made by the
   // candidate identity key. Proves the caller holds the signature private key.
-  let signaturePopOk = false;
+  let signaturePopOk: boolean;
 
   try {
     const signatureRawKey = importPublicKeyFromBytes(challenge.signaturePublicKey);

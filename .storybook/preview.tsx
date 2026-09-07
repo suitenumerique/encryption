@@ -4,7 +4,7 @@ import '@gouvfr-lasuite/cunningham-react/style';
 import type { Preview } from '@storybook/react';
 import { mswLoader } from 'msw-storybook-addon/csf3';
 import { setupWorker } from 'msw/browser';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { addons } from 'storybook/preview-api';
 import { themes } from 'storybook/theming';

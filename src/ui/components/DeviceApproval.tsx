@@ -443,15 +443,13 @@ function EnrolledDeviceSide({
   const [noMatch, setNoMatch] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Start each visit to the manual screen with an empty code (the grid remounts
-  // fresh), so parent state can never drift from what the boxes show.
-  useEffect(() => {
-    if (mode === 'manual') {
-      setCodeInput('');
-      setCodeComplete(false);
-      setNoMatch(false);
-    }
-  }, [mode]);
+  // Start each visit to the manual screen with an empty code.
+  const enterManualEntry = useCallback(() => {
+    setMode('manual');
+    setCodeInput('');
+    setCodeComplete(false);
+    setNoMatch(false);
+  }, []);
 
   // One path for both scan and manual: the code is the new device's decimal
   // fingerprint. We fetch this account's pending requests, and the vault confirms
@@ -483,8 +481,9 @@ function EnrolledDeviceSide({
         }
 
         if (!matched) {
+          // Stop the camera so it does not re-scan the same code
+          if (mode === 'scan') enterManualEntry();
           setNoMatch(true);
-          setMode('manual'); // stop the camera so it does not re-scan the same code
 
           return;
         }
@@ -499,12 +498,12 @@ function EnrolledDeviceSide({
         setDone(true);
       } catch (err) {
         onError(err);
-        setMode('manual');
+        enterManualEntry();
       } finally {
         setIsPending(false);
       }
     },
-    [isPending, getToken, approveDevice, signRequest, onError]
+    [isPending, getToken, approveDevice, signRequest, onError, mode, enterManualEntry]
   );
 
   if (done) {
@@ -529,12 +528,12 @@ function EnrolledDeviceSide({
             onDecode={submitCode}
             onUnavailable={() => {
               setCameraAvailable(false);
-              setMode('manual');
+              enterManualEntry();
             }}
             t={t}
           />
           <div style={{ textAlign: 'center', marginTop: 8 }}>
-            <Button size="small" variant="tertiary" onClick={() => setMode('manual')}>
+            <Button size="small" variant="tertiary" onClick={enterManualEntry}>
               {t('device_approval.enter_code_instead')}
             </Button>
           </div>

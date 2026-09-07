@@ -156,7 +156,7 @@ export async function handleCheckFingerprints(
     // from the directory and see whether it leads from the recorded identity to
     // exactly this new fingerprint. Any fetch failure is swallowed so the mismatch
     // stays fail-safe (blocked).
-    let chain: ContinuityLink[] = [];
+    let chain: ContinuityLink[];
 
     try {
       chain = await fetchChain(remoteUserId);

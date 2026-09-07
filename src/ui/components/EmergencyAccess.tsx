@@ -689,15 +689,14 @@ export function EmergencyAccess({
 
     const auditable = trusted.filter((contact) => contact.vault_active !== false);
 
-    if (auditable.length === 0) {
-      setAudit({});
-
-      return;
-    }
-
     let cancelled = false;
 
-    verifyEscrows(auditable.map(({ id, grantee_user_id, wait_time_days, escrow }) => ({ id, grantee_user_id, wait_time_days, escrow })))
+    const audited =
+      auditable.length === 0
+        ? Promise.resolve({ results: [] as Awaited<ReturnType<typeof verifyEscrows>>['results'] })
+        : verifyEscrows(auditable.map(({ id, grantee_user_id, wait_time_days, escrow }) => ({ id, grantee_user_id, wait_time_days, escrow })));
+
+    audited
       .then(({ results }) => {
         if (!cancelled) setAudit(Object.fromEntries(results.map((r) => [r.id, r.status])));
       })
@@ -816,7 +815,7 @@ export function EmergencyAccess({
           await withFreshToken(getToken, (token) => rearmEmergencyEscrow(token, entry.id, rearmBody, signature));
         } catch (err) {
           if (isVaultError(err) && err.code === VaultErrorCode.UNTRUSTED_RECIPIENT) {
-            throw new Error(t('emergency.designate_untrusted'));
+            throw new Error(t('emergency.designate_untrusted'), { cause: err });
           }
           throw err;
         }

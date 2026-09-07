@@ -1,5 +1,4 @@
 import { Meta, StoryFn } from '@storybook/react';
-import React from 'react';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';

@@ -1,6 +1,6 @@
 import { type DocumentProps, usePDF } from '@react-pdf/renderer';
 import type { Decorator } from '@storybook/react';
-import React, { type ReactElement } from 'react';
+import { type ReactElement } from 'react';
 
 /**
  * Renders a story that IS a `@react-pdf/renderer` <Document> into a real PDF and

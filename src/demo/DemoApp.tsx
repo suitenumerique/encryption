@@ -84,11 +84,15 @@ function base64ToAb(s: string): ArrayBuffer {
 }
 
 export function DemoApp() {
-  const clientRef = useRef<VaultClient | null>(null);
+  const [vaultClient] = useState(() => new VaultClient({ vaultUrl: VAULT_URL, interfaceUrl: INTERFACE_URL, theme: 'light' }));
+  const [interfaceOpen, setInterfaceOpen] = useState(false);
   const [state, setState] = useState<EncryptionState>('not-connected');
   const [currentUser, setCurrentUser] = useState<DemoUser | null>(null);
   const currentUserRef = useRef<DemoUser | null>(null);
-  currentUserRef.current = currentUser;
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const [allDocuments, setAllDocuments] = useState<FakeDocument[]>([]);
@@ -150,8 +154,7 @@ export function DemoApp() {
 
   // Initialize vault client
   useEffect(() => {
-    const client = new VaultClient({ vaultUrl: VAULT_URL, interfaceUrl: INTERFACE_URL, theme: 'light' });
-    clientRef.current = client;
+    const client = vaultClient;
 
     client.on('vault:ready', () => {
       log('Vault ready');
@@ -202,7 +205,7 @@ export function DemoApp() {
       .catch((err) => log(`Init failed: ${(err as Error).message}`));
 
     return () => client.destroy();
-  }, [log]);
+  }, [log, vaultClient]);
 
   // Logout a user
   const handleLogout = useCallback(
@@ -224,7 +227,7 @@ export function DemoApp() {
   // instead of separate Login + Select steps.
   const handleSelectUser = useCallback(
     async (user: DemoUser) => {
-      const client = clientRef.current;
+      const client = vaultClient;
 
       if (!client) return;
 
@@ -269,27 +272,25 @@ export function DemoApp() {
         log(`Error checking keys: ${(err as Error).message}`);
       }
     },
-    [log, refreshLoginState]
+    [log, refreshLoginState, vaultClient]
   );
 
-  const [interfaceOpen, setInterfaceOpen] = useState(false);
-
   const handleOpenOnboarding = useCallback(() => {
-    if (!interfaceContainer || !clientRef.current) return;
-    clientRef.current.openOnboarding(interfaceContainer);
+    if (!interfaceContainer) return;
+    vaultClient.openOnboarding(interfaceContainer);
     setInterfaceOpen(true);
     log('Opening onboarding interface...');
-  }, [interfaceContainer, log]);
+  }, [interfaceContainer, log, vaultClient]);
 
   const handleOpenSettings = useCallback(() => {
-    if (!interfaceContainer || !clientRef.current) return;
-    clientRef.current.openSettings(interfaceContainer);
+    if (!interfaceContainer) return;
+    vaultClient.openSettings(interfaceContainer);
     setInterfaceOpen(true);
     log('Opening settings...');
-  }, [interfaceContainer, log]);
+  }, [interfaceContainer, log, vaultClient]);
 
   const handleCreateDocument = useCallback(async () => {
-    const client = clientRef.current;
+    const client = vaultClient;
     if (!client || !currentUser || !newDocTitle.trim() || !newDocContent.trim()) return;
 
     try {
@@ -335,11 +336,11 @@ export function DemoApp() {
       const msg = attentionMessage(err);
       if (msg) setAttention(msg);
     }
-  }, [currentUser, newDocTitle, newDocContent, log]);
+  }, [currentUser, newDocTitle, newDocContent, log, vaultClient]);
 
   const handleDecryptDocument = useCallback(
     async (doc: FakeDocument) => {
-      const client = clientRef.current;
+      const client = vaultClient;
       if (!client || !currentKeycloakId) return;
 
       try {
@@ -362,7 +363,7 @@ export function DemoApp() {
         if (msg) setAttention(msg);
       }
     },
-    [log, currentKeycloakId]
+    [log, currentKeycloakId, vaultClient]
   );
 
   // Apply a change to a document's access list. Newly added recipients get the
@@ -371,7 +372,7 @@ export function DemoApp() {
   // The creator's own key is always preserved so they never lock themselves out.
   const handleAccessesChange = useCallback(
     async (doc: FakeDocument, newAccesses: SharedAccess[]) => {
-      const client = clientRef.current;
+      const client = vaultClient;
       if (!client || !currentKeycloakId) return;
 
       try {
@@ -414,7 +415,7 @@ export function DemoApp() {
         log(`Sharing update failed: ${(err as Error).message}`);
       }
     },
-    [currentKeycloakId, log]
+    [currentKeycloakId, log, vaultClient]
   );
 
   const currentToken = currentUser ? getToken(currentUser.username) : null;
@@ -667,7 +668,7 @@ export function DemoApp() {
             onClose={() => setShareDoc(null)}
             documentTitle={shareDoc.title}
             currentUserId={currentToken?.userId ?? null}
-            vaultClient={clientRef.current}
+            vaultClient={vaultClient}
             resolveUserId={getKnownUserId}
             accesses={shareDoc.sharedWith}
             onAccessesChange={(newAccesses) => handleAccessesChange(shareDoc, newAccesses)}

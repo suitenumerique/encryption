@@ -479,7 +479,7 @@ export function ModalEncryptionOnboarding({
         if (prepError instanceof SessionExpiredError) {
           throw prepError;
         }
-        throw new Error(t('errors.vault.registration_failed'));
+        throw new Error(t('errors.vault.registration_failed'), { cause: prepError });
       }
 
       setOnboardingBundle(prepared);
@@ -959,7 +959,6 @@ export function ModalEncryptionOnboarding({
  * Shown during onboarding and key restoration to remind users
  * that browser extensions can potentially access page content.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function SecurityNotice({ t }: { t: TFunction }) {
   return (
     <div style={{ marginTop: 'var(--c--globals--spacings--sm)', marginBottom: 'var(--c--globals--spacings--sm)' }}>
