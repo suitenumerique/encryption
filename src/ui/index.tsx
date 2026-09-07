@@ -17,6 +17,15 @@ applyBrandFont();
 const isAuthRoute = window.location.pathname === '/login' || window.location.pathname === '/auth/callback';
 const isIframe = window.self !== window.top;
 
+// Revealing the direct-access warning.
+if (!isIframe && !isAuthRoute) {
+  const accessError = document.getElementById('access-error');
+  const root = document.getElementById('root');
+
+  if (accessError) accessError.style.display = 'block';
+  if (root) root.style.display = 'none';
+}
+
 if (isIframe || isAuthRoute) {
   const rootElement = document.getElementById('root');
 
