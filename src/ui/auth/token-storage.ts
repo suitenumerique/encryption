@@ -5,9 +5,16 @@
  * The vault stores only private keys and crypto — keeping auth tokens there would
  * break the architectural separation of concerns.
  *
- * Note: localStorage is partitioned per top-level site (Chrome 115+), so each
- * product embedding gets its own token session. This is acceptable — the OIDC
- * session is per-product anyway.
+ * localStorage is partitioned by the EMBEDDING page's top-level site (Chrome 115+),
+ * and every product is required to share one registrable domain (see the storage
+ * partitioning constraint in the README), so they all land in the SAME partition:
+ * one token session shared across the suite, not one per product. Signing in from
+ * one product therefore leaves the others signed in. The `suiteUserId` in the key is
+ * what separates users, not products.
+ *
+ * A product deployed outside that domain would get a bucket of its own, but it would
+ * also lose the shared vault keys, so that is a broken deployment rather than a
+ * supported mode.
  */
 import { type TokenSet, tokenSetSchema } from '@encryption/src/ui/auth/oidc-client';
 
