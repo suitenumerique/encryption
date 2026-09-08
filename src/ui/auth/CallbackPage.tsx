@@ -17,6 +17,7 @@ export function CallbackPage() {
   const [error, setError] = useState<string | null>(null);
   const [wrongUserExpectedSub, setWrongUserExpectedSub] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [unacknowledged, setUnacknowledged] = useState(false);
   const processed = useRef(false);
 
   useEffect(() => {
@@ -26,9 +27,18 @@ export function CallbackPage() {
     (async () => {
       try {
         const tokenSet = await handleCallback();
-        notifyAuthComplete(tokenSet);
+
         setSuccess(true);
-        setTimeout(() => window.close(), 1000);
+
+        // Closing only on an acknowledgement, never on a timer. See notifyAuthComplete:
+        // a tab that closes on success alone tells whoever opened it that the signed-in
+        // user matched the `expectedSub` they put in the URL, and it also hides the case
+        // where the token reached nobody.
+        if (await notifyAuthComplete(tokenSet)) {
+          window.close();
+        } else {
+          setUnacknowledged(true);
+        }
       } catch (err) {
         if (err instanceof WrongUserError) {
           setError('wrong_user');
@@ -68,7 +78,14 @@ export function CallbackPage() {
   if (success) {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.SUCCESS}>{t('auth.success')}</Alert>
+        <Alert type={unacknowledged ? VariantType.WARNING : VariantType.SUCCESS}>
+          {t(unacknowledged ? 'auth.not_acknowledged' : 'auth.success')}
+        </Alert>
+        {unacknowledged && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+            <Button onClick={() => window.close()}>{t('settings.close')}</Button>
+          </div>
+        )}
       </div>
     );
   }

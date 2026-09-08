@@ -20,6 +20,9 @@ const OIDC_CLIENT_ID = runtimeConfig.oidcClientId;
 const OIDC_REDIRECT_URI = runtimeConfig.oidcRedirectUri;
 
 export const OIDC_AUTH_MESSAGE_TYPE = 'encryption-oidc-auth-complete';
+export const OIDC_AUTH_ACK_MESSAGE_TYPE = 'encryption-oidc-auth-ack';
+
+const AUTH_ACK_TIMEOUT_MS = 5000;
 
 export const tokenSetSchema = z.object({
   accessToken: z.string(),
@@ -148,7 +151,20 @@ export async function handleCallback(): Promise<TokenSet> {
 }
 
 /**
- * Send auth completion back to the opener (the interface iframe).
+ * Send auth completion back to the opener (the interface iframe), and resolve to
+ * whether that opener acknowledged it.
+ *
+ * The `interfaceOrigin` second argument is the security boundary, not a formality:
+ * the browser compares it against the opener's CURRENT origin and drops the message
+ * on mismatch. Any page can open this flow in a popup, so replacing it with '*' would
+ * hand the full token set, refresh token included, to whoever opened the tab.
+ *
+ * The acknowledgement exists because the token set is otherwise posted blind. Only a
+ * document on our own origin can send it, so a foreign opener never produces one and
+ * the tab stays open instead of closing on a timer. That removes a signal an attacker
+ * could otherwise read off `window.closed` — the tab closed only when the signed-in
+ * `sub` matched the one they put in the URL — and it also stops a legitimate user from
+ * being left silently unauthenticated when the message reached nobody.
  *
  * Uses window.opener.postMessage(): the callback tab was opened via window.open()
  * from the interface iframe. This works cross-site because it is a direct window
@@ -158,11 +174,31 @@ export async function handleCallback(): Promise<TokenSet> {
  * the server omits COOP on /login and /auth/callback: any COOP on those documents
  * severs it during the Keycloak round trip.
  */
-export function notifyAuthComplete(tokenSet: TokenSet): void {
-  if (window.opener && OIDC_REDIRECT_URI) {
-    const interfaceOrigin = new URL(OIDC_REDIRECT_URI).origin;
+export function notifyAuthComplete(tokenSet: TokenSet): Promise<boolean> {
+  if (!window.opener || !OIDC_REDIRECT_URI) return Promise.resolve(false);
+
+  const interfaceOrigin = new URL(OIDC_REDIRECT_URI).origin;
+
+  return new Promise((resolve) => {
+    function settle(acknowledged: boolean) {
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      resolve(acknowledged);
+    }
+
+    function onMessage(event: MessageEvent) {
+      if (event.origin !== interfaceOrigin || (event.data as { type?: string } | null)?.type !== OIDC_AUTH_ACK_MESSAGE_TYPE) return;
+
+      settle(true);
+    }
+
+    const timer = setTimeout(() => settle(false), AUTH_ACK_TIMEOUT_MS);
+
+    // Listening BEFORE posting: the interface answers synchronously in its own message
+    // handler, so a listener registered afterwards can miss the acknowledgement.
+    window.addEventListener('message', onMessage);
     window.opener.postMessage({ type: OIDC_AUTH_MESSAGE_TYPE, tokenSet }, interfaceOrigin);
-  }
+  });
 }
 
 /**

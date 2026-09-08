@@ -426,6 +426,7 @@
     "popup_blocked": "The sign-in window could not open. Please allow pop-ups for this site, then try again.",
     "success": "Authentication successful! You can close this tab.",
     "wrong_user": "You are signed in with a different account than the one used in the application. Please sign in with the correct account.",
+    "not_acknowledged": "Signed in, but the encryption interface did not confirm it received the result. Go back to the previous tab and try again, then close this one.",
     "sign_in_another_account": "Sign in with another account",
     "no_user_context": "The application did not provide user context. The encryption interface cannot work without knowing which user is authenticated. Please make sure you are logged in to the application.",
     "reconnect": "Reconnect"

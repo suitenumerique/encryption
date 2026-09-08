@@ -426,6 +426,7 @@
     "popup_blocked": "La fenêtre de connexion n'a pas pu s'ouvrir. Veuillez autoriser les fenêtres contextuelles pour ce site, puis réessayez.",
     "success": "Authentification réussie ! Vous pouvez fermer cet onglet.",
     "wrong_user": "Vous êtes connecté avec un compte différent de celui utilisé dans l'application. Veuillez vous connecter avec le bon compte.",
+    "not_acknowledged": "Connexion réussie, mais l'interface de chiffrement n'a pas confirmé avoir reçu le résultat. Retournez à l'onglet précédent et réessayez, puis fermez celui-ci.",
     "sign_in_another_account": "Se connecter avec un autre compte",
     "no_user_context": "L'application n'a pas fourni le contexte utilisateur. L'interface de chiffrement ne peut pas fonctionner sans savoir quel utilisateur est authentifié. Veuillez vous assurer d'être connecté à l'application.",
     "reconnect": "Se reconnecter"

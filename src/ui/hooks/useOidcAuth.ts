@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import i18n from '@encryption/src/i18n';
-import { OIDC_AUTH_MESSAGE_TYPE, getLoginUrl, isOidcConfigured } from '@encryption/src/ui/auth/oidc-client';
+import { OIDC_AUTH_ACK_MESSAGE_TYPE, OIDC_AUTH_MESSAGE_TYPE, getLoginUrl, isOidcConfigured } from '@encryption/src/ui/auth/oidc-client';
 import type { TokenSet } from '@encryption/src/ui/auth/oidc-client';
 
 interface OidcAuthState {
@@ -58,6 +58,11 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
     function handleMessage(event: MessageEvent) {
       if (event.data?.type !== OIDC_AUTH_MESSAGE_TYPE || !event.data.tokenSet) return;
       if (event.origin !== window.location.origin) return;
+
+      // Tell the callback tab it may close. Sent synchronously so it lands inside the
+      // window `notifyAuthComplete` is waiting on, and addressed to our own origin so
+      // it cannot be observed by whatever else may have opened that tab.
+      event.source?.postMessage({ type: OIDC_AUTH_ACK_MESSAGE_TYPE }, { targetOrigin: window.location.origin });
 
       if (windowPollRef.current) clearInterval(windowPollRef.current);
       windowPollRef.current = null;
