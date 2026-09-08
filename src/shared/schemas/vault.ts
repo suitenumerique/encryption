@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import '@encryption/src/shared/zod-jitless';
+
 // Wire schemas for the synchronized vault. All ciphertext / key fields are
 // base64; the server never decodes them. `item_id` is a logical id such as
 // "enc:2", "tofu:<userId>" or "active"; `type` is routing metadata only.

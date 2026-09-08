@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import '@encryption/src/shared/zod-jitless';
+
 // The context the client SDK hands the interface iframe on mount (via the
 // MSG_INTERFACE_CONTEXT / MSG_INTERFACE_REQUEST_CONTEXT handshake). suiteUserId
 // is always present; the per-flow blocks are set only for the flow that needs

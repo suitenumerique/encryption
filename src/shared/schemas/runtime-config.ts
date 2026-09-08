@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { BrandFont } from '@encryption/src/shared/brand-font';
+import '@encryption/src/shared/zod-jitless';
 
 // The configuration the server hands each document at serve time. Every field comes
 // from an env var the server already validates at boot (see src/server/env.ts), so a

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
+import '@encryption/src/shared/zod-jitless';
 
 // Wire schemas for emergency access (trusted contacts). The escrow blobs are
 // opaque base64 the server verifies signatures over but never decodes; sizes
