@@ -38,6 +38,13 @@ services:
       PORT: 7200
       # ... everything else comes from the deployment's own secret store. See .env.model.
 
+    pre_start:
+      - command: ['node_modules/prisma/build/index.js', 'migrate', 'deploy']
+        per_replica: false
+        environment:
+          # Ideally a different database user from the runtime, only this one having the rights to alter the schema it owns (no superuser to prevent `COPY FROM PROGRAM`)
+          DATABASE_URL: postgresql://migrator_to_change:pwd_to_change@localhost:5432/postgres
+
     ports:
       - '7200:7200'
 

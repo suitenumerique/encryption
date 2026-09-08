@@ -45,7 +45,15 @@ RUN npm run db:schema:compile
 # Build everything: server (esbuild single-file bundle), vault, UI, client SDK
 RUN npm run build
 
-# ---- Production stage: a Node runtime and the bundled files, nothing else (use `docker debug` to debug the container) ----
+# ---- Migration tree: the Prisma CLI and its dependencies, nothing else ----
+FROM builder AS migrator-tree
+
+RUN set -eu; \
+  npx tsx src/build/prisma-migration-closure.ts > /tmp/keep.txt; \
+  mkdir -p /opt/migrator; \
+  tar -cf - -T /tmp/keep.txt prisma.config.ts src/prisma | tar -xf - -C /opt/migrator
+
+# ---- Production stage: the server and the migration tooling, nothing else (use `docker debug` to debug the container) ----
 FROM ${NODE_DISTROLESS_IMAGE}@${NODE_DISTROLESS_DIGEST}
 
 ENV NODE_ENV=production
@@ -53,7 +61,14 @@ ENV NODE_ENV=production
 USER nonroot
 WORKDIR /app
 
-# Copy all build outputs — this is the entire application:
+# First, because it changes only when the lockfile does, while `dist` changes on every
+# commit: the Prisma CLI, its dependencies, the schema and the migrations. The 21 MB
+# native `schema-engine` binary is part of it on purpose — `migrate deploy` runs it, and
+# when it is absent the CLI tries to DOWNLOAD it on the spot, which a read-only filesystem
+# refuses and which would need registry egress the deployment must not grant.
+COPY --from=migrator-tree --chown=nonroot:nonroot /opt/migrator ./
+
+# Then all build outputs — this is the entire application:
 # - dist/server/main.mjs  (bundled server, all deps included via esbuild)
 # - dist/vault/            (HTML + JS for data.encryption)
 # - dist/ui/               (HTML + JS for encryption)
@@ -66,4 +81,6 @@ EXPOSE 7200
 HEALTHCHECK --interval=10s --timeout=2s --start-period=15s \
   CMD ["/nodejs/bin/node", "-e", "fetch('http://localhost:' + (process.env.PORT || 7200) + '/health').then(r => { if (!r.ok) throw new Error(); process.exit(0); }).catch(() => process.exit(1))"]
 
+# Below the default command running the server, but it's also possible override to it to apply database migrations:
+# `docker run [...] lasuite/encryption:latest node_modules/prisma/build/index.js migrate deploy`
 CMD ["--permission", "--allow-fs-read=/app", "--allow-fs-write=/tmp", "--max-old-space-size-percentage=70", "dist/server/main.mjs"]
