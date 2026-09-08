@@ -142,6 +142,24 @@ describe('securityHeadersPlugin', () => {
       expect(vaultCsp).not.toContain('interface-markup');
     });
 
+    it('omits COOP on the auth documents so the login popup keeps its opener', async () => {
+      const app = await buildApp();
+      const headersFor = async (url: string) => (await app.inject({ method: 'GET', url, headers: { host: UI_HOST } })).headers;
+
+      expect((await headersFor('/login?expectedSub=abc'))['cross-origin-opener-policy']).toBeUndefined();
+      expect((await headersFor('/auth/callback?code=xyz'))['cross-origin-opener-policy']).toBeUndefined();
+
+      expect((await headersFor('/settings'))['cross-origin-opener-policy']).toBe('same-origin');
+      expect((await headersFor('/loginaaa'))['cross-origin-opener-policy']).toBe('same-origin');
+      expect((await headersFor('/auth/callback-other'))['cross-origin-opener-policy']).toBe('same-origin');
+      expect((await headersFor('/login'))['content-security-policy']).toContain('frame-src https://data.encryption.localhost:7200');
+      expect((await headersFor('/login'))['cross-origin-resource-policy']).toBe('same-site');
+    });
+
+    it('keeps COOP on the vault, which opens no popup', async () => {
+      expect((await headersFor(VAULT_HOST))['cross-origin-opener-policy']).toBe('same-origin');
+    });
+
     it('lets the interface frame the vault, not only the products', async () => {
       const csp = (await headersFor(VAULT_HOST))['content-security-policy'] as string;
 

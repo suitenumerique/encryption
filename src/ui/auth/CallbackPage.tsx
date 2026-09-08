@@ -3,7 +3,7 @@
  * Opened in a new tab (same tab as LoginPage after Keycloak redirect).
  *
  * 1. Exchanges the authorization code for tokens
- * 2. Broadcasts the tokens via BroadcastChannel to the iframe
+ * 2. Posts the tokens to `window.opener`, which is the interface iframe
  * 3. Closes the tab
  */
 import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';

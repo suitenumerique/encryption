@@ -41,6 +41,11 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       return;
     }
 
+    // The interface opens these two as a popup and talks back to itself through
+    // `window.opener`; see the COOP exception below.
+    const path = request.url.split('?')[0];
+    const isAuthDocument = path === '/login' || path === '/auth/callback';
+
     // `request.host` keeps the port; env.VAULT_HOST/UI_HOST are derived from
     // new URL(...).host, which also keeps it. Comparing against the port-stripped
     // `request.hostname` would never match on a deployment with an explicit port.
@@ -93,7 +98,20 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
         `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}`
       );
 
-      reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      // COOP is deliberately absent on the two auth documents. They are the only
+      // top-level documents this host serves (every other route refuses to run outside
+      // an iframe, and COOP is ignored inside one), and the interface iframe opens them
+      // as a popup and reads the result back through `window.opener`. Measured in
+      // Chromium, `same-origin` here breaks that in one of two ways: the popup is
+      // refused outright with ERR_BLOCKED_BY_RESPONSE, because a sandboxed iframe may
+      // not open a popup that declares a COOP; or, once the sandbox is allowed to be
+      // escaped, it loads with `window.opener` already null and the token is posted
+      // into nothing. The silent variant is the worse one, so the header goes rather
+      // than the sandbox. It also protects nothing here: every route that COOP would
+      // apply to is an error page telling the visitor to close the tab.
+      if (!isAuthDocument) {
+        reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      }
       reply.raw.setHeader('Cross-Origin-Resource-Policy', 'same-site');
     } else {
       // API or unknown host

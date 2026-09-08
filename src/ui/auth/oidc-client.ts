@@ -3,14 +3,11 @@
  * Uses oidc-client-ts for Authorization Code flow with PKCE via redirect.
  *
  * The auth flow happens in a NEW TAB (not the iframe):
- * 1. The iframe detects it needs auth and notifies the parent product
- * 2. The parent opens a new tab to /login on the encryption domain
- * 3. The new tab redirects to Keycloak for authentication
- * 4. Keycloak redirects back to /auth/callback on the encryption domain
- * 5. The callback page stores the token in the vault (data.encryption)
- *    via a temporary hidden iframe and BroadcastChannel
- * 6. The callback page closes itself
- * 7. The original iframe receives the BroadcastChannel message and proceeds
+ * 1. The iframe detects it needs auth and calls `window.open` on /login itself
+ * 2. That tab redirects to Keycloak for authentication
+ * 3. Keycloak redirects back to /auth/callback on the encryption domain
+ * 4. The callback page posts the token set to `window.opener`, which is the iframe
+ * 5. The callback page closes itself, and the iframe proceeds
  */
 import { User, UserManager, WebStorageStateStore } from 'oidc-client-ts';
 import { z } from 'zod';
@@ -153,10 +150,13 @@ export async function handleCallback(): Promise<TokenSet> {
 /**
  * Send auth completion back to the opener (the interface iframe).
  *
- * Uses window.opener.postMessage() — the callback tab was opened via window.open()
- * from the interface iframe, and window.opener survives the Keycloak redirect
- * (no COOP headers break it). This works cross-site because it's a direct window
- * reference, not a storage API subject to Chrome's storage partitioning.
+ * Uses window.opener.postMessage(): the callback tab was opened via window.open()
+ * from the interface iframe. This works cross-site because it is a direct window
+ * reference, not a storage API subject to Chrome's storage partitioning, which is
+ * why a BroadcastChannel cannot replace it (the tab and the iframe sit in different
+ * storage partitions). The opener reference is therefore load-bearing, and it is why
+ * the server omits COOP on /login and /auth/callback: any COOP on those documents
+ * severs it during the Keycloak round trip.
  */
 export function notifyAuthComplete(tokenSet: TokenSet): void {
   if (window.opener && OIDC_REDIRECT_URI) {
