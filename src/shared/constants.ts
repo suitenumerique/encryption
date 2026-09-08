@@ -37,6 +37,15 @@ export const STORE_VAULT_CACHE = 'vaultCache';
 export const STORE_USER_ALIAS = 'userAlias';
 
 // ============================================================================
+// Trusted Types policy names
+// ============================================================================
+
+export const VAULT_TRUSTED_TYPES_POLICY = 'vault-service-worker';
+export const VAULT_SERVICE_WORKER_PATH = '/sw.js';
+
+export const UI_TRUSTED_TYPES_POLICY = 'interface-markup';
+
+// ============================================================================
 // PostMessage type keys — shared between iframes and their parents
 // ============================================================================
 

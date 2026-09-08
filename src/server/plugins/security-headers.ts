@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 
 import { env } from '@encryption/src/server/env';
+import { UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLICY } from '@encryption/src/shared/constants';
 
 // Wrapped with fastify-plugin to break encapsulation — otherwise the hook stays scoped
 // to this plugin and never runs for routes registered on the same app instance (API,
@@ -71,7 +72,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       // form-action are set explicitly because neither falls back to default-src.
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; connect-src ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; connect-src ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${VAULT_TRUSTED_TYPES_POLICY}`
       );
 
       // Cross-Origin isolation headers — reduces attack surface from side-channel attacks
@@ -89,7 +90,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}`
       );
 
       reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');

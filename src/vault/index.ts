@@ -1,4 +1,10 @@
-import { BROADCAST_KEYS_CHANGED, BROADCAST_KEYS_DESTROYED, MSG_VAULT_READY } from '@encryption/src/shared/constants';
+import {
+  BROADCAST_KEYS_CHANGED,
+  BROADCAST_KEYS_DESTROYED,
+  MSG_VAULT_READY,
+  VAULT_SERVICE_WORKER_PATH,
+  VAULT_TRUSTED_TYPES_POLICY,
+} from '@encryption/src/shared/constants';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { setupMessageHandler } from '@encryption/src/vault/message-handler';
 import { initOriginGuard, validateIframeContext } from '@encryption/src/vault/origin-guard';
@@ -55,7 +61,19 @@ if (bc) {
 // Skip in dev mode — the SW precaches vault files which conflicts with
 // Vite's on-the-fly module transformation.
 if ('serviceWorker' in navigator && !import.meta.env.DEV) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {
+  const policy = window.trustedTypes?.createPolicy(VAULT_TRUSTED_TYPES_POLICY, {
+    createScriptURL: (url) => {
+      if (url !== VAULT_SERVICE_WORKER_PATH) {
+        throw new TypeError(`the vault Trusted Types policy only produces ${VAULT_SERVICE_WORKER_PATH}`);
+      }
+
+      return url;
+    },
+  });
+
+  const scriptUrl = policy ? policy.createScriptURL(VAULT_SERVICE_WORKER_PATH) : VAULT_SERVICE_WORKER_PATH;
+
+  navigator.serviceWorker.register(scriptUrl as string).catch(() => {
     // SW registration may fail in some iframe contexts — vault still works without it
   });
 }

@@ -1,6 +1,8 @@
 import hljs from 'highlight.js/lib/common';
 import type { ReactNode } from 'react';
 
+import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
+
 function textOf(node: ReactNode): string {
   if (typeof node === 'string') return node;
   if (Array.isArray(node)) return node.map(textOf).join('');
@@ -50,7 +52,7 @@ export function CodeBlock({ children, language }: CodeBlockProps) {
           {language}
         </div>
       )}
-      <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted }} />
+      <code className="hljs" dangerouslySetInnerHTML={{ __html: toTrustedMarkup(highlighted) }} />
     </pre>
   );
 }

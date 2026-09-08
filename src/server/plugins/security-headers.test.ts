@@ -39,6 +39,13 @@ async function headersFor(host: string) {
   return response.headers;
 }
 
+function trustedTypesOf(csp: string): string | undefined {
+  return csp
+    .split(';')
+    .map((directive) => directive.trim())
+    .find((directive) => directive.startsWith('trusted-types'));
+}
+
 describe('securityHeadersPlugin', () => {
   // The failure this guards against: in development the Vite middleware answers by
   // writing to the raw response and never calls reply.send(), so an `onSend` hook was
@@ -116,6 +123,23 @@ describe('securityHeadersPlugin', () => {
         // not slip in alongside it.
         expect(scriptSrc).toBe("script-src 'self' 'wasm-unsafe-eval'");
       }
+    });
+
+    it('requires trusted types for script on both iframes, each naming a single policy', async () => {
+      const vaultCsp = (await headersFor(VAULT_HOST))['content-security-policy'] as string;
+      const uiCsp = (await headersFor(UI_HOST))['content-security-policy'] as string;
+
+      expect(vaultCsp).toContain("require-trusted-types-for 'script'");
+      expect(uiCsp).toContain("require-trusted-types-for 'script'");
+
+      expect(trustedTypesOf(vaultCsp)).toBe('trusted-types vault-service-worker');
+      expect(trustedTypesOf(uiCsp)).toBe('trusted-types interface-markup');
+    });
+
+    it('does not give the vault the interface markup policy', async () => {
+      const vaultCsp = (await headersFor(VAULT_HOST))['content-security-policy'] as string;
+
+      expect(vaultCsp).not.toContain('interface-markup');
     });
 
     it('lets the interface frame the vault, not only the products', async () => {
