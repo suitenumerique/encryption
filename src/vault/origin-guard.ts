@@ -21,6 +21,10 @@ export function validateIframeContext(): void {
   }
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Check if a message origin is in the allowed list.
  * Supports exact matches and wildcard subdomains (e.g., "https://*.example.com").
@@ -43,8 +47,10 @@ export function isOriginAllowed(origin: string): boolean {
       if (originUrl.protocol !== `${allowedProtocol}:`) return false;
 
       // Convert wildcard pattern to match: *.example.com matches sub.example.com
-      // but NOT sub.sub.example.com (single level only)
-      const hostPattern = allowedHost.replace(/\*/g, '[^.]+');
+      // but NOT sub.sub.example.com (single level only). Everything around the
+      // wildcard is literal, so the dots must be escaped: an unescaped "." would
+      // match any character and let "sub.exampleXcom" through.
+      const hostPattern = allowedHost.split('*').map(escapeRegExp).join('[^.]+');
 
       return new RegExp(`^${hostPattern}$`).test(originUrl.host);
     } catch {

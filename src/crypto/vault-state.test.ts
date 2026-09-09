@@ -1,5 +1,7 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import { vaultStateArb } from '@encryption/src/crypto/testing/arbitraries';
 import {
   type TofuEntry,
   type VaultState,
@@ -11,52 +13,31 @@ import {
   setTofu,
 } from '@encryption/src/crypto/vault-state';
 
-// Deterministic PRNG for the property-based tests below: driving the random
-// state generation from an explicit seed makes any failing case reproducible
-// (plain Math.random() would not be, and it is unavailable here anyway).
-function rng(seed: number): () => number {
-  let s = seed >>> 0;
-
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 0x100000000;
-  };
-}
-
 const normalize = (s: VaultState): VaultState => mergeVaultState(s, emptyVaultState());
-
-function randomState(rand: () => number): VaultState {
-  let state = emptyVaultState();
-
-  const keyCount = Math.floor(rand() * 4);
-  for (let v = 1; v <= keyCount; v++) {
-    state = addEncryptionKey(state, { version: v, algo: 'x-wing', publicKey: `pk${v}`, secretKey: `sk${v}`, createdAt: v * 1000 });
-  }
-
-  const userCount = Math.floor(rand() * 4);
-  for (let u = 0; u < userCount; u++) {
-    const userId = `u${Math.floor(rand() * 3)}`;
-    const status = rand() < 0.5 ? 'trusted' : 'refused';
-    const at = Math.floor(rand() * 5) * 100;
-    state = setTofu(state, userId, `fp${Math.floor(rand() * 3)}`, status, at);
-    if (rand() < 0.2) state = deleteTofu(state, userId, at + 50);
-  }
-
-  return state;
-}
 
 describe('mergeVaultState algebraic laws', () => {
   it('is commutative, associative, and idempotent over random states', () => {
-    for (let seed = 1; seed <= 300; seed++) {
-      const rand = rng(seed);
-      const a = randomState(rand);
-      const b = randomState(rand);
-      const c = randomState(rand);
+    fc.assert(
+      fc.property(vaultStateArb, vaultStateArb, vaultStateArb, (a, b, c) => {
+        expect(mergeVaultState(a, b)).toEqual(mergeVaultState(b, a));
+        expect(mergeVaultState(mergeVaultState(a, b), c)).toEqual(mergeVaultState(a, mergeVaultState(b, c)));
+        expect(mergeVaultState(a, a)).toEqual(normalize(a));
+      }),
+      { numRuns: 300 }
+    );
+  });
 
-      expect(mergeVaultState(a, b)).toEqual(mergeVaultState(b, a));
-      expect(mergeVaultState(mergeVaultState(a, b), c)).toEqual(mergeVaultState(a, mergeVaultState(b, c)));
-      expect(mergeVaultState(a, a)).toEqual(normalize(a));
-    }
+  it('never loses a key version or a TOFU entry either side knew', () => {
+    fc.assert(
+      fc.property(vaultStateArb, vaultStateArb, (a, b) => {
+        const merged = mergeVaultState(a, b);
+
+        for (const side of [a, b]) {
+          for (const k of side.encryptionKeys) expect(merged.encryptionKeys.some((m) => m.version === k.version)).toBe(true);
+          for (const userId of Object.keys(side.tofu)) expect(merged.tofu[userId]).toBeDefined();
+        }
+      })
+    );
   });
 });
 

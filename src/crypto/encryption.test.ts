@@ -2,6 +2,7 @@
  * Tests for the libsodium-based encryption functions.
  * X-Wing hybrid KEM (X25519 + ML-KEM-768) + XChaCha20-Poly1305 symmetric encryption.
  */
+import fc from 'fast-check';
 import sodium from 'libsodium-wrappers-sumo';
 import { describe, expect, it } from 'vitest';
 
@@ -17,6 +18,7 @@ import {
   hybridEncapsulate,
 } from '@encryption/src/crypto/encryption';
 import { CRYPTO_VERSION } from '@encryption/src/shared/constants';
+import { VaultError } from '@encryption/src/shared/vault-error';
 
 describe('encryption', () => {
   describe('generateUserKeyPair', () => {
@@ -153,5 +155,73 @@ describe('encryption', () => {
 
       await expect(decryptSymmetricKeyForUser(user.secretKey, tampered)).rejects.toThrow(/unsupported crypto version/i);
     });
+  });
+});
+
+describe('decryption over arbitrary input (property)', () => {
+  const flipBit = (bytes: Uint8Array, bit: number): Uint8Array => {
+    const out = new Uint8Array(bytes);
+    out[bit >> 3] ^= 1 << (bit & 7);
+
+    return out;
+  };
+
+  it('decryptContent round-trips any content and rejects any bit flip with a VaultError', async () => {
+    const key = await generateSymmetricKey();
+
+    await fc.assert(
+      fc.asyncProperty(fc.uint8Array({ maxLength: 512 }), fc.nat(), async (content, seed) => {
+        const encrypted = await encryptContent(content, key);
+        expect(await decryptContent(encrypted, key)).toEqual(content);
+
+        const flipped = flipBit(encrypted, seed % (encrypted.length * 8));
+        await expect(decryptContent(flipped, key)).rejects.toBeInstanceOf(VaultError);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('decryptContent rejects random bytes with a VaultError', async () => {
+    const key = await generateSymmetricKey();
+
+    await fc.assert(
+      fc.asyncProperty(fc.uint8Array({ maxLength: 256 }), async (bytes) => {
+        await expect(decryptContent(bytes, key)).rejects.toBeInstanceOf(VaultError);
+      }),
+      { numRuns: 200 }
+    );
+  });
+
+  it('decryptSymmetricKeyForUser round-trips and rejects any bit flip with a VaultError', async () => {
+    const recipient = await generateUserKeyPair();
+    const symmetricKey = await generateSymmetricKey();
+    const { alice: wrapped } = await encryptSymmetricKeyForUsers(symmetricKey, { alice: recipient.publicKey });
+
+    expect(await decryptSymmetricKeyForUser(recipient.secretKey, wrapped)).toEqual(symmetricKey);
+
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 0, max: wrapped.length * 8 - 1 }), async (bit) => {
+        await expect(decryptSymmetricKeyForUser(recipient.secretKey, flipBit(wrapped, bit))).rejects.toBeInstanceOf(VaultError);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('decryptSymmetricKeyForUser rejects random bytes with a VaultError', async () => {
+    const recipient = await generateUserKeyPair();
+    // Bias towards a plausible header so the length field itself gets fuzzed.
+    const blob = fc.oneof(
+      fc.uint8Array({ maxLength: 1300 }),
+      fc
+        .tuple(fc.integer({ min: 0, max: 0xffff }), fc.uint8Array({ maxLength: 1300 }))
+        .map(([len, rest]) => new Uint8Array([CRYPTO_VERSION, len & 0xff, len >> 8, ...rest]))
+    );
+
+    await fc.assert(
+      fc.asyncProperty(blob, async (bytes) => {
+        await expect(decryptSymmetricKeyForUser(recipient.secretKey, bytes)).rejects.toBeInstanceOf(VaultError);
+      }),
+      { numRuns: 200 }
+    );
   });
 });

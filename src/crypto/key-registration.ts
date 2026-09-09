@@ -24,7 +24,7 @@
  * little-endian, and we sign over the wire blobs verbatim (the same base64 the
  * server stores and returns) to avoid any re-serialization ambiguity.
  */
-import { writeUint16LE, writeUint32LE } from '@encryption/src/crypto/encryption';
+import { concat, lengthPrefixed, writeUint32LE, writeUint64LE } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
 import { type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
 
@@ -50,32 +50,6 @@ export interface KeyRegistrationRecord {
   encryptionPublicKeyWire: Uint8Array;
   /** Signature (identity) public key wire blob: base64-decoded [version:1][ed25519:32]. */
   signaturePublicKeyWire: Uint8Array;
-}
-
-function writeUint64LE(value: number): Uint8Array {
-  const buf = new ArrayBuffer(8);
-  // Timestamps in ms stay well within Number.MAX_SAFE_INTEGER (< 2^53), so the
-  // BigInt round-trip is lossless for any realistic date.
-  new DataView(buf).setBigUint64(0, BigInt(value), true);
-
-  return new Uint8Array(buf);
-}
-
-function lengthPrefixed(bytes: Uint8Array): Uint8Array[] {
-  return [writeUint16LE(bytes.length), bytes];
-}
-
-function concat(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((n, c) => n + c.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.length;
-  }
-
-  return out;
 }
 
 /**

@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -108,5 +109,30 @@ describe('emergency phrase capsule', () => {
     const capsule = await wrapPhraseEntropyForGrantee(entropy, grantee.publicKey);
 
     await expect(unwrapPhraseEntropy(capsule, [stranger.secretKey])).rejects.toBeTruthy();
+  });
+});
+
+describe('escrow payload encoding (property)', () => {
+  const text = fc.string({ unit: 'grapheme', maxLength: 24 });
+  const bytes = fc.uint8Array({ maxLength: 48 });
+  const record = fc.record({
+    grantorUserId: text,
+    granteeUserId: text,
+    granteeIdentityPublicKeyWire: bytes,
+    waitTimeDays: fc.nat(),
+    escrowCreatedAtMillis: fc.maxSafeNat(),
+    credentialAuthPublicKeyHash: bytes,
+    capsuleHash: bytes,
+  });
+
+  const canonical = (r: EmergencyEscrowRecord): string => JSON.stringify(r, (_, v) => (v instanceof Uint8Array ? Array.from(v) : v));
+  const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  it('encodeEmergencyEscrowPayload is injective', () => {
+    fc.assert(
+      fc.property(record, record, (a, b) => {
+        expect(sameBytes(encodeEmergencyEscrowPayload(a), encodeEmergencyEscrowPayload(b))).toBe(canonical(a) === canonical(b));
+      })
+    );
   });
 });

@@ -43,6 +43,10 @@ export const VaultErrorCode = {
   IFRAME_REQUIRED: 'IFRAME_REQUIRED',
   /** Ciphertext / encrypted-key payload too short to be valid (truncated). */
   CIPHERTEXT_TOO_SHORT: 'CIPHERTEXT_TOO_SHORT',
+  /** Ciphertext structure is inconsistent (e.g. a wrong length field): corrupt, not merely truncated. */
+  MALFORMED_CIPHERTEXT: 'MALFORMED_CIPHERTEXT',
+  /** A field cannot be represented in the canonical signed-payload encoding (length or number out of range). */
+  INVALID_CANONICAL_PAYLOAD: 'INVALID_CANONICAL_PAYLOAD',
   /** Blob's leading version byte doesn't match a format this build can decode. */
   UNSUPPORTED_CRYPTO_VERSION: 'UNSUPPORTED_CRYPTO_VERSION',
   /** A signature public key didn't have the expected Ed25519 length. */

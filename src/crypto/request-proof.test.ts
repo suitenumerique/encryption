@@ -1,3 +1,5 @@
+import fc from 'fast-check';
+import sodium from 'libsodium-wrappers-sumo';
 import { describe, expect, it } from 'vitest';
 
 import { REQUEST_SIG_MAX_AGE_SECONDS, REQUEST_SIG_SKEW_SECONDS, signRequestProof, verifyRequestProof } from '@encryption/src/crypto/request-proof';
@@ -168,5 +170,57 @@ describe('request-proof', () => {
 
     await expect(verify(tampered, { method: 'GET', path: '/api/vault/items', userId: 'u', keys: [id.wirePublic] })).resolves.toBe(false);
     await expect(verify('not-a-jws', { method: 'GET', path: '/api/vault/items', userId: 'u', keys: [id.wirePublic] })).resolves.toBe(false);
+  });
+});
+
+describe('request proof (property)', () => {
+  const request = { method: 'POST', path: '/api/vault/items', userId: 'user-1' };
+
+  it('is accepted exactly inside the skew-before / max-age-after window around signing time', async () => {
+    const id = await makeIdentity();
+    const token = await signRequestProof({ ...request, identitySecretKey: id.secret, nowSeconds: NOW });
+
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: -600, max: 600 }), async (delta) => {
+        const accepted = await verify(token, { ...request, keys: [id.wirePublic], nowSeconds: NOW + delta });
+
+        expect(accepted).toBe(delta >= -REQUEST_SIG_SKEW_SECONDS && delta < REQUEST_SIG_MAX_AGE_SECONDS);
+      })
+    );
+  });
+
+  it('ignores method case and query strings, and rejects any other path or method', async () => {
+    const id = await makeIdentity();
+    const token = await signRequestProof({ ...request, identitySecretKey: id.secret, nowSeconds: NOW });
+    const query = fc.string({ unit: 'grapheme-ascii', maxLength: 20 }).filter((q) => !q.includes('#'));
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom('POST', 'post', 'Post', 'GET', 'PUT'),
+        fc.constantFrom(request.path, '/api/vault/item', '/api/vault/items/'),
+        query,
+        async (method, path, q) => {
+          const accepted = await verify(token, { method, path: `${path}?${q}`, userId: request.userId, keys: [id.wirePublic] });
+
+          expect(accepted).toBe(method.toUpperCase() === request.method && path === request.path);
+        }
+      )
+    );
+  });
+
+  it('never throws and never accepts a token that was not signed by the key, whatever its shape', async () => {
+    const id = await makeIdentity();
+    const b64url = (s: string) => sodium.to_base64(sodium.from_string(s), sodium.base64_variants.URLSAFE_NO_PADDING);
+    const structured = fc
+      .tuple(fc.json(), fc.json(), fc.uint8Array({ maxLength: 80 }))
+      .map(([header, claims, sig]) => `${b64url(header)}.${b64url(claims)}.${sodium.to_base64(sig, sodium.base64_variants.URLSAFE_NO_PADDING)}`);
+    const token = fc.oneof(fc.string({ unit: 'grapheme' }), structured);
+
+    await fc.assert(
+      fc.asyncProperty(token, async (t) => {
+        expect(await verify(t, { ...request, keys: [id.wirePublic] })).toBe(false);
+      }),
+      { numRuns: 300 }
+    );
   });
 });

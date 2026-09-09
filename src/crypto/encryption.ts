@@ -45,6 +45,41 @@ export function readUint32LE(bytes: Uint8Array): number {
   return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
 }
 
+export function writeUint64LE(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new VaultError(VaultErrorCode.INVALID_CANONICAL_PAYLOAD, `Cannot encode ${value} as an unsigned 64-bit integer`);
+  }
+
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setBigUint64(0, BigInt(value), true);
+
+  return new Uint8Array(buf);
+}
+
+// Canonical (signed) payloads are built from length-prefixed fields. The prefix
+// is 16-bit, so a longer field would silently encode its length modulo 65536
+// and two different payloads could produce the same bytes: refuse instead.
+export function lengthPrefixed(bytes: Uint8Array): Uint8Array[] {
+  if (bytes.length > 0xffff) {
+    throw new VaultError(VaultErrorCode.INVALID_CANONICAL_PAYLOAD, `Field of ${bytes.length} bytes exceeds the 16-bit length prefix`);
+  }
+
+  return [writeUint16LE(bytes.length), bytes];
+}
+
+export function concat(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+
+  return out;
+}
+
 // Ensure sodium is ready before any operation
 let sodiumReady: Promise<void> | null = null;
 
@@ -229,8 +264,23 @@ export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, enc
     throw new VaultError(VaultErrorCode.UNSUPPORTED_CRYPTO_VERSION, `Unsupported crypto version ${version}`);
   }
 
-  // Parse: [version:1][kemCtLen:2][kemCt][encryptedSymKey]
+  await ensureSodium();
+
+  // Parse: [version:1][kemCtLen:2][kemCt][encryptedSymKey]. The length field is
+  // attacker-controlled: check it against the X-Wing size before slicing, so a
+  // corrupt blob fails with our own code instead of a raw libsodium throw.
   const kemLen = readUint16LE(encryptedKey.slice(1, 3));
+
+  if (kemLen !== sodium.crypto_kem_xwing_CIPHERTEXTBYTES) {
+    throw new VaultError(VaultErrorCode.MALFORMED_CIPHERTEXT, `Unexpected KEM ciphertext length ${kemLen}`);
+  }
+
+  const innerMinLen = 1 + sodium.crypto_secretbox_NONCEBYTES + sodium.crypto_secretbox_MACBYTES;
+
+  if (encryptedKey.length < 3 + kemLen + innerMinLen) {
+    throw new VaultError(VaultErrorCode.CIPHERTEXT_TOO_SHORT, 'Encrypted key is too short to be valid');
+  }
+
   const kemCiphertext = encryptedKey.slice(3, 3 + kemLen);
   const encryptedSymKey = encryptedKey.slice(3 + kemLen);
 

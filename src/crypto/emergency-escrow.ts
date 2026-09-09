@@ -20,11 +20,13 @@ import sodium from 'libsodium-wrappers-sumo';
 import {
   type HybridPublicKey,
   type HybridSecretKey,
+  concat,
   decryptSymmetricKeyForUser,
   encryptSymmetricKeyForUsers,
   ensureSodium,
-  writeUint16LE,
+  lengthPrefixed,
   writeUint32LE,
+  writeUint64LE,
 } from '@encryption/src/crypto/encryption';
 import { type SignaturePublicKey, type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
 
@@ -44,30 +46,6 @@ export interface EmergencyEscrowRecord {
   credentialAuthPublicKeyHash: Uint8Array;
   /** SHA-256 of the raw capsule bytes (the wrapped emergency-phrase entropy). */
   capsuleHash: Uint8Array;
-}
-
-function writeUint64LE(value: number): Uint8Array {
-  const buf = new ArrayBuffer(8);
-  new DataView(buf).setBigUint64(0, BigInt(value), true);
-
-  return new Uint8Array(buf);
-}
-
-function lengthPrefixed(bytes: Uint8Array): Uint8Array[] {
-  return [writeUint16LE(bytes.length), bytes];
-}
-
-function concat(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((n, c) => n + c.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.length;
-  }
-
-  return out;
 }
 
 export async function sha256(bytes: Uint8Array): Promise<Uint8Array> {

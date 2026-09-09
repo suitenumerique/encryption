@@ -154,6 +154,7 @@
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",
     "fake-indexeddb": "6.2.5",
+    "fast-check": "4.9.0",
     "jsdom": "30.0.1",
     "mjml-browser": "5.4.0",
     "msw": "2.15.0",

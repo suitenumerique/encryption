@@ -1,5 +1,7 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
+import { vaultStateArb } from '@encryption/src/crypto/testing/arbitraries';
 import { itemsToState, stateToItems } from '@encryption/src/crypto/vault-items';
 import { addEncryptionKey, addIdentity, emptyVaultState, mergeVaultState, setTofu } from '@encryption/src/crypto/vault-state';
 
@@ -37,5 +39,28 @@ describe('vault item mapping', () => {
     const shuffled = [...items].reverse();
 
     expect(itemsToState(shuffled)).toEqual(itemsToState(items));
+  });
+});
+
+describe('vault item mapping (property)', () => {
+  it('round-trips any state through items, in any item order', () => {
+    fc.assert(
+      fc.property(vaultStateArb, fc.nat(), (state, seed) => {
+        const items = stateToItems(state);
+        const shuffled = [...items].sort((a, b) => ((a.id.length * seed) % 3) - ((b.id.length * seed) % 3));
+
+        expect(itemsToState(shuffled)).toEqual(mergeVaultState(state, emptyVaultState()));
+      })
+    );
+  });
+
+  it('gives every item a unique id', () => {
+    fc.assert(
+      fc.property(vaultStateArb, (state) => {
+        const ids = stateToItems(state).map((i) => i.id);
+
+        expect(new Set(ids).size).toBe(ids.length);
+      })
+    );
   });
 });

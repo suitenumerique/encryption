@@ -1,6 +1,15 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import { englishWordlist, frenchWordlist, keyToMnemonic, mnemonicLanguageForLocale, mnemonicToKey } from '@encryption/src/crypto/mnemonic';
+import {
+  type MnemonicLanguage,
+  detectMnemonicLanguage,
+  englishWordlist,
+  frenchWordlist,
+  keyToMnemonic,
+  mnemonicLanguageForLocale,
+  mnemonicToKey,
+} from '@encryption/src/crypto/mnemonic';
 
 describe('mnemonic', () => {
   it('should encode a 32-byte key as 24 words', () => {
@@ -94,5 +103,56 @@ describe('mnemonic', () => {
 
   it('should have no duplicate words in the English wordlist', () => {
     expect(new Set(englishWordlist).size).toBe(2048);
+  });
+});
+
+describe('mnemonic round trip (property)', () => {
+  const key = fc.uint8Array({ minLength: 32, maxLength: 32 });
+  const language = fc.constantFrom<MnemonicLanguage>('french', 'english');
+  // The ways a phrase gets mangled between a printed kit and an input field.
+  const mangle = fc.record({
+    upper: fc.boolean(),
+    separator: fc.constantFrom(' ', '  ', '\t', '\n', ' \n '),
+    padding: fc.constantFrom('', ' ', '\n\t'),
+    nfc: fc.boolean(),
+  });
+
+  it('decodes back to the same key however the phrase was typed, with or without a language hint', () => {
+    fc.assert(
+      fc.property(key, language, mangle, (k, lang, m) => {
+        let phrase = keyToMnemonic(k, lang).split(' ').join(m.separator);
+        if (m.upper) phrase = phrase.toUpperCase();
+        if (m.nfc) phrase = phrase.normalize('NFC');
+        phrase = m.padding + phrase + m.padding;
+
+        expect(mnemonicToKey(phrase)).toEqual(k);
+        expect(mnemonicToKey(phrase, lang)).toEqual(k);
+        expect(detectMnemonicLanguage(phrase)).toBe(lang);
+      })
+    );
+  });
+
+  it('rejects a phrase with any single word swapped for another wordlist entry', () => {
+    fc.assert(
+      fc.property(key, language, fc.nat(), fc.nat(), (k, lang, wordIndex, replacementIndex) => {
+        const wordlist = lang === 'french' ? frenchWordlist : englishWordlist;
+        const words = keyToMnemonic(k, lang).split(' ');
+        const i = wordIndex % 24;
+        const replacement = wordlist[replacementIndex % wordlist.length];
+        fc.pre(replacement !== words[i]);
+        words[i] = replacement;
+
+        // One word carries 11 bits and the checksum only 8, so a swap can
+        // survive it with probability 1/256: the result must then be a
+        // DIFFERENT key, never the original one.
+        let decoded: Uint8Array;
+        try {
+          decoded = mnemonicToKey(words.join(' '), lang);
+        } catch {
+          return;
+        }
+        expect(decoded).not.toEqual(k);
+      })
+    );
   });
 });

@@ -1,12 +1,16 @@
+import fc from 'fast-check';
 import sodium from 'libsodium-wrappers-sumo';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
+import { itemTypeSchema } from '@encryption/src/crypto/vault-items';
 import {
   type SealedItem,
+  type VaultManifest,
   buildManifest,
   isRollback,
+  manifestBytes,
   parseManifest,
   sealedItemsMatchManifest,
   signManifest,
@@ -84,5 +88,45 @@ describe('signed manifest', () => {
 
     const good = buildManifest(3, 1, sampleItems());
     expect(parseManifest(JSON.stringify(good))).toEqual(good);
+  });
+});
+
+describe('manifest encoding (property)', () => {
+  const manifest: fc.Arbitrary<VaultManifest> = fc.record({
+    schema: fc.nat(),
+    revision: fc.nat(),
+    identityGen: fc.nat(),
+    items: fc.array(
+      fc.record({
+        id: fc.string({ unit: 'grapheme', maxLength: 12 }),
+        type: fc.constantFrom(...itemTypeSchema.options),
+        contentHash: fc.string({ unit: 'grapheme', maxLength: 12 }),
+        revisionDate: fc.nat(),
+      }),
+      { maxLength: 4 }
+    ),
+  });
+
+  // The identity signature covers these bytes: two different manifests must
+  // never share them, or a signature over one would validate the other.
+  it('manifestBytes is injective', () => {
+    fc.assert(
+      fc.property(manifest, manifest, (a, b) => {
+        expect(sodium.to_string(manifestBytes(a)) === sodium.to_string(manifestBytes(b))).toBe(JSON.stringify(a) === JSON.stringify(b));
+      })
+    );
+  });
+
+  it('parseManifest round-trips any manifest and never throws on arbitrary text', () => {
+    fc.assert(
+      fc.property(manifest, (m) => {
+        expect(parseManifest(JSON.stringify(m))).toEqual(m);
+      })
+    );
+    fc.assert(
+      fc.property(fc.oneof(fc.string({ unit: 'grapheme' }), fc.json()), (text) => {
+        expect(() => parseManifest(text)).not.toThrow();
+      })
+    );
   });
 });

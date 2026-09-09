@@ -52,12 +52,15 @@ export function keyToMnemonic(keyBytes: Uint8Array, language: MnemonicLanguage =
  * @scure/bip39 normalizes to NFKD internally as required by the BIP-39 spec.
  */
 export function mnemonicToKey(mnemonic: string, language?: MnemonicLanguage): Uint8Array {
-  const normalized = mnemonic.trim().toLowerCase();
-  const words = normalized.split(/\s+/);
+  const words = mnemonic.trim().toLowerCase().split(/\s+/);
 
   if (words.length !== 24) {
     throw new VaultError(VaultErrorCode.INVALID_MNEMONIC, `Expected 24 words, got ${words.length}`);
   }
+
+  // @scure/bip39 only splits on single spaces: a phrase copied from a printed
+  // kit (line breaks, tabs, double spaces) must be re-joined before validation.
+  const normalized = words.join(' ');
 
   if (language) {
     const wordlist = getWordlist(language);
@@ -86,7 +89,7 @@ export function mnemonicToKey(mnemonic: string, language?: MnemonicLanguage): Ui
  * Returns the detected language, or null if the mnemonic is invalid in both languages.
  */
 export function detectMnemonicLanguage(mnemonic: string): MnemonicLanguage | null {
-  const normalized = mnemonic.trim().toLowerCase();
+  const normalized = mnemonic.trim().toLowerCase().split(/\s+/).join(' ');
 
   if (validateMnemonic(normalized, french)) return 'french';
   if (validateMnemonic(normalized, english)) return 'english';

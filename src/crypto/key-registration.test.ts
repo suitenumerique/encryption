@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { generateUserKeyPair } from '@encryption/src/crypto/encryption';
@@ -11,6 +12,7 @@ import {
   verifyKeyRegistration,
 } from '@encryption/src/crypto/key-registration';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 // Build a fully-signed registration record the way the vault would, then return
 // the on-the-wire (base64) view that verifyKeyRegistration consumes.
@@ -176,5 +178,84 @@ describe('key-registration', () => {
 
       expect(await verifyIdentityContinuity(record, previousSignaturePublicKeyB64, 'not-base64-???')).toBe(false);
     });
+  });
+});
+
+describe('canonical payload encoding (property)', () => {
+  const text = fc.string({ unit: 'grapheme', maxLength: 24 });
+  const bytes = fc.uint8Array({ maxLength: 48 });
+
+  const registration = fc.record({
+    userId: text,
+    version: fc.nat(),
+    createdAtMillis: fc.maxSafeNat(),
+    encryptionPublicKeyWire: bytes,
+    signaturePublicKeyWire: bytes,
+  });
+
+  const continuity = fc.record({ userId: text, generation: fc.nat(), algo: text, signaturePublicKeyWire: bytes });
+
+  const canonical = (record: object): string => JSON.stringify(record, (_, v) => (v instanceof Uint8Array ? Array.from(v) : v));
+  const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  it('encodeKeyRegistrationPayload is injective', () => {
+    fc.assert(
+      fc.property(registration, registration, (a, b) => {
+        expect(sameBytes(encodeKeyRegistrationPayload(a), encodeKeyRegistrationPayload(b))).toBe(canonical(a) === canonical(b));
+      })
+    );
+  });
+
+  it('encodeIdentityContinuityPayload is injective', () => {
+    fc.assert(
+      fc.property(continuity, continuity, (a, b) => {
+        expect(sameBytes(encodeIdentityContinuityPayload(a), encodeIdentityContinuityPayload(b))).toBe(canonical(a) === canonical(b));
+      })
+    );
+  });
+
+  it('refuses a field the 16-bit length prefix cannot represent instead of wrapping it', () => {
+    const oversized = new Uint8Array(0x10000);
+
+    expect(() =>
+      encodeKeyRegistrationPayload({
+        userId: 'u',
+        version: 1,
+        createdAtMillis: 0,
+        encryptionPublicKeyWire: oversized,
+        signaturePublicKeyWire: oversized,
+      })
+    ).toThrow(expect.objectContaining({ code: VaultErrorCode.INVALID_CANONICAL_PAYLOAD }));
+  });
+
+  it('refuses a timestamp that is not an unsigned safe integer', () => {
+    for (const createdAtMillis of [-1, 1.5, Number.MAX_SAFE_INTEGER + 2, NaN]) {
+      expect(() =>
+        encodeKeyRegistrationPayload({
+          userId: 'u',
+          version: 1,
+          createdAtMillis,
+          encryptionPublicKeyWire: new Uint8Array(1),
+          signaturePublicKeyWire: new Uint8Array(1),
+        })
+      ).toThrow(VaultError);
+    }
+  });
+
+  it('verifyKeyRegistration returns false, never throws, on arbitrary wire records', async () => {
+    const wire = fc.record({
+      userId: text,
+      version: fc.nat(),
+      createdAtMillis: fc.maxSafeNat(),
+      encryptionPublicKeyB64: fc.oneof(text, bytes.map(uint8ToBase64)),
+      signaturePublicKeyB64: fc.oneof(text, bytes.map(uint8ToBase64)),
+      keyBindingSignatureB64: fc.oneof(text, bytes.map(uint8ToBase64)),
+    });
+
+    await fc.assert(
+      fc.asyncProperty(wire, async (record) => {
+        expect(await verifyKeyRegistration(record)).toBe(false);
+      })
+    );
   });
 });
