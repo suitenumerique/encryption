@@ -7,6 +7,7 @@ import {
 } from '@encryption/src/shared/constants';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { setupMessageHandler } from '@encryption/src/vault/message-handler';
+import { installVaultErrorReporting } from '@encryption/src/vault/monitoring';
 import { initOriginGuard, validateIframeContext } from '@encryption/src/vault/origin-guard';
 import { runtimeConfig } from '@encryption/src/vault/runtime-config';
 import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cache';
@@ -14,6 +15,9 @@ import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cach
 const ALLOWED_ORIGINS: string[] = runtimeConfig.allowedOrigins ?? [];
 
 const INTERFACE_ORIGIN: string | null = runtimeConfig.interfaceOrigin ?? null;
+
+// Before anything else can throw. Sends names, codes and positions, never a message.
+installVaultErrorReporting(window);
 
 try {
   validateIframeContext();

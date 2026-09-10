@@ -18,6 +18,19 @@ import { configureZodValidation } from '@encryption/src/server/zod-validation';
  *
  * Example: VERSION_SALT=jwks-rotated-2026-03-19
  */
+let buildVersion: string | null = null;
+
+/**
+ * The build hash also labels error reports (`release`) when no explicit
+ * SENTRY_RELEASE is configured: it changes with every image and is what the
+ * service already tells the browser, so events group by what actually ran.
+ */
+export function getBuildVersion(): string {
+  buildVersion ??= computeBuildVersion();
+
+  return buildVersion;
+}
+
 function computeBuildVersion(): string {
   const hash = createHash('sha256');
   const distDir = resolve(process.cwd(), 'dist');
@@ -42,7 +55,7 @@ function computeBuildVersion(): string {
 export async function versionRoute(app: FastifyInstance): Promise<void> {
   configureZodValidation(app);
 
-  const version = computeBuildVersion();
+  const version = getBuildVersion();
 
   app.withTypeProvider<ZodTypeProvider>().get('/api/version', {
     schema: {

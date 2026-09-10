@@ -1,3 +1,8 @@
+// Where browsers post every Reporting API report: CSP violations, COOP/COEP,
+// crashes, deprecations. Shared because the security-headers plugin advertises it
+// and the route serving it must agree; a mismatch would silently drop every report.
+export const BROWSER_REPORT_PATH = '/api/browser-reports';
+
 // Cryptographic scheme identifiers
 //
 // Asymmetric: X-Wing hybrid KEM (X25519 + ML-KEM-768),

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
 
 import { env } from '@encryption/src/server/env';
-import { UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLICY } from '@encryption/src/shared/constants';
+import { BROWSER_REPORT_PATH, UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLICY } from '@encryption/src/shared/constants';
 
 // Wrapped with fastify-plugin to break encapsulation — otherwise the hook stays scoped
 // to this plugin and never runs for routes registered on the same app instance (API,
@@ -72,12 +72,17 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     // connects to a WebSocket, so it must not widen connect-src there.
     const connectSrc = isDev ? "'self' ws:" : "'self'";
 
+    // Without reporting, the browser blocks a violation silently and nobody ever learns it happened.
+    reply.raw.setHeader('Reporting-Endpoints', `default="${request.protocol}://${request.host}${BROWSER_REPORT_PATH}"`);
+
+    const reporting = `report-to default; report-uri ${BROWSER_REPORT_PATH}`;
+
     if (host === env.VAULT_HOST) {
       // Vault: most restrictive CSP + origin isolation headers. base-uri and
       // form-action are set explicitly because neither falls back to default-src.
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; connect-src ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${VAULT_TRUSTED_TYPES_POLICY}`
+        `default-src 'none'; script-src ${scriptSrc}; connect-src ${connectSrc}; base-uri 'none'; form-action 'none'; frame-ancestors ${vaultFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${VAULT_TRUSTED_TYPES_POLICY}; ${reporting}`
       );
 
       // Cross-Origin isolation headers — reduces attack surface from side-channel attacks
@@ -95,7 +100,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}; ${reporting}`
       );
 
       // COOP is deliberately absent on the two auth documents. They are the only
@@ -115,7 +120,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.raw.setHeader('Cross-Origin-Resource-Policy', 'same-site');
     } else {
       // API or unknown host
-      reply.raw.setHeader('Content-Security-Policy', "default-src 'none'");
+      reply.raw.setHeader('Content-Security-Policy', `default-src 'none'; ${reporting}`);
     }
   });
 });

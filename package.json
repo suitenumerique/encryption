@@ -22,7 +22,7 @@
     "start:storybook": "serve -l 7204 --no-request-logging storybook-static",
     "build:prepare": "npm run db:schema:compile",
     "build": "concurrently --kill-others-on-fail -c \"auto\" \"npm:build:server\" \"npm:build:vault\" \"npm:build:ui\" \"npm:build:client\"",
-    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node24 --outfile=dist/server/main.mjs --format=esm --sourcemap --metafile=dist/server/meta.json --alias:@encryption/src=./src --external:vite --external:@fastify/swagger --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\" && npm run build:server:sbom",
+    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node24 --outfile=dist/server/main.mjs --format=esm --sourcemap --sources-content=false --metafile=dist/server/meta.json --alias:@encryption/src=./src --external:vite --external:@fastify/swagger --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\" && npm run build:server:sbom",
     "build:server:sbom": "cyclonedx-esbuild dist/server/meta.json --output-file dist/server/sbom.cdx.json && rm dist/server/meta.json",
     "build:vault": "vite build --config src/vault/vite.config.ts",
     "build:ui": "vite build --config src/ui/vite.config.ts",

@@ -2,9 +2,11 @@ import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest, Log
 import { ZodError } from 'zod';
 
 import { attachApiErrorMessages } from '@encryption/src/server/error-response';
+import { captureServerError } from '@encryption/src/server/monitoring';
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
 import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
+import { browserReportsRoute } from '@encryption/src/server/routes/browser-reports';
 import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-access';
 import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
@@ -45,6 +47,17 @@ export function errorHandler(error: FastifyError, request: FastifyRequest, reply
 
   // Server error: log the detail server-side, expose only a generic code.
   request.log.error(error);
+
+  // Reported with the route, never with the request: no body, no headers, no user.
+  // Inert unless a collector is configured.
+  captureServerError(error, {
+    tags: {
+      route: request.routeOptions?.url ?? 'unmatched', // Never `request.url`, which carries the query string
+      method: request.method,
+      status: statusCode,
+      host: request.host,
+    },
+  });
 
   return reply.status(500).send({ code: API_ERROR_INTERNAL });
 }
@@ -137,6 +150,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   }
 
   // Register routes
+  app.register(browserReportsRoute);
   app.register(versionRoute);
   app.register(meRoute);
   app.register(publicKeysRoute);

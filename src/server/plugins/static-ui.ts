@@ -24,6 +24,17 @@ function buildConfigBlock(): string {
   return buildRuntimeConfigBlock(config);
 }
 
+/**
+ * The `.map` files sit next to the bundles because the SERVER reads them, to resolve
+ * a stack reported by a browser back to our sources (`src/server/symbolicate.ts`).
+ * Nothing else needs them: the build emits them `hidden`, so no bundle references one
+ * and no browser asks for one. Serving them anyway would be an accident of them
+ * sharing a directory with the assets.
+ */
+export function isServableAsset(pathName: string): boolean {
+  return !pathName.endsWith('.map');
+}
+
 export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
   const distDir = resolve(process.cwd(), 'dist/ui');
 
@@ -52,6 +63,7 @@ export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
     prefix: '/assets/',
     constraints: { host: env.UI_HOST },
     decorateReply: false,
+    allowedPath: isServableAsset,
   });
 
   // Serve interface.html for all HTML routes (SPA fallback)

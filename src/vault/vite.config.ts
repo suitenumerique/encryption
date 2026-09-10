@@ -30,6 +30,33 @@ function injectRuntimeConfig(): Plugin {
 }
 
 /**
+ * The vault host serves a fixed allowlist of files, and the Service Worker is a
+ * classic script. Both break silently if this build ever emits a third chunk: Rollup
+ * does that as soon as `index.ts` and `sw.ts` import a common module, hoisting it
+ * (and everything reachable from it) into a shared file that is never served.
+ * Failing the build is the only place this can be caught before production.
+ */
+function assertOnlyExpectedChunks(): Plugin {
+  return {
+    name: 'vault-only-expected-chunks',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const chunks = Object.values(bundle)
+        .filter((output) => output.type === 'chunk')
+        .map((chunk) => chunk.fileName)
+        .sort();
+      const expected = ['sw.js', 'vault.js'];
+
+      if (chunks.join() !== expected.join()) {
+        throw new Error(
+          `The vault build must emit exactly ${expected.join(', ')}; got ${chunks.join(', ')}. Did sw.ts and index.ts start sharing a module?`
+        );
+      }
+    },
+  };
+}
+
+/**
  * Shared Vite config for the vault.
  * Used both by `vite build` and by the Fastify vite-dev plugin in dev mode.
  */
@@ -38,6 +65,7 @@ export function getVaultViteConfig(): UserConfig {
     root: resolve(configDir),
     plugins: [
       injectRuntimeConfig(),
+      assertOnlyExpectedChunks(),
       {
         ...sbom({
           outDir: '.',
@@ -50,12 +78,14 @@ export function getVaultViteConfig(): UserConfig {
     build: {
       outDir: resolve(configDir, '../../dist/vault'),
       emptyOutDir: true,
+      sourcemap: 'hidden', // Disable `sourceMappingURL` comment since `.map` files are not served by the backend
       rollupOptions: {
         input: {
           main: resolve(configDir, 'bridge.html'),
           sw: resolve(configDir, 'sw.ts'),
         },
         output: {
+          sourcemapExcludeSources: true, // Make `.map` files containing only positions, not the original code (since it's public already)
           manualChunks: undefined,
           inlineDynamicImports: false,
           entryFileNames: (chunkInfo: { name: string }) => {
@@ -79,9 +109,14 @@ export function getVaultViteConfig(): UserConfig {
   };
 }
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
   const { default: sri } = await import('vite-plugin-sri-gen');
   const config = getVaultViteConfig();
+
+  // Only needed when developping so files are served
+  if (command === 'build') {
+    config.publicDir = false;
+  }
 
   config.plugins = [sri({ algorithm: 'sha384' }), ...(config.plugins ?? [])];
 

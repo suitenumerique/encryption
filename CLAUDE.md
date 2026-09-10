@@ -95,6 +95,70 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 - `robots.txt` + `<meta name="robots" content="noindex, nofollow">`
 - Rate limiting: 10 key creations per 30 days, 10 device transfers per hour
 - Device transfer sessions auto-deleted after 1 hour
+- Reporting API endpoint at `/api/browser-reports` (`BROWSER_REPORT_PATH`), declared
+  under the reserved `default` name so it receives every report type, not only CSP.
+  Security types (`csp-violation`, `coop`, `coep`, `integrity-violation`, `crash`)
+  are logged at warn, the rest at info. A violation on the vault host in production
+  is close to proof of a compromised bundle: its policy allows no external load at all.
+
+## Error reporting
+
+Optional, off unless `SENTRY_DSN` is set, and never a dependency of the service.
+
+- **No Sentry SDK anywhere.** `src/server/monitoring.ts` speaks Sentry's public
+  envelope API over `fetch`, in one reviewable file with no package added to the
+  tree. The SDK's value is automatic context capture (request bodies, headers,
+  breadcrumbs, local variables, spans), which on an E2EE service is exactly the
+  behaviour that must not exist: CVE-2025-65944 is that story, where `Authorization`
+  and `Cookie` headers reached Sentry through span attributes and Sentry's own
+  server-side scrubbing missed them too. Any Sentry-compatible collector works
+  (Sentry, self-hosted Sentry, GlitchTip).
+- **Allowlist, not scrubbing.** The event is built field by field: error type,
+  redacted message, stack frames, and six permitted tag names (`route`, `method`,
+  `status`, `host`, `reportType`, `code`). No request, user, breadcrumb, context or
+  extra key is ever constructed. `redact()` removes emails and any 32+ character
+  base64url/hex run (a key, a wrapped blob, a JWT segment) from every string sent.
+- **The interface and the vault report through our own backend**, never to a
+  collector directly, with one shared reporter (`src/shared/error-reporting.ts`) and
+  one strict schema (`src/shared/schemas/browser-error-report.ts`): an error class
+  name (letters only), a stable `VaultError` code, and same-origin stack positions
+  parsed in the browser. `error.stack` itself is never sent, since its first line is
+  the message. The CSP keeps `connect-src 'self'`, an extension blocking analytics
+  cannot suppress a security report, and redaction happens server-side.
+  - The **interface** adds the message and `location.pathname` (never the query
+    string, which on `/auth/callback` carries an authorization code).
+  - The **vault** never adds them (its variables are private keys and plaintext),
+    and the server drops any report from the vault host that carries either, so the
+    guarantee does not rest on vault code. It reports only what nothing else covers:
+    uncaught errors in the vault window and its Service Worker, an unexpected
+    (non-`VaultError`) throw inside an operation, and the integrity codes
+    (`VAULT_INTEGRITY_FAILED`, `INVALID_KEY_BINDING`). CSP, Trusted Types, COOP/COEP
+    violations and crashes already reach the endpoint through the browser's Reporting
+    API, and expected failures already reach the product as codes.
+  - The **Service Worker** carries an inline name-and-code-only copy and must never
+    import the reporter: a module shared with the vault entry becomes a chunk the
+    vault host does not serve, and the vault build fails on it.
+- **Source maps are files for the server, never for the browser.** The build writes
+  a `.map` next to every bundle and the image ships both. Nobody uploads them and no
+  browser ever fetches one. They are read in exactly two places, both inside the
+  container: Node reads `dist/server/main.mjs.map` itself (`--enable-source-maps` in
+  the `Dockerfile`), so server stacks in logs and reports name `src/server/*.ts`
+  lines; and when the interface reports an exception, its stack points at positions
+  in the minified bundle, and `src/server/symbolicate.ts` opens the matching
+  `dist/ui/assets/*.map` from disk to translate them back to `src/ui/*.tsx` lines
+  before the event leaves. It uses `node:module`'s `SourceMap`, so no package is
+  added. This is the shape that fits an image many organizations deploy against
+  their own collector: a CI job uploading maps would upload them to OUR collector,
+  and a deployment needs nothing beyond `SENTRY_DSN`. Consequently `release` is only
+  a label (the `/api/version` build hash by default) and no commit SHA has to travel
+  anywhere. Two consequences of "the browser never reads them": Vite builds with
+  `sourcemap: 'hidden'`, which writes the same file as `true` but appends no
+  `sourceMappingURL` comment to the bundle (the browser's cue to fetch a map, and an
+  extra line in the bytes SRI hashes); and the maps **are not reachable over HTTP**:
+  the interface's static root refuses `.map` (`isServableAsset`, with a test) and the
+  vault host serves a fixed allowlist that has never included one. They carry
+  positions only (`sourcemapExcludeSources`, `--sources-content=false`), since the
+  source text is already public in this repository and only the mappings are used.
 
 ## Port scheme (local development)
 
@@ -107,6 +171,9 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 | 7204 | Storybook                  | `localhost`                                          |
 | 7205 | PostgreSQL (app)           | `localhost`                                          |
 | 7206 | PostgreSQL (Keycloak)      | `localhost`                                          |
+| 7207 | Maildev (web)              | `localhost`                                          |
+| 7208 | Maildev (SMTP)             | `localhost`                                          |
+| 7209 | GlitchTip                  | `localhost`                                          |
 
 In development, a single Fastify server on port 7200 embeds Vault and UI via Vite middleware mode. Host-based routing dispatches requests to the correct Vite instance. Everything works on `localhost:7200`, but for proper origin isolation (matching production), use the `.localhost` subdomains above. Modern browsers resolve `*.localhost` to `127.0.0.1` automatically and treat them as secure contexts (required for `crypto.subtle`). If your browser doesn't resolve them, add these entries to `/etc/hosts`:
 
@@ -137,6 +204,11 @@ open http://localhost:7201
 # Open Demo Product B (different port = different origin, proves cross-origin works)
 open http://localhost:7202
 ```
+
+Error reports from the dev server land in the GlitchTip started by `docker compose up`
+(a Sentry-compatible collector, so the code path is the one a production Sentry would
+exercise). Open http://localhost:7209 and log in as `dev@example.com` /
+`devdevdev`: the project and the fixed DSN in `.env.test` are seeded on every boot.
 
 ## Common commands
 

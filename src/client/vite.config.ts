@@ -16,7 +16,10 @@ export default defineConfig({
       formats: ['es', 'iife'],
       fileName: (format) => (format === 'es' ? 'client.mjs' : 'client.js'),
     },
-    sourcemap: true,
+    sourcemap: 'hidden', // Disable `sourceMappingURL` comment since `.map` files are not served by the backend
+    rollupOptions: {
+      output: { sourcemapExcludeSources: true }, // Make `.map` files containing only positions, not the original code (since it's public already)
+    },
   },
   resolve: {
     alias: {

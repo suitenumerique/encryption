@@ -58,6 +58,10 @@ FROM ${NODE_DISTROLESS_IMAGE}@${NODE_DISTROLESS_DIGEST}
 
 ENV NODE_ENV=production
 
+# Commit SHA helps with monitoring reports to know what version is having a bug
+ARG SOURCE_COMMIT=
+ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+
 USER nonroot
 WORKDIR /app
 
@@ -83,4 +87,4 @@ HEALTHCHECK --interval=10s --timeout=2s --start-period=15s \
 
 # Below the default command running the server, but it's also possible override to it to apply database migrations:
 # `docker run [...] lasuite/encryption:latest node_modules/prisma/build/index.js migrate deploy`
-CMD ["--permission", "--allow-fs-read=/app", "--allow-fs-write=/tmp", "--max-old-space-size-percentage=70", "dist/server/main.mjs"]
+CMD ["--permission", "--allow-fs-read=/app", "--allow-fs-write=/tmp", "--max-old-space-size-percentage=70", "--enable-source-maps", "dist/server/main.mjs"]

@@ -98,8 +98,12 @@ export function getUiViteConfig(): UserConfig {
     build: {
       outDir: resolve(configDir, '../../dist/ui'),
       emptyOutDir: true,
+      sourcemap: 'hidden', // Disable `sourceMappingURL` comment since `.map` files are not served by the backend
       rollupOptions: {
         input: resolve(configDir, 'interface.html'),
+        output: {
+          sourcemapExcludeSources: true, // Make `.map` files containing only positions, not the original code (since it's public already)
+        },
       },
     },
     resolve: {

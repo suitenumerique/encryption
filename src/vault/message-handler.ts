@@ -39,6 +39,7 @@ import {
 import { PRIVILEGED_OPERATIONS, type VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode, classifyVaultError } from '@encryption/src/shared/vault-error';
 import { checkEmergencyPending } from '@encryption/src/vault/emergency-pending';
+import { reportVaultError, shouldReportVaultError } from '@encryption/src/vault/monitoring';
 import { handleCommitStagedVault, handleUncommitStagedVault } from '@encryption/src/vault/operations/commit-staged';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleDestroyKeys } from '@encryption/src/vault/operations/destroy-keys';
@@ -353,6 +354,10 @@ export function setupMessageHandler(): void {
         error: error instanceof Error ? error.message : 'Unknown error',
         code: classifyVaultError(error),
       };
+
+      // An unexpected throw or an integrity failure is also worth an operator's
+      // attention; a normal outcome (wrong phrase, missing keys) is not.
+      if (shouldReportVaultError(error)) reportVaultError(error);
     }
 
     event.source?.postMessage(response, { targetOrigin: event.origin });

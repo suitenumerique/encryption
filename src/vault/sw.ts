@@ -21,6 +21,41 @@
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
+// Report the worker's uncaught errors, otherwise it can die silently and leave stale
+// bundles in the cache with nobody knowing.
+//
+// Why this is written out here instead of importing src/shared/error-reporting.ts:
+// vault.js and sw.js are two entries of the same Vite build. If both import one
+// module, Rollup moves that module into a third file (a shared chunk under assets/)
+// and makes both entries import it. The vault host only serves a fixed list of
+// files, so that chunk would be a 404 in production, and a Service Worker cannot
+// import modules anyway. The build fails on any extra chunk to make this visible.
+//
+// What is sent: the error class name and a fixed code, nothing else. No message, no
+// stack. Same endpoint, same origin, at most five reports per worker lifetime.
+const MAX_REPORTS = 5;
+let reported = 0;
+
+function reportWorkerError(error: unknown): void {
+  if (reported >= MAX_REPORTS) return;
+  reported += 1;
+
+  const name = error instanceof Error && /^[A-Za-z]{1,40}$/.test(error.name) ? error.name : 'Error';
+
+  fetch('/api/browser-reports', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'omit',
+    keepalive: true,
+    body: JSON.stringify({ type: 'browser-error', name, code: 'UNKNOWN', frames: [] }),
+  }).catch(() => {
+    // Reporting a failure must never become a failure of its own.
+  });
+}
+
+sw.addEventListener('error', (event) => reportWorkerError(event.error));
+sw.addEventListener('unhandledrejection', (event) => reportWorkerError(event.reason));
+
 const CACHE_NAME = 'vault-v1';
 const VERSION_KEY = '/__internal__/known-version';
 const VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;

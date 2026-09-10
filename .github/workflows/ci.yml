@@ -256,6 +256,8 @@ jobs:
           load: true
           push: false
           tags: ${{ steps.docker-meta.outputs.tags }}
+          build-args: |
+            SOURCE_COMMIT=${{ github.sha }}
           provenance: mode=max # attach repository info to the image
           sbom: true # store attestation manifest inside the image index (including info from application `.cdx.json` files)
           cache-from: type=gha
