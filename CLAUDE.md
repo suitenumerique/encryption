@@ -19,7 +19,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - `src/ui/` — React app (Cunningham, i18next, MDX docs, browser check)
 - `src/server/` — Fastify server, Host-based routing, API routes, security headers
 - `src/shared/` — constants, Zod schemas, error codes (shared between server and client)
-- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`
+- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; every model and enum sits in the `encryption` PostgreSQL schema (`@@schema`), never `public`, and `DATABASE_URL` carries `?schema=encryption` for the migration tooling
 - `src/demo/` — fake product pages for testing (two instances on different ports)
 - `src/i18n/` — French translations, i18next setup
 - `src/build/` — build-time helpers (browser versions from browserslist)

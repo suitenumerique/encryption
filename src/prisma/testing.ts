@@ -67,8 +67,8 @@ async function start(): Promise<void> {
   db = await PGlite.create({ loadDataDir: new Blob([readFileSync(TEST_DATABASE_SNAPSHOT_PATH)]) });
   client = new PrismaClient({ adapter: new PrismaPGlite(db) } as never);
 
-  const tables = await client.$queryRaw<{ tablename: string }[]>`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`;
-  truncateStatement = `TRUNCATE TABLE ${tables.map((row) => `"public"."${row.tablename}"`).join(', ')} CASCADE`;
+  const tables = await client.$queryRaw<{ tablename: string }[]>`SELECT tablename FROM pg_tables WHERE schemaname = 'encryption'`;
+  truncateStatement = `TRUNCATE TABLE ${tables.map((row) => `"encryption"."${row.tablename}"`).join(', ')} CASCADE`;
 }
 
 async function stop(): Promise<void> {

@@ -141,6 +141,76 @@ Compromising one domain is insufficient to both access private keys AND manipula
 - Domain validation enforced at startup
 - Rate limiting on key creation and device transfers
 
+## Deployment
+
+The release is a single container image, `lasuite/encryption`, published on Docker Hub by the `release` job of the CI on every tag (`vX.Y.Z` gives `X.Y.Z` and `latest`) and on every push to `main` (`main`). The image carries a signed provenance attestation and an SBOM, and is scanned with Trivy before it is pushed.
+
+### What the image is
+
+- **Distroless and non-root**: no shell, no package manager, the process runs as `nonroot`. Use `docker debug` (or an ephemeral container) to look inside.
+- **Zero `node_modules` at runtime**: the server is one bundled file, `dist/server/main.mjs`. The only extra tree is the Prisma CLI, kept for migrations (see below).
+- **Node permission model**: the default command runs with `--allow-fs-read=/app --allow-fs-write=/tmp`, so the filesystem can be read-only except `/tmp`.
+- **One process, two hostnames**: the server listens on `PORT` (7200) and routes on the `Host` header between the vault (`VAULT_URL`) and the interface (`UI_URL`). Point both hostnames at the same Service and make sure the proxy forwards `Host` unchanged.
+- **Health**: `GET /health` returns 200 when the server can answer. The image declares it as its `HEALTHCHECK`.
+- **Shutdown**: on `SIGTERM` the server stops accepting connections, drains, flushes pending error reports and exits. Give it a grace period of a few seconds.
+- **Egress needed**: PostgreSQL, the SMTP host(s), the OIDC provider (`OIDC_JWKS_URL`) and, if set, the host in `SENTRY_DSN`. Nothing else: no registry, no CDN, no download at startup.
+
+### Environment
+
+Every variable is listed in [`.env.model`](.env.model) with a production-shaped value; the server refuses to start and prints the offending names when one is missing or malformed. The ones that shape the deployment:
+
+| Variable                  | Role                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VAULT_URL`, `UI_URL`     | The two public origins. TLS is mandatory: the vault needs a secure context, and the browser reporting endpoint is ignored over plain HTTP. |
+| `ALLOWED_FRAME_ANCESTORS` | The product origins allowed to embed the iframes. They must share one registrable domain (see "Storage partitioning constraint").          |
+| `DATABASE_URL`            | Connection string of the **runtime** role (below).                                                                                         |
+| `OIDC_*`                  | The identity provider the interface authenticates against.                                                                                 |
+| `MAILER_*`                | SMTP for the emergency-access notifications, with an optional fallback host.                                                               |
+| `SENTRY_*`                | Optional error reporting (see "Error reporting").                                                                                          |
+
+### Database roles
+
+Two PostgreSQL roles, created once by the database administrator with the scripts in [`deploy/postgres/`](deploy/postgres):
+
+1. [`create-migrator-role.sql`](deploy/postgres/create-migrator-role.sql): `encryption_migrator`, owner of the `encryption` schema, the only role allowed to create and alter tables. Used by the migration step only.
+2. [`create-runtime-role.sql`](deploy/postgres/create-runtime-role.sql): `encryption_runtime`, allowed to read and write rows and nothing else. This is the role in the server's `DATABASE_URL`.
+
+```sh
+psql "$ADMIN_DATABASE_URL" -v password="'…'" -f deploy/postgres/create-migrator-role.sql
+psql "$ADMIN_DATABASE_URL" -v password="'…'" -f deploy/postgres/create-runtime-role.sql
+```
+
+The split means a compromised server process cannot change the schema, and a schema change cannot happen by accident from a pod: it only happens where the migrator credentials are, which is the release step. Every table lives in the `encryption` schema, never in `public`, so other roles on a shared server cannot even list them. Both connection strings carry `?schema=encryption`: the migration tooling reads it to place its own `_prisma_migrations` table there (the migrator has no right to create anything in `public`), and the server ignores it since its queries name the schema explicitly.
+
+### Migrations
+
+Migrations are applied **once per release, never per pod**. Run the same image with the migrator credentials and the Prisma CLI it ships:
+
+```sh
+docker run --rm \
+  -e DATABASE_URL="postgresql://encryption_migrator:…@db-host:5432/encryption?schema=encryption" \
+  lasuite/encryption:X.Y.Z node_modules/prisma/build/index.js migrate deploy
+```
+
+The command is idempotent and exits non-zero when a migration fails, which is what you want a deployment to stop on. Where it belongs:
+
+- **Kubernetes**: a `Job` run as a Helm `pre-install`/`pre-upgrade` hook, or an Argo CD `PreSync` hook. A failed migration is then a failed Job and the rollout does not start. Not an init container: it would run on every replica and every restart, and each of those pods would need the migrator credentials.
+- **Plain Docker**: a release step in the pipeline, before the new version starts.
+- **PaaS that builds from source** (Scalingo, Clever Cloud, Heroku-like): there is no image, the platform runs `npm ci` and `npm run build` itself, so the migration is an npm script run between the build and the start, with the migrator credentials, then the server starts with the runtime ones. Scalingo, for example, runs the `postdeploy` entry of the `Procfile` after the build and before the new release takes traffic:
+
+  ```
+  postdeploy: DATABASE_URL="$MIGRATOR_DATABASE_URL" npm run db:migration:deploy:unsecure
+  web: npm run start:unsecure
+  ```
+
+  Clever Cloud has the same two slots under `CC_POST_BUILD_HOOK` (or `CC_PRE_RUN_HOOK`) and `CC_RUN_COMMAND`. The `:unsecure` suffix means the script reads the platform's environment as is, instead of loading the local `.env.test`. The build needs `npm run db:schema:compile` before `npm run build`, exactly as the `Dockerfile` does.
+
+### Error reporting
+
+Optional. Set `SENTRY_DSN` to the DSN of any Sentry-compatible collector (Sentry, self-hosted Sentry, GlitchTip) and the server starts sending server errors and the reports the interface and the vault post to it. Unset, nothing is sent and nothing else changes.
+
+There is no Sentry SDK in the image and nothing to upload: source maps ship inside the image and are resolved there, so the collector only ever sees the server, never a browser. The event is built from an allowlist (error type, redacted message, stack positions, a handful of tags such as route and status code) rather than scrubbed, and reports from the vault carry no message at all. `SENTRY_ENVIRONMENT` labels the deployment; `SENTRY_RELEASE` defaults to the commit the image was built from.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
