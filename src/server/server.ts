@@ -10,6 +10,7 @@ import { browserReportsRoute } from '@encryption/src/server/routes/browser-repor
 import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-access';
 import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
+import { securityTxtRoute } from '@encryption/src/server/routes/security-txt';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { versionRoute } from '@encryption/src/server/routes/versions';
 import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/shared/error-codes';
@@ -151,6 +152,7 @@ export async function createServer(options: CreateServerOptions = {}) {
 
   // Register routes
   app.register(browserReportsRoute);
+  app.register(securityTxtRoute);
   app.register(versionRoute);
   app.register(meRoute);
   app.register(publicKeysRoute);

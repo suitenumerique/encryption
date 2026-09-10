@@ -56,6 +56,17 @@ const envSchema = z.object({
   // image, so nothing is ever matched against uploaded artifacts.
   SENTRY_RELEASE: z.string().optional(),
   SOURCE_COMMIT: z.string().optional(),
+  // Where a security researcher should report a problem with THIS deployment
+  // (published as /.well-known/security.txt). It belongs to whoever operates the
+  // instance, not to the code, so nothing is served until the operator sets it: an
+  // `mailto:` or an `https://` URL.
+  SECURITY_CONTACT_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .regex(/^(?:https:\/\/|mailto:)\S+$/)
+      .optional()
+  ),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails, the Recovery Kit PDF and the interface UI. Unset = each
   // surface's generic fallback.

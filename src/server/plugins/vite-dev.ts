@@ -26,7 +26,7 @@ import { env } from '@encryption/src/server/env';
 // hosts whose remaining traffic belongs to Vite. Must stay in sync with the
 // matching routes in server.ts: a path missing here is shadowed by Vite in dev
 // and 404s, while working fine in production.
-const FASTIFY_INFRA_PATHS = new Set(['/health', '/robots.txt', '/favicon.ico']);
+const FASTIFY_INFRA_PATHS = new Set(['/health', '/robots.txt', '/favicon.ico', '/.well-known/security.txt']);
 
 export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const { createServer: createViteServer } = await import('vite');

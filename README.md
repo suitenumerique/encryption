@@ -167,6 +167,7 @@ Every variable is listed in [`.env.model`](.env.model) with a production-shaped 
 | `OIDC_*`                  | The identity provider the interface authenticates against.                                                                                 |
 | `MAILER_*`                | SMTP for the emergency-access notifications, with an optional fallback host.                                                               |
 | `SENTRY_*`                | Optional error reporting (see "Error reporting").                                                                                          |
+| `SECURITY_CONTACT_URL`    | Optional. Where researchers report a problem with your instance (`mailto:` or `https://`), published as `/.well-known/security.txt`.       |
 
 ### Database roles
 
@@ -210,6 +211,10 @@ The command is idempotent and exits non-zero when a migration fails, which is wh
 Optional. Set `SENTRY_DSN` to the DSN of any Sentry-compatible collector (Sentry, self-hosted Sentry, GlitchTip) and the server starts sending server errors and the reports the interface and the vault post to it. Unset, nothing is sent and nothing else changes.
 
 There is no Sentry SDK in the image and nothing to upload: source maps ship inside the image and are resolved there, so the collector only ever sees the server, never a browser. The event is built from an allowlist (error type, redacted message, stack positions, a handful of tags such as route and status code) rather than scrubbed, and reports from the vault carry no message at all. `SENTRY_ENVIRONMENT` labels the deployment; `SENTRY_RELEASE` defaults to the commit the image was built from.
+
+## Reporting a security issue
+
+Please do not open a public issue. For the code, use GitHub's private reporting as described in [`SECURITY.md`](SECURITY.md). For a running instance, its operator publishes the channel at `/.well-known/security.txt` (set with `SECURITY_CONTACT_URL`).
 
 ## License
 

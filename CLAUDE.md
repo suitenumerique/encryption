@@ -93,6 +93,7 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 - Browser version check (from browserslist) shown as warning
 - Extensions warning during onboarding
 - `robots.txt` + `<meta name="robots" content="noindex, nofollow">`
+- `/.well-known/security.txt` (RFC 9116) on both hosts, only when the operator set `SECURITY_CONTACT_URL` (the contact is theirs, not the code's); generated at request time so `Expires` never goes stale. `SECURITY.md` is the channel for the code itself
 - Rate limiting: 10 key creations per 30 days, 10 device transfers per hour
 - Device transfer sessions auto-deleted after 1 hour
 - Reporting API endpoint at `/api/browser-reports` (`BROWSER_REPORT_PATH`), declared

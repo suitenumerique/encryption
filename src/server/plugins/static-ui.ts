@@ -77,7 +77,13 @@ export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
     const path = request.url.split('?')[0];
 
     // Skip asset and API requests
-    if (path.startsWith('/assets/') || path.startsWith('/public-assets/') || path === '/robots.txt' || path.startsWith('/api/')) {
+    if (
+      path.startsWith('/assets/') ||
+      path.startsWith('/public-assets/') ||
+      path === '/robots.txt' ||
+      path === '/.well-known/security.txt' ||
+      path.startsWith('/api/')
+    ) {
       return;
     }
 
