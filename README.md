@@ -98,6 +98,7 @@ In development, a single Fastify server on port 7200 embeds Vault and UI via Vit
 npm run dev              # Start server (API + vault + UI) + demos + storybook
 npm run build            # Build server + vault + UI + client SDK
 npm run test:unit        # Run tests
+npm run test:helm        # Render and check the Helm chart (needs helm + kubeconform)
 npm run lint             # ESLint + TypeScript check
 npm run format           # Prettier write
 npm run format:check     # Prettier check
@@ -155,6 +156,19 @@ The release is a single container image, `lasuite/encryption`, published on Dock
 - **Shutdown**: on `SIGTERM` the server stops accepting connections, drains, flushes pending error reports and exits. Give it a grace period of a few seconds.
 - **Egress needed**: PostgreSQL, the SMTP host(s), the OIDC provider (`OIDC_JWKS_URL`) and, if set, the host in `SENTRY_DSN`. Nothing else: no registry, no CDN, no download at startup.
 
+### Kubernetes
+
+A Helm chart, [`deploy/helm/encryption`](deploy/helm/encryption), deploys the image as described on this page: the Deployment with the hardening of `docker-compose.production.yaml`, one Service for both hostnames, the migration Job as a pre-upgrade hook with the migrator role, and optional Ingress, network policy and error reporting. It manages none of the dependencies and has no default image: `image.tag` is required, because the chart is versioned on its own. A `chart/vX.Y.Z` git tag publishes it to Docker Hub as an OCI artifact, `lasuite/encryption-chart`, attested like the image; an application tag never touches it, and a chart tag runs nothing else.
+
+Take it by version, keep the digest Helm prints, verify the digest with `cosign verify-attestation` exactly as for the image, then reference it as tag plus digest, which Helm refuses to deviate from:
+
+```sh
+helm pull oci://registry-1.docker.io/lasuite/encryption-chart --version 1.4.0   # prints Digest: sha256:…
+helm install encryption oci://registry-1.docker.io/lasuite/encryption-chart:1.4.0@sha256:… --values my-values.yaml
+```
+
+Its values are schema-checked, so a typo or a missing required value fails the install rather than the pod. `npm run test:helm` renders it and checks it against the Kubernetes API schemas and against the server's own environment contract; `deploy/helm/smoke-k3d.sh` installs it for real in a local k3d cluster. Examples for helmfile and Argo CD live in [`deploy/helmfile`](deploy/helmfile) and [`deploy/argocd`](deploy/argocd). See [the chart README](deploy/helm/encryption/README.md).
+
 ### Environment
 
 Every variable is listed in [`.env.model`](.env.model) with a production-shaped value; the server refuses to start and prints the offending names when one is missing or malformed. The ones that shape the deployment:
@@ -195,7 +209,7 @@ docker run --rm \
 
 The command is idempotent and exits non-zero when a migration fails, which is what you want a deployment to stop on. Where it belongs:
 
-- **Kubernetes**: a `Job` run as a Helm `pre-install`/`pre-upgrade` hook, or an Argo CD `PreSync` hook. A failed migration is then a failed Job and the rollout does not start. Not an init container: it would run on every replica and every restart, and each of those pods would need the migrator credentials.
+- **Kubernetes**: a `Job` run as a Helm `pre-install`/`pre-upgrade` hook, or an Argo CD `PreSync` hook, which is what the chart does. A failed migration is then a failed Job and the rollout does not start. Not an init container: it would run on every replica and every restart, and each of those pods would need the migrator credentials.
 - **Plain Docker**: a release step in the pipeline, before the new version starts.
 - **PaaS that builds from source** (Scalingo, Clever Cloud, Heroku-like): there is no image, the platform runs `npm ci` and `npm run build` itself, so the migration is an npm script run between the build and the start, with the migrator credentials, then the server starts with the runtime ones. Scalingo, for example, runs the `postdeploy` entry of the `Procfile` after the build and before the new release takes traffic:
 

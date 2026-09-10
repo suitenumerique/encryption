@@ -23,6 +23,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - `src/demo/` — fake product pages for testing (two instances on different ports)
 - `src/i18n/` — French translations, i18next setup
 - `src/build/` — build-time helpers (browser versions from browserslist)
+- `deploy/` — deployment material: PostgreSQL role scripts, the Helm chart and its tests (`deploy/helm/encryption.test.ts` renders it with the real `helm` binary and checks the Deployment against `src/server/env-schema.ts`), helmfile and Argo CD examples. The chart is versioned apart from the application: `chart/vX.Y.Z` tags publish `lasuite/encryption-chart` on Docker Hub and run only the chart jobs; `vX.Y.Z` tags release the image and skip the chart. `image.tag` is therefore required in the values.
 - `.storybook/` — Storybook config with factory pattern from assistant-declaration
 
 ## Tech stack
@@ -217,6 +218,7 @@ exercise). Open http://localhost:7209 and log in as `dev@example.com` /
 npm run dev              # Start server (API + vault + UI) + demos + storybook
 npm run build            # Build server + vault + UI + client SDK
 npm run test:unit        # Run tests
+npm run test:helm        # Render and check the Helm chart in deploy/helm (needs helm + kubeconform)
 npm run test:e2e:headless # Render every story in a headless browser
 npm run test:e2e         # Same, with the browser visible
 npm run lint             # ESLint + TypeScript check

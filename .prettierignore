@@ -7,3 +7,5 @@
 /storybook-static/
 /package-lock.json
 /tsconfig.json
+# Go templates are not YAML until rendered
+/deploy/helm/encryption/templates/

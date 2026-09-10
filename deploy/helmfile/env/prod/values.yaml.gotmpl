@@ -1,0 +1,65 @@
+# The values of one environment. Secrets are NOT here: they come from the SOPS file
+# next to this one, or from Secrets that already exist in the cluster (existingSecret).
+image:
+  # Both, always: the tag is what a human reads, the digest is what the node runs.
+  # Verify the digest with `cosign verify-attestation` (docker-compose.production.yaml)
+  # before writing it here.
+  tag: 1.37.0
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+replicaCount: 3
+
+hosts:
+  vault: data.encryption.example.org
+  interface: encryption.example.org
+
+config:
+  allowedFrameAncestors:
+    - https://docs.example.org
+    - https://drive.example.org
+  oidc:
+    issuer: https://auth.example.org/realms/suite
+    jwksUrl: https://auth.example.org/realms/suite/protocol/openid-connect/certs
+    clientId: encryption
+    serverClientId: encryption-server
+  mailer:
+    smtpHost: smtp.example.org
+    smtpPort: 587
+    existingSecret:
+      name: encryption-smtp
+    defaultDomain: example.org
+  emailProductUrl: https://docs.example.org
+  securityContactUrl: https://vdp.example.org/report
+
+database:
+  existingSecret:
+    name: encryption-database
+    key: runtime-url
+  migration:
+    existingSecret:
+      name: encryption-database
+      key: migrator-url
+
+sentry:
+  enabled: true
+  existingSecret:
+    name: encryption-sentry
+  environment: {{ .Environment.Name }}
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8 # the database, the relay, the collector

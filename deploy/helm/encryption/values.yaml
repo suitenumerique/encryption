@@ -1,0 +1,221 @@
+# Values for the encryption chart. Every key is validated by values.schema.json: a typo
+# in a key name or a wrong type fails `helm template` instead of producing a pod that
+# boots without the variable. Values marked "required" fail the render when empty.
+#
+# The chart deploys the service and nothing it depends on. PostgreSQL, the SMTP relay,
+# the OIDC provider and an error collector are external services the operator already
+# runs; the chart takes their coordinates and never manages persistent storage.
+
+image:
+  repository: lasuite/encryption
+  # The application version to run. Required (or a digest): the chart is versioned on
+  # its own, by `chart/vX.Y.Z` tags, and has no opinion on which application it runs.
+  tag: ''
+  # The bytes to run. With both set the reference is "repository:tag@sha256:...", the
+  # tag for humans and the digest for the runtime, which refuses anything else. Take
+  # the digest from `cosign verify-attestation` (see docker-compose.production.yaml),
+  # never from a tag you did not verify.
+  digest: ''
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+nameOverride: ''
+fullnameOverride: ''
+
+replicaCount: 2
+
+# The two public hostnames. Required. TLS is not optional in front of them: the vault
+# needs a secure context and the browser reporting endpoint is ignored over plain HTTP.
+hosts:
+  vault: '' # e.g. data.encryption.example.com
+  interface: '' # e.g. encryption.example.com
+
+# Non-secret configuration, mirroring .env.model. Names follow the variables.
+config:
+  # Product origins allowed to embed the iframes. Required, at least one. They must
+  # share one registrable domain (see the README, "Storage partitioning constraint").
+  allowedFrameAncestors: []
+  oidc:
+    issuer: '' # required, https://...
+    jwksUrl: '' # required
+    clientId: '' # required, the interface's public client
+    serverClientId: '' # required, the audience the server accepts
+    redirectUri: '' # default: https://<hosts.interface>/auth/callback
+    acceptUnverifiedEmail: false
+    fallbackToEmailForIdentification: false
+  mailer:
+    smtpHost: '' # required: the emergency-access notifications are a security control
+    smtpPort: 25
+    secure: false # implicit TLS (465); leave false for STARTTLS on 25/587
+    requireTls: true
+    # Credentials, either inline (written into a Secret the chart owns) or from an
+    # existing Secret. Leave everything empty for an unauthenticated relay.
+    user: ''
+    password: ''
+    existingSecret:
+      name: ''
+      userKey: MAILER_SMTP_USER
+      passwordKey: MAILER_SMTP_PASSWORD
+    # Optional second relay, tried when the primary send fails.
+    fallback:
+      smtpHost: ''
+      smtpPort: 25
+      secure: false
+      requireTls: true
+      user: ''
+      password: ''
+      existingSecret:
+        name: ''
+        userKey: MAILER_FALLBACK_SMTP_USER
+        passwordKey: MAILER_FALLBACK_SMTP_PASSWORD
+    defaultDomain: '' # required, sender domain of the notifications
+  # Where email links send the user (the interface only exists inside a product). Required.
+  emailProductUrl: ''
+  docsEnabled: true
+  # Optional JSON for the brand font (family + woff URLs), see .env.model.
+  brandFont: ''
+  # Where researchers report a problem with THIS instance, published as
+  # /.well-known/security.txt. Empty = the path does not exist.
+  securityContactUrl: ''
+
+database:
+  # The runtime role's connection string (rows only, see deploy/postgres/). One of
+  # `url` (inline, written into a Secret the chart owns) or `existingSecret.name`.
+  url: ''
+  existingSecret:
+    name: ''
+    key: DATABASE_URL
+  migration:
+    # A Job run as a Helm pre-install/pre-upgrade hook (Argo CD maps it to PreSync):
+    # once per release, never per pod, and a failed migration stops the rollout.
+    enabled: true
+    # The migrator role's connection string. Same shape as above.
+    url: ''
+    existingSecret:
+      name: ''
+      key: DATABASE_URL
+    backoffLimit: 1
+    activeDeadlineSeconds: 600
+    annotations: {}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+sentry:
+  # Error reporting to any Sentry-compatible collector (Sentry, GlitchTip). Disabled,
+  # nothing is sent and nothing else changes. See "Error reporting" in the README.
+  enabled: false
+  dsn: ''
+  existingSecret:
+    name: ''
+    key: SENTRY_DSN
+  environment: ''
+  # Empty = the commit the image was built from.
+  release: ''
+
+# Raw Kubernetes `env` entries appended after the chart's own (a value, a
+# configMapKeyRef, a secretKeyRef, a fieldRef...). `extraEnvFrom` are `envFrom`
+# entries (a whole Secret or ConfigMap). Both are for what the chart has no key for,
+# and override nothing: Kubernetes keeps the FIRST occurrence of a variable name.
+extraEnv: []
+extraEnvFrom: []
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  # One rule per host, both to the same Service (the server routes on the Host header).
+  tls:
+    enabled: true
+    # Empty = "<fullname>-tls". With cert-manager, add its annotation above and it
+    # creates this Secret for both hosts.
+    secretName: ''
+
+# Mirrors docker-compose.production.yaml: no shell, no root, nothing writable but /tmp.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# The only writable path. Memory-backed and bounded, like the compose tmpfs.
+tmpVolume:
+  sizeLimit: 64Mi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    # Node sizes its heap from this limit (--max-old-space-size-percentage in the image).
+    memory: 1Gi
+
+probes:
+  startup:
+    periodSeconds: 2
+    failureThreshold: 30
+  readiness:
+    periodSeconds: 10
+    timeoutSeconds: 2
+  liveness:
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+terminationGracePeriodSeconds: 30
+
+podDisruptionBudget:
+  # Rendered only when replicaCount > 1, since a budget on a single replica blocks node drains.
+  enabled: true
+  minAvailable: 1
+
+serviceAccount:
+  create: true
+  name: ''
+  annotations: {}
+
+networkPolicy:
+  # Off by default because the egress destinations (database, relay, OIDC provider,
+  # collector) are only known to the operator. Enabled, the pods accept traffic on
+  # the app port from `ingress.from` (empty = anywhere) and may only reach DNS plus
+  # the `egress` rules given here.
+  enabled: false
+  ingress:
+    from: []
+  egress: []
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+
+priorityClassName: ''
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+deploymentAnnotations: {}

@@ -1,0 +1,483 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the chart > renders the same objects as last time (review the snapshot diff on any change) 1`] = `
+"---
+# Source: encryption-chart/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: encryption
+      app.kubernetes.io/instance: enc
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 7200
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    # Name resolution, wherever the cluster DNS lives.
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+      - port: 5432
+        protocol: TCP
+      to:
+      - ipBlock:
+          cidr: 10.0.0.0/8
+---
+# Source: encryption-chart/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: encryption
+      app.kubernetes.io/instance: enc
+---
+# Source: encryption-chart/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: false
+---
+# Source: encryption-chart/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://encryption_runtime:runtime-password@postgres.example.org:5432/encryption?schema=encryption"
+  MIGRATOR_DATABASE_URL: "postgresql://encryption_migrator:migrator-password@postgres.example.org:5432/encryption?schema=encryption"
+  SENTRY_DSN: "https://11111111111111111111111111111111@glitchtip.example.org/1"
+  MAILER_SMTP_USER: "relay-user"
+  MAILER_SMTP_PASSWORD: "relay-password"
+---
+# Source: encryption-chart/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+---
+# Source: encryption-chart/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: encryption
+      app.kubernetes.io/instance: enc
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: encryption
+        app.kubernetes.io/instance: enc
+      annotations:
+        # A changed inline secret rolls the pods, since env from a Secret is read at start.
+        checksum/secret: 6e371e3bd63df7ec665e16a30feb5ac2833d189e6076a1a6f129111361a2fb54
+    spec:
+      serviceAccountName: enc-encryption
+      # The server never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: server
+          image: "lasuite/encryption:1.2.3"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http
+              containerPort: 7200
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "7200"
+            - name: VAULT_URL
+              value: "https://data.encryption.example.org"
+            - name: UI_URL
+              value: "https://encryption.example.org"
+            - name: ALLOWED_FRAME_ANCESTORS
+              value: "https://docs.example.org,https://drive.example.org"
+            - name: OIDC_ISSUER
+              value: "https://auth.example.org/realms/suite"
+            - name: OIDC_JWKS_URL
+              value: "https://auth.example.org/realms/suite/protocol/openid-connect/certs"
+            - name: OIDC_CLIENT_ID
+              value: "encryption"
+            - name: OIDC_SERVER_CLIENT_ID
+              value: "encryption-server"
+            - name: OIDC_REDIRECT_URI
+              value: "https://encryption.example.org/auth/callback"
+            - name: OIDC_ACCEPT_UNVERIFIED_EMAIL
+              value: "false"
+            - name: OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION
+              value: "false"
+            - name: DOCS_ENABLED
+              value: "true"
+            - name: MAILER_SMTP_HOST
+              value: "smtp.example.org"
+            - name: MAILER_SMTP_PORT
+              value: "587"
+            - name: MAILER_SMTP_SECURE
+              value: "false"
+            - name: MAILER_SMTP_REQUIRE_TLS
+              value: "true"
+            - name: MAILER_SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: "enc-encryption"
+                  key: "MAILER_SMTP_USER"
+            - name: MAILER_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "enc-encryption"
+                  key: "MAILER_SMTP_PASSWORD"
+            - name: MAILER_FALLBACK_SMTP_HOST
+              value: "smtp-fallback.example.org"
+            - name: MAILER_FALLBACK_SMTP_PORT
+              value: "25"
+            - name: MAILER_FALLBACK_SMTP_SECURE
+              value: "false"
+            - name: MAILER_FALLBACK_SMTP_REQUIRE_TLS
+              value: "false"
+            - name: MAILER_DEFAULT_DOMAIN
+              value: "example.org"
+            - name: EMAIL_PRODUCT_URL
+              value: "https://docs.example.org"
+            - name: SECURITY_CONTACT_URL
+              value: "mailto:security@example.org"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: "enc-encryption"
+                  key: "DATABASE_URL"
+            - name: SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: "enc-encryption"
+                  key: "SENTRY_DSN"
+            - name: SENTRY_ENVIRONMENT
+              value: "production"
+            - name: EMAIL_PALETTE_PATH
+              value: /config/palette.json
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 3
+            periodSeconds: 20
+            timeoutSeconds: 2
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+      topologySpreadConstraints:
+        -
+          maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: encryption
+              app.kubernetes.io/instance: enc
+---
+# Source: encryption-chart/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: enc-encryption
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: "nginx"
+  tls:
+    - secretName: "enc-encryption-tls"
+      hosts:
+        - "data.encryption.example.org"
+        - "encryption.example.org"
+  rules:
+    - host: "data.encryption.example.org"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: enc-encryption
+                port:
+                  name: http
+    - host: "encryption.example.org"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: enc-encryption
+                port:
+                  name: http
+---
+# Source: encryption-chart/templates/tests/health.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: enc-encryption-test-health
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    # Not deleted on success: \`helm test --logs\` reads the pod after it finished. The
+    # next run replaces it.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    fsGroup: 65532
+    runAsGroup: 65532
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: health
+      image: "lasuite/encryption:1.2.3"
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+      env:
+        - name: HEALTH_URL
+          value: "http://enc-encryption:80/health"
+      args:
+        - -e
+        - |
+          const url = process.env.HEALTH_URL;
+          fetch(url)
+            .then(async (response) => {
+              console.log(\`\${url} -> \${response.status} \${await response.text()}\`);
+              if (!response.ok) process.exit(1);
+            })
+            .catch((error) => {
+              console.error(\`\${url} -> \${error}\`);
+              process.exit(1);
+            });
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+---
+# Source: encryption-chart/templates/migration-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # The release revision in the name: a hook Job is immutable once created, so the
+  # name must change every time Helm has to create it again.
+  name: enc-encryption-migrate-1
+  namespace: "encryption"
+  labels:
+    helm.sh/chart: encryption-chart-0.0.0-dev
+    app.kubernetes.io/name: encryption
+    app.kubernetes.io/instance: enc
+    app.kubernetes.io/version: "1.2.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: migration
+  annotations:
+    # Before the Deployment is touched, on install and on upgrade. Argo CD reads the
+    # same annotations and runs it as a PreSync hook. A failed Job stays for its logs;
+    # a succeeded one is removed, and a stale one is replaced on the next run.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: encryption
+        app.kubernetes.io/instance: enc
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: enc-encryption
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: "lasuite/encryption:1.2.3"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          # The image's entrypoint is \`node\`; these are its arguments, the Prisma CLI
+          # the image ships for exactly this (see the Dockerfile).
+          args:
+            - node_modules/prisma/build/index.js
+            - migrate
+            - deploy
+          env:
+            - name: NODE_ENV
+              value: production
+            
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: "enc-encryption"
+                  key: "MIGRATOR_DATABASE_URL"
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+"
+`;

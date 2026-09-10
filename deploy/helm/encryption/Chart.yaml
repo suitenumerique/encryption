@@ -1,0 +1,17 @@
+apiVersion: v2
+type: application
+# `encryption-chart`, not `encryption`: on Docker Hub the chart lives in its own
+# repository, lasuite/encryption-chart, so its versions never collide with the image's
+# tags in lasuite/encryption. Kubernetes objects are still named after the application
+# (see `encryption.name` in _helpers.tpl).
+name: encryption-chart
+description: End-to-end encryption service for La Suite numérique (vault + interface, one server, one image)
+home: https://github.com/suitenumerique/encryption
+sources:
+  - https://github.com/suitenumerique/encryption
+# A placeholder: the chart is versioned by `chart/vX.Y.Z` git tags, independently of
+# the application, and the release pipeline packages it with that version. There is no
+# appVersion on purpose: the chart has no opinion on which image it runs, `image.tag`
+# is required in the values.
+version: 0.0.0-dev
+kubeVersion: '>=1.27.0-0'

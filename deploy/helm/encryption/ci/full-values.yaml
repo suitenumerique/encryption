@@ -1,0 +1,71 @@
+# A complete, production-shaped configuration with every optional feature on and every
+# secret given inline. The chart test renders it, snapshots it, validates it against the
+# Kubernetes schemas and asserts on its details. Nothing here is real.
+image:
+  tag: 1.2.3
+
+replicaCount: 3
+
+hosts:
+  vault: data.encryption.example.org
+  interface: encryption.example.org
+
+config:
+  allowedFrameAncestors:
+    - https://docs.example.org
+    - https://drive.example.org
+  oidc:
+    issuer: https://auth.example.org/realms/suite
+    jwksUrl: https://auth.example.org/realms/suite/protocol/openid-connect/certs
+    clientId: encryption
+    serverClientId: encryption-server
+    acceptUnverifiedEmail: false
+    fallbackToEmailForIdentification: false
+  mailer:
+    smtpHost: smtp.example.org
+    smtpPort: 587
+    requireTls: true
+    user: relay-user
+    password: relay-password
+    fallback:
+      smtpHost: smtp-fallback.example.org
+      smtpPort: 25
+      requireTls: false
+    defaultDomain: example.org
+  emailProductUrl: https://docs.example.org
+  securityContactUrl: mailto:security@example.org
+
+database:
+  url: postgresql://encryption_runtime:runtime-password@postgres.example.org:5432/encryption?schema=encryption
+  migration:
+    url: postgresql://encryption_migrator:migrator-password@postgres.example.org:5432/encryption?schema=encryption
+
+sentry:
+  enabled: true
+  dsn: https://11111111111111111111111111111111@glitchtip.example.org/1
+  environment: production
+
+extraEnv:
+  - name: EMAIL_PALETTE_PATH
+    value: /config/palette.json
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 5432
+          protocol: TCP

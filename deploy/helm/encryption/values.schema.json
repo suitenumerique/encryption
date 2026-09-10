@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "encryption chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "hostname": {
+      "type": "string",
+      "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$"
+    },
+    "httpsUrl": { "type": "string", "pattern": "^https://\\S+$" },
+    "optionalHttpsUrl": { "type": "string", "pattern": "^(?:https://\\S+)?$" },
+    "existingSecretKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    },
+    "existingSecretCredentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "userKey": { "type": "string", "minLength": 1 },
+        "passwordKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "relay": {
+      "smtpHost": { "type": "string" },
+      "smtpPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+      "secure": { "type": "boolean" },
+      "requireTls": { "type": "boolean" },
+      "user": { "type": "string" },
+      "password": { "type": "string" },
+      "existingSecret": { "$ref": "#/$defs/existingSecretCredentials" }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "properties": {
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^(?:sha256:[0-9a-f]{64})?$" },
+        "pullPolicy": { "type": "string", "enum": ["IfNotPresent", "Always", "Never"] },
+        "pullSecrets": {
+          "type": "array",
+          "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }
+        }
+      }
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vault": { "anyOf": [{ "const": "" }, { "$ref": "#/$defs/hostname" }] },
+        "interface": { "anyOf": [{ "const": "" }, { "$ref": "#/$defs/hostname" }] }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowedFrameAncestors": { "type": "array", "items": { "$ref": "#/$defs/httpsUrl" } },
+        "oidc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "issuer": { "$ref": "#/$defs/optionalHttpsUrl" },
+            "jwksUrl": { "$ref": "#/$defs/optionalHttpsUrl" },
+            "clientId": { "type": "string" },
+            "serverClientId": { "type": "string" },
+            "redirectUri": { "$ref": "#/$defs/optionalHttpsUrl" },
+            "acceptUnverifiedEmail": { "type": "boolean" },
+            "fallbackToEmailForIdentification": { "type": "boolean" }
+          }
+        },
+        "mailer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "smtpHost": { "$ref": "#/$defs/relay/smtpHost" },
+            "smtpPort": { "$ref": "#/$defs/relay/smtpPort" },
+            "secure": { "$ref": "#/$defs/relay/secure" },
+            "requireTls": { "$ref": "#/$defs/relay/requireTls" },
+            "user": { "$ref": "#/$defs/relay/user" },
+            "password": { "$ref": "#/$defs/relay/password" },
+            "existingSecret": { "$ref": "#/$defs/existingSecretCredentials" },
+            "fallback": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "smtpHost": { "$ref": "#/$defs/relay/smtpHost" },
+                "smtpPort": { "$ref": "#/$defs/relay/smtpPort" },
+                "secure": { "$ref": "#/$defs/relay/secure" },
+                "requireTls": { "$ref": "#/$defs/relay/requireTls" },
+                "user": { "$ref": "#/$defs/relay/user" },
+                "password": { "$ref": "#/$defs/relay/password" },
+                "existingSecret": { "$ref": "#/$defs/existingSecretCredentials" }
+              }
+            },
+            "defaultDomain": { "type": "string" }
+          }
+        },
+        "emailProductUrl": { "$ref": "#/$defs/optionalHttpsUrl" },
+        "docsEnabled": { "type": "boolean" },
+        "brandFont": { "type": "string" },
+        "securityContactUrl": { "type": "string", "pattern": "^(?:https://\\S+|mailto:\\S+)?$" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "existingSecret": { "$ref": "#/$defs/existingSecretKey" },
+        "migration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "url": { "type": "string" },
+            "existingSecret": { "$ref": "#/$defs/existingSecretKey" },
+            "backoffLimit": { "type": "integer", "minimum": 0 },
+            "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+            "annotations": { "type": "object" },
+            "resources": { "$ref": "#/$defs/resources" }
+          }
+        }
+      }
+    },
+    "sentry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "dsn": { "type": "string" },
+        "existingSecret": { "$ref": "#/$defs/existingSecretKey" },
+        "environment": { "type": "string" },
+        "release": { "type": "string" }
+      }
+    },
+    "extraEnv": {
+      "type": "array",
+      "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } }
+    },
+    "extraEnvFrom": { "type": "array", "items": { "type": "object" } },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "annotations": { "type": "object" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secretName": { "type": "string" }
+          }
+        }
+      }
+    },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "tmpVolume": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "sizeLimit": { "type": "string", "pattern": "^[0-9]+(?:[EPTGMK]i?)?$" } }
+    },
+    "resources": { "$ref": "#/$defs/resources" },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startup": { "$ref": "#/$defs/probe" },
+        "readiness": { "$ref": "#/$defs/probe" },
+        "liveness": { "$ref": "#/$defs/probe" }
+      }
+    },
+    "strategy": { "type": "object" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "type": ["integer", "string"] }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "from": { "type": "array", "items": { "type": "object" } } }
+        },
+        "egress": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "topologySpreadConstraints": { "type": "array", "items": { "type": "object" } },
+    "priorityClassName": { "type": "string" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array", "items": { "type": "object" } },
+    "affinity": { "type": "object" },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "deploymentAnnotations": { "type": "object" }
+  }
+}

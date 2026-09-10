@@ -5,7 +5,8 @@ on:
     branches:
       - main
     tags:
-      - 'v*'
+      - 'v*' # the application: image build, scan, push, attestation
+      - 'chart/v*' # the Helm chart alone: package, push, attestation (never mixed with the application jobs, see each job's `if`)
   pull_request:
 
 permissions: # Default permissions
@@ -19,6 +20,7 @@ concurrency:
 env:
   CONTAINER_REGISTRY: docker.io
   CONTAINER_IMAGE: lasuite/encryption
+  CHART_IMAGE: lasuite/encryption-chart # its own repository: chart versions must not collide with image tags
   NODE_OPTIONS: --max-old-space-size=4096
   NODE_VERSION: 24.19.0
   NPM_VERSION: 12.0.2
@@ -27,6 +29,7 @@ jobs:
   # TODO: add egress filter when GitHub releases it end of 2026, and maybe scopes on events that trigger the pipeline
   supply-chain:
     name: Supply chain
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -61,6 +64,7 @@ jobs:
 
   verify:
     name: Verify
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -104,6 +108,7 @@ jobs:
 
   test:
     name: Unit tests
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -128,6 +133,7 @@ jobs:
 
   e2e:
     name: Story tests
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -173,7 +179,7 @@ jobs:
   build:
     name: Build
     # when releasing the build will be done with docker, so only target pull requests here
-    if: ${{ github.event.act || github.event_name == 'pull_request' }}
+    if: ${{ github.event.act || (github.event_name == 'pull_request' && !startsWith(github.ref, 'refs/tags/chart/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -196,10 +202,35 @@ jobs:
       - name: Build
         run: npm run build
 
+  helm:
+    name: Helm chart
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }} # an application tag never touches the chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Install Helm and kubeconform
+        uses: ./.github/actions/setup-helm
+
+      - name: Test the chart # lint, values schema, Kubernetes API schemas, rendered objects, snapshot
+        run: npm run test:helm
+
   release:
     name: Release
     needs: [supply-chain, verify, test, e2e]
-    if: ${{ github.event.act || github.ref_name == 'main' || github.ref_type == 'tag' }}
+    if: ${{ github.event.act || github.ref_name == 'main' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -312,3 +343,64 @@ jobs:
       #
       # Deployment must be handled outside this repository, either by using GitHub hooks, regular checks, or by manually deploying
       #
+
+  release-chart:
+    name: Release the chart
+    needs: [helm]
+    if: ${{ startsWith(github.ref, 'refs/tags/chart/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: ./.github/actions/setup-helm
+
+      - name: Compute the chart version # `chart/v1.4.0` -> `1.4.0`, and nothing else is accepted
+        id: chart-meta
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${REF_NAME#chart/v}"
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::${REF_NAME} is not chart/vX.Y.Z"; exit 1; }
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Package the chart
+        env:
+          VERSION: ${{ steps.chart-meta.outputs.version }}
+        run: helm package deploy/helm/encryption --version "${VERSION}" --destination /tmp/chart
+
+      - name: Log in to the container registry
+        env:
+          REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+          REGISTRY_TOKEN: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
+        # Helm speaks to Docker Hub's OCI endpoint by its real name
+        run: echo "${REGISTRY_TOKEN}" | helm registry login registry-1.docker.io --username "${REGISTRY_USERNAME}" --password-stdin
+
+      - name: Push the chart
+        id: chart-push
+        env:
+          VERSION: ${{ steps.chart-meta.outputs.version }}
+        # The chart name (Chart.yaml) becomes the repository under the namespace: lasuite/encryption-chart
+        run: |
+          OUTPUT="$(helm push "/tmp/chart/encryption-chart-${VERSION}.tgz" oci://registry-1.docker.io/lasuite 2>&1)"
+          echo "${OUTPUT}"
+          DIGEST="$(echo "${OUTPUT}" | sed -n 's/^Digest: //p')"
+          [ -n "${DIGEST}" ] || { echo "::error::helm push printed no digest"; exit 1; }
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Pin it as \`${CHART_IMAGE}:${VERSION}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the build provenance
+        # Same Sigstore attestation as the image; `cosign verify-attestation` on the chart digest reads it (see deploy/helm/encryption/README.md)
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ env.CONTAINER_REGISTRY }}/${{ env.CHART_IMAGE }}
+          subject-digest: ${{ steps.chart-push.outputs.digest }}
+          push-to-registry: true
