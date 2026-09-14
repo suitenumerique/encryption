@@ -4,6 +4,29 @@
   "author": "Suite numérique",
   "role": "Maintainers of suitenumerique/encryption",
   "timestamp": "2026-09-02T00:00:00Z",
-  "version": 1,
-  "statements": []
+  "last_updated": "2026-09-14T00:00:00Z",
+  "version": 2,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-3f6p-5ww8-9rcr",
+        "description": "mysql2: auth plugin downgrade to mysql_clear_password leaks plaintext credentials"
+      },
+      "products": [{ "@id": "pkg:npm/mysql2" }],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "mysql2 is a MySQL driver the Prisma CLI declares as a dependency for every database it supports; it sits in the image only because `prisma migrate deploy` ships there. This service connects to PostgreSQL exclusively (`prisma.config.ts`, `@prisma/adapter-pg`), so no MySQL handshake, and therefore no auth plugin negotiation, ever runs. Prisma pins the exact version, so it moves when Prisma does."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-40345",
+        "aliases": ["GHSA-ggr8-5vv4-36mx"],
+        "description": "deepmerge-ts: stack exhaustion when merging recursive object graphs"
+      },
+      "products": [{ "@id": "pkg:npm/deepmerge-ts" }],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The only consumer in the image is `@prisma/config`, which merges the defaults of the Prisma CLI with the operator's own `prisma.config.ts` when `migrate deploy` starts. Both inputs are authored by the operator and shipped inside the image; no external party can supply an object to that merge. The server bundle carries its own, fixed copy (8.x) for html-to-text. Prisma pins the exact version, so it moves when Prisma does."
+    }
+  ]
 }

@@ -65,7 +65,7 @@
     "seed": "tsx src/prisma/seed.script.ts"
   },
   "overrides": {
-    "js-yaml@^4": "4.3.1",
+    "js-yaml@^4": "4.3.2",
     "@rolldown/plugin-babel": {
       "@babel/plugin-transform-runtime": "^7"
     },
@@ -89,8 +89,8 @@
     "@fontsource-variable/inter": "5.2.8",
     "@gouvfr-lasuite/cunningham-react": "4.2.0",
     "@mdx-js/react": "3.1.1",
-    "@prisma/adapter-pg": "7.5.0",
-    "@prisma/client": "7.5.0",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
     "@react-pdf/renderer": "4.5.1",
     "@scure/bip39": "2.4.0",
     "fastify": "5.12.1",
@@ -107,7 +107,7 @@
     "libsodium-wrappers-sumo": "0.8.4",
     "mermaid": "11.16.0",
     "mjml": "5.4.0",
-    "nodemailer": "9.0.3",
+    "nodemailer": "9.1.1",
     "oidc-client-ts": "3.5.0",
     "pg": "8.20.0",
     "qrcode": "1.5.4",
@@ -162,7 +162,7 @@
     "pglite-prisma-adapter": "0.7.2",
     "playwright": "1.61.1",
     "prettier": "3.8.1",
-    "prisma": "7.5.0",
+    "prisma": "7.10.0",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
     "rollup-plugin-sbom": "4.0.0",
