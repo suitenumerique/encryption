@@ -390,13 +390,17 @@ jobs:
         run: helm package deploy/helm/encryption --version "${VERSION}" --destination /tmp/chart
 
       - name: Log in to the container registry
-        env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKER_HUB_USER }}
-          REGISTRY_TOKEN: ${{ secrets.DOCKER_HUB_PASSWORD }}
-        run: echo "${REGISTRY_TOKEN}" | helm registry login registry-1.docker.io --username "${REGISTRY_USERNAME}" --password-stdin
+        # Docker's credential file, not `helm registry login`: the attestation push reads only that file, and Helm falls back to it
+        if: ${{ !github.event.act }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.CONTAINER_REGISTRY }}
+          username: ${{ secrets.DOCKER_HUB_USER }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Push the chart
         id: chart-push
+        if: ${{ !github.event.act }}
         env:
           VERSION: ${{ steps.chart-meta.outputs.version }}
         # Through `tee`, not `$(...)`: under `bash -e` a failed substitution exits before its
@@ -411,6 +415,7 @@ jobs:
 
       - name: Publish the build provenance
         # Same Sigstore attestation as the image; `cosign verify-attestation` on the chart digest reads it (see deploy/helm/encryption/README.md)
+        if: ${{ !github.event.act }}
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-name: ${{ env.CONTAINER_REGISTRY }}/${{ env.CHART_IMAGE }}
