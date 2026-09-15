@@ -211,7 +211,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -359,7 +359,7 @@ jobs:
       attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -399,10 +399,12 @@ jobs:
         id: chart-push
         env:
           VERSION: ${{ steps.chart-meta.outputs.version }}
+        # Through `tee`, not `$(...)`: under `bash -e` a failed substitution exits before its
+        # output is printed, which hides Helm's error. `pipefail` keeps that failure fatal.
         run: |
-          OUTPUT="$(helm push "/tmp/chart/encryption-chart-${VERSION}.tgz" oci://registry-1.docker.io/lasuite 2>&1)"
-          echo "${OUTPUT}"
-          DIGEST="$(echo "${OUTPUT}" | sed -n 's/^Digest: //p')"
+          set -o pipefail
+          helm push "/tmp/chart/encryption-chart-${VERSION}.tgz" oci://registry-1.docker.io/lasuite 2>&1 | tee "${RUNNER_TEMP}/helm-push.log"
+          DIGEST="$(sed -n 's/^Digest: //p' "${RUNNER_TEMP}/helm-push.log")"
           [ -n "${DIGEST}" ] || { echo "::error::helm push printed no digest"; exit 1; }
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Pin it as \`${CHART_IMAGE}:${VERSION}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
