@@ -391,8 +391,8 @@ jobs:
 
       - name: Log in to the container registry
         env:
-          REGISTRY_USERNAME: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
-          REGISTRY_TOKEN: ${{ secrets.CONTAINER_REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.DOCKER_HUB_USER }}
+          REGISTRY_TOKEN: ${{ secrets.DOCKER_HUB_PASSWORD }}
         run: echo "${REGISTRY_TOKEN}" | helm registry login registry-1.docker.io --username "${REGISTRY_USERNAME}" --password-stdin
 
       - name: Push the chart
