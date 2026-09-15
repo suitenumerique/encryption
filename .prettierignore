@@ -1,6 +1,7 @@
 /.cache/
 /.github/CODEOWNERS
 /build/
+/deploy/helm/encryption/templates/
 /dist/
 /node_modules/
 /src/generated/

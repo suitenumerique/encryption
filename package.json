@@ -36,8 +36,10 @@
     "lint:es": "TIMING=1 eslint .",
     "lint:ts": "tsc --noEmit --incremental false",
     "test:prepare": "npm run db:schema:compile",
-    "test:unit": "vitest run --passWithNoTests",
-    "test:unit:watch": "vitest",
+    "test:unit": "vitest run --project unit --passWithNoTests",
+    "test:unit:watch": "vitest --project unit",
+    "test:helm": "vitest run --project helm",
+    "test:helm:smoke": "deploy/helm/smoke-k3d.sh",
     "test:e2e": "vitest run --config vitest.storybook.config.ts",
     "test:e2e:headless": "vitest run --config vitest.storybook.config.ts --browser.headless",
     "db:schema:compile": "prisma generate",
@@ -175,7 +177,8 @@
     "vite": "8.2.2",
     "vite-plugin-dts": "5.0.3",
     "vite-plugin-sri-gen": "1.3.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "yaml": "2.9.0"
   },
   "packageManager": "npm@12.0.2",
   "engines": {

@@ -5,7 +5,8 @@ on:
     branches:
       - testci
     tags:
-      - 'v*'
+      - 'v*' # the application: image build, scan, push, attestation
+      - 'chart/v*' # the Helm chart alone: package, push, attestation (never mixed with the application jobs, see each job's `if`)
   pull_request:
 
 permissions: # Default permissions
@@ -19,6 +20,7 @@ concurrency:
 env:
   CONTAINER_REGISTRY: docker.io
   CONTAINER_IMAGE: lasuite/encryption
+  CHART_IMAGE: lasuite/encryption-chart # its own repository: chart versions must not collide with image tags
   NODE_OPTIONS: --max-old-space-size=4096
   NODE_VERSION: 24.19.0
   NPM_VERSION: 12.0.2
@@ -27,6 +29,7 @@ jobs:
   # TODO: add egress filter when GitHub releases it end of 2026, and maybe scopes on events that trigger the pipeline
   supply-chain:
     name: Supply chain
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -61,6 +64,7 @@ jobs:
 
   verify:
     name: Verify
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -104,6 +108,7 @@ jobs:
 
   test:
     name: Unit tests
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -128,6 +133,7 @@ jobs:
 
   e2e:
     name: Story tests
+    if: ${{ !startsWith(github.ref, 'refs/tags/chart/') }} # a chart tag runs only the chart jobs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -173,7 +179,7 @@ jobs:
   build:
     name: Build
     # when releasing the build will be done with docker, so only target pull requests here
-    if: ${{ github.event.act || github.event_name == 'pull_request' }}
+    if: ${{ github.event.act || (github.event_name == 'pull_request' && !startsWith(github.ref, 'refs/tags/chart/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -196,10 +202,79 @@ jobs:
       - name: Build
         run: npm run build
 
+  helm:
+    name: Helm chart
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }} # an application tag never touches the chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Install Helm and kubeconform
+        uses: ./.github/actions/setup-helm
+
+      - name: Test the chart # lint, values schema, Kubernetes API schemas, rendered objects, snapshot
+        run: npm run test:helm
+
+  changes:
+    name: Changes since the last successful run
+    # A branch build republishes `main` (image) and `0.0.0-main` (chart) only when their part changed
+    # since the last run of this workflow that succeeded on the branch. Not since the previous push:
+    # a run whose release failed or was cancelled is not a base, so the next push publishes again.
+    # `.github` counts for both, a workflow change can change what gets published.
+    # A tag, "act", a pull request, no successful run yet, or its commit gone (force-push) publish anyway.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # to find the last successful run
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+      chart: ${{ steps.diff.outputs.chart }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the last successful run's commit has to be there to diff against it
+
+      - name: Compare with the last successful run
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BASE=""
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            WORKFLOW_FILE="$(basename "${GITHUB_WORKFLOW_REF%@*}")"
+            BASE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${GITHUB_REF_NAME}&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // empty')" || BASE=""
+          fi
+          if [[ -z "${BASE}" ]] || ! git cat-file -e "${BASE}^{commit}" 2> /dev/null; then
+            echo "No usable successful run to compare with, publishing everything"
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "chart=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Comparing with ${BASE}, the last successful run"
+          changed() { git diff --quiet "${BASE}" "${GITHUB_SHA}" -- "$@" && echo false || echo true; }
+          echo "app=$(changed . ':(exclude)deploy/helm')" >> "$GITHUB_OUTPUT"
+          echo "chart=$(changed deploy/helm/encryption .github)" >> "$GITHUB_OUTPUT"
+
   release:
     name: Release
-    needs: [supply-chain, verify, test, e2e]
-    if: ${{ github.event.act || github.ref_name == 'testci' || github.ref_type == 'tag' }}
+    needs: [supply-chain, verify, test, e2e, changes]
+    if: ${{ (github.event.act || github.ref_name == 'testci' || startsWith(github.ref, 'refs/tags/v')) && needs.changes.outputs.app == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -313,3 +388,80 @@ jobs:
       #
       # Deployment must be handled outside this repository, either by using GitHub hooks, regular checks, or by manually deploying
       #
+
+  release-chart:
+    name: Release the chart
+    needs: [helm, changes]
+    # Either having the chart release tag, or the main branch to have the same behavior than Docker images when tests are needed
+    if: ${{ (github.event.act || github.ref_name == 'testci' || startsWith(github.ref, 'refs/tags/chart/v')) && needs.changes.outputs.chart == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: ./.github/actions/setup-helm
+
+      - name: Compute the chart version # `chart/v1.4.0` -> `1.4.0`, a branch build -> `0.0.0-main`
+        id: chart-meta
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        # A branch build publishes one fixed version that the next build overwrites, the chart's
+        # counterpart of the image's `main` tag. Not `main` itself: a chart version must be
+        # SemVer and Helm refuses it. A pre-release is also skipped when Helm resolves the
+        # latest version, so an install that does not name this version never gets it.
+        run: |
+          if [[ "${REF_TYPE}" == "tag" ]]; then
+            VERSION="${REF_NAME#chart/v}"
+            [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::${REF_NAME} is not chart/vX.Y.Z"; exit 1; }
+          else
+            VERSION="0.0.0-main"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Package the chart
+        env:
+          VERSION: ${{ steps.chart-meta.outputs.version }}
+        run: helm package deploy/helm/encryption --version "${VERSION}" --destination /tmp/chart
+
+      - name: Log in to the container registry
+        # Docker's credential file, not `helm registry login`: the attestation push reads only that file, and Helm falls back to it
+        if: ${{ !github.event.act }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.CONTAINER_REGISTRY }}
+          username: ${{ secrets.DOCKER_HUB_USER }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      - name: Push the chart
+        id: chart-push
+        if: ${{ !github.event.act }}
+        env:
+          VERSION: ${{ steps.chart-meta.outputs.version }}
+        # Through `tee`, not `$(...)`: under `bash -e` a failed substitution exits before its
+        # output is printed, which hides Helm's error. `pipefail` keeps that failure fatal.
+        run: |
+          set -o pipefail
+          helm push "/tmp/chart/encryption-chart-${VERSION}.tgz" oci://registry-1.docker.io/lasuite 2>&1 | tee "${RUNNER_TEMP}/helm-push.log"
+          DIGEST="$(sed -n 's/^Digest: //p' "${RUNNER_TEMP}/helm-push.log")"
+          [ -n "${DIGEST}" ] || { echo "::error::helm push printed no digest"; exit 1; }
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Pin it as \`${CHART_IMAGE}:${VERSION}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the build provenance
+        # Same Sigstore attestation as the image; `cosign verify-attestation` on the chart digest reads it (see deploy/helm/encryption/README.md)
+        if: ${{ !github.event.act }}
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ env.CONTAINER_REGISTRY }}/${{ env.CHART_IMAGE }}
+          subject-digest: ${{ steps.chart-push.outputs.digest }}
+          push-to-registry: true
