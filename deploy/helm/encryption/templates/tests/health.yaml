@@ -1,0 +1,60 @@
+{{- /*
+`helm test <release>` runs this pod inside the cluster after an install or upgrade: it
+proves the Service resolves and the server answers, through the same network path the
+Ingress will use. The application image is reused, so no extra image has to be allowed
+in the cluster; its entrypoint is `node`, and fetch is built in.
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "encryption.fullname" . }}-test-health
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "encryption.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    # Not deleted on success: `helm test --logs` reads the pod after it finished. The
+    # next run replaces it.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  {{- with .Values.image.pullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.podSecurityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: health
+      image: {{ include "encryption.image" . | quote }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      {{- with .Values.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      env:
+        - name: HEALTH_URL
+          value: {{ printf "http://%s:%d/health" (include "encryption.fullname" .) (int .Values.service.port) | quote }}
+      args:
+        - -e
+        - |
+          const url = process.env.HEALTH_URL;
+          fetch(url)
+            .then(async (response) => {
+              console.log(`${url} -> ${response.status} ${await response.text()}`);
+              if (!response.ok) process.exit(1);
+            })
+            .catch((error) => {
+              console.error(`${url} -> ${error}`);
+              process.exit(1);
+            });
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi

@@ -28,6 +28,22 @@
       "depNameTemplate": "npm",
       "datasourceTemplate": "npm",
       "versioningTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "description": "Helm is downloaded as a tarball and checked against a pinned checksum rather than through an action, so no built-in manager sees it. Renovate can bump the version; the matching HELM_SHA256 has to be updated in the same pull request, and `sha256sum -c` fails the job if it is not.",
+      "managerFilePatterns": ["/^\\.github/actions/setup-helm/action\\.yml$/"],
+      "matchStrings": ["HELM_VERSION: (?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "helm/helm",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Same for kubeconform, with KUBECONFORM_SHA256.",
+      "managerFilePatterns": ["/^\\.github/actions/setup-helm/action\\.yml$/"],
+      "matchStrings": ["KUBECONFORM_VERSION: (?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "yannh/kubeconform",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
