@@ -36,7 +36,7 @@ Do the same for the image inside the values: verify `lasuite/encryption@<digest>
 
 ### The test build
 
-Every push to the CI branch also publishes the chart as `0.0.0-main`, the counterpart of the image's `main` tag, and the next push overwrites it. It is for trying a chart change before tagging it, never for a real deployment. It is a SemVer pre-release because a chart version cannot be `main`, and Helm skips pre-releases when it resolves the latest version, so only an install that names it gets it:
+A push to the CI branch that changes this directory (or the workflows) since the last successful run also publishes the chart as `0.0.0-main`, the counterpart of the image's `main` tag, and the next such push overwrites it. It is for trying a chart change before tagging it, never for a real deployment. It is a SemVer pre-release because a chart version cannot be `main`, and Helm skips pre-releases when it resolves the latest version, so only an install that names it gets it:
 
 ```sh
 helm upgrade --install encryption oci://registry-1.docker.io/lasuite/encryption-chart --version 0.0.0-main \

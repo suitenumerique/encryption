@@ -227,10 +227,54 @@ jobs:
       - name: Test the chart # lint, values schema, Kubernetes API schemas, rendered objects, snapshot
         run: npm run test:helm
 
+  changes:
+    name: Changes since the last successful run
+    # A branch build republishes `main` (image) and `0.0.0-main` (chart) only when their part changed
+    # since the last run of this workflow that succeeded on the branch. Not since the previous push:
+    # a run whose release failed or was cancelled is not a base, so the next push publishes again.
+    # `.github` counts for both, a workflow change can change what gets published.
+    # A tag, "act", a pull request, no successful run yet, or its commit gone (force-push) publish anyway.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # to find the last successful run
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+      chart: ${{ steps.diff.outputs.chart }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the last successful run's commit has to be there to diff against it
+
+      - name: Compare with the last successful run
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BASE=""
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            WORKFLOW_FILE="$(basename "${GITHUB_WORKFLOW_REF%@*}")"
+            BASE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${GITHUB_REF_NAME}&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // empty')" || BASE=""
+          fi
+          if [[ -z "${BASE}" ]] || ! git cat-file -e "${BASE}^{commit}" 2> /dev/null; then
+            echo "No usable successful run to compare with, publishing everything"
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "chart=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Comparing with ${BASE}, the last successful run"
+          changed() { git diff --quiet "${BASE}" "${GITHUB_SHA}" -- "$@" && echo false || echo true; }
+          echo "app=$(changed . ':(exclude)deploy/helm')" >> "$GITHUB_OUTPUT"
+          echo "chart=$(changed deploy/helm/encryption .github)" >> "$GITHUB_OUTPUT"
+
   release:
     name: Release
-    needs: [supply-chain, verify, test, e2e]
-    if: ${{ github.event.act || github.ref_name == 'testci' || startsWith(github.ref, 'refs/tags/v') }}
+    needs: [supply-chain, verify, test, e2e, changes]
+    if: ${{ (github.event.act || github.ref_name == 'testci' || startsWith(github.ref, 'refs/tags/v')) && needs.changes.outputs.app == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -347,9 +391,9 @@ jobs:
 
   release-chart:
     name: Release the chart
-    needs: [helm]
+    needs: [helm, changes]
     # Either having the chart release tag, or the main branch to have the same behavior than Docker images when tests are needed
-    if: ${{ github.event.act || github.ref_name == 'testci' || startsWith(github.ref, 'refs/tags/chart/v') }}
+    if: ${{ (github.event.act || github.ref_name == 'testci' || startsWith(github.ref, 'refs/tags/chart/v')) && needs.changes.outputs.chart == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
