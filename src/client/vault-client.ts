@@ -2,6 +2,7 @@ import {
   MSG_INTERFACE_CLOSED,
   MSG_INTERFACE_CONTEXT,
   MSG_INTERFACE_ONBOARDING_COMPLETE,
+  MSG_INTERFACE_REQUEST_CLOSE,
   MSG_INTERFACE_REQUEST_CONTEXT,
   MSG_INTERFACE_RESIZE,
   MSG_INTERFACE_SET_THEME,
@@ -754,6 +755,27 @@ export class VaultClient {
     this.openInterface(container, '/recipient-profile');
     this.pendingContext = { recipientProfile: { userId, label } };
     this.sendContext(this.interfaceIframe?.contentWindow);
+  }
+
+  /**
+   * Ask the interface to close, from the product's own close control (the X of
+   * the modal hosting the iframe). The interface owns the decision: mid-backup
+   * it shows its "cancel setup?" confirmation instead of closing, so a product
+   * must NOT unmount its modal here. It waits for the 'interface:closed' event,
+   * which fires once the interface has really closed (for this request or any
+   * other reason). With no interface open this is a no-op that still emits
+   * 'interface:closed', so a product's close handler stays uniform.
+   */
+  requestClose(): void {
+    const target = this.interfaceIframe?.contentWindow;
+
+    if (!target) {
+      this.emit(MSG_INTERFACE_CLOSED, undefined as never);
+
+      return;
+    }
+
+    target.postMessage({ type: MSG_INTERFACE_REQUEST_CLOSE }, this.interfaceOrigin);
   }
 
   /**

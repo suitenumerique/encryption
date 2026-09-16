@@ -135,18 +135,44 @@ const preview: Preview = {
       // content grow and scroll rather than being clipped.
       const isFullscreen = context.parameters.layout === 'fullscreen';
 
+      // Interface screens are content for a modal the PRODUCT draws around the
+      // iframe (card, padding, close control). `hostModal` stands in for that
+      // chrome so a story shows the screen at the width it really gets: the
+      // design system's small modal (350px) or, for list-heavy screens, the
+      // medium one.
+      const hostModal = context.parameters.hostModal as boolean | 'medium' | undefined;
+
       return (
         <I18nextProvider i18n={i18n}>
           <CunninghamProvider theme={cunninghamTheme}>
             <div
               style={{
-                background: 'var(--c--contextuals--background--surface--primary, #fff)',
+                background: hostModal
+                  ? 'var(--c--contextuals--background--surface--tertiary, #f6f8f9)'
+                  : 'var(--c--contextuals--background--surface--primary, #fff)',
                 color: 'var(--c--contextuals--content--semantic--neutral--primary, #161616)',
                 minHeight: '100%',
                 ...(isFullscreen ? {} : { padding: 'var(--c--globals--spacings--4, 16px)' }),
               }}
             >
-              <Story />
+              {hostModal ? (
+                <div
+                  style={{
+                    width: hostModal === 'medium' ? 600 : 350,
+                    maxWidth: '100%',
+                    boxSizing: 'border-box',
+                    padding: 24,
+                    borderRadius: 8,
+                    background: 'var(--c--contextuals--background--surface--secondary, #fff)',
+                    border: '1px solid var(--c--contextuals--border--surface--primary, #dfe2ea)',
+                    boxShadow: '0 6px 20px rgba(0, 0, 18, 0.1)',
+                  }}
+                >
+                  <Story />
+                </div>
+              ) : (
+                <Story />
+              )}
             </div>
           </CunninghamProvider>
         </I18nextProvider>

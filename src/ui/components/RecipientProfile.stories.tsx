@@ -13,7 +13,8 @@ export default {
   component: RecipientProfile,
   ...generateMetaDefault({
     parameters: {
-      layout: 'padded',
+      layout: 'centered',
+      hostModal: true,
     },
   }),
 } as Meta<ComponentType>;

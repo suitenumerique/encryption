@@ -83,6 +83,8 @@ Two categories of operations:
 
 The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
 
+**Interface screens are modal content, not modals.** A product hosts the interface iframe inside its own modal (Docs and Drive use the design system's 350px small modal; `src/demo` shows the reference wiring) and the interface only lays out the content with the primitives in `src/ui/components/layout/` (`Screen`: illustration, title, description, body, stacked full-width actions; `IdentityCard` + `FingerprintBoxes`; `layout.css`). The product's close control must call `vaultClient.requestClose()` (`MSG_INTERFACE_REQUEST_CLOSE`): the screen shown may hold a guard (`useCloseGuard`, e.g. an unsaved recovery phrase asks "cancel the setup?") and the interface confirms with `MSG_INTERFACE_CLOSED` once it has really closed, so the product unmounts its modal on `interface:closed`, never on the click. The SDK-owned overlays (verify recipients, emergency prompt) draw their own Cunningham Modal instead. In Storybook, `parameters.hostModal` (`true` = 350px, `'medium'` = 600px) stands in for the product's modal.
+
 ## Security measures
 
 - CSP, COEP, COOP, CORP headers (vault is the most restrictive)

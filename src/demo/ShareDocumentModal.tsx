@@ -653,39 +653,12 @@ export function ShareDocumentModal({
         </div>
       </Modal>
 
-      {/* Recipient profile overlay — hosts the encryption interface iframe. Sits
-          above the share modal; click the backdrop or Close to dismiss. */}
+      {/* Recipient profile: a second product modal hosting the interface iframe
+          above the share modal. No title: the interface draws its own. */}
       {profileUserId && (
-        <div
-          onClick={closeProfile}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 10000,
-            background: 'rgba(0, 0, 0, 0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ background: 'white', borderRadius: 8, width: 'min(560px, 92vw)', maxHeight: '90vh', overflow: 'auto', padding: 12 }}
-          >
-            {/* No title here: the interface iframe renders its own "Encryption
-                Identity" heading, so a second title would be redundant. */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-              <button
-                onClick={closeProfile}
-                aria-label="Close"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 28, lineHeight: 1, padding: '0 4px', color: '#666' }}
-              >
-                ×
-              </button>
-            </div>
-            <div ref={setProfileContainer} style={{ minHeight: 200 }} />
-          </div>
-        </div>
+        <Modal isOpen onClose={closeProfile} closeOnClickOutside size={ModalSize.SMALL} aria-label="Encryption identity">
+          <div ref={setProfileContainer} className="demo-encryption-host" style={{ minHeight: 120 }} />
+        </Modal>
       )}
     </>
   );

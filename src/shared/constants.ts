@@ -112,4 +112,8 @@ export const MSG_INTERFACE_RESIZE = 'interface:resize';
 export const MSG_INTERFACE_SET_THEME = 'interface:set-theme';
 export const MSG_INTERFACE_ONBOARDING_COMPLETE = 'interface:onboarding-complete';
 export const MSG_INTERFACE_CLOSED = 'interface:closed';
+// Product -> interface: the product's own close control was used. The interface
+// decides (it may hold an unsaved recovery phrase) and answers with
+// MSG_INTERFACE_CLOSED once it is really done.
+export const MSG_INTERFACE_REQUEST_CLOSE = 'interface:request-close';
 export const MSG_INTERFACE_VERIFY_COMPLETE = 'interface:verify-complete';

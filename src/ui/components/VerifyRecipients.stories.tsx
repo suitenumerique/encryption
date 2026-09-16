@@ -16,7 +16,7 @@ export default {
   component: VerifyRecipients,
   ...generateMetaDefault({
     parameters: {
-      layout: 'padded',
+      layout: 'centered',
     },
   }),
 } as Meta<ComponentType>;

@@ -25,7 +25,7 @@ const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>(
 export default {
   title: 'Preview/Modals/EmergencyAccess',
   component: EmergencyAccess,
-  ...generateMetaDefault({ parameters: { layout: 'padded' } }),
+  ...generateMetaDefault({ parameters: { layout: 'centered', hostModal: 'medium' } }),
 } as Meta<ComponentType>;
 
 const Template: StoryFn<ComponentType> = (args) => <EmergencyAccess {...args} />;

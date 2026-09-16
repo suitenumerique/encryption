@@ -1,4 +1,4 @@
-import { Alert, Button, CunninghamProvider, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, CunninghamProvider, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -23,10 +23,12 @@ import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSett
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
 import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
 import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
+import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
-import { useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
+import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
 import { runtimeConfig } from '@encryption/src/ui/runtime-config';
@@ -83,9 +85,28 @@ function decodeJwtUserInfo(token: string): UserInfo {
   };
 }
 
-/** Inner component that has access to the EncryptionContext */
+/**
+ * Owns the parent handshake and answers the product's close requests. The
+ * product's own close control never unmounts the iframe by itself: it asks, the
+ * screen shown may object (an unsaved recovery phrase), and the interface
+ * confirms with MSG_INTERFACE_CLOSED once it is really done. Wrapping every
+ * state here (auth gates included) guarantees a request is always answered.
+ */
 function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Route) => void }) {
   const parentContext = useParentMessages();
+  const handleClose = useCallback(() => {
+    notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
+  }, [parentContext.parentOrigin]);
+
+  return (
+    <CloseRequestProvider requests={parentContext.closeRequests} onClose={handleClose}>
+      <InterfaceScreens route={route} navigate={navigate} parentContext={parentContext} />
+    </CloseRequestProvider>
+  );
+}
+
+/** Inner component that has access to the EncryptionContext */
+function InterfaceScreens({ route, navigate, parentContext }: { route: Route; navigate: (to: Route) => void; parentContext: ParentContext }) {
   const { t } = useTranslation('common');
   const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
 
@@ -376,66 +397,42 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // All hooks declared above — conditional returns are safe below this point.
   // OIDC must be configured for the interface to work.
   if (!oidcAuth.isConfigured) {
-    return (
-      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>
-      </div>
-    );
+    return <Screen banner={<Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>} />;
   }
 
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
   if (!oidcAuth.token && !tokenRestoreAttempted && !handshakeTimedOut) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
-        <Loader />
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   // Wait for OIDC authentication.
   if (!oidcAuth.token) {
     // Waiting for the login tab to complete
     if (oidcAuth.isAuthenticating) {
-      return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: '200px',
-            gap: '1rem',
-            padding: '2rem',
-          }}
-        >
-          <Loader />
-          <p style={{ textAlign: 'center', margin: 0 }}>{t('auth.authenticating')}</p>
-        </div>
-      );
+      return <LoadingScreen label={t('auth.authenticating')} />;
     }
 
     // Error from a previous attempt
     if (oidcAuth.error) {
       return (
-        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-          <Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-            <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
-          </div>
-        </div>
+        <Screen
+          title={t('auth.required_title')}
+          banner={<Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>}
+          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
+        />
       );
     }
 
     // Auth needed — show explanation and "Continue" button
     if (oidcAuth.needsAuth) {
       return (
-        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-          <Alert type={VariantType.INFO}>{t('auth.required_explanation')}</Alert>
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem' }}>
-            <Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>
-          </div>
-        </div>
+        <Screen
+          illustration="shield-check"
+          title={t('auth.required_title')}
+          description={t('auth.required_explanation')}
+          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>}
+        />
       );
     }
 
@@ -444,18 +441,10 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
     // way, show the warning rather than spin — the interface cannot proceed
     // without knowing which user is authenticated.
     if ((tokenRestoreAttempted || handshakeTimedOut) && !parentContext.suiteUserId) {
-      return (
-        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-          <Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>
-        </div>
-      );
+      return <Screen banner={<Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>} />;
     }
 
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
-        <Loader />
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   // Any unrecoverable failure to resolve the internal id (a 403 with no usable
@@ -466,12 +455,10 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // has a way out instead of an endless loader.
   if (userResolveError && !internalUserId) {
     return (
-      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-          <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
-        </div>
-      </div>
+      <Screen
+        banner={<Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>}
+        actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
+      />
     );
   }
 
@@ -697,15 +684,7 @@ export function App() {
     if (!DOCS_ENABLED) {
       return (
         <CunninghamProvider theme={cunninghamTheme}>
-          <div
-            style={{
-              padding: 'var(--c--globals--spacings--lg)',
-              textAlign: 'center',
-              color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
-            }}
-          >
-            <p>{t('docs.disabled')}</p>
-          </div>
+          <Screen padded description={t('docs.disabled')} />
         </CunninghamProvider>
       );
     }

@@ -97,36 +97,28 @@ export function DecimalCodeInput({ groupCount = 8, groupSize = 5, onChange }: De
   // Fixed 4 columns so the boxes always lay out as even rows (8 groups -> 2 rows
   // of 4) regardless of the iframe width, instead of wrapping unevenly.
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-      {indices.map((i) => (
-        <input
-          key={i}
-          ref={(el) => {
-            refs.current[i] = el;
-          }}
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoComplete="off"
-          maxLength={groupSize}
-          value={groups[i]}
-          onChange={(e) => handleChange(i, e.target.value)}
-          onKeyDown={(e) => handleKeyDown(i, e)}
-          onPaste={(e) => handlePaste(i, e)}
-          aria-label={`code group ${i + 1}`}
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            textAlign: 'left',
-            fontFamily: 'monospace',
-            fontSize: 20,
-            letterSpacing: '0.12em',
-            padding: '10px 10px',
-            borderRadius: 4,
-            border: '1px solid var(--c--contextuals--border--surface--primary)',
-          }}
-        />
-      ))}
+    <div className="enc-fingerprint-wrap">
+      <div className="enc-fingerprint">
+        {indices.map((i) => (
+          <input
+            key={i}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
+            maxLength={groupSize}
+            value={groups[i]}
+            onChange={(e) => handleChange(i, e.target.value)}
+            onKeyDown={(e) => handleKeyDown(i, e)}
+            onPaste={(e) => handlePaste(i, e)}
+            aria-label={`code group ${i + 1}`}
+            className="enc-fingerprint__group enc-fingerprint__input"
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -14,6 +14,12 @@
         overflow: auto !important;
         min-height: 100%;
       }
+
+      /* The modal hosting the encryption interface is the design system's
+         350px "small" modal; Cunningham's small is 300px. */
+      .c__modal--small:has(.demo-encryption-host) {
+        width: 350px;
+      }
     </style>
   </head>
   <body>

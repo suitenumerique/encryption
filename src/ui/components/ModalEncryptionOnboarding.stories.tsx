@@ -1,5 +1,6 @@
 import { Meta, StoryFn } from '@storybook/react';
 import { userEvent } from 'storybook/test';
+import { expect } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
@@ -17,6 +18,7 @@ export default {
   ...generateMetaDefault({
     parameters: {
       layout: 'centered',
+      hostModal: true,
     },
   }),
 } as Meta<ComponentType>;
@@ -31,6 +33,8 @@ NewUserStory.args = {
   userId: '00000000-0000-0000-0000-000000000000',
   onClose: () => console.log('onClose'),
   onSuccess: (pk) => console.log('onSuccess', pk),
+  onUseAnotherDevice: () => console.log('onUseAnotherDevice'),
+  onOpenEmergencyAccess: () => console.log('onOpenEmergencyAccess'),
   hasExistingBackendKey: false,
 };
 NewUserStory.parameters = {
@@ -50,6 +54,8 @@ ExistingUserStory.args = {
   userId: '00000000-0000-0000-0000-000000000000',
   onClose: () => console.log('onClose'),
   onSuccess: (pk) => console.log('onSuccess', pk),
+  onUseAnotherDevice: () => console.log('onUseAnotherDevice'),
+  onOpenEmergencyAccess: () => console.log('onOpenEmergencyAccess'),
   hasExistingBackendKey: true,
   existingKeyFingerprint: '0031712345678901234567890123456789012345',
   userInfo: { name: 'Alice Martin', email: 'alice.martin@numerique.gouv.fr' },
@@ -112,3 +118,21 @@ LastResortStory.play = async ({ canvasElement }) => {
 };
 
 export const LastResort = prepareStory(LastResortStory);
+
+// The recovery phrase step: the keys are minted locally and the confirmation
+// stays locked until the phrase left the screen one way or another.
+const BackupStory = Template.bind({});
+BackupStory.args = { ...NewUserStory.args };
+BackupStory.parameters = NewUserStory.parameters;
+BackupStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_backup'));
+
+  const confirm = await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done'));
+  expect(confirm).toBeDisabled();
+
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_reveal')));
+  expect(confirm).toBeEnabled();
+};
+
+export const Backup = prepareStory(BackupStory);

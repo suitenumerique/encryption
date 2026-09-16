@@ -11,7 +11,8 @@ export default {
   component: RecoveryPhraseInput,
   ...generateMetaDefault({
     parameters: {
-      layout: 'padded',
+      layout: 'centered',
+      hostModal: true,
     },
   }),
 } as Meta<ComponentType>;

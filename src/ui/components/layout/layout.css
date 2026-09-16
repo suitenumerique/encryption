@@ -1,0 +1,515 @@
+/*
+ * Shared layout of the interface screens. The product hosts the iframe inside
+ * its own modal (chrome, padding, close control), so a screen only lays out the
+ * modal's content: an optional illustration, a title/description block, a body
+ * and a stack of full-width actions. Sizes follow the design system's modal
+ * anatomy (24px card padding, 16px between sections, 40px buttons).
+ */
+
+.enc-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--base);
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: var(--c--globals--font--families--base);
+}
+
+/* The interface draws its own card in the SDK overlays (verify recipients,
+   emergency prompt); embedded in a product modal it inherits the modal padding. */
+.enc-screen--padded {
+  padding: var(--c--globals--spacings--base);
+}
+
+.enc-screen__illustration {
+  display: flex;
+  justify-content: center;
+}
+
+.enc-screen__illustration img {
+  display: block;
+  width: 142px;
+  height: 100px;
+  object-fit: contain;
+}
+
+.enc-screen__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--st);
+}
+
+.enc-screen__title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.enc-screen__title--error {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.enc-screen__description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  overflow-wrap: anywhere;
+}
+
+.enc-screen__description p {
+  margin: 0;
+}
+
+.enc-screen__description p + p {
+  margin-top: var(--c--globals--spacings--xs);
+}
+
+.enc-screen__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--sm);
+}
+
+/* Actions stack full-width by default; `--row` right-aligns a Cancel/Confirm pair. */
+.enc-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  width: 100%;
+}
+
+.enc-actions > .c__button {
+  width: 100%;
+  justify-content: center;
+}
+
+.enc-actions--row {
+  flex-direction: row;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--sm);
+}
+
+.enc-actions--row > .c__button {
+  width: auto;
+}
+
+/* Small text (12px) used for hints under a card or a form. */
+.enc-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.enc-hint--center {
+  text-align: center;
+}
+
+/* A bordered card (an identity, a contact row). */
+.enc-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--primary);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.enc-card--warning {
+  border-color: var(--c--contextuals--border--semantic--warning--secondary);
+}
+
+.enc-card--error {
+  border-color: var(--c--contextuals--border--semantic--error--secondary);
+}
+
+.enc-card--success {
+  border-color: var(--c--contextuals--border--semantic--success--secondary);
+}
+
+.enc-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: 0 2px;
+  min-height: 34px;
+}
+
+.enc-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.enc-identity__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.enc-identity__name {
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enc-identity__secondary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enc-avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--c--contextuals--background--semantic--brand--primary);
+  color: var(--c--contextuals--content--semantic--brand--on-brand);
+  font-size: 10px;
+  font-weight: var(--c--globals--font--weights--bold);
+  letter-spacing: -0.35px;
+  text-transform: uppercase;
+}
+
+.enc-avatar--large {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+}
+
+/* A status chip next to an identity ("Key mismatch", "Active", ...). */
+.enc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: var(--c--globals--font--weights--medium);
+  white-space: nowrap;
+}
+
+.enc-chip .material-icons {
+  font-size: 16px;
+}
+
+.enc-chip--warning {
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+.enc-chip--error {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.enc-chip--success {
+  color: var(--c--contextuals--content--semantic--success--tertiary);
+}
+
+.enc-chip--info {
+  color: var(--c--contextuals--content--semantic--info--tertiary);
+}
+
+.enc-chip--neutral {
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+/* The 40-digit safety fingerprint: 8 groups of 5 digits in two rows of boxes,
+   large and bold so it can be read out loud or compared at a glance. */
+.enc-fingerprint {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--st);
+  width: 100%;
+  user-select: all;
+}
+
+.enc-fingerprint__group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 2px;
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--tertiary);
+  font-family: var(--c--globals--font--families--base);
+  font-size: clamp(14px, 5.2cqw, 20px);
+  line-height: 27px;
+  font-weight: var(--c--globals--font--weights--bold);
+  letter-spacing: 0.12em;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+.enc-fingerprint--warning .enc-fingerprint__group {
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+}
+
+.enc-fingerprint--error .enc-fingerprint__group {
+  background: var(--c--contextuals--background--semantic--error--tertiary);
+}
+
+.enc-fingerprint--success .enc-fingerprint__group {
+  background: var(--c--contextuals--background--semantic--success--tertiary);
+}
+
+.enc-fingerprint-wrap {
+  container-type: inline-size;
+  width: 100%;
+}
+
+/* Cunningham's Alert content is a flex row; a checkbox under the message needs
+   the column. */
+.enc-alert-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.enc-alert-stack .c__checkbox {
+  margin: 0;
+}
+
+/* A section title inside a longer screen (emergency access lists). */
+.enc-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.enc-section__title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.enc-section__subtitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* Native text controls, themed like Cunningham inputs. */
+.enc-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 6px var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--primary);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: var(--c--globals--font--families--base);
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.enc-input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+.enc-input--mono {
+  font-family: monospace;
+  letter-spacing: 0.05em;
+}
+
+.enc-input--valid {
+  border-color: var(--c--contextuals--border--semantic--success--secondary);
+}
+
+.enc-input--invalid {
+  border-color: var(--c--contextuals--border--semantic--error--secondary);
+}
+
+.enc-label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+}
+
+/* A centered "waiting" pill (device pairing). */
+.enc-waiting {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  align-self: center;
+  padding: var(--c--globals--spacings--t) var(--c--globals--spacings--base);
+  border-radius: 999px;
+  background: var(--c--contextuals--background--surface--secondary);
+  font-size: 13px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.enc-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--sm);
+  text-align: center;
+}
+
+.enc-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--sm);
+  min-height: 160px;
+  padding: var(--c--globals--spacings--md);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  font-size: 14px;
+}
+
+.enc-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.enc-list li + li {
+  margin-top: 2px;
+}
+
+.enc-phrase {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: all;
+}
+
+/* The revealed recovery phrase: numbered words in three columns. */
+.enc-words {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--secondary);
+  list-style: none;
+  counter-reset: word;
+  user-select: all;
+}
+
+.enc-words li {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.enc-words li::before {
+  counter-increment: word;
+  content: counter(word) '.';
+  flex-shrink: 0;
+  width: 20px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  user-select: none;
+}
+
+.enc-words li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The typed pairing code reuses the fingerprint boxes as inputs. */
+.enc-fingerprint__input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  text-align: center;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.enc-fingerprint__input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+/* The 24 word boxes of the recovery phrase input. */
+.enc-word-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--xs);
+}
+
+.enc-word-inputs__cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.enc-word-inputs__index {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.enc-word-inputs .enc-input {
+  min-height: 32px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.enc-hint--invalid {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+/* Alerts inside a screen follow the screen's text scale. */
+.enc-screen .c__alert {
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.enc-screen__description .enc-list {
+  margin-top: var(--c--globals--spacings--xs);
+}

@@ -2,16 +2,17 @@ import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-r
 import type { TFunction } from 'i18next';
 import jsQR from 'jsqr';
 import QRCode from 'qrcode';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
-import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 import { ApiError, approveDevicePath } from '@encryption/src/ui/api/client';
 import { approveDeviceRequest, fetchDeviceApproval, fetchPendingDeviceApprovals, requestDeviceApproval } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
+import { Icon, LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
@@ -89,16 +90,14 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
   }, [onDecode, onUnavailable]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+    <div className="enc-center">
       <video
         ref={videoRef}
         muted
         playsInline
-        style={{ width: '100%', maxWidth: 320, borderRadius: 8, background: '#000', aspectRatio: '1 / 1', objectFit: 'cover' }}
+        style={{ width: '100%', maxWidth: 302, borderRadius: 8, background: '#000', aspectRatio: '1 / 1', objectFit: 'cover' }}
       />
-      <p style={{ fontSize: 13, textAlign: 'center', color: 'var(--c--contextuals--content--semantic--neutral--secondary)', margin: 0 }}>
-        {t('device_approval.scan_hint')}
-      </p>
+      <p className="enc-hint enc-hint--center">{t('device_approval.scan_hint')}</p>
     </div>
   );
 }
@@ -149,32 +148,37 @@ export function DeviceApproval({
   );
 
   if (role === 'loading') {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
-        <Loader />
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
-  return (
-    <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
+  const banner = (
+    <>
       {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
       {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+    </>
+  );
 
-      {role === 'new' ? (
-        <NewDeviceSide
-          getToken={getToken}
-          onError={onError}
-          onClose={onClose}
-          onAdopted={onAdopted}
-          startDeviceApproval={startDeviceApproval}
-          completeDeviceApproval={completeDeviceApproval}
-          t={t}
-        />
-      ) : (
-        <EnrolledDeviceSide getToken={getToken} onError={onError} onClose={onClose} approveDevice={approveDevice} signRequest={signRequest} t={t} />
-      )}
-    </div>
+  return role === 'new' ? (
+    <NewDeviceSide
+      getToken={getToken}
+      onError={onError}
+      onClose={onClose}
+      onAdopted={onAdopted}
+      startDeviceApproval={startDeviceApproval}
+      completeDeviceApproval={completeDeviceApproval}
+      banner={banner}
+      t={t}
+    />
+  ) : (
+    <EnrolledDeviceSide
+      getToken={getToken}
+      onError={onError}
+      onClose={onClose}
+      approveDevice={approveDevice}
+      signRequest={signRequest}
+      banner={banner}
+      t={t}
+    />
   );
 }
 
@@ -186,6 +190,7 @@ function NewDeviceSide({
   onAdopted,
   startDeviceApproval,
   completeDeviceApproval,
+  banner,
   t,
 }: {
   getToken: () => Promise<string | null>;
@@ -194,6 +199,7 @@ function NewDeviceSide({
   onAdopted?: () => void;
   startDeviceApproval: () => Promise<{ devicePublicKey: string; decimalFingerprint: string }>;
   completeDeviceApproval: (wrapped: string, token: string | null) => Promise<{ adopted: boolean }>;
+  banner: ReactNode;
   t: TFunction;
 }) {
   const [started, setStarted] = useState(false);
@@ -301,121 +307,83 @@ function NewDeviceSide({
 
   if (done) {
     return (
-      <>
-        <Alert type={VariantType.SUCCESS}>{t('device_approval.new_success')}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button onClick={onClose}>{t('device_approval.btn_done')}</Button>
-        </div>
-      </>
+      <Screen
+        illustration="shield-check"
+        title={t('device_approval.new_success_title')}
+        description={t('device_approval.new_success')}
+        actions={<Button onClick={onClose}>{t('device_approval.btn_done')}</Button>}
+      />
+    );
+  }
+
+  const cancelButton = (
+    <Button variant="bordered" color="neutral" onClick={onClose}>
+      {t('device_approval.btn_cancel')}
+    </Button>
+  );
+
+  if (!started) {
+    return (
+      <Screen
+        title={t('device_approval.new_title')}
+        description={t('device_approval.new_intro')}
+        banner={banner}
+        actions={
+          <>
+            <Button onClick={start} icon={<Icon name="qr_code_2" />}>
+              {t('device_approval.btn_start')}
+            </Button>
+            {cancelButton}
+          </>
+        }
+      />
     );
   }
 
   return (
-    <>
-      <h2>{t('device_approval.new_title')}</h2>
-      <p style={{ fontSize: 13 }}>{t('device_approval.new_intro')}</p>
+    <Screen title={t('device_approval.new_title')} description={t('device_approval.new_code_hint')} banner={banner} actions={cancelButton}>
+      <div className="enc-center">
+        {qr && (
+          <img
+            src={qr}
+            alt="pairing QR code"
+            style={{ display: 'block', borderRadius: 8, border: '1px solid var(--c--contextuals--border--surface--primary)' }}
+          />
+        )}
 
-      {!started ? (
-        <Button onClick={start} fullWidth>
-          {t('device_approval.btn_start')}
-        </Button>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 12 }}>
-          {qr && (
-            <img
-              src={qr}
-              alt="pairing QR code"
-              style={{ display: 'block', borderRadius: 8, border: '1px solid var(--c--contextuals--border--surface--primary)' }}
-            />
-          )}
-          <p style={{ fontSize: 13, textAlign: 'center', margin: 0 }}>{t('device_approval.new_code_hint')}</p>
+        {/* No-camera fallback: reveal the long decimal code to type by hand. */}
+        {decimalFingerprint &&
+          (!revealCode ? (
+            <Button size="small" variant="tertiary" color="neutral" onClick={() => setRevealCode(true)}>
+              {t('device_approval.new_reveal_code')}
+            </Button>
+          ) : (
+            <>
+              <p className="enc-hint enc-hint--center">{t('device_approval.new_manual_hint')}</p>
+              <FingerprintBoxes fingerprint={decimalFingerprint} />
+              <Button
+                size="small"
+                variant="tertiary"
+                color={copied ? 'success' : 'neutral'}
+                icon={<Icon name={copied ? 'check' : 'content_copy'} size={16} />}
+                onClick={() => {
+                  void navigator.clipboard.writeText(decimalFingerprint).then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 1500);
+                  });
+                }}
+              >
+                {copied ? t('device_approval.copied') : t('device_approval.copy_code')}
+              </Button>
+            </>
+          ))}
 
-          {/* No-camera fallback: reveal the long decimal code to type by hand. */}
-          {decimalFingerprint && (
-            <div style={{ width: '100%', maxWidth: 320, textAlign: 'center' }}>
-              {!revealCode ? (
-                <Button size="small" variant="tertiary" onClick={() => setRevealCode(true)}>
-                  {t('device_approval.new_reveal_code')}
-                </Button>
-              ) : (
-                <>
-                  <p style={{ fontSize: 12, margin: '0 0 6px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-                    {t('device_approval.new_manual_hint')}
-                  </p>
-                  {/* 4 groups per row (2 rows of 4). Content-sized columns centered
-                      in the full-width block (`1fr` tracks can't shrink below the
-                      monospace groups' min-content, so they overflow a narrow panel;
-                      `max-content` + centering can't). */}
-                  <div style={{ containerType: 'inline-size' }}>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(4, max-content)',
-                        justifyContent: 'center',
-                        rowGap: 10,
-                        columnGap: 12,
-                        userSelect: 'text',
-                        padding: 'var(--c--globals--spacings--t) var(--c--globals--spacings--sm)',
-                        background: 'var(--c--contextuals--background--surface--secondary)',
-                        borderRadius: 4,
-                      }}
-                    >
-                      {formatDecimalFingerprint(decimalFingerprint)
-                        .split(' ')
-                        .map((g, i) => (
-                          <span
-                            key={i}
-                            style={{ fontFamily: 'monospace', fontSize: 'clamp(12px, 5.5cqw, 22px)', letterSpacing: '0.06em', textAlign: 'left' }}
-                          >
-                            {g}
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-                  <Button
-                    size="small"
-                    variant="tertiary"
-                    style={{ marginTop: 6 }}
-                    onClick={() => {
-                      void navigator.clipboard.writeText(decimalFingerprint).then(() => {
-                        setCopied(true);
-                        window.setTimeout(() => setCopied(false), 1500);
-                      });
-                    }}
-                  >
-                    {copied ? t('device_approval.copied') : t('device_approval.copy_code')}
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              marginTop: 4,
-              padding: 'var(--c--globals--spacings--t) var(--c--globals--spacings--base)',
-              borderRadius: 999,
-              background: 'var(--c--contextuals--background--surface--secondary)',
-            }}
-          >
-            <Loader />
-            <span style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-              {t('device_approval.new_waiting')}
-            </span>
-          </div>
+        <div className="enc-waiting">
+          <Loader />
+          <span>{t('device_approval.new_waiting')}</span>
         </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 16 }}>
-        <Button variant="secondary" onClick={onClose}>
-          {t('device_approval.btn_back')}
-        </Button>
       </div>
-    </>
+    </Screen>
   );
 }
 
@@ -426,6 +394,7 @@ function EnrolledDeviceSide({
   onClose,
   approveDevice,
   signRequest,
+  banner,
   t,
 }: {
   getToken: () => Promise<string | null>;
@@ -433,6 +402,7 @@ function EnrolledDeviceSide({
   onClose: () => void;
   approveDevice: (devicePublicKey: string, expectedDecimal: string) => Promise<{ wrappedDeviceBootstrap: string }>;
   signRequest: (method: string, path: string, body?: string) => Promise<string>;
+  banner: ReactNode;
   t: TFunction;
 }) {
   const [mode, setMode] = useState<'scan' | 'manual'>('scan');
@@ -508,22 +478,35 @@ function EnrolledDeviceSide({
 
   if (done) {
     return (
-      <>
-        <Alert type={VariantType.SUCCESS}>{t('device_approval.approve_success')}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button onClick={onClose}>{t('device_approval.btn_done')}</Button>
-        </div>
-      </>
+      <Screen
+        illustration="shield-check"
+        title={t('device_approval.approve_success_title')}
+        description={t('device_approval.approve_success')}
+        actions={<Button onClick={onClose}>{t('device_approval.btn_done')}</Button>}
+      />
     );
   }
 
   return (
-    <>
-      <h2>{t('device_approval.approve_title')}</h2>
-      <p style={{ fontSize: 13 }}>{t('device_approval.approve_intro')}</p>
-
+    <Screen
+      title={t('device_approval.approve_title')}
+      description={mode === 'manual' ? t('device_approval.manual_intro') : t('device_approval.approve_intro')}
+      banner={banner}
+      actions={
+        <>
+          {mode === 'manual' && (
+            <Button onClick={() => submitCode(codeInput)} disabled={isPending || !codeComplete}>
+              {isPending ? t('device_approval.approving') : t('device_approval.btn_approve')}
+            </Button>
+          )}
+          <Button variant="bordered" color="neutral" onClick={onClose}>
+            {t('device_approval.btn_cancel')}
+          </Button>
+        </>
+      }
+    >
       {mode === 'scan' && !isPending && (
-        <div style={{ marginTop: 8 }}>
+        <>
           <QrScanner
             onDecode={submitCode}
             onUnavailable={() => {
@@ -532,36 +515,31 @@ function EnrolledDeviceSide({
             }}
             t={t}
           />
-          <div style={{ textAlign: 'center', marginTop: 8 }}>
-            <Button size="small" variant="tertiary" onClick={enterManualEntry}>
+          <div style={{ textAlign: 'center' }}>
+            <Button size="small" variant="tertiary" color="neutral" onClick={enterManualEntry}>
               {t('device_approval.enter_code_instead')}
             </Button>
           </div>
-        </div>
+        </>
       )}
 
       {mode === 'manual' && (
-        <div style={{ marginTop: 8 }}>
-          <p style={{ fontSize: 13 }}>{t('device_approval.manual_intro')}</p>
-          <div style={{ marginTop: 8 }}>
-            <DecimalCodeInput
-              onChange={(digits, complete) => {
-                setCodeInput(digits);
-                setCodeComplete(complete);
-                setNoMatch(false);
-              }}
-            />
-          </div>
-          {noMatch && (
-            <div style={{ marginTop: 8 }}>
-              <Alert type={VariantType.ERROR}>{t('device_approval.code_no_match')}</Alert>
-            </div>
-          )}
+        <>
+          <DecimalCodeInput
+            onChange={(digits, complete) => {
+              setCodeInput(digits);
+              setCodeComplete(complete);
+              setNoMatch(false);
+            }}
+          />
+          {noMatch && <Alert type={VariantType.ERROR}>{t('device_approval.code_no_match')}</Alert>}
           {cameraAvailable && (
-            <div style={{ marginTop: 8 }}>
+            <div style={{ textAlign: 'center' }}>
               <Button
                 size="small"
                 variant="tertiary"
+                color="neutral"
+                icon={<Icon name="qr_code_scanner" size={16} />}
                 onClick={() => {
                   setNoMatch(false);
                   setMode('scan');
@@ -571,19 +549,8 @@ function EnrolledDeviceSide({
               </Button>
             </div>
           )}
-        </div>
+        </>
       )}
-
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-        <Button variant="secondary" onClick={onClose}>
-          {t('device_approval.btn_cancel')}
-        </Button>
-        {mode === 'manual' && (
-          <Button onClick={() => submitCode(codeInput)} disabled={isPending || !codeComplete}>
-            {isPending ? t('device_approval.approving') : t('device_approval.btn_approve')}
-          </Button>
-        )}
-      </div>
-    </>
+    </Screen>
   );
 }
