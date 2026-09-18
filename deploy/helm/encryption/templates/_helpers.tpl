@@ -219,6 +219,10 @@ interface's client. Any other value turns each of the interface's API calls into
 - name: SECURITY_CONTACT_URL
   value: {{ $v.config.securityContactUrl | quote }}
 {{- end }}
+{{- if $v.config.maintenanceEscrowPublicKey }}
+- name: MAINTENANCE_ESCROW_PUBLIC_KEY
+  value: {{ $v.config.maintenanceEscrowPublicKey | quote }}
+{{- end }}
 {{- if not (or $v.database.url $v.database.existingSecret.name) }}
 {{- fail "database.url or database.existingSecret.name is required" }}
 {{- end }}

@@ -59,6 +59,7 @@ interface FakeDocument {
   title: string;
   encryptedContent: string; // base64
   encryptedKeys: Record<string, string>; // userId -> base64 wrapped key
+  maintenanceKey?: string; // base64
   createdBy: string;
   createdAtMillis: number;
   sharedWith: SharedAccess[];
@@ -308,13 +309,16 @@ export function DemoApp() {
       // Encrypt for the author themselves. The vault resolves the recipient's key
       // from the directory and trust-checks it (own identity is always trusted).
       const authorLabel = { email: currentUser.email, name: `${currentUser.firstName} ${currentUser.lastName}` };
-      const { encryptedContent, encryptedKeys } = await client.encryptWithoutKey(plainBytes.buffer as ArrayBuffer, { [authorId]: authorLabel });
+      const { encryptedContent, encryptedKeys, maintenanceKey } = await client.encryptWithoutKey(plainBytes.buffer as ArrayBuffer, {
+        [authorId]: authorLabel,
+      });
 
       const doc: FakeDocument = {
         id: crypto.randomUUID(),
         title: newDocTitle,
         encryptedContent: abToBase64(encryptedContent),
         encryptedKeys: { [authorId]: abToBase64(encryptedKeys[authorId]) },
+        ...(maintenanceKey ? { maintenanceKey: abToBase64(maintenanceKey) } : {}),
         createdBy: currentUser.username,
         createdAtMillis: Date.now(),
         sharedWith: [],
@@ -385,6 +389,7 @@ export function DemoApp() {
 
         // Keep the creator's and still-shared recipients' wrapped keys; drop the rest.
         const nextKeys: Record<string, string> = {};
+        let maintenanceKey = doc.maintenanceKey;
         for (const [uid, wrapped] of Object.entries(doc.encryptedKeys)) {
           if (keptIds.has(uid)) nextKeys[uid] = wrapped;
         }
@@ -398,19 +403,20 @@ export function DemoApp() {
           const recipients: Record<string, RecipientLabel> = {};
           for (const a of newRecipients) recipients[a.userId] = { email: a.email, name: a.fullName };
 
-          const { encryptedKeys } = await client.shareKeys(base64ToAb(myWrappedKey), recipients);
-          for (const [uid, wrapped] of Object.entries(encryptedKeys)) nextKeys[uid] = abToBase64(wrapped);
+          const shared = await client.shareKeys(base64ToAb(myWrappedKey), recipients);
+          for (const [uid, wrapped] of Object.entries(shared.encryptedKeys)) nextKeys[uid] = abToBase64(wrapped);
+          if (shared.maintenanceKey) maintenanceKey = abToBase64(shared.maintenanceKey);
           log(`Wrapped the document key for ${newRecipients.length} new recipient(s)`);
         }
 
         await fetch(`${DEMO_API}/${doc.id}?product=${PRODUCT_ID}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sharedWith: newAccesses, encryptedKeys: nextKeys }),
+          body: JSON.stringify({ sharedWith: newAccesses, encryptedKeys: nextKeys, maintenanceKey }),
         });
 
         // Reflect the change in the open modal immediately; SSE refreshes the list.
-        setShareDoc((prev) => (prev && prev.id === doc.id ? { ...prev, sharedWith: newAccesses, encryptedKeys: nextKeys } : prev));
+        setShareDoc((prev) => (prev && prev.id === doc.id ? { ...prev, sharedWith: newAccesses, encryptedKeys: nextKeys, maintenanceKey } : prev));
       } catch (err) {
         log(`Sharing update failed: ${(err as Error).message}`);
       }

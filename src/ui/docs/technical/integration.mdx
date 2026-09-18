@@ -272,6 +272,11 @@ encryptedKeys['my-suite-user-id'],
 
 </CodeBlock>
 
+<Alert severity="info" title="maintenanceKey">
+  When the deployment runs the maintenance escrow, `encryptWithoutKey` and `shareKeys` also return `maintenanceKey`. Persist it on the resource
+  whenever it is present (see "Maintenance escrow" below). It is absent otherwise, and it is never a recipient.
+</Alert>
+
 ### 7. Automatic updates
 
 The vault and the SDK are handled by a Service Worker that caches them and checks `GET /api/version` every 5 minutes. When a new version is detected, the SW updates its cache automatically and silently (no event is emitted).
@@ -296,14 +301,14 @@ encryption.destroy();`}
 
 ### Product operations (through the vault)
 
-| Method                                                 | Description                                         | Returns                               |
-| ------------------------------------------------------ | --------------------------------------------------- | ------------------------------------- |
-| `hasKeys()`                                            | Whether keys exist on this device                   | `{ hasKeys: boolean }`                |
-| `getPublicKey()`                                       | Fetch the public key                                | `{ publicKey: ArrayBuffer }`          |
-| `encryptWithoutKey(data, userPublicKeys)`              | Encrypt content (generates a new symmetric key)     | `{ encryptedContent, encryptedKeys }` |
-| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-encrypt with an existing key (collab, auto-save) | `{ encryptedData: ArrayBuffer }`      |
-| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Decrypt with a provided symmetric key               | `{ data: ArrayBuffer }`               |
-| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Share the key with other users                      | `{ encryptedKeys: Record }`           |
+| Method                                                 | Description                                         | Returns                                                |
+| ------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------ |
+| `hasKeys()`                                            | Whether keys exist on this device                   | `{ hasKeys: boolean }`                                 |
+| `getPublicKey()`                                       | Fetch the public key                                | `{ publicKey: ArrayBuffer }`                           |
+| `encryptWithoutKey(data, userPublicKeys)`              | Encrypt content (generates a new symmetric key)     | `{ encryptedContent, encryptedKeys, maintenanceKey? }` |
+| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-encrypt with an existing key (collab, auto-save) | `{ encryptedData: ArrayBuffer }`                       |
+| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Decrypt with a provided symmetric key               | `{ data: ArrayBuffer }`                                |
+| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Share the key with other users                      | `{ encryptedKeys: Record, maintenanceKey? }`           |
 
 ### Configuration
 
@@ -340,6 +345,16 @@ To integrate the encryption service, each Suite product must:
 2. **Use the `suiteUserId` in `setAuthContext`** — **never** pass the product's internal identifier
 3. **Index by `suiteUserId`** — use the `suiteUserId` as the key in every encryption-related map (`fetchPublicKeys`, `encryptWithoutKey`, etc.)
 4. **Do not pass a token to the interface** — the interface (`encryption`) authenticates on its own through its dedicated OIDC client
+
+### Maintenance escrow
+
+A deployment may keep, for every encrypted resource, one extra copy of the resource key wrapped for an operator-held maintenance key, kept offline, so that a stored document can be repaired or re-encoded (a fix on stored data, a migration to another tool) without waiting for its users. The encryption server decides (`MAINTENANCE_ESCROW_PUBLIC_KEY`); a product has nothing to configure and one rule to follow:
+
+1. **Persist `maintenanceKey` when it is present.** `encryptWithoutKey` and `shareKeys` return it next to `encryptedKeys` (a base64 blob of the same shape as a wrapped key). Store it on the resource that holds the ciphertext, in a nullable column, and overwrite it on every share. In a key hierarchy (Drive), it is returned for the encryption root only, which is enough: nested keys chain from it.
+2. **Never treat it as a recipient.** It is not in `encryptedKeys`, it is not a user, and it must not appear in a sharing list or be removable from one.
+3. **Backfill lazily.** A resource created before the option was enabled has no copy. Calling `shareKeys` with an empty recipient map, from any current holder, returns only `maintenanceKey`; do it when you open such a resource and the column is null.
+
+The operator later exports the rows (`id`, `maintenanceKey`, `encryptedContent`, and the recipients to re-wrap for) and runs `npm run maintenance` from the encryption repository; the results are written back by the product. Architecture, Appendix C, has the full model and the alternatives that were considered.
 
 ### Recommendation: second authentication factor (2FA)
 

@@ -51,6 +51,8 @@ export const VaultErrorCode = {
   UNSUPPORTED_CRYPTO_VERSION: 'UNSUPPORTED_CRYPTO_VERSION',
   /** A signature public key didn't have the expected Ed25519 length. */
   INVALID_SIGNATURE_KEY: 'INVALID_SIGNATURE_KEY',
+  /** The configured maintenance public key, or the operator's key file, is not a well-formed X-Wing key. */
+  INVALID_MAINTENANCE_KEY: 'INVALID_MAINTENANCE_KEY',
   /**
    * A registry entry's binding signature did not verify against its claimed
    * identity (signature) key — the directory record is forged, tampered, or

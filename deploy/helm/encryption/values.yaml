@@ -76,6 +76,10 @@ config:
   # Where researchers report a problem with THIS instance, published as
   # /.well-known/security.txt. Empty = the path does not exist.
   securityContactUrl: ''
+  # Maintenance escrow (architecture.md, Appendix C): the operator's public key from
+  # `npm run maintenance -- keygen`. Empty = no escrow copy is produced. A public
+  # key, so a plain value; the matching secret key never reaches the cluster.
+  maintenanceEscrowPublicKey: ''
 
 database:
   # The runtime role's connection string (rows only, see deploy/postgres/). One of

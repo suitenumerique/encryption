@@ -282,6 +282,10 @@
         "securityContactUrl": {
           "type": "string",
           "pattern": "^(?:https://\\S+|mailto:\\S+)?$"
+        },
+        "maintenanceEscrowPublicKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$"
         }
       }
     },

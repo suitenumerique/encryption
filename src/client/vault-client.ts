@@ -337,13 +337,19 @@ export class VaultClient {
    * Use this for standalone encrypted files (no parent) and for the root
    * folder of an encrypted subtree.
    *
-   * @returns encryptedContent and encryptedKeys (userId → wrappedKey)
+   * When the deployment runs the maintenance escrow, the result also carries
+   * `maintenanceKey`: the same key wrapped for the operator's key. Persist it
+   * on the resource whenever it is present (a nullable column next to the
+   * ciphertext); never treat it as a recipient. It is absent otherwise.
+   *
+   * @returns encryptedContent, encryptedKeys (userId → wrappedKey) and, when
+   *   configured, maintenanceKey
    */
   async encryptWithoutKey(
     data: ArrayBuffer,
     recipients: Record<string, RecipientLabel>,
     options?: { optimizeMemory?: boolean }
-  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     return this.withRecipientVerification(recipients, (isFinalAttempt) =>
       this.encryptWithoutKeyRequest(data, Object.keys(recipients), options, isFinalAttempt)
     );
@@ -354,7 +360,7 @@ export class VaultClient {
     recipientSubs: string[],
     options: { optimizeMemory?: boolean } | undefined,
     allowTransfer: boolean
-  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     const optimize = options?.optimizeMemory === true;
     // Transferring `data` detaches it, so only do it on the FINAL attempt: an
     // auto-verify retry needs the buffer intact if the first attempt is refused
@@ -364,6 +370,7 @@ export class VaultClient {
     return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientSubs, optimizeMemory: optimize }, transferables)) as {
       encryptedContent: ArrayBuffer;
       encryptedKeys: Record<string, ArrayBuffer>;
+      maintenanceKey?: ArrayBuffer;
     };
   }
 
@@ -576,13 +583,17 @@ export class VaultClient {
    * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
    *   When provided, resolves the chain from entry point to the target item's key
    *   before re-encrypting for the target users.
-   * @returns encryptedKeys - Record of userId → ArrayBuffer encrypted symmetric key for each user
+   * @returns encryptedKeys - Record of userId → ArrayBuffer encrypted symmetric key for each user,
+   *   plus `maintenanceKey` when the deployment runs the maintenance escrow (persist it
+   *   on the resource, replacing any previous value). An empty `recipients` map is
+   *   valid and returns only that copy: use it to backfill a resource that predates
+   *   the escrow, from any current holder.
    */
   async shareKeys(
     encryptedSymmetricKey: ArrayBuffer,
     recipients: Record<string, RecipientLabel>,
     encryptedKeyChain?: ArrayBuffer[]
-  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     return this.withRecipientVerification(recipients, () => this.shareKeysRequest(encryptedSymmetricKey, Object.keys(recipients), encryptedKeyChain));
   }
 
@@ -590,7 +601,7 @@ export class VaultClient {
     encryptedSymmetricKey: ArrayBuffer,
     recipientSubs: string[],
     encryptedKeyChain?: ArrayBuffer[]
-  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     const payload: Record<string, unknown> = { encryptedSymmetricKey, recipientSubs };
 
     if (encryptedKeyChain) {
@@ -599,6 +610,7 @@ export class VaultClient {
 
     return (await this.vaultRequest(MSG_VAULT_SHARE_KEYS, payload)) as {
       encryptedKeys: Record<string, ArrayBuffer>;
+      maintenanceKey?: ArrayBuffer;
     };
   }
 

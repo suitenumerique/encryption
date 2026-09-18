@@ -115,6 +115,17 @@ npm run ci:simulate      # Run the CI pipeline locally with `act`
 
 It's not designed to release a new version, but to test most of the pipeline (packages, tests, build). Note the flags stay in the npm script rather than in `.actrc`, so they do not leak into other `act` invocations. Also, we cannot use concurrent jobs feature here due to our setup upgrading npm (jobs share the same folders and there is a conflict). Lastly, `act` copies the working tree without its `.git`, so the steps comparing against committed files are skipped locally: a green local run does not prove the generated API client is in sync.
 
+### Trying the maintenance escrow locally
+
+`.env.test` configures the public half of the committed development key pair, `src/maintenance/dev-maintenance-key.json` (a fixture for the demo, never for a real deployment), so every document created in the demo products carries a `maintenanceKey`. The operator loop then runs against the demo store:
+
+```bash
+# Audit which rows the key opens, then read them, then re-encode one for a new holder
+curl -s 'http://localhost:7200/api/demo/documents?product=7201' | npm run -s maintenance -- check --key src/maintenance/dev-maintenance-key.json
+curl -s 'http://localhost:7200/api/demo/documents?product=7201' | npm run -s maintenance -- decrypt --key src/maintenance/dev-maintenance-key.json --utf8
+npm run -s maintenance -- fetch-public-keys --registry http://data.encryption.localhost:7200 <sub>   # verified public keys, to paste into `recipients`
+```
+
 ## Tech stack
 
 - **Crypto**: libsodium-wrappers-sumo (WASM), hybrid X25519 + post-quantum placeholder, XChaCha20-Poly1305
@@ -173,15 +184,16 @@ Its values are schema-checked, so a typo or a missing required value fails the i
 
 Every variable is listed in [`.env.model`](.env.model) with a production-shaped value; the server refuses to start and prints the offending names when one is missing or malformed. The ones that shape the deployment:
 
-| Variable                  | Role                                                                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `VAULT_URL`, `UI_URL`     | The two public origins. TLS is mandatory: the vault needs a secure context, and the browser reporting endpoint is ignored over plain HTTP. |
-| `ALLOWED_FRAME_ANCESTORS` | The product origins allowed to embed the iframes. They must share one registrable domain (see "Storage partitioning constraint").          |
-| `DATABASE_URL`            | Connection string of the **runtime** role (below).                                                                                         |
-| `OIDC_*`                  | The identity provider the interface authenticates against.                                                                                 |
-| `MAILER_*`                | SMTP for the emergency-access notifications, with an optional fallback host.                                                               |
-| `SENTRY_*`                | Optional error reporting (see "Error reporting").                                                                                          |
-| `SECURITY_CONTACT_URL`    | Optional. Where researchers report a problem with your instance (`mailto:` or `https://`), published as `/.well-known/security.txt`.       |
+| Variable                        | Role                                                                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VAULT_URL`, `UI_URL`           | The two public origins. TLS is mandatory: the vault needs a secure context, and the browser reporting endpoint is ignored over plain HTTP. |
+| `ALLOWED_FRAME_ANCESTORS`       | The product origins allowed to embed the iframes. They must share one registrable domain (see "Storage partitioning constraint").          |
+| `DATABASE_URL`                  | Connection string of the **runtime** role (below).                                                                                         |
+| `OIDC_*`                        | The identity provider the interface authenticates against.                                                                                 |
+| `MAILER_*`                      | SMTP for the emergency-access notifications, with an optional fallback host.                                                               |
+| `SENTRY_*`                      | Optional error reporting (see "Error reporting").                                                                                          |
+| `SECURITY_CONTACT_URL`          | Optional. Where researchers report a problem with your instance (`mailto:` or `https://`), published as `/.well-known/security.txt`.       |
+| `MAINTENANCE_ESCROW_PUBLIC_KEY` | Optional. Enables the maintenance escrow: the operator's public key from `npm run maintenance -- keygen` (see "Maintenance escrow").       |
 
 ### Database roles
 
@@ -225,6 +237,12 @@ The command is idempotent and exits non-zero when a migration fails, which is wh
 Optional. Set `SENTRY_DSN` to the DSN of any Sentry-compatible collector (Sentry, self-hosted Sentry, GlitchTip) and the server starts sending server errors and the reports the interface and the vault post to it. Unset, nothing is sent and nothing else changes.
 
 There is no Sentry SDK in the image and nothing to upload: source maps ship inside the image and are resolved there, so the collector only ever sees the server, never a browser. The event is built from an allowlist (error type, redacted message, stack positions, a handful of tags such as route and status code) rather than scrubbed, and reports from the vault carry no message at all. `SENTRY_ENVIRONMENT` labels the deployment; `SENTRY_RELEASE` defaults to the commit the image was built from.
+
+### Maintenance escrow
+
+Optional, and each deployment's own choice: useful when you are not yet confident in the deployment, or when you want a guaranteed way to re-encode the stored content later (a migration to another tool, another encryption scheme). Set `MAINTENANCE_ESCROW_PUBLIC_KEY` to the public key printed by `npm run maintenance -- keygen --out maintenance.json`, and every resource key the vault wraps for its recipients is also wrapped, once more, for that key; products persist the copy next to the ciphertext. The day a stored document has to be read or re-encoded without waiting for its users, export the rows and pipe them through `npm run maintenance -- check | decrypt | rewrap` with the key file, offline.
+
+It lowers end-to-end encryption by exactly one holder, the custodian of the secret key, and keeps the protection that matters most: a leaked database or server still yields nothing readable, because the secret key exists only offline. Keep it in a physical vault under the security officer (RSSI / CISO), ideally Shamir-split across several people so that no one can read content alone. Unset the variable, drop the column and destroy the key when you no longer want the option. See [architecture.md, Appendix C](architecture.md#appendix-c-maintenance-escrow-a-deployment-option).
 
 ## Reporting a security issue
 

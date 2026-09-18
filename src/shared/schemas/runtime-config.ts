@@ -36,6 +36,7 @@ export const uiRuntimeConfigSchema = z.object({
 export const vaultRuntimeConfigSchema = z.object({
   allowedOrigins: z.array(z.string().min(1)),
   interfaceOrigin: z.string().url(),
+  maintenanceEscrowPublicKey: z.string().min(1).optional(),
 });
 
 export type UiRuntimeConfig = z.infer<typeof uiRuntimeConfigSchema>;

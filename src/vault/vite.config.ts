@@ -21,6 +21,7 @@ function injectRuntimeConfig(): Plugin {
           .map((s) => s.trim())
           .filter(Boolean),
         interfaceOrigin: process.env.UI_URL ?? '',
+        ...(process.env.MAINTENANCE_ESCROW_PUBLIC_KEY ? { maintenanceEscrowPublicKey: process.env.MAINTENANCE_ESCROW_PUBLIC_KEY } : {}),
       };
       const block = buildRuntimeConfigBlock(config);
 

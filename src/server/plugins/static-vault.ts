@@ -12,6 +12,7 @@ function buildVaultConfigBlock(): string {
   const config = {
     allowedOrigins: env.ALLOWED_FRAME_ANCESTORS.split(',').map((s) => s.trim()),
     interfaceOrigin: env.UI_URL,
+    ...(env.MAINTENANCE_ESCROW_PUBLIC_KEY ? { maintenanceEscrowPublicKey: env.MAINTENANCE_ESCROW_PUBLIC_KEY } : {}),
   };
 
   return buildRuntimeConfigBlock(config);

@@ -21,6 +21,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - `src/shared/` — constants, Zod schemas, error codes (shared between server and client)
 - `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; every model and enum sits in the `encryption` PostgreSQL schema (`@@schema`), never `public`, and `DATABASE_URL` carries `?schema=encryption` for the migration tooling
 - `src/demo/` — fake product pages for testing (two instances on different ports)
+- `src/maintenance/` — operator CLI (`npm run maintenance`, commander) for the maintenance escrow: keygen, check, decrypt, rewrap, fetch-public-keys over stdin/stdout JSON rows
 - `src/i18n/` — French translations, i18next setup
 - `src/build/` — build-time helpers (browser versions from browserslist)
 - `deploy/` — deployment material: PostgreSQL role scripts, the Helm chart and its tests (`deploy/helm/encryption.test.ts` renders it with the real `helm` binary and checks the Deployment against `src/server/env-schema.ts`), helmfile and Argo CD examples. The chart is versioned apart from the application: `chart/vX.Y.Z` tags publish `lasuite/encryption-chart` on Docker Hub and run only the chart jobs; `vX.Y.Z` tags release the image and skip the chart. A push to the CI branch republishes the image as `main` only when something outside `deploy/helm` changed, and the chart as `0.0.0-main` only when `deploy/helm/encryption` or `.github` changed, both compared with the commit of the last successful run on the branch (the `changes` job), so a failed release is published again by the next push. `image.tag` is therefore required in the values.
@@ -96,6 +97,7 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 - `robots.txt` + `<meta name="robots" content="noindex, nofollow">`
 - `/.well-known/security.txt` (RFC 9116) on both hosts, only when the operator set `SECURITY_CONTACT_URL` (the contact is theirs, not the code's); generated at request time so `Expires` never goes stale. `SECURITY.md` is the channel for the code itself
 - Rate limiting: 10 key creations per 30 days, 10 device transfers per hour
+- Maintenance escrow (architecture.md Appendix C), off unless `MAINTENANCE_ESCROW_PUBLIC_KEY` is set: the vault wraps every resource key once more for the operator's X-Wing key, AFTER the recipient trust gate, from runtime config (never from the request), and returns it as a separate `maintenanceKey` field of `encrypt-without-key` / `share-keys`; products persist it next to the ciphertext. `shareKeys` with no recipients returns only that copy (backfill). Never a recipient, never a user key.
 - Device transfer sessions auto-deleted after 1 hour
 - Reporting API endpoint at `/api/browser-reports` (`BROWSER_REPORT_PATH`), declared
   under the reserved `default` name so it receives every report type, not only CSP.
@@ -211,6 +213,11 @@ Error reports from the dev server land in the GlitchTip started by `docker compo
 (a Sentry-compatible collector, so the code path is the one a production Sentry would
 exercise). Open http://localhost:7209 and log in as `dev@example.com` /
 `devdevdev`: the project and the fixed DSN in `.env.test` are seeded on every boot.
+
+`.env.test` also sets `MAINTENANCE_ESCROW_PUBLIC_KEY` to the public half of the committed
+DEV key pair `src/maintenance/dev-maintenance-key.json` (a fixture, never for a real
+deployment), so demo documents carry a `maintenanceKey` and the operator loop can be tried
+end to end: `curl -s 'http://localhost:7200/api/demo/documents?product=7201' | npm run -s maintenance -- decrypt --key src/maintenance/dev-maintenance-key.json --utf8`.
 
 ## Common commands
 

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { parseMaintenancePublicKey } from '@encryption/src/crypto/maintenance-escrow';
+
 export const envSchema = z.object({
   PORT: z.coerce.number().default(7200),
   HOST: z.string().default('0.0.0.0'),
@@ -66,6 +68,28 @@ export const envSchema = z.object({
     z
       .string()
       .regex(/^(?:https:\/\/|mailto:)\S+$/)
+      .optional()
+  ),
+  // Optional maintenance escrow (architecture.md, Appendix C): the operator's X-Wing
+  // public key in the registry wire format. When set, the vault hands products one
+  // extra wrapped copy of every resource key for it. Validated in full at boot: a
+  // malformed key would otherwise fail every document creation in the browser.
+  MAINTENANCE_ESCROW_PUBLIC_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .refine(
+        (value) => {
+          try {
+            parseMaintenancePublicKey(value);
+
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { message: 'must be a base64 X-Wing public key in the registry wire format (see `npm run maintenance -- keygen`)' }
+      )
       .optional()
   ),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
