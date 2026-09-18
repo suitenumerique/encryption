@@ -62,6 +62,7 @@ import {
 } from '@encryption/src/vault/operations/fingerprint-registry';
 import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-keys';
 import { handleGetPublicKey, handleHasKeys } from '@encryption/src/vault/operations/key-management';
+import { getMaintenancePublicKey } from '@encryption/src/vault/operations/maintenance-escrow';
 import { handleChangeRecoveryPhrase, handlePrepareOnboarding } from '@encryption/src/vault/operations/onboarding';
 import { resolveTrustedRecipientKeys } from '@encryption/src/vault/operations/recipient-trust';
 import { handleRespondToKeyChallenge } from '@encryption/src/vault/operations/respond-to-key-challenge';
@@ -96,7 +97,7 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       const p = payload as { data: ArrayBuffer; recipientSubs: string[] };
       const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs ?? []);
 
-      return handleEncryptWithoutKey(userId, { data: p.data, userPublicKeys });
+      return handleEncryptWithoutKey(userId, { data: p.data, userPublicKeys, maintenancePublicKey: getMaintenancePublicKey() });
     }
     case MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY:
       return handleEncryptNestedWithoutKey(
@@ -139,7 +140,12 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       const p = payload as { encryptedSymmetricKey: ArrayBuffer; recipientSubs: string[]; encryptedKeyChain?: ArrayBuffer[] };
       const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs ?? []);
 
-      return handleShareKeys(userId, { encryptedSymmetricKey: p.encryptedSymmetricKey, userPublicKeys, encryptedKeyChain: p.encryptedKeyChain });
+      return handleShareKeys(userId, {
+        encryptedSymmetricKey: p.encryptedSymmetricKey,
+        userPublicKeys,
+        encryptedKeyChain: p.encryptedKeyChain,
+        maintenancePublicKey: getMaintenancePublicKey(),
+      });
     }
     case MSG_VAULT_FETCH_PUBLIC_KEYS:
       // `subs` is the product/interface form: results come back keyed by the

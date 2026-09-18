@@ -1,4 +1,12 @@
-import { encryptContent, encryptSymmetricKeyForUsers, generateSymmetricKey, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
+import {
+  type HybridPublicKey,
+  encryptContent,
+  encryptSymmetricKeyForUsers,
+  generateSymmetricKey,
+  importPublicKeyFromBase64,
+  uint8ToBase64,
+  wrapKeyForMaintenance,
+} from '@encryption/src/crypto';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
@@ -67,11 +75,15 @@ export async function handleEncryptWithKey(
  * Used for standalone encrypted files (no parent) and for the root folder
  * of an encrypted subtree. Callers persist each returned wrapped key on the
  * matching user's access row.
+ *
+ * With a `maintenancePublicKey` (the deployment's escrow key, injected by the
+ * message boundary, never by a product), K_new is also wrapped for it and
+ * returned as `maintenanceKey`, which the caller persists on the resource.
  */
 export async function handleEncryptWithoutKey(
   userId: string,
-  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer> }
-): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer>; maintenancePublicKey?: HybridPublicKey | null }
+): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
   const pair = await getStoredKeyPair(userId);
 
   if (!pair) {
@@ -92,6 +104,12 @@ export async function handleEncryptWithoutKey(
 
   for (const [uid, encKey] of Object.entries(encryptedKeysRaw)) {
     encryptedKeys[uid] = encKey.buffer as ArrayBuffer;
+  }
+
+  if (payload.maintenancePublicKey) {
+    const maintenanceKey = await wrapKeyForMaintenance(newKey, payload.maintenancePublicKey);
+
+    return { encryptedContent, encryptedKeys, maintenanceKey: maintenanceKey.buffer as ArrayBuffer };
   }
 
   return { encryptedContent, encryptedKeys };
