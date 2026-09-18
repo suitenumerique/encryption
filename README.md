@@ -240,7 +240,26 @@ There is no Sentry SDK in the image and nothing to upload: source maps ship insi
 
 ### Maintenance escrow
 
-Optional, and each deployment's own choice: useful when you are not yet confident in the deployment, or when you want a guaranteed way to re-encode the stored content later (a migration to another tool, another encryption scheme). Set `MAINTENANCE_ESCROW_PUBLIC_KEY` to the public key printed by `npm run maintenance -- keygen --out maintenance.json`, and every resource key the vault wraps for its recipients is also wrapped, once more, for that key; products persist the copy next to the ciphertext. The day a stored document has to be read or re-encoded without waiting for its users, export the rows and pipe them through `npm run maintenance -- check | decrypt | rewrap` with the key file, offline.
+Optional, and each deployment's own choice: useful when you are not yet confident in the deployment, or when you want a guaranteed way to re-encode the stored content later (a migration to another tool, another encryption scheme). Set `MAINTENANCE_ESCROW_PUBLIC_KEY` to the public key printed by `npm run maintenance -- keygen --out maintenance.json`, and every resource key the vault wraps for its recipients is also wrapped, once more, for that key; products persist the copy next to the ciphertext. The day a stored document has to be read or re-encoded without waiting for its users, export the rows and run them through `npm run maintenance -- check | decrypt | rewrap` with the key file, offline.
+
+Exporting from a product database is one query, with the column names of that product, written to a file. Binary columns go through `encode`, whose base64 PostgreSQL wraps every 76 characters, hence the `translate` (the CLI rejects wrapped base64 rather than decoding garbage). `recipients` lists the subs to re-wrap for, resolved by `--registry` through the public directory with their binding signatures verified:
+
+```bash
+psql "$PRODUCT_DATABASE_URL" -At -o rows.ndjson -c "
+  SELECT json_build_object(
+    'id', d.id,
+    'maintenanceKey', translate(encode(d.maintenance_key, 'base64'), E'\n', ''),
+    'encryptedContent', translate(encode(d.encrypted_content, 'base64'), E'\n', ''),
+    'recipients', (SELECT json_agg(a.sub) FROM document_accesses a WHERE a.document_id = d.id)
+  ) FROM documents d WHERE d.maintenance_key IS NOT NULL"
+
+npm run maintenance -- check  --key maintenance.json --in rows.ndjson --out check.ndjson
+npm run maintenance -- rewrap --key maintenance.json --in rows.ndjson --out results.ndjson --registry https://data.encryption.example.org
+```
+
+`--in` and `--out` are the robust way to run a real batch: the export can be inspected and re-run, rows are streamed one line at a time so its size does not matter, and the result file (created readable by its owner only, since `decrypt` writes plaintext) holds nothing but results. Without them the commands read stdin and write stdout, which composes with `psql`, `jq` and `curl` for a quick look; use `npm run -s` then, or npm's banner lands in the output. A JSON array is accepted as well, buffered whole, so keep it for small listings.
+
+Each output line carries `id`, `encryptedKeys` (one wrapped copy per sub), a fresh `maintenanceKey`, and `encryptedContent` with `--rotate-key`; the product writes them back in one transaction per row. `src/maintenance/escrow.test.ts` runs exactly this loop against a real PostgreSQL table and the real directory route.
 
 It lowers end-to-end encryption by exactly one holder, the custodian of the secret key, and keeps the protection that matters most: a leaked database or server still yields nothing readable, because the secret key exists only offline. Keep it in a physical vault under the security officer (RSSI / CISO), ideally Shamir-split across several people so that no one can read content alone. Unset the variable, drop the column and destroy the key when you no longer want the option. See [architecture.md, Appendix C](architecture.md#appendix-c-maintenance-escrow-a-deployment-option).
 

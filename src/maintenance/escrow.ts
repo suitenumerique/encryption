@@ -43,10 +43,21 @@ export const maintenanceRowSchema = z.object({
 
 export type MaintenanceRow = z.infer<typeof maintenanceRowSchema>;
 
+export function parseRow(entry: unknown, index: number): MaintenanceRow {
+  const parsed = maintenanceRowSchema.safeParse(entry);
+
+  if (!parsed.success) {
+    throw new Error(`row ${index + 1}: ${z.prettifyError(parsed.error)}`);
+  }
+
+  return parsed.data;
+}
+
 /**
  * Accepts the two shapes an export naturally comes in: one JSON object per line
- * (psql `\copy ... to stdout` of a `row_to_json`, `jq -c`), or a JSON array (a
- * REST listing such as the demo store's).
+ * (`psql -At`, `jq -c`), or a JSON array (a REST listing such as the demo
+ * store's). For an export too large to hold in memory, see `readRows` in io.ts,
+ * which streams the first shape.
  */
 export function parseRows(text: string): MaintenanceRow[] {
   const trimmed = text.trim();
@@ -57,15 +68,7 @@ export function parseRows(text: string): MaintenanceRow[] {
     ? (JSON.parse(trimmed) as unknown[])
     : trimmed.split('\n').map((line) => JSON.parse(line) as unknown);
 
-  return raw.map((entry, index) => {
-    const parsed = maintenanceRowSchema.safeParse(entry);
-
-    if (!parsed.success) {
-      throw new Error(`row ${index + 1}: ${z.prettifyError(parsed.error)}`);
-    }
-
-    return parsed.data;
-  });
+  return raw.map(parseRow);
 }
 
 function label(row: MaintenanceRow, index: number): string {
