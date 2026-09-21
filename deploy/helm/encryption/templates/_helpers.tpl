@@ -207,8 +207,8 @@ interface's client. Any other value turns each of the interface's API calls into
   value: {{ $v.config.mailer.fallback.requireTls | toString | quote }}
 {{- include "encryption.relayCredentialsEnv" (dict "root" $ "prefix" "MAILER_FALLBACK_SMTP" "relay" $v.config.mailer.fallback) }}
 {{- end }}
-- name: MAILER_DEFAULT_DOMAIN
-  value: {{ include "encryption.required" (list $v.config.mailer.defaultDomain "config.mailer.defaultDomain") | quote }}
+- name: MAILER_SENDER_ADDRESS
+  value: {{ include "encryption.required" (list $v.config.mailer.senderAddress "config.mailer.senderAddress") | quote }}
 - name: EMAIL_PRODUCT_URL
   value: {{ include "encryption.required" (list $v.config.emailProductUrl "config.emailProductUrl") | quote }}
 {{- if $v.config.brandFont }}

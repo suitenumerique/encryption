@@ -28,7 +28,7 @@ config:
       smtpHost: smtp-fallback.example.org
       smtpPort: 25
       requireTls: false
-    defaultDomain: example.org
+    senderAddress: noreply@example.org
   emailProductUrl: https://docs.example.org
   securityContactUrl: mailto:security@example.org
 

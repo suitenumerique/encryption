@@ -265,8 +265,16 @@
                 }
               }
             },
-            "defaultDomain": {
-              "type": "string"
+            "senderAddress": {
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                }
+              ]
             }
           }
         },

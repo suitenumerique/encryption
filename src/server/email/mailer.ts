@@ -154,7 +154,7 @@ export class Mailer {
 }
 
 export const mailer = new Mailer({
-  defaultSender: `Chiffrement <noreply@${env.MAILER_DEFAULT_DOMAIN}>`,
+  defaultSender: `Chiffrement <${env.MAILER_SENDER_ADDRESS}>`,
   smtp: {
     host: env.MAILER_SMTP_HOST,
     port: env.MAILER_SMTP_PORT,

@@ -206,6 +206,8 @@ describe('the chart', () => {
     expect(renderError(FULL_VALUES, ['extraEnvs=1'])).toMatch(/extraEnvs.*not allowed|not allowed.*extraEnvs/);
     expect(renderError(FULL_VALUES, ['config.oidc.issuer=http://insecure.example.org'])).toMatch(/issuer/);
     expect(renderError(FULL_VALUES, ['hosts.vault='])).toContain('hosts.vault is required');
+    expect(renderError(FULL_VALUES, ['config.mailer.senderAddress='])).toContain('config.mailer.senderAddress is required');
+    expect(renderError(FULL_VALUES, ['config.mailer.senderAddress=example.org'])).toMatch(/senderAddress/);
     expect(renderError(FULL_VALUES, ['database.url='])).toContain('database.url or database.existingSecret.name is required');
     expect(renderError(EXISTING_SECRETS_VALUES, ['image.digest='])).toContain('image.tag or image.digest is required');
   });

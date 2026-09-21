@@ -67,7 +67,7 @@ config:
         name: ''
         userKey: MAILER_FALLBACK_SMTP_USER
         passwordKey: MAILER_FALLBACK_SMTP_PASSWORD
-    defaultDomain: '' # required, sender domain of the notifications
+    senderAddress: '' # e.g. noreply@example.org
   # Where email links send the user (the interface only exists inside a product). Required.
   emailProductUrl: ''
   docsEnabled: true

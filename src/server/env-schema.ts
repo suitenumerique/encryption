@@ -39,8 +39,10 @@ export const envSchema = z.object({
   MAILER_FALLBACK_SMTP_PASSWORD: z.string().optional(),
   MAILER_FALLBACK_SMTP_SECURE: z.stringbool().default(false),
   MAILER_FALLBACK_SMTP_REQUIRE_TLS: z.stringbool().default(true),
-  // Sender domain for "Chiffrement <noreply@domain>"
-  MAILER_DEFAULT_DOMAIN: z.string().min(1),
+  // The address notifications are sent from, as "Chiffrement <address>". Whole, not just a
+  // domain: a relay only accepts senders it was set up for, and an operator may have to
+  // use a given mailbox (one per environment, for instance).
+  MAILER_SENDER_ADDRESS: z.email(),
   // The product page email links point to: the encryption interface only exists
   // embedded in products, so every notification needs somewhere to send the user.
   EMAIL_PRODUCT_URL: z.string().url(),
