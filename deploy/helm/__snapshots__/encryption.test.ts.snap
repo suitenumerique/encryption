@@ -230,8 +230,8 @@ spec:
               value: "false"
             - name: MAILER_FALLBACK_SMTP_REQUIRE_TLS
               value: "false"
-            - name: MAILER_DEFAULT_DOMAIN
-              value: "example.org"
+            - name: MAILER_SENDER_ADDRESS
+              value: "noreply@example.org"
             - name: EMAIL_PRODUCT_URL
               value: "https://docs.example.org"
             - name: SECURITY_CONTACT_URL
