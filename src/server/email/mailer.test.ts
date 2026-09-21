@@ -7,7 +7,7 @@ import { EmergencyAcceptedEmail } from '@encryption/src/server/email/templates/E
 // The module singleton reads the server env at import time; tests build their own instances
 vi.mock('@encryption/src/server/env', () => ({ env: {} }));
 
-const defaultSender = 'Chiffrement <noreply@example.com>';
+const defaultSender = { name: 'LaSuite Chiffrement', address: 'noreply@example.com' };
 const smtpSettings = { host: 'primary.example.com', port: 25, user: '', password: '' };
 const fallbackSmtpSettings = { host: 'fallback.example.com', port: 25, user: '', password: '' };
 
@@ -89,7 +89,7 @@ describe('Mailer', () => {
     // A non-ASCII subject must cross the wire encoded, never raw.
     expect(sent).toMatch(/Subject: =\?UTF-8\?/);
     expect(sent).toContain('To: grantor@example.com');
-    expect(sent).toContain('From: Chiffrement <noreply@example.com>');
+    expect(sent).toContain('From: LaSuite Chiffrement <noreply@example.com>');
   });
 
   it('throws rather than silently dropping the email when no SMTP host is configured', async () => {
