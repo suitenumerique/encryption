@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import fp from 'fastify-plugin';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -17,7 +18,10 @@ function buildVaultConfigBlock(): string {
   return buildRuntimeConfigBlock(config);
 }
 
-export async function staticVaultPlugin(app: FastifyInstance): Promise<void> {
+// Wrapped with fastify-plugin to break encapsulation: the hook below serves files that are
+// no route (`/vault.js`, `/client.js`...), and a hook private to a plugin only ever runs
+// for the routes declared inside that plugin. Unwrapped, every file is a 404.
+export const staticVaultPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const vaultDir = resolve(process.cwd(), 'dist/vault');
   const clientDir = resolve(process.cwd(), 'dist/client');
 
@@ -68,4 +72,4 @@ export async function staticVaultPlugin(app: FastifyInstance): Promise<void> {
       reply.type(file.type).header('Access-Control-Allow-Origin', '*').send(file.content);
     }
   });
-}
+});

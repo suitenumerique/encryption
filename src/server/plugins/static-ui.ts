@@ -1,9 +1,11 @@
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
+import fp from 'fastify-plugin';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
+import { FASTIFY_INFRA_PATHS } from '@encryption/src/server/plugins/infra-paths';
 import { parseBrandFont } from '@encryption/src/shared/brand-font';
 import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
 
@@ -35,7 +37,10 @@ export function isServableAsset(pathName: string): boolean {
   return !pathName.endsWith('.map');
 }
 
-export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
+// Wrapped with fastify-plugin to break encapsulation: the hook below answers paths that are
+// no route at all (`/`, `/login`...), and a hook private to a plugin only ever runs for the
+// routes declared inside that plugin. Unwrapped, every page is a 404.
+export const staticUiPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const distDir = resolve(process.cwd(), 'dist/ui');
 
   if (!existsSync(distDir)) {
@@ -77,16 +82,10 @@ export async function staticUiPlugin(app: FastifyInstance): Promise<void> {
     const path = request.url.split('?')[0];
 
     // Skip asset and API requests
-    if (
-      path.startsWith('/assets/') ||
-      path.startsWith('/public-assets/') ||
-      path === '/robots.txt' ||
-      path === '/.well-known/security.txt' ||
-      path.startsWith('/api/')
-    ) {
+    if (FASTIFY_INFRA_PATHS.has(path) || path.startsWith('/assets/') || path.startsWith('/public-assets/') || path.startsWith('/api/')) {
       return;
     }
 
     reply.type('text/html').send(interfaceHtml);
   });
-}
+});
