@@ -3,4 +3,11 @@
 // Both of those intercept requests before routing, so a path missing here is shadowed:
 // it 404s under Vite, and the interface answers it with its HTML page in production.
 // Must stay in sync with the matching routes in server.ts.
-export const FASTIFY_INFRA_PATHS = new Set(['/health', '/robots.txt', '/favicon.ico', '/.well-known/security.txt']);
+export const FASTIFY_INFRA_PATHS = new Set([
+  '/health',
+  '/health/ready',
+  '/health/startup',
+  '/robots.txt',
+  '/favicon.ico',
+  '/.well-known/security.txt',
+]);

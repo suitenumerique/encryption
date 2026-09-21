@@ -173,9 +173,14 @@ resources:
     # Node sizes its heap from this limit (--max-old-space-size-percentage in the image).
     memory: 1Gi
 
+# The three probes call three levels of the server's own check: /health/startup (serves its
+# pages, its API, and reaches a migrated database), /health/ready (the same without the
+# database) and /health (the process answers).
 probes:
   startup:
     periodSeconds: 2
+    # The first database round trip opens a TLS connection: more than the default second.
+    timeoutSeconds: 4
     failureThreshold: 30
   readiness:
     periodSeconds: 10

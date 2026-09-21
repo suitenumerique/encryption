@@ -38,7 +38,7 @@ spec:
       {{- end }}
       env:
         - name: HEALTH_URL
-          value: {{ printf "http://%s:%d/health" (include "encryption.fullname" .) (int .Values.service.port) | quote }}
+          value: {{ printf "http://%s:%d/health/startup" (include "encryption.fullname" .) (int .Values.service.port) | quote }}
       args:
         - -e
         - |
