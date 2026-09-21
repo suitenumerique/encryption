@@ -8,6 +8,7 @@ import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
 import { browserReportsRoute } from '@encryption/src/server/routes/browser-reports';
 import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-access';
+import { SELF_CHECK_REMOTE_ADDRESS, healthRoute } from '@encryption/src/server/routes/health';
 import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
 import { securityTxtRoute } from '@encryption/src/server/routes/security-txt';
@@ -97,6 +98,9 @@ export async function createServer(options: CreateServerOptions = {}) {
   // API route never carries one (`/api/me`, `/api/vault/events`), a served module
   // always does. `/@…` covers Vite internals (`/@vite/client`) that have none.
   app.addHook('onResponse', async (request, reply) => {
+    // The readiness check asks the server for its own pages: not traffic.
+    if (request.socket.remoteAddress === SELF_CHECK_REMOTE_ADDRESS) return;
+
     if (isDev) {
       const path = request.url.split('?')[0];
       const lastSegment = path.slice(path.lastIndexOf('/') + 1);
@@ -163,10 +167,8 @@ export async function createServer(options: CreateServerOptions = {}) {
   // they are not part of the API the interface consumes.
   const hidden = { schema: { hide: true } };
 
-  // Health check
-  app.get('/health', hidden, async () => {
-    return { status: 'ok' };
-  });
+  // Liveness, readiness and startup checks
+  app.register(healthRoute);
 
   // Prevent indexing on both domains
   app.get('/robots.txt', hidden, async (_, reply) => {

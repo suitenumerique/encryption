@@ -250,18 +250,27 @@ spec:
               value: "production"
             - name: EMAIL_PALETTE_PATH
               value: /config/palette.json
+          # One level per probe (src/server/routes/health.ts). Startup also queries the
+          # database: a pod with wrong database settings, or an unmigrated database, never
+          # becomes ready, so a rollout keeps the pods that work.
           startupProbe:
             httpGet:
-              path: /health
+              path: /health/startup
               port: http
             failureThreshold: 30
             periodSeconds: 2
+            timeoutSeconds: 4
+          # Readiness asks the server for its own interface page, a vault file and an API
+          # route. Not the database: the vault decrypts locally and must stay reachable
+          # while the database is down.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: http
             periodSeconds: 10
             timeoutSeconds: 2
+          # Liveness is only "the process answers": anything more turns an outage of that
+          # thing into a restart loop.
           livenessProbe:
             httpGet:
               path: /health
@@ -416,7 +425,7 @@ spec:
         readOnlyRootFilesystem: true
       env:
         - name: HEALTH_URL
-          value: "http://enc-encryption:80/health"
+          value: "http://enc-encryption:80/health/startup"
       args:
         - -e
         - |

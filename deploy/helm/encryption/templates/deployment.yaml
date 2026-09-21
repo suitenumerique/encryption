@@ -69,16 +69,24 @@ spec:
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          # One level per probe (src/server/routes/health.ts). Startup also queries the
+          # database: a pod with wrong database settings, or an unmigrated database, never
+          # becomes ready, so a rollout keeps the pods that work.
           startupProbe:
             httpGet:
-              path: /health
+              path: /health/startup
               port: http
             {{- toYaml .Values.probes.startup | nindent 12 }}
+          # Readiness asks the server for its own interface page, a vault file and an API
+          # route. Not the database: the vault decrypts locally and must stay reachable
+          # while the database is down.
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: http
             {{- toYaml .Values.probes.readiness | nindent 12 }}
+          # Liveness is only "the process answers": anything more turns an outage of that
+          # thing into a restart loop.
           livenessProbe:
             httpGet:
               path: /health
