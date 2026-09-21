@@ -8,6 +8,7 @@
   "emails": {
     "hello": "Bonjour,",
     "serviceName": "Chiffrement",
+    "senderName": "LaSuite Chiffrement",
     "emergencyAccepted": {
       "subject": "Votre contact de confiance a accepté",
       "title": "Invitation acceptée",
