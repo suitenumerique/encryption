@@ -25,6 +25,12 @@
 # overrides both: an ApplicationSet that passes the commit tag the workflow also
 # publishes, `sha-<8 chars>`, gets a rollout on every push instead of a moving tag.
 #
+# The products' tags come from DOCS_TAG and DRIVE_TAG, one per product for all its
+# images (Docs' CI tags its three images alike, Drive's two alike), `main` when unset.
+# The ApplicationSet reads them from labels of the pull request, `docs:pr-2694` and
+# `drive:encryption`, so the committed defaults stay `main` and a pull request tests a
+# product branch without a commit to undo before merging.
+#
 # Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
 # <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
 # start with `data.`), <feature>-auth, <feature>-s3, <feature>-s3-console, <feature>-mail
@@ -39,6 +45,8 @@
 {{- if lt (len $imageParts) 2 }}{{ fail (printf "ENCRYPTION_IMAGE must be repository:tag, got %q" $image) }}{{ end }}
 {{- $imageTag := last $imageParts }}
 {{- $imageRepository := join ":" (initial $imageParts) }}
+{{- $docsTag := coalesce (env "ARGOCD_ENV_DOCS_TAG") (env "DOCS_TAG") "main" }}
+{{- $driveTag := coalesce (env "ARGOCD_ENV_DRIVE_TAG") (env "DRIVE_TAG") "main" }}
 environments:
   preview:
     values:
@@ -54,19 +62,19 @@ environments:
             tag: {{ $imageTag | quote }}
           docs:
             repository: lasuite/impress-backend
-            tag: main
+            tag: {{ $docsTag | quote }}
           docsFrontend:
             repository: lasuite/impress-frontend
-            tag: main
+            tag: {{ $docsTag | quote }}
           docsYProvider:
             repository: lasuite/impress-y-provider
-            tag: main
+            tag: {{ $docsTag | quote }}
           drive:
             repository: lasuite/drive-backend
-            tag: main
+            tag: {{ $driveTag | quote }}
           driveFrontend:
             repository: lasuite/drive-frontend
-            tag: main
+            tag: {{ $driveTag | quote }}
         ingressClassName: nginx
         clusterIssuer: letsencrypt
 ---

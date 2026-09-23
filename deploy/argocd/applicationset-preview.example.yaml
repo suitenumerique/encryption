@@ -78,6 +78,16 @@ spec:
             # few minutes and start on their own once it is there.
             - name: ENCRYPTION_IMAGE
               value: 'lasuite/encryption:sha-{{ .head_short_sha }}'
+            # The Docs and Drive images under test, from labels of the pull request:
+            # `docs:pr-2694` runs the images the Docs CI pushed for its labelled pull
+            # request 2694, `drive:encryption` the ones pushed by hand for that branch
+            # (see deploy/helm/suite-stack/README.md, "Images"). No label, `main`; several
+            # for one product, the first. The helmfile's committed defaults never carry a
+            # test version this way, so there is nothing to undo before merging.
+            - name: DOCS_TAG
+              value: '{{ $t := list }}{{ range .labels }}{{ if hasPrefix "docs:" . }}{{ $t = append $t (trimPrefix "docs:" .) }}{{ end }}{{ end }}{{ with first $t }}{{ . }}{{ end }}'
+            - name: DRIVE_TAG
+              value: '{{ $t := list }}{{ range .labels }}{{ if hasPrefix "drive:" . }}{{ $t = append $t (trimPrefix "drive:" .) }}{{ end }}{{ end }}{{ with first $t }}{{ . }}{{ end }}'
             # The two below are the argo-cd-helmfile plugin's own: the environment to
             # render, and the release namespace following the destination. Another plugin
             # selects the environment its own way (an APP_ENV variable, for instance).
