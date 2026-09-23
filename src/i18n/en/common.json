@@ -8,6 +8,7 @@
   "emails": {
     "hello": "Hello,",
     "serviceName": "Encryption",
+    "senderName": "LaSuite Encryption",
     "emergencyAccepted": {
       "subject": "Your trusted contact accepted",
       "title": "Invitation accepted",

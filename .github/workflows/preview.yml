@@ -1,0 +1,271 @@
+name: Preview environment
+
+# One ephemeral environment per pull request carrying the `preview` label. The environment
+# itself is not created here: an Argo CD ApplicationSet in the deployment repository
+# (deploy/argocd/applicationset-preview.example.yaml) lists the labelled pull requests
+# and renders deploy/helmfile/preview at each one's own commit, then removes it when the
+# pull request closes or loses the label. This repository's part is the image of the
+# pull request's own code, a comment saying where the environment is, and a nudge so Argo
+# CD looks now rather than at its next poll.
+#
+# The image goes where the releases go, `lasuite/encryption` on Docker Hub, so there is
+# one registry to know about. Tags: `pr-<number>`, moving with the pull request (what the
+# preview helmfile derives from the pull request number by itself), `sha-<8 chars>` for
+# the exact commit (for an ApplicationSet that wants a rollout on every push), and the
+# branch name for a manual run ("Run workflow" on a `feat/<name>` branch, for a build to
+# point a stack at without a pull request: the prefix says the build is a feature in
+# progress, and any other branch is refused with a message). Releases (`vX.Y.Z`,
+# `latest`) and `main` are never touched:
+# the repository's immutable-tag rule protects the versions, and this workflow only writes
+# the three shapes above. It also cleans after itself: a pull request's tag goes when it
+# closes or loses the label, everything else of those shapes after thirty days.
+#
+# The push and the cleanup use the Docker Hub token of the `release` environment, the one
+# the CI releases with. Its deployment branch rules must admit these runs: a pull request
+# runs on GitHub's merge ref, admitted by a branch rule `refs/pull/*/merge`, and a manual
+# run on its `feat/*` branch. A token of its own, limited to read, write and
+# delete on the repository, in an environment of its own, would keep the release
+# credential with the release job alone: the two `environment:` lines below are all that
+# changes then.
+#
+# The product images the environment runs come from labels of the pull request,
+# `docs:<tag>` and `drive:<tag>` (`pr-<number>` tags of a labelled upstream pull request,
+# or a build pushed by hand, see deploy/helm/suite-stack/README.md, "Images"), which the
+# ApplicationSet passes to the helmfile; without one, `main`. A label is an object of the
+# repository, not of the pull request, so this workflow deletes a product label once no
+# open pull request carries it any more: the list of labels never accumulates versions.
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, opened, synchronize, closed]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1' # Monday 04:17 UTC, the thirty-day purge
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push supersedes the build in progress of the same pull request or branch
+  group: preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CONTAINER_REGISTRY: docker.io
+  CONTAINER_IMAGE: lasuite/encryption
+
+jobs:
+  image:
+    name: Publish the image of this code
+    # A labelled pull request of this repository (a fork's run gets no secret to push with),
+    # or a manual run on a feature branch
+    if: >-
+      (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/feat/')) ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.action != 'unlabeled' &&
+      contains(github.event.pull_request.labels.*.name, 'preview') &&
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.docker-meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The pull request's own commit, the one the ApplicationSet deploys, not the merge
+          # commit GitHub makes for the event; a manual run is on the branch head already
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Compute the image tags
+        id: docker-meta
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          PRIMARY="${CONTAINER_IMAGE}:sha-${HEAD_SHA:0:8}"
+          if [[ -n "${PR_NUMBER}" ]]; then
+            MOVING="pr-${PR_NUMBER}"
+          else
+            # A branch name as a tag: lowercase, nothing outside [a-z0-9._-], and never one
+            # of the shapes the CI owns (a branch called `main`, `latest` or `v1.2.3`)
+            MOVING="$(echo "${BRANCH}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g' | cut -c1-120)"
+            if [[ "${MOVING}" == "main" || "${MOVING}" == "latest" || "${MOVING}" =~ ^v[0-9] ]]; then
+              MOVING="branch-${MOVING}"
+            fi
+          fi
+          echo "tags=${PRIMARY},${CONTAINER_IMAGE}:${MOVING}" >> "$GITHUB_OUTPUT"
+          echo "primary-tag=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${HEAD_SHA:0:8}" >> "$GITHUB_OUTPUT"
+          echo "moving-tag=${MOVING}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and scan the image # the same steps as a release, see .github/actions/build-image
+        uses: ./.github/actions/build-image
+        with:
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          primary-tag: ${{ steps.docker-meta.outputs.primary-tag }}
+          source-commit: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Log in to the container registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.CONTAINER_REGISTRY }}
+          username: ${{ secrets.DOCKER_HUB_USER }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      - name: Push the scanned image
+        env:
+          TAGS: ${{ steps.docker-meta.outputs.tags }}
+          TAG: ${{ steps.docker-meta.outputs.tag }}
+          MOVING_TAG: ${{ steps.docker-meta.outputs.moving-tag }}
+        run: |
+          IFS=',' read -ra TAG_LIST <<< "${TAGS}"
+          for tag in "${TAG_LIST[@]}"; do
+            docker push "${tag}"
+          done
+          # The tags only: the repository name would be masked as the registry user's value
+          echo "Pushed the tags \`${TAG}\` and \`${MOVING_TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  refused:
+    name: Refuse a manual run outside feat/
+    # A skipped job says nothing; this one makes the run red with the reason
+    if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/feat/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: |
+          echo "::error::A manual run publishes a feature branch only, named feat/<something>: '${GITHUB_REF_NAME}' is not one. Open a pull request with the preview label instead."
+          exit 1
+
+  comment:
+    name: Say where it is
+    needs: [image]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3.0.1
+        with:
+          comment-tag: preview-url
+          message: |
+            :rocket: **Preview of this pull request, full stack**
+
+            - Docs: https://${{ github.event.pull_request.number }}-docs.${{ vars.PREVIEW_DOMAIN }}/
+            - Drive: https://${{ github.event.pull_request.number }}-drive.${{ vars.PREVIEW_DOMAIN }}/
+            - Mailbox: https://${{ github.event.pull_request.number }}-mail.${{ vars.PREVIEW_DOMAIN }}/
+
+            **Accounts**: `alice.martin` / `alice.martin`, `bob.dupont` / `bob.dupont` (see `bootstrap.keycloak.users`), or register your own on the sign-in page.
+
+            **Image**: `${{ env.CONTAINER_IMAGE }}:${{ needs.image.outputs.tag }}`, also tagged `pr-${{ github.event.pull_request.number }}`, which the environment runs. Every push republishes it; restart the `stack-encryption` Deployment in Argo CD to pick it up, unless the ApplicationSet follows the commit tag.
+
+            Everything in this environment is public: put nothing real in it. It is destroyed when this pull request is closed or loses the `preview` label.
+
+  notify-argocd:
+    name: Notify Argo CD
+    needs: [image]
+    # After the image exists, so the sync it triggers finds it. Skipped until the
+    # deployment repository side exists: the variable is set with the secrets when it does.
+    if: github.event_name == 'pull_request' && vars.ARGOCD_PREPROD_WEBHOOK_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: numerique-gouv/action-argocd-webhook-notification@cac2ee67896eb13e84e804f60c4271370424eaa8 # main
+        with:
+          deployment_repo_path: ${{ secrets.DEPLOYMENT_REPO_URL }}
+          argocd_webhook_secret: ${{ secrets.ARGOCD_PREPROD_WEBHOOK_SECRET }}
+          argocd_url: ${{ vars.ARGOCD_PREPROD_WEBHOOK_URL }}
+
+  labels:
+    name: Delete the product labels nobody uses
+    # `docs:<tag>` and `drive:<tag>` are created for one pull request and would outlive it
+    # in the repository's label list: gone when the last open pull request carrying one
+    # closes or drops it.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.action == 'closed') ||
+      (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && (startsWith(github.event.label.name, 'docs:') || startsWith(github.event.label.name, 'drive:')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # labels are issue objects
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # On a close, every product label of the pull request; on an unlabel, the one removed
+      CANDIDATES: ${{ github.event.action == 'unlabeled' && github.event.label.name || join(github.event.pull_request.labels.*.name, ',') }}
+    steps:
+      - run: |
+          IN_USE="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" --jq '.[].labels[].name' || true)"
+          IFS=',' read -ra LABELS <<< "${CANDIDATES}"
+          for label in "${LABELS[@]}"; do
+            [[ "${label}" == docs:* || "${label}" == drive:* ]] || continue
+            if grep -qxF "${label}" <<< "${IN_USE}"; then
+              echo "Keeping ${label}, an open pull request carries it"
+              continue
+            fi
+            echo "Deleting the label ${label}"
+            gh label delete "${label}" --yes
+          done
+
+  clean:
+    name: Clean the registry
+    # The pull request's tag when it closes or loses the label (the environment goes with
+    # it), and once a week every `pr-`, `sha-` or branch tag older than thirty days whose
+    # pull request is not open and labelled any more. Docker Hub has no expiry of its own,
+    # and its immutable-tag rule on the repository refuses the deletion of a version anyway.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'preview')) ||
+      (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && github.event.label.name == 'preview')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      pull-requests: read # the open labelled pull requests, whose tags the purge keeps
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Delete the tags
+        env:
+          DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          TOKEN="$(curl -sSf -X POST https://hub.docker.com/v2/users/login/ -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg u "${DOCKER_HUB_USER}" --arg p "${DOCKER_HUB_PASSWORD}" '{username: $u, password: $p}')" | jq -r .token)"
+          delete_tag() {
+            echo "Deleting ${CONTAINER_IMAGE}:$1"
+            curl -sSf -X DELETE -H "Authorization: JWT ${TOKEN}" "https://hub.docker.com/v2/repositories/${CONTAINER_IMAGE}/tags/$1/"
+          }
+
+          if [[ -n "${PR_NUMBER}" ]]; then
+            delete_tag "pr-${PR_NUMBER}"
+            exit 0
+          fi
+
+          # The weekly purge. Tags this workflow writes (`pr-<n>`, `sha-<8>`, a branch name,
+          # that is anything but `main`, `latest` and versions), last pushed more than thirty
+          # days ago, except the `pr-<n>` of a pull request still open and labelled.
+          KEEP="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+            --jq '.[] | select(any(.labels[]; .name == "preview")) | "pr-\(.number)"' | paste -sd, - || true)"
+          CUTOFF="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          URL="https://hub.docker.com/v2/repositories/${CONTAINER_IMAGE}/tags/?page_size=100"
+          while [[ -n "${URL}" && "${URL}" != "null" ]]; do
+            PAGE="$(curl -sSf -H "Authorization: JWT ${TOKEN}" "${URL}")"
+            while IFS= read -r tag; do
+              [[ -z "${tag}" ]] && continue
+              delete_tag "${tag}"
+            done < <(echo "${PAGE}" | jq -r --arg cutoff "${CUTOFF}" --arg keep ",${KEEP}," '
+              .results[]
+              | select(.name != "main" and .name != "latest" and (.name | test("^v[0-9]") | not))
+              | select(.last_updated < $cutoff)
+              | .name as $name | select(($keep | index("," + $name + ",")) == null)
+              | $name')
+            URL="$(echo "${PAGE}" | jq -r .next)"
+          done

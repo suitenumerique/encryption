@@ -1,0 +1,96 @@
+# The stack as one environment derived from two inputs: every hostname comes from
+# `feature` (a short label: `beta` for the testers' long-lived environment, a pull
+# request number for an ephemeral preview) and `domain`, and the chart is the one of
+# this checkout, never a published one. This is the factorization the chart cannot do
+# itself (each subchart reads its own block of values), so whoever deploys it only sets
+# those two inputs, as helmfile state values or as the variables FEATURE and DOMAIN:
+#
+#   helmfile -e preview -f deploy/helmfile/preview/helmfile.yaml.gotmpl \
+#     --state-values-set feature=2694,domain=ppr.example.org \
+#     --state-values-set images.docs.tag=pr-2694,images.docsFrontend.tag=pr-2694 \
+#     apply
+#
+#   FEATURE=2694 DOMAIN=ppr.example.org \
+#     helmfile -e preview -f deploy/helmfile/preview/helmfile.yaml.gotmpl apply
+#
+# The variables exist for Argo CD: its ApplicationSet passes the pull request number and
+# the domain to its helmfile plugin as environment variables of the Application, not as
+# command-line options, and a sidecar plugin sees them prefixed ARGOCD_ENV_. A state
+# value wins over the variable, the variable over the default below.
+#
+# The encryption image follows: a numeric feature is a pull request number, and the
+# preview workflow publishes that pull request's code as `lasuite/encryption:pr-<number>`
+# on every push, so that tag is the default; any other feature (`beta`, `ci`) runs the
+# `main` tag of the CI branch. A third variable, ENCRYPTION_IMAGE (`repository:tag`),
+# overrides both: an ApplicationSet that passes the commit tag the workflow also
+# publishes, `sha-<8 chars>`, gets a rollout on every push instead of a moving tag.
+#
+# The products' tags come from DOCS_TAG and DRIVE_TAG, one per product for all its
+# images (Docs' CI tags its three images alike, Drive's two alike), `main` when unset.
+# The ApplicationSet reads them from labels of the pull request, `docs:pr-2694` and
+# `drive:encryption`, so the committed defaults stay `main` and a pull request tests a
+# product branch without a commit to undo before merging.
+#
+# Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
+# <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
+# start with `data.`), <feature>-auth, <feature>-s3, <feature>-s3-console, <feature>-mail
+# and <feature>-office. One wildcard DNS record on <domain> covers them all, and cert-manager
+# issues one certificate per host. The namespace is the one given (`-n`, or the Argo CD
+# destination), else `preview-<feature>`.
+{{- $feature := coalesce (env "ARGOCD_ENV_FEATURE") (env "FEATURE") "ci" }}
+{{- $domain := coalesce (env "ARGOCD_ENV_DOMAIN") (env "DOMAIN") "example.org" }}
+{{- $defaultTag := ternary (printf "pr-%s" $feature) "main" (regexMatch "^[0-9]+$" $feature) }}
+{{- $image := coalesce (env "ARGOCD_ENV_ENCRYPTION_IMAGE") (env "ENCRYPTION_IMAGE") (printf "lasuite/encryption:%s" $defaultTag) }}
+{{- $imageParts := splitList ":" $image }}
+{{- if lt (len $imageParts) 2 }}{{ fail (printf "ENCRYPTION_IMAGE must be repository:tag, got %q" $image) }}{{ end }}
+{{- $imageTag := last $imageParts }}
+{{- $imageRepository := join ":" (initial $imageParts) }}
+{{- $docsTag := coalesce (env "ARGOCD_ENV_DOCS_TAG") (env "DOCS_TAG") "main" }}
+{{- $driveTag := coalesce (env "ARGOCD_ENV_DRIVE_TAG") (env "DRIVE_TAG") "main" }}
+environments:
+  preview:
+    values:
+      - feature: {{ $feature | quote }}
+        domain: {{ $domain | quote }}
+        # The images of the branches under test. The encryption one is derived above;
+        # the products' tags are either the `pr-<number>` ones their CI pushes for a
+        # labelled upstream pull request, or a build pushed by hand (see the stack README,
+        # "Images"). Either way the reference is set here, on our side.
+        images:
+          encryption:
+            repository: {{ $imageRepository | quote }}
+            tag: {{ $imageTag | quote }}
+          docs:
+            repository: lasuite/impress-backend
+            tag: {{ $docsTag | quote }}
+          docsFrontend:
+            repository: lasuite/impress-frontend
+            tag: {{ $docsTag | quote }}
+          docsYProvider:
+            repository: lasuite/impress-y-provider
+            tag: {{ $docsTag | quote }}
+          drive:
+            repository: lasuite/drive-backend
+            tag: {{ $driveTag | quote }}
+          driveFrontend:
+            repository: lasuite/drive-frontend
+            tag: {{ $driveTag | quote }}
+        ingressClassName: nginx
+        clusterIssuer: letsencrypt
+---
+# Registered before the render so `helm dependency build` resolves the stack chart's
+# dependencies (a Chart.lock names repositories by URL and Helm wants them known).
+repositories:
+  - name: suitenumerique-docs
+    url: https://suitenumerique.github.io/docs
+  - name: suitenumerique-drive
+    url: https://suitenumerique.github.io/drive
+  - name: suitenumerique-dev-backend
+    url: https://suitenumerique.github.io/helm-dev-backend
+---
+releases:
+  - name: stack
+    namespace: {{ .Namespace | default (printf "preview-%v" .Values.feature) }}
+    chart: ../../helm/suite-stack
+    values:
+      - values.yaml.gotmpl

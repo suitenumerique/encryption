@@ -1,0 +1,152 @@
+{{- if .Values.onlyoffice.enabled }}
+{{- $o := .Values.onlyoffice }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: onlyoffice
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: onlyoffice
+data:
+  # Loaded last by the server's configuration stack. Drive fetches the discovery document
+  # over the Service name, and the server builds the editor URLs of that document from
+  # the request it receives; `wopi.host` makes it use the public origin instead, the one
+  # the tester's browser opens.
+  local-production-linux.json: {{ dict "wopi" (dict "host" (printf "https://%s" $o.host)) | toJson | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onlyoffice
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: onlyoffice
+spec:
+  replicas: 1
+  # One instance, nothing persisted: two would not share the editing sessions.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "suite-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: onlyoffice
+  template:
+    metadata:
+      labels:
+        {{- include "suite-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: onlyoffice
+    spec:
+      automountServiceAccountToken: false
+      # The image is a whole machine under supervisord (nginx, node services, its own
+      # PostgreSQL, RabbitMQ and Redis) that starts as root and drops privileges per
+      # service itself, so none of the hardening of the other pods applies to it.
+      containers:
+        - name: onlyoffice
+          image: {{ $o.image | quote }}
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: WOPI_ENABLED
+              value: 'true'
+            - name: JWT_ENABLED
+              value: 'true'
+            - name: JWT_SECRET
+              value: {{ $o.jwtSecret | quote }}
+            # The server refuses to fetch documents from private addresses by default;
+            # inside the cluster that is where Drive is.
+            - name: ALLOW_PRIVATE_IP_ADDRESS
+              value: 'true'
+          # The first boot generates fonts and initializes its database: minutes, not
+          # seconds. The startup probe covers ten of them.
+          startupProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/onlyoffice/documentserver/local-production-linux.json
+              subPath: local-production-linux.json
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 3Gi
+      volumes:
+        - name: config
+          configMap:
+            name: onlyoffice
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # A fixed name: Drive's discovery and conversion URLs in the values.
+  name: onlyoffice
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: onlyoffice
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "suite-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: onlyoffice
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if $o.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onlyoffice
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: onlyoffice
+  {{- with $o.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $o.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $o.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $o.host | quote }}
+      secretName: {{ $o.ingress.tls.secretName | default "onlyoffice-tls" | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $o.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: onlyoffice
+                port:
+                  name: http
+{{- end }}
+{{- end }}

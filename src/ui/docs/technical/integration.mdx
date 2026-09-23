@@ -368,7 +368,7 @@ The service lets every user designate a **trusted contact** who can help them re
 The instance operator does have to configure the notification emails, which are an essential channel (the objection delay only protects the owner if they are told a recovery was requested):
 
 - **`EMAIL_PRODUCT_URL`**: the product page the email links point to. The links carry neither a token nor a deep route: once signed in, the pending state resurfaces on its own through the SDK.
-- **`MAILER_*`**: the SMTP configuration (`MAILER_SMTP_HOST`, `MAILER_SMTP_PORT`, `MAILER_SMTP_USER`, `MAILER_SMTP_PASSWORD`), the optional fallback transport (`MAILER_FALLBACK_SMTP_*`) and `MAILER_DEFAULT_DOMAIN`. With no SMTP host configured, the server logs the emails instead of sending them.
+- **`MAILER_*`**: the SMTP configuration (`MAILER_SMTP_HOST`, `MAILER_SMTP_PORT`, `MAILER_SMTP_USER`, `MAILER_SMTP_PASSWORD`), the optional fallback transport (`MAILER_FALLBACK_SMTP_*`) and `MAILER_SENDER_ADDRESS`, the address notifications are sent from (the relay must accept it). With no SMTP host configured, the server logs the emails instead of sending them.
 
 In local development a **maildev** container is provided in `docker-compose.yaml`: the emails sent are readable in a web interface on port **7207** (SMTP on port **7208**), and nothing leaves the machine.
 

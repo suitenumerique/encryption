@@ -9,6 +9,7 @@ import { setEmailAssetBaseUrl } from '@encryption/src/server/email/assets';
 import { convertHtmlEmailToText } from '@encryption/src/server/email/helpers';
 import { applyEmailPaletteOverride } from '@encryption/src/server/email/palette';
 import { env } from '@encryption/src/server/env';
+import { t } from '@encryption/src/server/i18n';
 import { parseBrandFont, setServerBrandFont } from '@encryption/src/shared/brand-font';
 
 // Emails reference the logo by absolute URL (mail clients cannot resolve a
@@ -44,15 +45,21 @@ export interface EmailServerSettings {
 export type CreateTransportFactory = (settings: EmailServerSettings) => Transporter;
 
 export interface MailerOptions {
-  defaultSender: string;
+  defaultSender: Sender;
   smtp?: EmailServerSettings;
   fallbackSmtp?: EmailServerSettings;
   // Injectable so tests can substitute nodemailer's jsonTransport for real SMTP connections
   createTransport?: CreateTransportFactory;
 }
 
+/** A pair rather than a "Name <address>" string: nodemailer then quotes the name itself. */
+export interface Sender {
+  name: string;
+  address: string;
+}
+
 export interface SendOptions {
-  sender?: string;
+  sender?: Sender;
   replyTo?: string;
   recipients: string[];
   subject: string;
@@ -73,7 +80,7 @@ function defaultCreateTransport(settings: EmailServerSettings): Transporter {
 export class Mailer {
   protected transporter: Transporter | null = null;
   protected fallbackTransporter: Transporter | null = null;
-  protected defaultSender: string;
+  protected defaultSender: Sender;
 
   constructor(options: MailerOptions) {
     this.defaultSender = options.defaultSender;
@@ -154,7 +161,8 @@ export class Mailer {
 }
 
 export const mailer = new Mailer({
-  defaultSender: `Chiffrement <noreply@${env.MAILER_DEFAULT_DOMAIN}>`,
+  // Only a fallback: every notification names its sender in the recipient's language.
+  defaultSender: { name: t('en', 'emails.senderName'), address: env.MAILER_SENDER_ADDRESS },
   smtp: {
     host: env.MAILER_SMTP_HOST,
     port: env.MAILER_SMTP_PORT,
