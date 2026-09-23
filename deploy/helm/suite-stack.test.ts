@@ -502,9 +502,19 @@ describe('the stack chart', () => {
     expect(fromEnvironment).toContain('namespace: "preview-7"');
     expect(fromEnvironment).not.toMatch(/ci-[a-z]+\.example\.org/);
 
-    const prefixed = run('helmfile', args, undefined, { ARGOCD_ENV_FEATURE: '8', ARGOCD_ENV_DOMAIN: 'ppr.example.net' });
+    // A number is a pull request: its own image, the tag the preview workflow publishes
+    expect(fromEnvironment).toContain('image: "lasuite/encryption:pr-7"');
+    expect(run('helmfile', args, undefined, { FEATURE: 'beta', DOMAIN: 'ppr.example.net' })).toContain('image: "lasuite/encryption:main"');
+
+    const prefixed = run('helmfile', args, undefined, {
+      ARGOCD_ENV_FEATURE: '8',
+      ARGOCD_ENV_DOMAIN: 'ppr.example.net',
+      ARGOCD_ENV_ENCRYPTION_IMAGE: 'lasuite/encryption:sha-0123abcd',
+    });
 
     expect(prefixed).toContain('8-encryption.ppr.example.net');
+    expect(prefixed).toContain('image: "lasuite/encryption:sha-0123abcd"');
+    expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
     const overridden = run('helmfile', [...args.slice(0, -1), '--state-values-set', 'feature=9', 'template'], undefined, {
       FEATURE: '7',

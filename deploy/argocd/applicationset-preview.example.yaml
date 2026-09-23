@@ -60,15 +60,24 @@ spec:
         path: deploy/helmfile/preview
         plugin:
           name: helmfile
-          # The helmfile reads the two inputs every hostname derives from as environment
-          # variables (FEATURE, DOMAIN, or their ARGOCD_ENV_ form), so any plugin that runs
-          # `helmfile -e preview template` in the directory renders the right environment.
-          # The products' image tags stay the helmfile's defaults.
+          # The helmfile reads the two inputs every hostname derives from, and the
+          # encryption image, as environment variables (FEATURE, DOMAIN, ENCRYPTION_IMAGE,
+          # or their ARGOCD_ENV_ form), so any plugin that runs `helmfile -e preview
+          # template` in the directory renders the right environment. The products' image
+          # tags stay the helmfile's defaults.
           env:
             - name: FEATURE
               value: '{{ .number }}'
             - name: DOMAIN
               value: ppr.example.org
+            # Optional. Without it the helmfile runs `lasuite/encryption:pr-<number>`, the
+            # moving tag .github/workflows/preview.yml republishes on every push, which the
+            # pods only pick up when restarted. With it, the tag of this very commit: the
+            # manifest changes on every push and Argo CD rolls the pods itself. It may sync
+            # before the workflow has pushed the image; the pods then fail to pull for a
+            # few minutes and start on their own once it is there.
+            - name: ENCRYPTION_IMAGE
+              value: 'lasuite/encryption:sha-{{ .head_short_sha }}'
             # The two below are the argo-cd-helmfile plugin's own: the environment to
             # render, and the release namespace following the destination. Another plugin
             # selects the environment its own way (an APP_ENV variable, for instance).

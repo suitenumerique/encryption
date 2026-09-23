@@ -288,28 +288,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Docker
-        if: ${{ !github.event.act }} # reconfigures the daemon, which act reaches through a mounted socket
-        uses: docker/setup-docker-action@77e84dbf09b47d1e29270283c22f16145aa85ca1 # v5.4.0
-        with:
-          version: v29.7.2 # pinned like the rest, this job is the one holding a credential
-          # containerd store needed to let the build be scanned (provenance and SBOM) and then pushed
-          daemon-config: |
-            {
-              "features": {
-                "containerd-snapshotter": true
-              }
-            }
-
-      - name: Make sure the containerd image store is active # needed to ensure `load: true` because otherwise attestation and provenance are dropped silently
-        if: ${{ !github.event.act }} # asserts the runner daemon, not whatever a developer happens to run
-        run: |
-          docker info --format '{{json .DriverStatus}}' | grep -q 'io.containerd.snapshotter' \
-            || (echo "::error::The containerd image store is not active, attestations would be dropped." && exit 1)
-
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
       - name: Compute the image tags
         id: docker-meta
         run: |
@@ -325,33 +303,12 @@ jobs:
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
           echo "primary-tag=${PRIMARY}" >> $GITHUB_OUTPUT
 
-      - name: Build the image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      - name: Build and scan the image
+        uses: ./.github/actions/build-image
         with:
-          context: .
-          load: true
-          push: false
           tags: ${{ steps.docker-meta.outputs.tags }}
-          build-args: |
-            SOURCE_COMMIT=${{ github.sha }}
-          provenance: mode=max # attach repository info to the image
-          sbom: true # store attestation manifest inside the image index (including info from application `.cdx.json` files)
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Scan the image
-        # It will scan the Docker attached SBOM, but also the npm ones copied inside as `.cdx.json`
-        # "act" cannot support this since trivy action is doing `actions/checkout`, which needs a token act has none of
-        if: ${{ !github.event.act }}
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_VEX: security/vex.openvex.json # allow bypass some if documented (opt-in file for external scanners, so fine if manipulated)
-        with:
-          image-ref: ${{ steps.docker-meta.outputs.primary-tag }}
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
+          primary-tag: ${{ steps.docker-meta.outputs.primary-tag }}
+          source-commit: ${{ github.sha }}
 
       - name: Log in to the container registry
         if: ${{ !github.event.act }}
