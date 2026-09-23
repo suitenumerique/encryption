@@ -18,6 +18,13 @@
 # command-line options, and a sidecar plugin sees them prefixed ARGOCD_ENV_. A state
 # value wins over the variable, the variable over the default below.
 #
+# The encryption image follows: a numeric feature is a pull request number, and the
+# preview workflow publishes that pull request's code as `lasuite/encryption:pr-<number>`
+# on every push, so that tag is the default; any other feature (`beta`, `ci`) runs the
+# `main` tag of the CI branch. A third variable, ENCRYPTION_IMAGE (`repository:tag`),
+# overrides both: an ApplicationSet that passes the commit tag the workflow also
+# publishes, `sha-<8 chars>`, gets a rollout on every push instead of a moving tag.
+#
 # Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
 # <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
 # start with `data.`), <feature>-auth, <feature>-s3, <feature>-s3-console, <feature>-mail
@@ -26,19 +33,25 @@
 # destination), else `preview-<feature>`.
 {{- $feature := coalesce (env "ARGOCD_ENV_FEATURE") (env "FEATURE") "ci" }}
 {{- $domain := coalesce (env "ARGOCD_ENV_DOMAIN") (env "DOMAIN") "example.org" }}
+{{- $defaultTag := ternary (printf "pr-%s" $feature) "main" (regexMatch "^[0-9]+$" $feature) }}
+{{- $image := coalesce (env "ARGOCD_ENV_ENCRYPTION_IMAGE") (env "ENCRYPTION_IMAGE") (printf "lasuite/encryption:%s" $defaultTag) }}
+{{- $imageParts := splitList ":" $image }}
+{{- if lt (len $imageParts) 2 }}{{ fail (printf "ENCRYPTION_IMAGE must be repository:tag, got %q" $image) }}{{ end }}
+{{- $imageTag := last $imageParts }}
+{{- $imageRepository := join ":" (initial $imageParts) }}
 environments:
   preview:
     values:
       - feature: {{ $feature | quote }}
         domain: {{ $domain | quote }}
-        # The images of the branches under test. The encryption `main` tag follows the CI
-        # branch; the products' tags are either the `pr-<number>` ones their CI pushes for
-        # a labelled upstream pull request, or a build pushed by hand (see the stack
-        # README, "Images"). Either way the reference is set here, on our side.
+        # The images of the branches under test. The encryption one is derived above;
+        # the products' tags are either the `pr-<number>` ones their CI pushes for a
+        # labelled upstream pull request, or a build pushed by hand (see the stack README,
+        # "Images"). Either way the reference is set here, on our side.
         images:
           encryption:
-            repository: lasuite/encryption
-            tag: main
+            repository: {{ $imageRepository | quote }}
+            tag: {{ $imageTag | quote }}
           docs:
             repository: lasuite/impress-backend
             tag: main
