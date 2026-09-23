@@ -514,6 +514,17 @@ describe('the stack chart', () => {
 
     expect(prefixed).toContain('8-encryption.ppr.example.net');
     expect(prefixed).toContain('image: "lasuite/encryption:sha-0123abcd"');
+    expect(prefixed).toContain('image: "lasuite/impress-frontend:main"');
+
+    // The products under test, from labels of the pull request: one tag per product
+    const products = run('helmfile', args, undefined, { FEATURE: '7', DOMAIN: 'ppr.example.net', DOCS_TAG: 'pr-2694', DRIVE_TAG: 'encryption' });
+
+    for (const image of ['impress-backend', 'impress-frontend', 'impress-y-provider']) {
+      expect(products).toContain(`image: "lasuite/${image}:pr-2694"`);
+    }
+    for (const image of ['drive-backend', 'drive-frontend']) {
+      expect(products).toContain(`image: "lasuite/${image}:encryption"`);
+    }
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
     const overridden = run('helmfile', [...args.slice(0, -1), '--state-values-set', 'feature=9', 'template'], undefined, {

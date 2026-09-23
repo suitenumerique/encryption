@@ -28,9 +28,12 @@ name: Preview environment
 # credential with the release job alone: the two `environment:` lines below are all that
 # changes then.
 #
-# The product images the environment runs are set in the helmfile's `images` defaults
-# (`pr-<number>` tags of a labelled upstream pull request, or a build pushed by hand, see
-# deploy/helm/suite-stack/README.md, "Images").
+# The product images the environment runs come from labels of the pull request,
+# `docs:<tag>` and `drive:<tag>` (`pr-<number>` tags of a labelled upstream pull request,
+# or a build pushed by hand, see deploy/helm/suite-stack/README.md, "Images"), which the
+# ApplicationSet passes to the helmfile; without one, `main`. A label is an object of the
+# repository, not of the pull request, so this workflow deletes a product label once no
+# open pull request carries it any more: the list of labels never accumulates versions.
 
 on:
   pull_request:
@@ -177,6 +180,37 @@ jobs:
           deployment_repo_path: ${{ secrets.DEPLOYMENT_REPO_URL }}
           argocd_webhook_secret: ${{ secrets.ARGOCD_PREPROD_WEBHOOK_SECRET }}
           argocd_url: ${{ vars.ARGOCD_PREPROD_WEBHOOK_URL }}
+
+  labels:
+    name: Delete the product labels nobody uses
+    # `docs:<tag>` and `drive:<tag>` are created for one pull request and would outlive it
+    # in the repository's label list: gone when the last open pull request carrying one
+    # closes or drops it.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.action == 'closed') ||
+      (github.event_name == 'pull_request' && github.event.action == 'unlabeled' && (startsWith(github.event.label.name, 'docs:') || startsWith(github.event.label.name, 'drive:')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # labels are issue objects
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # On a close, every product label of the pull request; on an unlabel, the one removed
+      CANDIDATES: ${{ github.event.action == 'unlabeled' && github.event.label.name || join(github.event.pull_request.labels.*.name, ',') }}
+    steps:
+      - run: |
+          IN_USE="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" --jq '.[].labels[].name' || true)"
+          IFS=',' read -ra LABELS <<< "${CANDIDATES}"
+          for label in "${LABELS[@]}"; do
+            [[ "${label}" == docs:* || "${label}" == drive:* ]] || continue
+            if grep -qxF "${label}" <<< "${IN_USE}"; then
+              echo "Keeping ${label}, an open pull request carries it"
+              continue
+            fi
+            echo "Deleting the label ${label}"
+            gh label delete "${label}" --yes
+          done
 
   clean:
     name: Clean the registry
