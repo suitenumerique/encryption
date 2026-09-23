@@ -1,0 +1,87 @@
+# The GitOps way to run the preview environments, for the deployment repository (the one
+# Argo CD watches for preprod and prod), not for this repository. One Application per
+# open pull request of this repository that carries the `preview` label; the Application
+# disappears, and prunes everything it created, when the pull request closes or loses
+# the label. The chart and the helmfile are read at the pull request's own commit, so a
+# pull request that changes the chart is previewed with its own chart, and nothing is
+# ever published to a registry for it.
+#
+# Nothing is rendered in advance, by a workflow or anyone: Argo CD renders at sync time.
+# For a Helm source it runs `helm template` itself in the checked-out commit; for a
+# helmfile it needs a config management plugin, a sidecar of argocd-repo-server with the
+# helmfile binary, whose `generate` command runs `helmfile template` in the checked-out
+# directory and whose standard output IS the manifest Argo CD applies. The environment
+# variables of the Application reach that command as ARGOCD_ENV_<name>. The values below
+# are those of the argo-cd-helmfile plugin (https://github.com/travisghansen/argo-cd-helmfile),
+# the usual one; another plugin has other names. Its sidecar, for reference:
+#
+#   - name: helmfile
+#     image: ghcr.io/travisghansen/argo-cd-helmfile:latest   # pin a version
+#     command: [/var/run/argocd/argocd-cmp-server]
+#     securityContext: { runAsNonRoot: true, runAsUser: 999 }
+#     volumeMounts:
+#       - { mountPath: /var/run/argocd, name: var-files }
+#       - { mountPath: /home/argocd/cmp-server/plugins, name: plugins }
+#       - { mountPath: /tmp, name: helmfile-tmp }
+#
+# (its plugin.yaml, shipped in the image, declares `discover` on helmfile.yaml* and
+# `generate` as `helmfile template`, so the Application only points at the directory).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: encryption-preview
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ['missingkey=error']
+  generators:
+    - pullRequest:
+        github:
+          owner: suitenumerique
+          repo: encryption
+          labels:
+            - preview
+          # A token with read access to pull requests; a webhook on the repository makes
+          # Argo CD react to label and push events instead of waiting for the next poll.
+          tokenRef:
+            secretName: github-token
+            key: token
+        requeueAfterSeconds: 300
+  template:
+    metadata:
+      name: 'encryption-preview-{{ .number }}'
+      labels:
+        preview: 'true'
+    spec:
+      project: preview
+      source:
+        repoURL: https://github.com/suitenumerique/encryption.git
+        targetRevision: '{{ .head_sha }}'
+        path: deploy/helmfile/preview
+        plugin:
+          name: helmfile
+          # The helmfile reads the two inputs every hostname derives from as environment
+          # variables (FEATURE, DOMAIN, or their ARGOCD_ENV_ form), so any plugin that runs
+          # `helmfile -e preview template` in the directory renders the right environment.
+          # The products' image tags stay the helmfile's defaults.
+          env:
+            - name: FEATURE
+              value: '{{ .number }}'
+            - name: DOMAIN
+              value: ppr.example.org
+            # The two below are the argo-cd-helmfile plugin's own: the environment to
+            # render, and the release namespace following the destination. Another plugin
+            # selects the environment its own way (an APP_ENV variable, for instance).
+            - name: HELMFILE_GLOBAL_OPTIONS
+              value: '-e preview'
+            - name: HELMFILE_USE_CONTEXT_NAMESPACE
+              value: 'true'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'preview-{{ .number }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

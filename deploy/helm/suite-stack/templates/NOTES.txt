@@ -1,0 +1,32 @@
+{{ .Chart.Name }} {{ .Chart.Version }} as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+{{- if .Values.docs.enabled }}
+Docs        https://{{ .Values.docs.ingress.host }}
+{{- end }}
+{{- if .Values.drive.enabled }}
+Drive       https://{{ .Values.drive.ingress.host }}
+{{- end }}
+{{- if .Values.encryption.enabled }}
+Encryption  https://{{ .Values.encryption.hosts.interface }} (interface), https://{{ .Values.encryption.hosts.vault }} (vault)
+{{- end }}
+Keycloak    https://{{ .Values.shared.keycloak.hostname }} (admin console: {{ .Values.shared.keycloak.username }}), realm {{ .Values.shared.keycloak.realm.name }}
+{{- if .Values.shared.minio.consoleIngress.enabled }}
+MinIO       https://{{ .Values.shared.minio.consoleIngress.hostname }} (console: {{ .Values.shared.minio.username }})
+{{- end }}
+{{- if and .Values.mailpit.enabled .Values.mailpit.ingress.enabled }}
+Mailbox     https://{{ .Values.mailpit.host }} (every email sent by the stack)
+{{- end }}
+{{- if and .Values.onlyoffice.enabled .Values.onlyoffice.ingress.enabled }}
+Office      https://{{ .Values.onlyoffice.host }} (the editor Drive opens office files with)
+{{- end }}
+
+Tester accounts (bootstrap.keycloak.users):
+{{- range .Values.bootstrap.keycloak.users }}
+  {{ .username }} / {{ .password }} ({{ .email }})
+{{- end }}
+
+The bootstrap Job creates the databases, buckets, clients and accounts after the shared
+services are up, then migrates the encryption service; the products' own migration Jobs
+wait for their database. Watch it settle with:
+
+  kubectl -n {{ .Release.Namespace }} get jobs,pods

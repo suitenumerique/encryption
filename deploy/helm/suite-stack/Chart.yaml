@@ -1,0 +1,32 @@
+apiVersion: v2
+type: application
+name: suite-stack
+description: >-
+  A complete environment for testing the encryption feature inside the products: the
+  encryption service, Docs and Drive from any image, and the services they share (one
+  PostgreSQL, one Redis, one MinIO, one Keycloak, one mail catcher). For beta testers
+  and demos, not for production.
+home: https://github.com/suitenumerique/encryption
+sources:
+  - https://github.com/suitenumerique/encryption
+version: 0.0.0-dev
+kubeVersion: '>=1.27.0-0'
+dependencies:
+  - name: encryption-chart
+    alias: encryption
+    version: '>=0.0.0-0'
+    repository: file://../encryption
+    condition: encryption.enabled
+  - name: docs
+    version: 4.5.0
+    repository: https://suitenumerique.github.io/docs
+    condition: docs.enabled
+  - name: drive
+    version: 0.15.0
+    repository: https://suitenumerique.github.io/drive
+    condition: drive.enabled
+  - name: dev-backend
+    alias: shared
+    version: 0.0.12
+    repository: https://suitenumerique.github.io/helm-dev-backend
+    condition: shared.enabled

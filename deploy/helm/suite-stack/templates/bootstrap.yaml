@@ -1,0 +1,265 @@
+{{- include "suite-stack.checks" . -}}
+{{- $fullName := include "suite-stack.fullname" . }}
+{{- $hookName := printf "%s-bootstrap-%d" $fullName .Release.Revision }}
+{{- $b := .Values.bootstrap }}
+{{- $s := .Values.shared }}
+{{- $postgresHost := include "suite-stack.postgresHost" . }}
+{{- $minioHost := include "suite-stack.minioHost" . }}
+{{- $keycloakHost := include "suite-stack.keycloakHost" . }}
+{{- $realm := $s.keycloak.realm.name }}
+{{/*
+What the shared chart cannot do on its own, in the order the products need it. The Job
+runs after the shared services exist (post-install) and, on an upgrade, before the
+products roll out (pre-upgrade), so a changed image migrates before it serves. Every
+step is idempotent: the Job also runs on every upgrade, and that is how a tester or a
+client gets added later. The scripts hold passwords, hence a Secret, itself a hook of
+the same phases so it is never a previous revision's content.
+*/}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $hookName | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+type: Opaque
+stringData:
+  create-migrator-role.sql: |
+    {{- .Files.Get "files/postgres/create-migrator-role.sql" | nindent 4 }}
+  create-runtime-role.sql: |
+    {{- .Files.Get "files/postgres/create-runtime-role.sql" | nindent 4 }}
+  postgres.sh: |
+    set -eu
+    until pg_isready -q; do echo "waiting for PostgreSQL at ${PGHOST}"; sleep 2; done
+    exists() { [ "$(psql -tAc "$1")" = 1 ]; }
+    {{- range $b.postgres.databases }}
+    if ! exists "SELECT 1 FROM pg_database WHERE datname = '{{ . }}'"; then
+      psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "{{ . }}"'
+      echo "created database {{ . }}"
+    fi
+    {{- end }}
+    {{- if .Values.encryption.enabled }}
+    # The encryption service's two roles, in its database, from deploy/postgres/.
+    if ! exists "SELECT 1 FROM pg_roles WHERE rolname = 'encryption_migrator'"; then
+      psql -d {{ $b.encryption.database | quote }} -v ON_ERROR_STOP=1 -v password="'${ENCRYPTION_MIGRATOR_PASSWORD}'" -f /scripts/create-migrator-role.sql
+      echo "created role encryption_migrator"
+    fi
+    if ! exists "SELECT 1 FROM pg_roles WHERE rolname = 'encryption_runtime'"; then
+      psql -d {{ $b.encryption.database | quote }} -v ON_ERROR_STOP=1 -v password="'${ENCRYPTION_RUNTIME_PASSWORD}'" -f /scripts/create-runtime-role.sql
+      echo "created role encryption_runtime"
+    fi
+    {{- end }}
+  minio.sh: |
+    set -eu
+    until mc alias set local "http://${MINIO_HOST}:${MINIO_PORT}" "${MINIO_USER}" "${MINIO_PASSWORD}" > /dev/null 2>&1; do
+      echo "waiting for MinIO at ${MINIO_HOST}:${MINIO_PORT}"; sleep 2
+    done
+    {{- range $b.minio.buckets }}
+    mc mb --ignore-existing "local/{{ . }}"
+    {{- if $b.minio.versioning }}
+    mc version enable "local/{{ . }}"
+    {{- end }}
+    {{- end }}
+  # The terms text as a file: kcadm posts JSON, and the text carries apostrophes the shell
+  # quoting of the script below could not (the header travels as a variable instead).
+  notice.json: {{ dict "termsTitle" $b.keycloak.notice.termsTitle "termsText" $b.keycloak.notice.terms | toJson | quote }}
+  keycloak.sh: |
+    set -eu
+    KCADM=/opt/keycloak/bin/kcadm.sh
+    CONFIG=/tmp/kcadm.config
+    until "$KCADM" config credentials --config "$CONFIG" --server "http://${KEYCLOAK_HOST}:8080" --realm master --user "${KEYCLOAK_ADMIN}" --password "${KEYCLOAK_ADMIN_PASSWORD}" > /dev/null 2>&1; do
+      echo "waiting for Keycloak at ${KEYCLOAK_HOST}:8080"; sleep 3
+    done
+    kc() { "$KCADM" "$@" --config "$CONFIG"; }
+    # The notice: the realm's display name heads every sign-in page, the terms text is a
+    # message override of the login theme, and the terms step is a default required action,
+    # so every account registered from now on accepts it before its first sign-in. The
+    # action's alias is looked up: Keycloak renamed it (lowercase until 20, uppercase after).
+    kc update "realms/${REALM}" -s "displayName=${NOTICE_HEADER}" -s "displayNameHtml=${NOTICE_HEADER_HTML}" -s internationalizationEnabled=true -s 'supportedLocales=["fr"]' -s defaultLocale=fr
+    kc create "realms/${REALM}/localization/fr" -f /scripts/notice.json
+    TERMS=$(kc get authentication/required-actions -r "$REALM" --fields alias --format csv --noquotes | grep -i '^terms_and_conditions$')
+    kc update "authentication/required-actions/${TERMS}" -r "$REALM" -s enabled=true -s defaultAction=true
+    # Creates the client, or updates it in place so the URIs follow the values.
+    ensure_client() {
+      local client_id=$1 definition=$2 id
+      id=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
+      if [ -z "$id" ]; then
+        echo "$definition" | kc create clients -r "$REALM" -f -
+        echo "created client ${client_id}"
+      else
+        echo "$definition" | kc update "clients/${id}" -r "$REALM" -f -
+        echo "updated client ${client_id}"
+      fi
+    }
+    # Creates the user if missing, with the terms to accept at first sign-in; the password
+    # is set every run, so the values win.
+    ensure_user() {
+      local username=$1 email=$2 first_name=$3 last_name=$4 password=$5 id
+      id=$(kc get users -r "$REALM" -q username="$username" -q exact=true --fields id --format csv --noquotes)
+      if [ -z "$id" ]; then
+        kc create users -r "$REALM" -s username="$username" -s email="$email" -s firstName="$first_name" -s lastName="$last_name" -s enabled=true -s emailVerified=true -s "requiredActions=[\"${TERMS}\"]"
+        echo "created user ${username}"
+      fi
+      kc set-password -r "$REALM" --username "$username" --new-password "$password"
+    }
+    {{- range $b.keycloak.clients }}
+    {{- $definition := dict "clientId" .clientId "protocol" "openid-connect" "enabled" true "publicClient" (default false .public) "standardFlowEnabled" true "directAccessGrantsEnabled" false "redirectUris" .redirectUris "webOrigins" .webOrigins "attributes" (dict "post.logout.redirect.uris" "+") }}
+    {{- if not .public }}
+    {{- $_ := set $definition "secret" (required (printf "bootstrap.keycloak.clients[%s].secret is required for a confidential client" .clientId) .secret) }}
+    {{- end }}
+    ensure_client {{ .clientId | squote }} {{ $definition | toJson | squote }}
+    {{- end }}
+    {{- range $b.keycloak.users }}
+    ensure_user {{ .username | squote }} {{ .email | squote }} {{ .firstName | squote }} {{ .lastName | squote }} {{ .password | squote }}
+    {{- end }}
+  {{- if .Values.encryption.enabled }}
+  ENCRYPTION_MIGRATION_DATABASE_URL: {{ include "suite-stack.encryptionDatabaseUrl" (dict "role" "migrator" "password" $b.encryption.migratorPassword "host" $postgresHost "database" $b.encryption.database) | quote }}
+  {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $hookName | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: {{ $b.job.backoffLimit }}
+  activeDeadlineSeconds: {{ $b.job.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "suite-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      # Sequential by construction: init containers run one after the other.
+      initContainers:
+        - name: postgres
+          image: {{ $s.postgres.image | quote }}
+          command: [/bin/sh, /scripts/postgres.sh]
+          env:
+            - name: PGHOST
+              value: {{ $postgresHost | quote }}
+            - name: PGUSER
+              value: {{ $s.postgres.username | quote }}
+            - name: PGPASSWORD
+              value: {{ $s.postgres.password | quote }}
+            - name: PGDATABASE
+              value: {{ $s.postgres.database | quote }}
+            {{- if .Values.encryption.enabled }}
+            - name: ENCRYPTION_MIGRATOR_PASSWORD
+              value: {{ $b.encryption.migratorPassword | quote }}
+            - name: ENCRYPTION_RUNTIME_PASSWORD
+              value: {{ $b.encryption.runtimePassword | quote }}
+            {{- end }}
+          securityContext: &containerSecurityContext
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts: &volumeMounts
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: minio
+          image: {{ $s.minio.mc.image | quote }}
+          command: [/bin/sh, /scripts/minio.sh]
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/mc
+            - name: MINIO_HOST
+              value: {{ $minioHost | quote }}
+            - name: MINIO_PORT
+              value: {{ $s.minio.api.port | quote }}
+            - name: MINIO_USER
+              value: {{ $s.minio.username | quote }}
+            - name: MINIO_PASSWORD
+              value: {{ $s.minio.password | quote }}
+          securityContext: *containerSecurityContext
+          volumeMounts: *volumeMounts
+        - name: keycloak
+          image: {{ $s.keycloak.image | quote }}
+          command: [/bin/bash, /scripts/keycloak.sh]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: KEYCLOAK_HOST
+              value: {{ $keycloakHost | quote }}
+            - name: KEYCLOAK_ADMIN
+              value: {{ $s.keycloak.username | quote }}
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: {{ $s.keycloak.password | quote }}
+            - name: REALM
+              value: {{ $realm | quote }}
+            - name: NOTICE_HEADER
+              value: {{ $b.keycloak.notice.header | quote }}
+            - name: NOTICE_HEADER_HTML
+              value: {{ $b.keycloak.notice.header | html | quote }}
+          securityContext: *containerSecurityContext
+          volumeMounts: *volumeMounts
+      containers:
+        {{- if .Values.encryption.enabled }}
+        # The service's migration, as its own chart runs it (templates/migration-job.yaml
+        # there), with the migrator role the first init container created.
+        - name: migrate
+          image: {{ include "suite-stack.encryptionImage" . | quote }}
+          imagePullPolicy: {{ .Values.encryption.image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - node_modules/prisma/build/index.js
+            - migrate
+            - deploy
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $hookName | quote }}
+                  key: ENCRYPTION_MIGRATION_DATABASE_URL
+          securityContext:
+            <<: *containerSecurityContext
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+        {{- else }}
+        - name: done
+          image: {{ $s.postgres.image | quote }}
+          command: [/bin/sh, -c, 'echo "bootstrap complete"']
+          securityContext: *containerSecurityContext
+        {{- end }}
+      volumes:
+        - name: scripts
+          secret:
+            secretName: {{ $hookName | quote }}
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

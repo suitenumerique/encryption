@@ -1,0 +1,607 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the stack chart > renders the same objects of its own as last time (review the snapshot diff on any change) 1`] = `
+"
+# Source: suite-stack/templates/onlyoffice.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: onlyoffice
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: onlyoffice
+data:
+  # Loaded last by the server's configuration stack. Drive fetches the discovery document
+  # over the Service name, and the server builds the editor URLs of that document from
+  # the request it receives; \`wopi.host\` makes it use the public origin instead, the one
+  # the tester's browser opens.
+  local-production-linux.json: "{\\"wopi\\":{\\"host\\":\\"https://office.suite.example.org\\"}}"
+
+---
+
+# Source: suite-stack/templates/mailpit.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  # A fixed name: the products' SMTP host in the values.
+  name: mailpit
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: mailpit
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/component: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+    - name: http
+      port: 8025
+      targetPort: http
+
+---
+
+# Source: suite-stack/templates/onlyoffice.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  # A fixed name: Drive's discovery and conversion URLs in the values.
+  name: onlyoffice
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: onlyoffice
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/component: onlyoffice
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+
+# Source: suite-stack/templates/mailpit.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: mailpit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: suite-stack
+      app.kubernetes.io/instance: stack
+      app.kubernetes.io/component: mailpit
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: suite-stack
+        app.kubernetes.io/instance: stack
+        app.kubernetes.io/component: mailpit
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mailpit
+          image: "axllent/mailpit:v1.31.1"
+          ports:
+            - name: smtp
+              containerPort: 1025
+            - name: http
+              containerPort: 8025
+          env:
+            # Messages live in memory: a restart empties the mailbox, which is fine here.
+            - name: MP_SMTP_AUTH_ACCEPT_ANY
+              value: 'true'
+            - name: MP_SMTP_AUTH_ALLOW_INSECURE
+              value: 'true'
+          readinessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+
+---
+
+# Source: suite-stack/templates/onlyoffice.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onlyoffice
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: onlyoffice
+spec:
+  replicas: 1
+  # One instance, nothing persisted: two would not share the editing sessions.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: suite-stack
+      app.kubernetes.io/instance: stack
+      app.kubernetes.io/component: onlyoffice
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: suite-stack
+        app.kubernetes.io/instance: stack
+        app.kubernetes.io/component: onlyoffice
+    spec:
+      automountServiceAccountToken: false
+      # The image is a whole machine under supervisord (nginx, node services, its own
+      # PostgreSQL, RabbitMQ and Redis) that starts as root and drops privileges per
+      # service itself, so none of the hardening of the other pods applies to it.
+      containers:
+        - name: onlyoffice
+          image: "onlyoffice/documentserver:9.4.0.1"
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: WOPI_ENABLED
+              value: 'true'
+            - name: JWT_ENABLED
+              value: 'true'
+            - name: JWT_SECRET
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            # The server refuses to fetch documents from private addresses by default;
+            # inside the cluster that is where Drive is.
+            - name: ALLOW_PRIVATE_IP_ADDRESS
+              value: 'true'
+          # The first boot generates fonts and initializes its database: minutes, not
+          # seconds. The startup probe covers ten of them.
+          startupProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/onlyoffice/documentserver/local-production-linux.json
+              subPath: local-production-linux.json
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 3Gi
+      volumes:
+        - name: config
+          configMap:
+            name: onlyoffice
+
+---
+
+# Source: suite-stack/templates/mailpit.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mailpit
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: mailpit
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: "nginx"
+  tls:
+    - hosts:
+        - "mail.suite.example.org"
+      secretName: "mailpit-tls"
+  rules:
+    - host: "mail.suite.example.org"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mailpit
+                port:
+                  name: http
+
+---
+
+# Source: suite-stack/templates/onlyoffice.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onlyoffice
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: onlyoffice
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: "nginx"
+  tls:
+    - hosts:
+        - "office.suite.example.org"
+      secretName: "onlyoffice-tls"
+  rules:
+    - host: "office.suite.example.org"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: onlyoffice
+                port:
+                  name: http
+
+---
+
+# Source: suite-stack/templates/bootstrap.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "stack-suite-stack-bootstrap-1"
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+type: Opaque
+stringData:
+  create-migrator-role.sql: |
+    -- The role that applies schema migrations (\`prisma migrate deploy\`). It owns the
+    -- \`encryption\` schema, so it is the only one allowed to create or alter tables, and it
+    -- is used once per release, never by the running server.
+    --
+    -- Everything lives in a dedicated schema rather than \`public\`: every role in a
+    -- database has USAGE on \`public\` (and CREATE, before PostgreSQL 15), so on a shared
+    -- server another application's role could list the tables. Nobody but the two roles
+    -- below gets as much as USAGE on \`encryption\`.
+    --
+    -- Run once, connected to the service's database as its administrator:
+    --   psql "$ADMIN_DATABASE_URL" -v password="'<strong password>'" -f deploy/postgres/create-migrator-role.sql
+    \\set ON_ERROR_STOP on
+    
+    CREATE ROLE encryption_migrator LOGIN PASSWORD :password;
+    
+    CREATE SCHEMA encryption AUTHORIZATION encryption_migrator;
+    
+    -- The first migration opens with \`CREATE SCHEMA IF NOT EXISTS "encryption"\`, and
+    -- PostgreSQL checks the CREATE privilege on the database BEFORE looking at whether the
+    -- schema already exists, so without this the migration fails with "permission denied
+    -- for database" even though the schema is there. \`:DBNAME\` is the database psql is
+    -- connected to.
+    GRANT CREATE ON DATABASE :"DBNAME" TO encryption_migrator;
+    
+  create-runtime-role.sql: |
+    -- The role the server connects with (\`DATABASE_URL\`). Data only: it can read and write
+    -- rows but cannot create, alter or drop anything, so a compromised server cannot
+    -- rewrite the schema, and a migration cannot run by accident from a pod.
+    --
+    -- Run once, after create-migrator-role.sql, connected as the same administrator:
+    --   psql "$ADMIN_DATABASE_URL" -v password="'<strong password>'" -f deploy/postgres/create-runtime-role.sql
+    \\set ON_ERROR_STOP on
+    
+    CREATE ROLE encryption_runtime LOGIN PASSWORD :password;
+    
+    GRANT USAGE ON SCHEMA encryption TO encryption_runtime;
+    
+    -- Tables that already exist (none on a fresh database, all of them on an existing one).
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA encryption TO encryption_runtime;
+    
+    -- Tables that future migrations create: without this line every release that adds a
+    -- table would need a manual GRANT before the server can use it. It applies to objects
+    -- created by the migrator role, so it must be run by a superuser or by a member of
+    -- that role (the administrator who created it, in PostgreSQL 16 and later).
+    ALTER DEFAULT PRIVILEGES FOR ROLE encryption_migrator IN SCHEMA encryption
+      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO encryption_runtime;
+    
+  postgres.sh: |
+    set -eu
+    until pg_isready -q; do echo "waiting for PostgreSQL at \${PGHOST}"; sleep 2; done
+    exists() { [ "$(psql -tAc "$1")" = 1 ]; }
+    if ! exists "SELECT 1 FROM pg_database WHERE datname = 'docs'"; then
+      psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "docs"'
+      echo "created database docs"
+    fi
+    if ! exists "SELECT 1 FROM pg_database WHERE datname = 'drive'"; then
+      psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "drive"'
+      echo "created database drive"
+    fi
+    if ! exists "SELECT 1 FROM pg_database WHERE datname = 'encryption'"; then
+      psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "encryption"'
+      echo "created database encryption"
+    fi
+    # The encryption service's two roles, in its database, from deploy/postgres/.
+    if ! exists "SELECT 1 FROM pg_roles WHERE rolname = 'encryption_migrator'"; then
+      psql -d "encryption" -v ON_ERROR_STOP=1 -v password="'\${ENCRYPTION_MIGRATOR_PASSWORD}'" -f /scripts/create-migrator-role.sql
+      echo "created role encryption_migrator"
+    fi
+    if ! exists "SELECT 1 FROM pg_roles WHERE rolname = 'encryption_runtime'"; then
+      psql -d "encryption" -v ON_ERROR_STOP=1 -v password="'\${ENCRYPTION_RUNTIME_PASSWORD}'" -f /scripts/create-runtime-role.sql
+      echo "created role encryption_runtime"
+    fi
+  minio.sh: |
+    set -eu
+    until mc alias set local "http://\${MINIO_HOST}:\${MINIO_PORT}" "\${MINIO_USER}" "\${MINIO_PASSWORD}" > /dev/null 2>&1; do
+      echo "waiting for MinIO at \${MINIO_HOST}:\${MINIO_PORT}"; sleep 2
+    done
+    mc mb --ignore-existing "local/docs-media-storage"
+    mc version enable "local/docs-media-storage"
+    mc mb --ignore-existing "local/drive-media-storage"
+    mc version enable "local/drive-media-storage"
+  # The terms text as a file: kcadm posts JSON, and the text carries apostrophes the shell
+  # quoting of the script below could not (the header travels as a variable instead).
+  notice.json: "{\\"termsText\\":\\"Cet environnement sert à essayer LaSuite. Tout le monde peut y créer un compte, la console d'administration et la boîte mail sont publiques : un compte peut être lu ou repris par n'importe qui. N'y mettez aucune donnée réelle, ni document, ni mot de passe utilisé ailleurs. Tout peut être effacé à tout moment.\\",\\"termsTitle\\":\\"Environnement de test\\"}"
+  keycloak.sh: |
+    set -eu
+    KCADM=/opt/keycloak/bin/kcadm.sh
+    CONFIG=/tmp/kcadm.config
+    until "$KCADM" config credentials --config "$CONFIG" --server "http://\${KEYCLOAK_HOST}:8080" --realm master --user "\${KEYCLOAK_ADMIN}" --password "\${KEYCLOAK_ADMIN_PASSWORD}" > /dev/null 2>&1; do
+      echo "waiting for Keycloak at \${KEYCLOAK_HOST}:8080"; sleep 3
+    done
+    kc() { "$KCADM" "$@" --config "$CONFIG"; }
+    # The notice: the realm's display name heads every sign-in page, the terms text is a
+    # message override of the login theme, and the terms step is a default required action,
+    # so every account registered from now on accepts it before its first sign-in. The
+    # action's alias is looked up: Keycloak renamed it (lowercase until 20, uppercase after).
+    kc update "realms/\${REALM}" -s "displayName=\${NOTICE_HEADER}" -s "displayNameHtml=\${NOTICE_HEADER_HTML}" -s internationalizationEnabled=true -s 'supportedLocales=["fr"]' -s defaultLocale=fr
+    kc create "realms/\${REALM}/localization/fr" -f /scripts/notice.json
+    TERMS=$(kc get authentication/required-actions -r "$REALM" --fields alias --format csv --noquotes | grep -i '^terms_and_conditions$')
+    kc update "authentication/required-actions/\${TERMS}" -r "$REALM" -s enabled=true -s defaultAction=true
+    # Creates the client, or updates it in place so the URIs follow the values.
+    ensure_client() {
+      local client_id=$1 definition=$2 id
+      id=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
+      if [ -z "$id" ]; then
+        echo "$definition" | kc create clients -r "$REALM" -f -
+        echo "created client \${client_id}"
+      else
+        echo "$definition" | kc update "clients/\${id}" -r "$REALM" -f -
+        echo "updated client \${client_id}"
+      fi
+    }
+    # Creates the user if missing, with the terms to accept at first sign-in; the password
+    # is set every run, so the values win.
+    ensure_user() {
+      local username=$1 email=$2 first_name=$3 last_name=$4 password=$5 id
+      id=$(kc get users -r "$REALM" -q username="$username" -q exact=true --fields id --format csv --noquotes)
+      if [ -z "$id" ]; then
+        kc create users -r "$REALM" -s username="$username" -s email="$email" -s firstName="$first_name" -s lastName="$last_name" -s enabled=true -s emailVerified=true -s "requiredActions=[\\"\${TERMS}\\"]"
+        echo "created user \${username}"
+      fi
+      kc set-password -r "$REALM" --username "$username" --new-password "$password"
+    }
+    ensure_client 'docs' '{"attributes":{"post.logout.redirect.uris":"+"},"clientId":"docs","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":false,"redirectUris":["https://docs.suite.example.org/*"],"secret":"ThisIsAnExampleKeyForDevPurposeOnly","standardFlowEnabled":true,"webOrigins":["https://docs.suite.example.org"]}'
+    ensure_client 'drive' '{"attributes":{"post.logout.redirect.uris":"+"},"clientId":"drive","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":false,"redirectUris":["https://drive.suite.example.org/*"],"secret":"ThisIsAnExampleKeyForDevPurposeOnly","standardFlowEnabled":true,"webOrigins":["https://drive.suite.example.org"]}'
+    ensure_client 'encryption' '{"attributes":{"post.logout.redirect.uris":"+"},"clientId":"encryption","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":true,"redirectUris":["https://encryption.suite.example.org/auth/callback"],"standardFlowEnabled":true,"webOrigins":["https://encryption.suite.example.org"]}'
+    ensure_user 'alice.martin' 'alice.martin@example.org' 'Alice' 'Martin' 'alice.martin'
+    ensure_user 'bob.dupont' 'bob.dupont@example.org' 'Bob' 'Dupont' 'bob.dupont'
+  ENCRYPTION_MIGRATION_DATABASE_URL: "postgresql://encryption_migrator:migrator@postgres:5432/encryption?schema=encryption"
+
+---
+
+# Source: suite-stack/templates/bootstrap.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "stack-suite-stack-bootstrap-1"
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: suite-stack
+        app.kubernetes.io/instance: stack
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      # Sequential by construction: init containers run one after the other.
+      initContainers:
+        - name: postgres
+          image: "postgres:16-alpine"
+          command: [/bin/sh, /scripts/postgres.sh]
+          env:
+            - name: PGHOST
+              value: "postgres"
+            - name: PGUSER
+              value: "dinum"
+            - name: PGPASSWORD
+              value: "pass"
+            - name: PGDATABASE
+              value: "postgres"
+            - name: ENCRYPTION_MIGRATOR_PASSWORD
+              value: "migrator"
+            - name: ENCRYPTION_RUNTIME_PASSWORD
+              value: "runtime"
+          securityContext: &containerSecurityContext
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts: &volumeMounts
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: minio
+          image: "quay.io/minio/mc"
+          command: [/bin/sh, /scripts/minio.sh]
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/mc
+            - name: MINIO_HOST
+              value: "minio"
+            - name: MINIO_PORT
+              value: "9000"
+            - name: MINIO_USER
+              value: "dinum"
+            - name: MINIO_PASSWORD
+              value: "password"
+          securityContext: *containerSecurityContext
+          volumeMounts: *volumeMounts
+        - name: keycloak
+          image: "quay.io/keycloak/keycloak:20.0.1"
+          command: [/bin/bash, /scripts/keycloak.sh]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: KEYCLOAK_HOST
+              value: "shared-keycloak"
+            - name: KEYCLOAK_ADMIN
+              value: "admin"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: "pass"
+            - name: REALM
+              value: "suite"
+            - name: NOTICE_HEADER
+              value: "Environnement de test : rien n'y est privé"
+            - name: NOTICE_HEADER_HTML
+              value: "Environnement de test : rien n&#39;y est privé"
+          securityContext: *containerSecurityContext
+          volumeMounts: *volumeMounts
+      containers:
+        # The service's migration, as its own chart runs it (templates/migration-job.yaml
+        # there), with the migrator role the first init container created.
+        - name: migrate
+          image: "lasuite/encryption:main"
+          imagePullPolicy: Always
+          args:
+            - node_modules/prisma/build/index.js
+            - migrate
+            - deploy
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: "stack-suite-stack-bootstrap-1"
+                  key: ENCRYPTION_MIGRATION_DATABASE_URL
+          securityContext:
+            <<: *containerSecurityContext
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scripts
+          secret:
+            secretName: "stack-suite-stack-bootstrap-1"
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+"
+`;

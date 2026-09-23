@@ -110,7 +110,7 @@ spec:
           env:
             - name: NODE_ENV
               value: production
-            {{- include "encryption.secretEnv" (dict "root" $ "env" "DATABASE_URL" "value" $m.url "existing" $m.existingSecret "key" "DATABASE_URL" "secretName" $hookName) | nindent 12 }}
+            {{- include "encryption.secretEnv" (dict "root" $ "env" "DATABASE_URL" "value" $m.url "existing" $m.existingSecret "key" "DATABASE_URL" "secretName" $hookName) | trim | nindent 12 }}
           {{- with $m.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

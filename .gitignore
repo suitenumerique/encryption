@@ -32,3 +32,7 @@ npm-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+
+# stack chart dependencies (allow moving version of encryption chart)
+deploy/helm/suite-stack/charts/
+deploy/helm/suite-stack/Chart.lock
