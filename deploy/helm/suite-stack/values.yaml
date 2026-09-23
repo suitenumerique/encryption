@@ -1,0 +1,661 @@
+# One complete environment, ready to render: the encryption service, Docs and Drive, and
+# the services they share. Every hostname below sits under ONE domain, `suite.example.org`,
+# and the chart is meant to be installed in the namespace `suite`. To point it somewhere
+# else, replace both strings everywhere in this file (or in your override): the four
+# subcharts each read their own block, so a hostname cannot be written once and derived.
+# The chart refuses to render when the blocks disagree with each other (see the
+# "bootstrap" section and templates/_checks.tpl), so a missed replacement fails early.
+#
+# Everything here is plaintext and dev grade on purpose: this is a throwaway environment
+# for beta testers, backed by the same `dev-backend` chart the products use for their own
+# feature environments. Nothing in it is a production pattern.
+
+# ---------------------------------------------------------------------------------------
+# The shared services (the `dev-backend` chart, https://github.com/suitenumerique/helm-dev-backend)
+# ---------------------------------------------------------------------------------------
+shared:
+  enabled: true
+  # Fixed names whatever the release is called: `serviceNameOverride` pins the Service of
+  # PostgreSQL, Redis and MinIO, which the product blocks below reach as `postgres`,
+  # `redis` and `minio`. Keycloak has no such override, so its Service is named from the
+  # chart's full name, `shared-keycloak`; only the bootstrap Job uses it, the products
+  # sign in through the public hostname.
+  fullnameOverride: shared
+  postgres:
+    enabled: true
+    name: postgres
+    serviceNameOverride: postgres
+    image: postgres:16-alpine
+    username: dinum
+    password: pass
+    # The chart creates this one database at first boot; the products' databases are
+    # created by the bootstrap Job (bootstrap.postgres.databases).
+    database: postgres
+    persistence: true
+    size: 5Gi
+  redis:
+    enabled: true
+    name: redis
+    serviceNameOverride: redis
+    image: redis:8.2-alpine
+    username: user
+    password: pass
+  minio:
+    enabled: true
+    name: minio
+    serviceNameOverride: minio
+    image: quay.io/minio/minio
+    mc:
+      image: quay.io/minio/mc
+    # Drive's browser uploads go straight to the bucket with presigned URLs, so the API
+    # needs a public hostname. Docs only reaches it from inside the cluster.
+    ingress:
+      enabled: true
+      hostname: s3.suite.example.org
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+      tls:
+        enabled: true
+        secretName: minio-tls
+    consoleIngress:
+      enabled: true
+      hostname: s3-console.suite.example.org
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+      tls:
+        enabled: true
+        secretName: minio-console-tls
+    api:
+      port: 9000
+    console:
+      port: 9001
+    username: dinum
+    password: password
+    # The chart creates this one bucket; the others come from bootstrap.minio.buckets.
+    bucket: docs-media-storage
+    versioning: true
+    persistence: true
+    size: 5Gi
+  keycloak:
+    enabled: true
+    name: keycloak
+    image: quay.io/keycloak/keycloak:20.0.1
+    hostname: auth.suite.example.org
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    username: admin
+    password: pass
+    tls:
+      enabled: true
+      secretName: keycloak-tls
+    db:
+      username: dinum
+      password: pass
+      database: keycloak
+      persistence: true
+      # Volume sizes: some block-storage drivers refuse small volumes (Outscale's BSU
+      # provisions nothing under 4 GiB, and the claim stays Pending with a
+      # ProvisioningFailed event), so nothing here asks for less than 5Gi.
+      size: 5Gi
+      image: postgres:16-alpine
+    # The realm is imported once, at first boot, with one user and one confidential
+    # client named after the realm. The clients the products use, and the testers'
+    # accounts, are created by the bootstrap Job (bootstrap.keycloak), which also runs
+    # on upgrades, so editing that list is enough to add a tester.
+    realm:
+      name: suite
+      username: john.doe
+      password: john.doe
+      email: john.doe@example.org
+  dsproxy:
+    enabled: false
+  cicap:
+    enabled: false
+
+# ---------------------------------------------------------------------------------------
+# What the shared chart cannot do on its own, run as a Job after the services are up
+# (post-install) and before the products roll out on an upgrade (pre-upgrade).
+# ---------------------------------------------------------------------------------------
+bootstrap:
+  postgres:
+    # Created if missing, on the shared PostgreSQL. Each Django product wants its own
+    # database (both use the `public` schema); the encryption service gets one too, with
+    # its two roles from deploy/postgres/ (the runtime role can only touch rows).
+    databases:
+      - docs
+      - drive
+      - encryption
+  minio:
+    buckets:
+      - docs-media-storage
+      - drive-media-storage
+    versioning: true
+  keycloak:
+    # Created or updated in the realm above, by clientId. `public: true` makes a client
+    # without secret, for a browser application (the encryption interface). Passwords and
+    # secrets must not contain quotes.
+    clients:
+      - clientId: docs
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://docs.suite.example.org/*
+        webOrigins:
+          - https://docs.suite.example.org
+      - clientId: drive
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://drive.suite.example.org/*
+        webOrigins:
+          - https://drive.suite.example.org
+      - clientId: encryption
+        public: true
+        redirectUris:
+          - https://encryption.suite.example.org/auth/callback
+        webOrigins:
+          - https://encryption.suite.example.org
+    # The testers. Created if missing, the password is (re)set every run, the email is
+    # marked verified so every product accepts the account as is.
+    users:
+      - username: alice.martin
+        email: alice.martin@example.org
+        firstName: Alice
+        lastName: Martin
+        password: alice.martin
+      - username: bob.dupont
+        email: bob.dupont@example.org
+        firstName: Bob
+        lastName: Dupont
+        password: bob.dupont
+    # Written on the realm at every run. `header` heads every sign-in and registration
+    # page; `terms` is what every new account, registered or created here, must accept
+    # before its first sign-in (Keycloak's own terms-and-conditions step). Anyone with the
+    # URL can register, the admin console and the mailbox are public, so nothing here is
+    # private: the tester reads that before typing anything real.
+    notice:
+      header: "Environnement de test : rien n'y est privé"
+      termsTitle: Environnement de test
+      terms: >-
+        Cet environnement sert à essayer LaSuite. Tout le monde peut y créer un compte, la
+        console d'administration et la boîte mail sont publiques : un compte peut être lu ou
+        repris par n'importe qui. N'y mettez aucune donnée réelle, ni document, ni mot de
+        passe utilisé ailleurs. Tout peut être effacé à tout moment.
+  encryption:
+    # The service's database and the passwords of its two roles. The chart checks that
+    # `encryption.database.url` below is the runtime role's URL built from these, and
+    # runs the migration itself with the migrator's, since the service's own migration
+    # hook would run before the shared PostgreSQL exists.
+    database: encryption
+    migratorPassword: migrator
+    runtimePassword: runtime
+  job:
+    backoffLimit: 2
+    activeDeadlineSeconds: 900
+
+# A mail catcher: the products and the encryption service send there, testers read the
+# mailbox on the web UI. The encryption service refuses to boot without an SMTP host.
+mailpit:
+  enabled: true
+  image: axllent/mailpit:v1.31.1
+  host: mail.suite.example.org
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    tls:
+      enabled: true
+      secretName: ''
+
+# The document server Drive opens office files with (WOPI): a text document, a spreadsheet
+# or a slide deck is edited in the browser, by several testers at once. Without it Drive
+# only offers the download. Docs has its own editor and does not use it. One container
+# with everything inside (its own PostgreSQL, RabbitMQ, Redis), nothing persisted: a
+# restart loses the editing sessions that were open, not the files, which are in MinIO.
+onlyoffice:
+  enabled: true
+  image: onlyoffice/documentserver:9.4.0.1
+  host: office.suite.example.org
+  # Signs the conversion calls Drive makes to the server; the same value goes in
+  # drive.backend.envVars.WOPI_ONLYOFFICE_CONVERT_JWT_SECRET.
+  jwtSecret: ThisIsAnExampleKeyForDevPurposeOnly
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+      # The editor holds a WebSocket open for the whole session.
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+      nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+      nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    tls:
+      enabled: true
+      secretName: ''
+
+# ---------------------------------------------------------------------------------------
+# The encryption service (deploy/helm/encryption, every key documented there)
+# ---------------------------------------------------------------------------------------
+encryption:
+  enabled: true
+  image:
+    repository: lasuite/encryption
+    # `main` is republished on every push to the CI branch; a tag pins a release.
+    tag: main
+    pullPolicy: Always
+  replicaCount: 1
+  hosts:
+    vault: data.encryption.suite.example.org
+    interface: encryption.suite.example.org
+  config:
+    allowedFrameAncestors:
+      - https://docs.suite.example.org
+      - https://drive.suite.example.org
+    oidc:
+      issuer: https://auth.suite.example.org/realms/suite
+      jwksUrl: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
+      clientId: encryption
+      # Accounts added by hand in the Keycloak console rarely have their email marked
+      # verified; the bootstrap accounts always do.
+      acceptUnverifiedEmail: true
+    mailer:
+      smtpHost: mailpit
+      smtpPort: 1025
+      secure: false
+      requireTls: false
+      senderAddress: noreply@suite.example.org
+    emailProductUrl: https://docs.suite.example.org
+  database:
+    url: postgresql://encryption_runtime:runtime@postgres:5432/encryption?schema=encryption
+    migration:
+      # Run by the bootstrap Job instead (see bootstrap.encryption).
+      enabled: false
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+
+# ---------------------------------------------------------------------------------------
+# Docs (the `docs` chart, src/helm/impress in https://github.com/suitenumerique/docs).
+# Copied from the chart's own feature-environment values, with every coordinate pointed at
+# the shared services and the three encryption variables added.
+# ---------------------------------------------------------------------------------------
+docs:
+  enabled: true
+  # Fixed names for the in-cluster Services (`docs-backend`, `docs-y-provider`...).
+  fullnameOverride: docs
+  image:
+    repository: lasuite/impress-backend
+    pullPolicy: Always
+    tag: main
+  backend:
+    migrateJobAnnotations:
+      argocd.argoproj.io/hook: Sync
+      argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    # The chart's migrate and createsuperuser Job pods carry the same labels as the
+    # backend pods, so this PodDisruptionBudget (maxUnavailable: 1) selects them too, and
+    # the disruption controller fails on them ("jobs.batch does not implement the scale
+    # subresource"). The budget is then Degraded, and Argo CD, which waits for every
+    # object to be healthy before the PostSync hooks, fails the sync. One replica has no
+    # use for a budget anyway.
+    pdb:
+      enabled: false
+    replicas: 1
+    envVars:
+      DJANGO_CONFIGURATION: Feature
+      DJANGO_SETTINGS_MODULE: impress.settings
+      DJANGO_SECRET_KEY: lkjsdlfkjsldkfjslkdfjslkdjfslkdjf
+      DJANGO_ALLOWED_HOSTS: docs.suite.example.org
+      DJANGO_CSRF_TRUSTED_ORIGINS: https://docs.suite.example.org
+      DJANGO_SERVER_TO_SERVER_API_TOKENS: secret-api-key
+      DJANGO_SUPERUSER_PASSWORD: admin
+      DJANGO_EMAIL_BRAND_NAME: 'La Suite Numérique'
+      DJANGO_EMAIL_HOST: mailpit
+      DJANGO_EMAIL_PORT: 1025
+      DJANGO_EMAIL_USE_SSL: 'False'
+      DJANGO_EMAIL_LOGO_IMG: https://docs.suite.example.org/assets/logo-suite-numerique.png
+      DJANGO_EMAIL_URL_APP: https://docs.suite.example.org
+      FRONTEND_SILENT_LOGIN_ENABLED: 'True'
+      LOGGING_LEVEL_HANDLERS_CONSOLE: ERROR
+      LOGGING_LEVEL_LOGGERS_ROOT: INFO
+      LOGGING_LEVEL_LOGGERS_APP: INFO
+      OIDC_USERINFO_SHORTNAME_FIELD: first_name
+      OIDC_USERINFO_FULLNAME_FIELDS: name
+      OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
+      OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
+      OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
+      OIDC_OP_USER_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/userinfo
+      OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
+      OIDC_REDIRECT_ALLOWED_HOSTS: docs.suite.example.org
+      OIDC_RP_CLIENT_ID: docs
+      OIDC_RP_CLIENT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
+      OIDC_RP_SIGN_ALGO: RS256
+      OIDC_RP_SCOPES: openid email profile
+      # The encryption integration reads the access token from the session.
+      OIDC_STORE_ACCESS_TOKEN: 'True'
+      LOGIN_REDIRECT_URL: https://docs.suite.example.org
+      LOGIN_REDIRECT_URL_FAILURE: https://docs.suite.example.org
+      LOGOUT_REDIRECT_URL: https://docs.suite.example.org
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: docs
+      DB_USER: dinum
+      DB_PASSWORD: pass
+      # One Redis, one database index per product.
+      REDIS_URL: redis://user:pass@redis:6379/1
+      DJANGO_CELERY_BROKER_URL: redis://user:pass@redis:6379/1
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+      AWS_S3_ACCESS_KEY_ID: dinum
+      AWS_S3_SECRET_ACCESS_KEY: password
+      AWS_STORAGE_BUCKET_NAME: docs-media-storage
+      STORAGES_STATICFILES_BACKEND: django.contrib.staticfiles.storage.StaticFilesStorage
+      COLLABORATION_SERVER_SECRET: my-secret
+      Y_PROVIDER_API_BASE_URL: http://docs-y-provider:443/api/
+      Y_PROVIDER_API_KEY: my-secret
+      DOCSPEC_API_URL: http://docs-docspec:4000/conversion
+      ENCRYPTION_FEATURE_ENABLED: 'True'
+      ENCRYPTION_VAULT_URL: https://data.encryption.suite.example.org
+      ENCRYPTION_INTERFACE_URL: https://encryption.suite.example.org
+    # The migration Job is not a hook: it starts with the rest of the release, so it
+    # waits for the shared PostgreSQL (and for the bootstrap Job's database) itself.
+    migrate:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while ! python manage.py check --database default > /dev/null 2>&1
+          do
+            echo "Database not ready"
+            sleep 2
+          done
+          echo "Database is ready"
+          python manage.py migrate --no-input
+      restartPolicy: Never
+    createsuperuser:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while ! python manage.py check --database default > /dev/null 2>&1
+          do
+            echo "Database not ready"
+            sleep 2
+          done
+          python manage.py createsuperuser --email admin@example.org --password admin
+      restartPolicy: Never
+  frontend:
+    replicas: 1
+    image:
+      repository: lasuite/impress-frontend
+      pullPolicy: Always
+      tag: main
+    envVars:
+      PORT: 8080
+      NEXT_PUBLIC_API_ORIGIN: https://docs.suite.example.org
+  yProvider:
+    replicas: 1
+    image:
+      repository: lasuite/impress-y-provider
+      pullPolicy: Always
+      tag: main
+    envVars:
+      COLLABORATION_BACKEND_BASE_URL: https://docs.suite.example.org
+      COLLABORATION_LOGGING: 'true'
+      COLLABORATION_SERVER_ORIGIN: https://docs.suite.example.org
+      COLLABORATION_SERVER_SECRET: my-secret
+      Y_PROVIDER_API_KEY: my-secret
+  docSpec:
+    enabled: true
+    replicas: 1
+    image:
+      repository: ghcr.io/docspecio/api
+      pullPolicy: IfNotPresent
+      tag: 2.6.3
+    probes:
+      liveness:
+        path: /health
+      readiness:
+        path: /health
+  ingress:
+    enabled: true
+    host: docs.suite.example.org
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: 20m
+      cert-manager.io/cluster-issuer: letsencrypt
+  ingressCollaborationWS:
+    enabled: true
+    host: docs.suite.example.org
+  ingressCollaborationApi:
+    enabled: true
+    host: docs.suite.example.org
+  ingressAdmin:
+    enabled: true
+    host: docs.suite.example.org
+  ingressMedia:
+    enabled: true
+    host: docs.suite.example.org
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: https://docs.suite.example.org/api/v1.0/documents/media-auth/
+      nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
+      nginx.ingress.kubernetes.io/upstream-vhost: minio.suite.svc.cluster.local:9000
+      nginx.ingress.kubernetes.io/rewrite-target: /docs-media-storage/$1
+  # An ExternalName Service, so it needs the fully qualified name of the shared MinIO.
+  serviceMedia:
+    host: minio.suite.svc.cluster.local
+    port: 9000
+  posthog:
+    ingress:
+      enabled: false
+    ingressAssets:
+      enabled: false
+
+# ---------------------------------------------------------------------------------------
+# Drive (the `drive` chart, src/helm/drive in https://github.com/suitenumerique/drive).
+# Same origin as the Docs block: the chart's development values.
+# ---------------------------------------------------------------------------------------
+drive:
+  enabled: true
+  fullnameOverride: drive
+  image:
+    repository: lasuite/drive-backend
+    pullPolicy: Always
+    tag: main
+  backend:
+    migrateJobAnnotations:
+      argocd.argoproj.io/hook: Sync
+      argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    replicas: 1
+    envVars:
+      DJANGO_CONFIGURATION: Feature
+      DJANGO_SETTINGS_MODULE: drive.settings
+      DJANGO_SECRET_KEY: lkjsdlfkjsldkfjslkdfjslkdjfslkdjf
+      DJANGO_ALLOWED_HOSTS: drive.suite.example.org
+      DJANGO_CSRF_TRUSTED_ORIGINS: https://drive.suite.example.org
+      DJANGO_SERVER_TO_SERVER_API_TOKENS: secret-api-key
+      DJANGO_SUPERUSER_PASSWORD: admin
+      DJANGO_EMAIL_BRAND_NAME: 'La Suite Numérique'
+      DJANGO_EMAIL_HOST: mailpit
+      DJANGO_EMAIL_PORT: 1025
+      DJANGO_EMAIL_USE_SSL: 'False'
+      DJANGO_EMAIL_LOGO_IMG: https://drive.suite.example.org/assets/logo-suite-numerique.png
+      LOGGING_LEVEL_LOGGERS_ROOT: INFO
+      LOGGING_LEVEL_LOGGERS_APP: INFO
+      OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
+      OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
+      OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
+      OIDC_OP_USER_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/userinfo
+      OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
+      OIDC_RP_CLIENT_ID: drive
+      OIDC_RP_CLIENT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
+      OIDC_RP_SIGN_ALGO: RS256
+      OIDC_RP_SCOPES: openid email
+      OIDC_USER_FIELD_TO_SHORTNAME: given_name
+      OIDC_USER_FIELDS_TO_FULLNAME: given_name,usual_name
+      OIDC_STORE_ACCESS_TOKEN: 'True'
+      LOGIN_REDIRECT_URL: https://drive.suite.example.org
+      LOGIN_REDIRECT_URL_FAILURE: https://drive.suite.example.org
+      LOGOUT_REDIRECT_URL: https://drive.suite.example.org
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: drive
+      DB_USER: dinum
+      DB_PASSWORD: pass
+      REDIS_URL: redis://user:pass@redis:6379/2
+      DJANGO_CELERY_BROKER_URL: redis://user:pass@redis:6379/2
+      # Public: the browser uploads to presigned URLs on it.
+      AWS_S3_ENDPOINT_URL: https://s3.suite.example.org
+      AWS_S3_ACCESS_KEY_ID: dinum
+      AWS_S3_SECRET_ACCESS_KEY: password
+      AWS_S3_SIGNATURE_VERSION: s3v4
+      AWS_S3_REGION_NAME: eu-east-1
+      AWS_STORAGE_BUCKET_NAME: drive-media-storage
+      STORAGES_STATICFILES_BACKEND: django.contrib.staticfiles.storage.StaticFilesStorage
+      MEDIA_BASE_URL: https://drive.suite.example.org
+      DJANGO_CELERY_TASK_ROUTES: "{'core.tasks.storage.mirror_file': {'queue': 'mirror'}, 'lasuite.malware_detection.tasks.*': {'queue': 'malware_detection'}}"
+      ENCRYPTION_FEATURE_ENABLED: 'True'
+      ENCRYPTION_VAULT_URL: https://data.encryption.suite.example.org
+      ENCRYPTION_INTERFACE_URL: https://encryption.suite.example.org
+      # The document server (onlyoffice below): discovered and called over its Service,
+      # while it fetches the files from Drive's public origin.
+      WOPI_CLIENTS: onlyoffice
+      WOPI_ONLYOFFICE_DISCOVERY_URL: http://onlyoffice/hosting/discovery
+      WOPI_SRC_BASE_URL: https://drive.suite.example.org
+      WOPI_ONLYOFFICE_OPTIONS: '{"ForceConvertExtensions": ["doc", "xls", "ppt"], "ConvertServiceUrl": "http://onlyoffice/converter"}'
+      WOPI_ONLYOFFICE_CONVERT_JWT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
+      # Drive learns the server's capabilities and proof keys by a Celery task, run by its
+      # configure-wopi Job and by a schedule, daily at 3:00 by default. Every five minutes
+      # here: the Job is a PostSync hook under Argo CD, which waits for the whole stack to
+      # be healthy, and the server mints new proof keys at each restart (nothing is
+      # persisted), after which Drive's cached ones are refused until the next run.
+      WOPI_CONFIGURATION_CRONTAB_MINUTE: '*/5'
+      WOPI_CONFIGURATION_CRONTAB_HOUR: '*'
+    migrate:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while ! python manage.py check --database default > /dev/null 2>&1
+          do
+            echo "Database not ready"
+            sleep 2
+          done
+          echo "Database is ready"
+          python manage.py migrate --no-input
+      restartPolicy: Never
+    createsuperuser:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while ! python manage.py check --database default > /dev/null 2>&1
+          do
+            echo "Database not ready"
+            sleep 2
+          done
+          python manage.py createsuperuser --email admin@example.org --password admin
+      restartPolicy: Never
+    # The chart's Job enqueues one Celery task that reads the document server's discovery
+    # document, with no retry: run before the server answers, the editor stays unconfigured
+    # until the daily refresh. So it waits, like the migration waits for the database.
+    configureWopi:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          until python -c "import urllib.request; urllib.request.urlopen('$WOPI_ONLYOFFICE_DISCOVERY_URL', timeout=5)" > /dev/null 2>&1
+          do
+            echo "Document server not ready"
+            sleep 5
+          done
+          python manage.py trigger_wopi_configuration
+      restartPolicy: Never
+    celeryWorkers:
+      - name: default
+        replicas: 1
+        command: []
+        args: ['celery', '-A', 'drive.celery_app', 'worker', '-l', 'INFO', '-n', 'drive@%h']
+        resources: {}
+        probes:
+          liveness:
+            exec:
+              command: ['/bin/sh', '-c', 'celery -A drive.celery_app inspect ping -d drive@$HOSTNAME']
+            initialDelaySeconds: 60
+            timeoutSeconds: 5
+          readiness:
+            exec:
+              command: ['/bin/sh', '-c', 'celery -A drive.celery_app inspect ping -d drive@$HOSTNAME']
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
+      - name: mirror
+        replicas: 1
+        command: []
+        args: ['celery', '-A', 'drive.celery_app', 'worker', '-l', 'INFO', '-Q', 'mirror', '-n', 'drive@%h']
+        resources: {}
+        probes:
+          liveness:
+            exec:
+              command: ['/bin/sh', '-c', 'celery -A drive.celery_app inspect ping -d drive@$HOSTNAME']
+            initialDelaySeconds: 60
+            timeoutSeconds: 5
+          readiness:
+            exec:
+              command: ['/bin/sh', '-c', 'celery -A drive.celery_app inspect ping -d drive@$HOSTNAME']
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
+      - name: malware-detection
+        replicas: 1
+        command: []
+        args: ['celery', '-A', 'drive.celery_app', 'worker', '-l', 'INFO', '-Q', 'malware_detection', '-n', 'drive@%h']
+        resources: {}
+        probes:
+          liveness:
+            exec:
+              command: ['/bin/sh', '-c', 'celery -A drive.celery_app inspect ping -d drive@$HOSTNAME']
+            initialDelaySeconds: 60
+            timeoutSeconds: 5
+          readiness:
+            exec:
+              command: ['/bin/sh', '-c', 'celery -A drive.celery_app inspect ping -d drive@$HOSTNAME']
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
+  frontend:
+    replicas: 1
+    image:
+      repository: lasuite/drive-frontend
+      pullPolicy: Always
+      tag: main
+    envVars:
+      PORT: 8080
+      NEXT_PUBLIC_API_ORIGIN: https://drive.suite.example.org
+  ingress:
+    enabled: true
+    host: drive.suite.example.org
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: 150m
+      cert-manager.io/cluster-issuer: letsencrypt
+  ingressAdmin:
+    enabled: true
+    host: drive.suite.example.org
+  ingressMedia:
+    enabled: true
+    host: drive.suite.example.org
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: https://drive.suite.example.org/api/v1.0/items/media-auth/
+      nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
+      nginx.ingress.kubernetes.io/upstream-vhost: minio.suite.svc.cluster.local:9000
+      nginx.ingress.kubernetes.io/rewrite-target: /drive-media-storage/$1
+  ingressMediaPreview:
+    enabled: true
+    host: drive.suite.example.org
+    annotations:
+      nginx.ingress.kubernetes.io/auth-url: https://drive.suite.example.org/api/v1.0/items/media-auth/
+      nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
+      nginx.ingress.kubernetes.io/upstream-vhost: minio.suite.svc.cluster.local:9000
+      nginx.ingress.kubernetes.io/rewrite-target: /drive-media-storage/$1
+  serviceMedia:
+    host: minio.suite.svc.cluster.local
+    port: 9000
+  posthog:
+    ingress:
+      enabled: false
+    ingressAssets:
+      enabled: false

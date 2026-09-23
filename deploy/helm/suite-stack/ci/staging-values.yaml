@@ -1,0 +1,31 @@
+# What a developer overrides on top of values.yaml: the images of the product branches
+# under test, either the `pr-<number>` tags the products' CI pushes for a labelled
+# upstream pull request, or a build pushed to a registry of their own (see the README,
+# "Images"). Every other value can stay, provided the domain and namespace are replaced
+# in values.yaml.
+encryption:
+  image:
+    repository: myaccount/encryption
+    tag: e2ee
+
+docs:
+  image:
+    repository: myaccount/impress-backend
+    tag: e2ee
+  frontend:
+    image:
+      repository: myaccount/impress-frontend
+      tag: e2ee
+  yProvider:
+    image:
+      repository: myaccount/impress-y-provider
+      tag: e2ee
+
+drive:
+  image:
+    repository: myaccount/drive-backend
+    tag: e2ee
+  frontend:
+    image:
+      repository: myaccount/drive-frontend
+      tag: e2ee

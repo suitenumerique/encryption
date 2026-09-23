@@ -107,6 +107,10 @@
     }
   },
   "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Read by a parent chart's dependency condition when this chart is a subchart (deploy/helm/suite-stack); the chart itself ignores it."
+    },
     "global": {
       "type": "object"
     },

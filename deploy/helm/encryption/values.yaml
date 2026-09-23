@@ -6,6 +6,10 @@
 # the OIDC provider and an error collector are external services the operator already
 # runs; the chart takes their coordinates and never manages persistent storage.
 
+# Read by a parent chart's dependency condition when this chart is one of its subcharts
+# (deploy/helm/suite-stack). The chart itself ignores it.
+enabled: true
+
 image:
   repository: lasuite/encryption
   # The application version to run. Required (or a digest): the chart is versioned on
