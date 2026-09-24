@@ -46,8 +46,8 @@ export async function playFindAlert(parentElement: HTMLElement, text?: string | 
   }, options);
 }
 
-export async function playFindHeading(parentElement: HTMLElement, name: string | RegExp): Promise<HTMLElement> {
-  return await within(parentElement).findByRole('heading', { name });
+export async function playFindHeading(parentElement: HTMLElement, name: string | RegExp, options?: { timeout?: number }): Promise<HTMLElement> {
+  return await within(parentElement).findByRole('heading', { name }, options);
 }
 
 export async function playFindDocumentStructure(parentElement: HTMLElement): Promise<HTMLElement> {

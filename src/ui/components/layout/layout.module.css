@@ -1,0 +1,658 @@
+/*
+ * Shared layout of the interface screens. The product hosts the iframe inside
+ * its own modal (chrome, padding, close control), so a screen only lays out the
+ * modal's content: an optional illustration, a title/description block, a body
+ * and a stack of full-width actions. Sizes follow the design system's modal
+ * anatomy (24px card padding, 16px between sections, 40px buttons).
+ */
+
+/* The interface's own padding around a screen: the product's modal gives the
+   iframe its box with none, so controls may hang into this area, as the product's
+   cross hangs into the modal's. Same 24px the design system's modal uses. */
+.host {
+  box-sizing: border-box;
+  padding: var(--c--globals--spacings--md);
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--base);
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: var(--c--globals--font--families--base);
+}
+
+/* The interface draws its own card in the SDK overlays (verify recipients,
+   emergency prompt); embedded in a product modal it inherits the modal padding. */
+.screen--padded {
+  padding: var(--c--globals--spacings--base);
+}
+
+.screen__illustration {
+  display: flex;
+  justify-content: center;
+}
+
+.screen__illustration img {
+  display: block;
+  width: 142px;
+  height: 100px;
+  object-fit: contain;
+}
+
+.screen__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--st);
+}
+
+.screen__title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.screen__title--error {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.screen__description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  overflow-wrap: anywhere;
+}
+
+.screen__description > * {
+  margin: 0;
+}
+
+/* Paragraphs and lists alike: each block sits one step under the previous one.
+   `:not(:first-child)` gives it more weight than the resets on the blocks
+   themselves (the one above, and `.list`'s own margin), so no block escapes it. */
+.screen__description > :not(:first-child) {
+  margin-top: var(--c--globals--spacings--sm);
+}
+
+.screen__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--sm);
+}
+
+/* Actions stack full-width by default; `--row` right-aligns a Cancel/Confirm pair. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  width: 100%;
+}
+
+.actions > :global(.c__button) {
+  width: 100%;
+  justify-content: center;
+}
+
+/* A stacked label longer than the card wraps; the button grows instead of overflowing. */
+.actions:not(.actions--row) > :global(.c__button) {
+  height: auto;
+  min-height: var(--c--components--button--medium-height);
+  padding-top: 8px;
+  padding-bottom: 8px;
+  white-space: normal;
+  line-height: 20px;
+}
+
+.actions--row {
+  flex-direction: row;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--sm);
+}
+
+.actions--row > :global(.c__button) {
+  width: auto;
+}
+
+/* Small text (12px) used for hints under a card or a form. */
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.hint--center {
+  text-align: center;
+}
+
+/* A bordered card (an identity, a contact row). */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--primary);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* The trusted-contacts card on the previous-identity screen: body text scale. */
+.contacts {
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.contacts p {
+  margin: 0;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.card--warning {
+  border-color: var(--c--contextuals--border--semantic--warning--secondary);
+}
+
+.card--error {
+  border-color: var(--c--contextuals--border--semantic--error--secondary);
+}
+
+.card--success {
+  border-color: var(--c--contextuals--border--semantic--success--secondary);
+}
+
+.card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: 0 2px;
+  min-height: 34px;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.identity__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.identity__name {
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity__secondary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--c--contextuals--background--semantic--brand--primary);
+  color: var(--c--contextuals--content--semantic--brand--on-brand);
+  font-size: 10px;
+  font-weight: var(--c--globals--font--weights--bold);
+  letter-spacing: -0.35px;
+  text-transform: uppercase;
+}
+
+.avatar--large {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+}
+
+/* A status chip next to an identity ("Key mismatch", "Active", ...). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: var(--c--globals--font--weights--medium);
+  white-space: nowrap;
+}
+
+.chip :global(.material-icons) {
+  font-size: 16px;
+}
+
+.chip--warning {
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+.chip--error {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.chip--success {
+  color: var(--c--contextuals--content--semantic--success--tertiary);
+}
+
+.chip--info {
+  color: var(--c--contextuals--content--semantic--info--tertiary);
+}
+
+.chip--neutral {
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+/* The 40-digit safety fingerprint: 8 groups of 5 digits in two rows of boxes,
+   large and bold so it can be read out loud or compared at a glance. */
+.fingerprint {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--st);
+  width: 100%;
+  user-select: all;
+}
+
+.fingerprint__group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 2px;
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--tertiary);
+  font-family: var(--c--globals--font--families--base);
+  font-size: clamp(14px, 5.2cqw, 20px);
+  line-height: 27px;
+  font-weight: var(--c--globals--font--weights--bold);
+  letter-spacing: 0.12em;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  /* The neutral surface alone barely separates from the card; the toned
+     variants carry their own colour. */
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.fingerprint--warning .fingerprint__group,
+.fingerprint--error .fingerprint__group,
+.fingerprint--success .fingerprint__group {
+  border-color: transparent;
+}
+
+.fingerprint--warning .fingerprint__group {
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+}
+
+.fingerprint--error .fingerprint__group {
+  background: var(--c--contextuals--background--semantic--error--tertiary);
+}
+
+.fingerprint--success .fingerprint__group {
+  background: var(--c--contextuals--background--semantic--success--tertiary);
+}
+
+.fingerprint-wrap {
+  container-type: inline-size;
+  width: 100%;
+}
+
+/* Cunningham's Alert content is a flex row; a checkbox under the message needs
+   the column. */
+.alert-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.alert-stack :global(.c__checkbox) {
+  margin: 0;
+}
+
+/* A section title inside a longer screen (emergency access lists). */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+/* The one fact a prompt must get across (a deadline): its own tinted box, the
+   value large enough to be read before anything else on the screen. */
+.deadline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--c--globals--spacings--sm);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+  text-align: center;
+}
+
+.deadline__value {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.deadline__time {
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+/* An empty list: a dashed placeholder where the rows would be, so "nothing here
+   yet" reads as a state of the list rather than as one more line of copy. */
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--sm);
+  border: 1px dashed var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.section__title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.section__subtitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* Native text controls, themed like Cunningham inputs. */
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 6px var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--primary);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: var(--c--globals--font--families--base);
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+.input--mono {
+  font-family: monospace;
+  letter-spacing: 0.05em;
+}
+
+.input--valid {
+  border-color: var(--c--contextuals--border--semantic--success--secondary);
+}
+
+.input--invalid {
+  border-color: var(--c--contextuals--border--semantic--error--secondary);
+}
+
+/* Caption of a group of boxes inside a card ("This device", "Registered on the server"). */
+.group-label {
+  margin: 6px 0 8px;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: var(--c--globals--font--weights--medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+}
+
+/* A centered "waiting" pill (device pairing). */
+.waiting {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  align-self: center;
+  padding: var(--c--globals--spacings--t) var(--c--globals--spacings--base);
+  border-radius: 999px;
+  background: var(--c--contextuals--background--surface--secondary);
+  font-size: 13px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* A secondary action written as a sentence ("No camera on the other device?
+   Show a code to type"): a design-system button never wraps, so it would run
+   past the 350px card. This one wraps and reads as a link. */
+.link-button {
+  max-width: 100%;
+  height: auto;
+  min-height: 32px;
+  padding: 6px 12px;
+  white-space: pre-line;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* The spinner is a flex item next to text: without this it gives up width and turns oval. */
+.waiting :global(.c__loader),
+.loading :global(.c__loader) {
+  flex-shrink: 0;
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--sm);
+  text-align: center;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--sm);
+  min-height: 160px;
+  padding: var(--c--globals--spacings--md);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  font-size: 14px;
+}
+
+.list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.list li + li {
+  margin-top: 2px;
+}
+
+.phrase {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: all;
+}
+
+/* The revealed recovery phrase: numbered words in three columns. */
+.words {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--secondary);
+  list-style: none;
+  counter-reset: word;
+  user-select: all;
+}
+
+.words li {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.words li::before {
+  counter-increment: word;
+  content: counter(word) '.';
+  flex-shrink: 0;
+  width: 20px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  user-select: none;
+}
+
+.words li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The typed pairing code: the fingerprint box as an input. */
+.fingerprint__group--input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  text-align: center;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.fingerprint__group--input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+/* The 24 word boxes of the recovery phrase input. */
+.word-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--xs);
+}
+
+/* Three columns in a 350px modal leave about 95px per word. The longest words
+   of the French list are 10 letters, so the index lives inside the box (top
+   left, tiny) and the box keeps the whole column for the word. */
+.word-inputs__cell {
+  position: relative;
+  min-width: 0;
+}
+
+.word-inputs__index {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  pointer-events: none;
+}
+
+.word-inputs .input {
+  min-height: 32px;
+  padding: 4px 4px 4px 12px;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.hint--invalid {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+/* Radio and checkbox options inside a screen follow its text scale: the design
+   system's default is sized for a form page, too small next to 14px copy. */
+.screen :global(.c__checkbox__label) {
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+}
+
+/* The design system's provider mounts a toast container fixed to the bottom edge
+   of the viewport. The interface never toasts, and its viewport is an iframe cut
+   to the content, so that empty, padded strip would sit over the last action and
+   swallow its clicks. */
+:global(.c__toast__container:empty) {
+  display: none;
+}
+
+:global(.c__toast__container) {
+  pointer-events: none;
+}
+
+/* The way back inside a flow, above the title: a small text link, as opposed to
+   the product's cross, which leaves the whole interface. */
+.screen__back {
+  align-self: flex-start;
+  /* The mirror of the product's cross: 6px from the modal's top and left edges,
+     while the content starts 24px under and after them. */
+  margin: -18px 0 -8px -18px;
+}
+
+/* Alerts inside a screen follow the screen's text scale. */
+.screen :global(.c__alert) {
+  font-size: 14px;
+  line-height: 18px;
+}

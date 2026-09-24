@@ -73,8 +73,8 @@ import { handleReactivateVault, handleRestoreFromPhrase } from '@encryption/src/
 import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
-import { resolveBoundaryUser } from '@encryption/src/vault/user-resolution';
-import { ensureVaultSyncDriver } from '@encryption/src/vault/vault-sync-driver';
+import { resolveBoundaryUser, resolveLocalUserId } from '@encryption/src/vault/user-resolution';
+import { ensureVaultSyncDriver, resumeVaultSyncDriver, vaultSyncDriverOutcome } from '@encryption/src/vault/vault-sync-driver';
 
 async function dispatch(data: unknown, userId: string): Promise<unknown> {
   // Extract type and payload from the message. Payload may contain ArrayBuffer
@@ -274,6 +274,18 @@ export function setupMessageHandler(): void {
       const declaredSub = event.data.suiteUserId as string | undefined;
       const declaredInternalId = event.data.internalUserId as string | undefined;
 
+      // "Has keys" asks about THIS device. A device that ever held a vault also
+      // holds the sub -> id alias (the interface declares the id on every
+      // privileged operation), so no local alias means no local keys, and the
+      // registry has nothing to add: a user who never enabled encryption then
+      // costs no request at all on page load.
+      if (operationType === MSG_VAULT_HAS_KEYS && declaredSub && !declaredInternalId && !(await resolveLocalUserId(declaredSub))) {
+        const response: VaultResponse = { type: MSG_VAULT_RESULT, requestId, success: true, data: { hasKeys: false } };
+        event.source?.postMessage(response, { targetOrigin: event.origin });
+
+        return;
+      }
+
       const userId = await resolveBoundaryUser(declaredSub, declaredInternalId, isPrivilegedAllowed);
 
       if (!userId) {
@@ -302,13 +314,23 @@ export function setupMessageHandler(): void {
       // One-shot courtesy push (per user, per page load): if this user has
       // actionable emergency-access state, tell the PRODUCT page so its SDK can
       // surface it. Products only; the interface has its own authenticated view.
+      // It signs with the same identity as the driver, so it waits for the
+      // driver's first answer: an identity the server refused is not asked twice.
       if (!isInterfaceOrigin(event.origin)) {
         const source = event.source;
         const origin = event.origin;
-        void checkEmergencyPending(userId, (message) => source?.postMessage(message, { targetOrigin: origin }));
+        void vaultSyncDriverOutcome().then((ok) => {
+          if (ok) return checkEmergencyPending(userId, (message) => source?.postMessage(message, { targetOrigin: origin }));
+        });
       }
 
       const data = (await dispatch(event.data, userId)) as Record<string, unknown> | undefined;
+
+      // A privileged operation is the interface changing what the server knows of
+      // this identity (registration, restore, reactivation, reset): the one kind
+      // of event after which a driver that gave up on a refused signature should
+      // try again.
+      if (PRIVILEGED_OPERATIONS.has(operationType)) resumeVaultSyncDriver(userId);
 
       response = { type: MSG_VAULT_RESULT, requestId, success: true, data };
 

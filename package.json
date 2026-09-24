@@ -18,6 +18,7 @@
     "dev:demo:product-a": "DEMO_PORT=7201 vite --config src/demo/vite.config.ts",
     "dev:demo:product-b": "DEMO_PORT=7202 vite --config src/demo/vite.config.ts",
     "dev:storybook": "storybook dev -p 7204 --no-open",
+    "css:types": "tsx src/build/css-module-types.ts",
     "build:storybook": "storybook build",
     "start:storybook": "serve -l 7204 --no-request-logging storybook-static",
     "build:prepare": "npm run db:schema:compile",

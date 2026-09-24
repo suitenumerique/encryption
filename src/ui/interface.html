@@ -7,9 +7,13 @@
     <title>Encryption Interface</title>
     <style>
       html,
+      html,
       body {
         margin: 0;
         padding: 0;
+        /* The interface is framed at its content height by the product: it never
+           scrolls itself, so a rounding pixel cannot grow into a scrollbar. */
+        overflow: hidden;
       }
 
       .access-error {

@@ -1,4 +1,4 @@
-import { CunninghamProvider } from '@gouvfr-lasuite/cunningham-react';
+import { CunninghamProvider, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { VaultClient } from '@encryption/src/client/vault-client';
@@ -86,6 +86,8 @@ function base64ToAb(s: string): ArrayBuffer {
 export function DemoApp() {
   const [vaultClient] = useState(() => new VaultClient({ vaultUrl: VAULT_URL, interfaceUrl: INTERFACE_URL, theme: 'light' }));
   const [interfaceOpen, setInterfaceOpen] = useState(false);
+  // The interface asks for the modal width its screen needs (see integration.mdx).
+  const [interfaceSize, setInterfaceSize] = useState<ModalSize>(ModalSize.SMALL);
   const [state, setState] = useState<EncryptionState>('not-connected');
   const [currentUser, setCurrentUser] = useState<DemoUser | null>(null);
   const currentUserRef = useRef<DemoUser | null>(null);
@@ -106,7 +108,6 @@ export function DemoApp() {
   }, [allDocuments, currentUser, currentKeycloakId]);
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocContent, setNewDocContent] = useState('');
-  const [interfaceContainer, setInterfaceContainer] = useState<HTMLDivElement | null>(null);
   const [shareDoc, setShareDoc] = useState<FakeDocument | null>(null);
   // A standing prompt raised when a vault operation fails with a code that needs
   // user action (integrity failure, missing keys, ...). Persists across the raw
@@ -171,9 +172,11 @@ export function DemoApp() {
       setState('ready');
       log(`Onboarding complete. Public key: ${publicKey.slice(0, 30)}...`);
     });
+    client.on('interface:size', ({ size }) => setInterfaceSize(size === 'medium' ? ModalSize.MEDIUM : ModalSize.SMALL));
     client.on('interface:closed', () => {
       log('Interface closed');
       setInterfaceOpen(false);
+      setInterfaceSize(ModalSize.SMALL);
       // Re-check key state after the interface closes (keys may have been created/deleted)
       client
         .hasKeys()
@@ -275,19 +278,33 @@ export function DemoApp() {
     [log, refreshLoginState, vaultClient]
   );
 
+  // The host modal mounts its container only once open, so the screen to show
+  // is remembered and the SDK is pointed at the container as soon as it appears.
+  const pendingScreenRef = useRef<'onboarding' | 'settings' | null>(null);
+
+  const hostContainerRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (!el || !pendingScreenRef.current) return;
+
+      if (pendingScreenRef.current === 'onboarding') vaultClient.openOnboarding(el);
+      else vaultClient.openSettings(el);
+
+      pendingScreenRef.current = null;
+    },
+    [vaultClient]
+  );
+
   const handleOpenOnboarding = useCallback(() => {
-    if (!interfaceContainer) return;
-    vaultClient.openOnboarding(interfaceContainer);
+    pendingScreenRef.current = 'onboarding';
     setInterfaceOpen(true);
     log('Opening onboarding interface...');
-  }, [interfaceContainer, log, vaultClient]);
+  }, [log]);
 
   const handleOpenSettings = useCallback(() => {
-    if (!interfaceContainer) return;
-    vaultClient.openSettings(interfaceContainer);
+    pendingScreenRef.current = 'settings';
     setInterfaceOpen(true);
     log('Opening settings...');
-  }, [interfaceContainer, log, vaultClient]);
+  }, [log]);
 
   const handleCreateDocument = useCallback(async () => {
     const client = vaultClient;
@@ -555,11 +572,22 @@ export function DemoApp() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           {/* Left: Documents + Interface container */}
           <div>
-            {/* Interface iframe container — only visible when an interface is open */}
-            <div style={{ marginBottom: 16, display: interfaceOpen ? 'block' : 'none' }}>
-              <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#666' }}>Encryption interface</h3>
-              <div ref={setInterfaceContainer} style={{ border: '1px dashed #ddd', borderRadius: 8, minHeight: 40 }} />
-            </div>
+            {/* The interface iframe lives in a modal the PRODUCT draws, like Docs
+                and Drive do: the modal provides the card, its padding and the
+                close control. That control only ASKS the interface to close
+                (requestClose): mid-backup the interface answers with its own
+                confirmation, and the modal goes away on 'interface:closed'. The
+                container element stays mounted so the SDK can attach to it
+                before the modal is even open. */}
+            <Modal
+              isOpen={interfaceOpen}
+              onClose={() => vaultClient.requestClose()}
+              closeOnClickOutside={false}
+              size={interfaceSize}
+              aria-label="Encryption"
+            >
+              <div ref={hostContainerRef} className="demo-encryption-host" style={{ minHeight: 120 }} />
+            </Modal>
 
             {/* Create document — hidden while the onboarding/settings interface is
                 open, so it only appears once encryption is fully set up. */}

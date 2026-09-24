@@ -71,7 +71,7 @@ export function StandardLayout(props: PropsWithChildren<StandardLayoutProps>) {
           )}
         </MjmlRaw>
       </MjmlHead>
-      <MjmlBody width={500}>
+      <MjmlBody width={500} backgroundColor={emailPalette.lightBody}>
         <MjmlWrapper fullWidth cssClass="body-wrapper" backgroundColor={emailPalette.lightBody}>
           <MjmlSection cssClass="logo-section">
             <MjmlGroup>

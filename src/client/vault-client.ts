@@ -1,7 +1,9 @@
 import {
   MSG_INTERFACE_CLOSED,
   MSG_INTERFACE_CONTEXT,
+  MSG_INTERFACE_HOST_SIZE,
   MSG_INTERFACE_ONBOARDING_COMPLETE,
+  MSG_INTERFACE_REQUEST_CLOSE,
   MSG_INTERFACE_REQUEST_CONTEXT,
   MSG_INTERFACE_RESIZE,
   MSG_INTERFACE_SET_THEME,
@@ -90,6 +92,12 @@ export interface EncryptionClientEventMap {
   'onboarding:complete': { publicKey: string };
   /** Fired when the user cancels or closes the interface */
   [MSG_INTERFACE_CLOSED]: void;
+  /**
+   * Fired when the shown screen wants a modal of another width: the product
+   * switches its modal between the design system's small (350px) and medium
+   * (600px) sizes. Emitted on every screen change, so a product can also ignore it.
+   */
+  'interface:size': { size: 'small' | 'medium' };
   /** Fired on errors from the vault or the interface */
   error: Error;
   /** Fired when keys changed from another tab/product (via BroadcastChannel) */
@@ -757,6 +765,27 @@ export class VaultClient {
   }
 
   /**
+   * Ask the interface to close, from the product's own close control (the X of
+   * the modal hosting the iframe). The interface owns the decision: mid-backup
+   * it shows its "cancel setup?" confirmation instead of closing, so a product
+   * must NOT unmount its modal here. It waits for the 'interface:closed' event,
+   * which fires once the interface has really closed (for this request or any
+   * other reason). With no interface open this is a no-op that still emits
+   * 'interface:closed', so a product's close handler stays uniform.
+   */
+  requestClose(): void {
+    const target = this.interfaceIframe?.contentWindow;
+
+    if (!target) {
+      this.emit(MSG_INTERFACE_CLOSED, undefined as never);
+
+      return;
+    }
+
+    target.postMessage({ type: MSG_INTERFACE_REQUEST_CLOSE }, this.interfaceOrigin);
+  }
+
+  /**
    * Close the interface iframe if it is open.
    */
   closeInterface(): void {
@@ -795,6 +824,9 @@ export class VaultClient {
     this.closeInterface();
 
     this.interfaceIframe = this.buildInterfaceIframe(path);
+    // A placeholder height while the interface loads, so the product's modal does
+    // not open collapsed; dropped on the first size report, otherwise a screen
+    // shorter than this shows the difference as empty space under its content.
     this.interfaceIframe.style.minHeight = '300px';
     container.appendChild(this.interfaceIframe);
   }
@@ -827,6 +859,9 @@ export class VaultClient {
     iframe.style.width = '100%';
     iframe.style.border = 'none';
     iframe.style.overflow = 'hidden';
+    // The frame is sized to its content (see MSG_INTERFACE_RESIZE); its own
+    // viewport must never scroll, or a rounding pixel shows up as a scrollbar.
+    iframe.setAttribute('scrolling', 'no');
     // Sandbox permissions (principle of least privilege):
     // - allow-scripts: required for the React app and OIDC client
     // - allow-same-origin: required for sessionStorage (OIDC state)
@@ -1157,7 +1192,7 @@ export class VaultClient {
       return;
     }
 
-    const msg = data as { type: string; publicKey?: string; height?: number; outcome?: 'resolved' | 'cancelled' };
+    const msg = data as { type: string; publicKey?: string; height?: number; size?: string; outcome?: 'resolved' | 'cancelled' };
 
     switch (msg.type) {
       case MSG_INTERFACE_REQUEST_CONTEXT:
@@ -1176,8 +1211,12 @@ export class VaultClient {
         // its own modal, so collapsing it to content height would break the
         // backdrop.
         if (msg.height && this.interfaceIframe && !this.verifyOverlay) {
+          this.interfaceIframe.style.minHeight = '';
           this.interfaceIframe.style.height = `${Math.ceil(msg.height)}px`;
         }
+        break;
+      case MSG_INTERFACE_HOST_SIZE:
+        this.emit('interface:size', { size: msg.size === 'medium' ? 'medium' : 'small' });
         break;
       case MSG_INTERFACE_ONBOARDING_COMPLETE:
         this.emit('onboarding:complete', { publicKey: msg.publicKey ?? '' });

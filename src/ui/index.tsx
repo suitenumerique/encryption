@@ -51,7 +51,10 @@ if (isIframe || isAuthRoute) {
       let timer: ReturnType<typeof setTimeout> | undefined;
 
       const post = () => {
-        const height = document.body.scrollHeight;
+        // `scrollHeight` rounds a fractional layout height down, and a frame one
+        // pixel shorter than its content grows a scrollbar; the rect keeps the
+        // fraction, and the ceiling covers it.
+        const height = Math.ceil(document.body.getBoundingClientRect().height);
         if (height === lastPosted) return;
         lastPosted = height;
         window.parent.postMessage({ type: MSG_INTERFACE_RESIZE, height }, '*');

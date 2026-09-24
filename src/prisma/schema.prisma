@@ -6,7 +6,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  schemas  = ["encryption"]
 }
 
 /// Signature (identity) algorithm. A closed set, not a free string: every value
@@ -19,8 +18,6 @@ datasource db {
 ///     signed string.
 enum SignatureAlgo {
   ed25519
-
-  @@schema("encryption")
 }
 
 /// Encryption (KEM) algorithm. Same closed-set rules. Unlike the signature algo,
@@ -30,8 +27,6 @@ enum SignatureAlgo {
 /// the identifier `x_wing`.
 enum EncryptionAlgo {
   x_wing @map("x-wing")
-
-  @@schema("encryption")
 }
 
 /// The kind of a sealed vault item (routing metadata the CLIENT uses to rebuild
@@ -46,8 +41,6 @@ enum VaultItemType {
   encryptionKey
   tofu
   active
-
-  @@schema("encryption")
 }
 
 /// A user of the encryption service. `id` is the canonical, immutable user
@@ -73,7 +66,6 @@ model User {
   emergencyAccessReceived EmergencyAccess[]        @relation("emergencyAccessAsGrantee")
 
   @@map("users")
-  @@schema("encryption")
 }
 
 /// One OIDC credential (issuer + sub) linked to a user. `subject` is only
@@ -98,7 +90,6 @@ model OidcAccount {
   @@unique([issuer, subject])
   @@index([userId])
   @@map("oidc_accounts")
-  @@schema("encryption")
 }
 
 /// A user's IDENTITY: the Ed25519 signature key contacts verify out-of-band
@@ -146,7 +137,6 @@ model Identity {
   @@unique([userId, generation])
   @@index([userId, disabledAt])
   @@map("identities")
-  @@schema("encryption")
 }
 
 /// One encryption public key (X-Wing wire blob) bound to an Identity for one
@@ -184,7 +174,6 @@ model EncryptionKey {
   @@index([userId, createdAt])
   @@index([identityId])
   @@map("encryption_keys")
-  @@schema("encryption")
 }
 
 /// Pending proof-of-possession challenges for identity registration.
@@ -215,7 +204,6 @@ model KeyPossessionChallenge {
   @@index([userId])
   @@index([expiresAt])
   @@map("key_possession_challenges")
-  @@schema("encryption")
 }
 
 /// One opaque record of a user's synchronized vault (an encryption key version,
@@ -238,7 +226,6 @@ model VaultItem {
   @@unique([vaultId, itemId])
   @@index([vaultId])
   @@map("vault_items")
-  @@schema("encryption")
 }
 
 /// Per-vault metadata: the monotonic account revision (what clients poll to
@@ -261,7 +248,6 @@ model VaultMeta {
   vault VaultKeyring @relation(fields: [vaultId], references: [id], onDelete: Cascade)
 
   @@map("vault_meta")
-  @@schema("encryption")
 }
 
 /// A user's vault (container). A user can hold SEVERAL keyrings over time:
@@ -289,7 +275,6 @@ model VaultKeyring {
   @@index([userId])
   @@index([userId, disabledAt])
   @@map("vault_keyring")
-  @@schema("encryption")
 }
 
 /// The kind of a vault credential. `primary` is the owner's own recovery phrase
@@ -299,8 +284,6 @@ model VaultKeyring {
 enum VaultCredentialType {
   primary
   emergency
-
-  @@schema("encryption")
 }
 
 /// One way to unlock a vault (a keyslot, LUKS-style): the material derived from
@@ -332,7 +315,6 @@ model VaultCredential {
 
   @@index([vaultId])
   @@map("vault_credentials")
-  @@schema("encryption")
 }
 
 /// Lifecycle of a trusted-contact relationship
@@ -341,8 +323,6 @@ enum EmergencyAccessStatus {
   confirmed
   recoveryRequested @map("recovery_requested")
   recoveryApproved  @map("recovery_approved")
-
-  @@schema("encryption")
 }
 
 /// A trusted-contact (emergency access) relationship. Created in ONE step by
@@ -383,7 +363,6 @@ model EmergencyAccess {
   @@index([granteeIdentityId])
   @@index([status, recoveryRequestedAt])
   @@map("emergency_access")
-  @@schema("encryption")
 }
 
 /// Single-use nonce issued before a vault fetch or write, signed by the caller's
@@ -399,7 +378,6 @@ model VaultChallenge {
   @@index([userId])
   @@index([expiresAt])
   @@map("vault_challenges")
-  @@schema("encryption")
 }
 
 /// A device-approval request. A new device publishes its ephemeral public key
@@ -421,5 +399,4 @@ model VaultApproval {
   @@index([userId])
   @@index([expiresAt])
   @@map("vault_approvals")
-  @@schema("encryption")
 }
