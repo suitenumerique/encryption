@@ -108,8 +108,7 @@ export const BROADCAST_KEYS_DESTROYED = 'keys-destroyed';
 // --- Interface messages (encryption ↔ parent product) ---
 export const MSG_INTERFACE_CONTEXT = 'interface:context';
 export const MSG_INTERFACE_REQUEST_CONTEXT = 'interface:request-context';
-export const MSG_INTERFACE_RESIZE = 'interface:resize';
-export const MSG_INTERFACE_HOST_SIZE = 'interface:host-size';
+export const MSG_INTERFACE_SHOWN = 'interface:shown';
 export const MSG_INTERFACE_SET_THEME = 'interface:set-theme';
 export const MSG_INTERFACE_ONBOARDING_COMPLETE = 'interface:onboarding-complete';
 export const MSG_INTERFACE_CLOSED = 'interface:closed';

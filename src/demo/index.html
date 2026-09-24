@@ -15,35 +15,12 @@
         min-height: 100%;
       }
 
-      /* The modal hosting the encryption interface is the design system's
-         350px "small" modal; Cunningham's small is 300px. */
-      .c__modal--small:has(.demo-encryption-host) {
-        width: 350px;
-      }
-
-      /* The interface pads its own screens: the modal gives its iframe the bare box. */
-      .c__modal:has(.demo-encryption-host) .c__modal__scroller {
-        padding: 0;
-      }
-
-      /* The design system's close control is a zero-height sticky spot inside the
-         scroller: while the modal does not scroll it sits in the top padding, and once
-         it scrolls it pins elsewhere, so the cross jumps and the content shows through
-         around it. Anchoring it to the modal box itself keeps it in the same corner
-         in every case, and a halo in the modal's colour masks what scrolls under it. */
-      .c__modal:has(.demo-encryption-host) .c__modal__close {
-        position: absolute;
-        top: 0.4rem;
-        right: 0.4rem;
-        height: auto;
-        z-index: 1;
-      }
-
-      .c__modal:has(.demo-encryption-host) .c__modal__close .c__button {
-        top: 0;
-        right: 0;
-        background: var(--c--components--modal--background-color);
-        box-shadow: 0 0 0 4px var(--c--components--modal--background-color);
+      /* The interface draws its own modal over the page; the product's modal only
+         holds a loader until then. */
+      .demo-encryption-loading {
+        display: flex;
+        justify-content: center;
+        padding: 24px 0;
       }
     </style>
   </head>

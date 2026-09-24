@@ -491,6 +491,9 @@
   "docs": {
     "disabled": "La documentation n'est pas disponible sur cette instance."
   },
+  "interface": {
+    "title": "Chiffrement"
+  },
   "identity": {
     "copied": "Copié",
     "copy_fingerprint": "Copier l'empreinte"

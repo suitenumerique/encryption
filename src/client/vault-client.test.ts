@@ -126,27 +126,26 @@ describe('VaultClient per-flow context', () => {
 });
 
 describe('VaultClient.openRecipientProfile', () => {
-  it('mounts the interface at /recipient-profile in the given container', () => {
+  it('loads the interface at /recipient-profile in a hidden full-viewport layer on the body', () => {
     const { client, internal } = makeClient();
     client.setAuthContext({ suiteUserId: 'me' });
-    const container = document.createElement('div');
-    document.body.appendChild(container);
 
-    client.openRecipientProfile(container, 'u1', { email: 'alice@example.test' });
+    client.openRecipientProfile('u1', { email: 'alice@example.test' });
 
-    const iframe = container.querySelector('iframe');
+    const iframe = document.body.querySelector('iframe[title="Encryption Interface"]');
     expect(iframe).not.toBeNull();
-    expect(iframe!.src).toContain('/recipient-profile');
+    expect(iframe!.getAttribute('src')).toContain('/recipient-profile');
+    // Hidden until the app inside reports it mounted; transparent over the product.
+    expect((iframe!.parentElement as HTMLElement).style.visibility).toBe('hidden');
+    expect((iframe as HTMLIFrameElement).style.background).toBe('transparent');
     expect(internal.pendingContext).toEqual({ recipientProfile: { userId: 'u1', label: { email: 'alice@example.test' } } });
   });
 
   it('threads the profile userId and its label into the context payload', () => {
     const { client, internal } = makeClient();
     client.setAuthContext({ suiteUserId: 'me' });
-    const container = document.createElement('div');
-    document.body.appendChild(container);
 
-    client.openRecipientProfile(container, 'u1', { email: 'alice@example.test', name: 'Alice' });
+    client.openRecipientProfile('u1', { email: 'alice@example.test', name: 'Alice' });
 
     const target = { postMessage: vi.fn() };
     internal.sendContext(target);

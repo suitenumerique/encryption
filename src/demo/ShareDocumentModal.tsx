@@ -482,13 +482,11 @@ export function ShareDocumentModal({
   // opens the encryption interface at that person's profile screen inside a
   // demo-owned container (the interface draws its own trust/fingerprint UI).
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
-  const [profileContainer, setProfileContainer] = useState<HTMLDivElement | null>(null);
 
-  // Mount (or re-target) the profile iframe once both the target userId and the
-  // container element exist. Re-runs when either changes, so switching between
-  // recipients re-points the same overlay.
+  // Open (or re-target) the profile once a target userId is set. The interface
+  // draws its own modal above this one; switching recipients re-points it.
   useEffect(() => {
-    if (!profileUserId || !profileContainer || !vaultClient) return;
+    if (!profileUserId || !vaultClient) return;
 
     // The label travels with the rows we already display (search results,
     // pending selection, existing accesses).
@@ -502,8 +500,8 @@ export function ShareDocumentModal({
 
     if (!label) return;
 
-    vaultClient.openRecipientProfile(profileContainer, profileUserId, label);
-  }, [profileUserId, profileContainer, vaultClient, searchUsers, selectedUsers, accesses]);
+    vaultClient.openRecipientProfile(profileUserId, label);
+  }, [profileUserId, vaultClient, searchUsers, selectedUsers, accesses]);
 
   const openProfile = useCallback(
     (userId: string) => {
@@ -514,9 +512,14 @@ export function ShareDocumentModal({
     [vaultClient]
   );
 
-  const closeProfile = useCallback(() => {
-    vaultClient?.closeInterface();
-    setProfileUserId(null);
+  // The interface reports its own close (its cross, or a decision taken).
+  useEffect(() => {
+    if (!vaultClient) return;
+
+    const handleClosed = () => setProfileUserId(null);
+    vaultClient.on('interface:closed', handleClosed);
+
+    return () => vaultClient.off('interface:closed', handleClosed);
   }, [vaultClient]);
 
   // Only expose the affordance when there is a client to open the profile with.
@@ -643,14 +646,6 @@ export function ShareDocumentModal({
           </QuickSearch>
         </div>
       </Modal>
-
-      {/* Recipient profile: a second product modal hosting the interface iframe
-          above the share modal. No title: the interface draws its own. */}
-      {profileUserId && (
-        <Modal isOpen onClose={closeProfile} closeOnClickOutside size={ModalSize.SMALL} aria-label="Encryption identity">
-          <div ref={setProfileContainer} className="demo-encryption-host" style={{ minHeight: 120 }} />
-        </Modal>
-      )}
     </>
   );
 }

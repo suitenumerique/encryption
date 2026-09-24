@@ -60,7 +60,6 @@ interface EmergencyAccessProps {
   currentAccessToken?: string | null;
   /** Set when the SDK auto-opened the interface on actionable state: leads with a prompt modal. */
   emergencyPending?: InterfaceContext['emergencyPending'] | null;
-  overlayMode?: boolean;
 }
 
 // Localized "in 44 days" / "dans 3 heures" via the browser's own relative-time
@@ -569,7 +568,6 @@ export function EmergencyAccess({
   isAuthenticating = false,
   currentAccessToken = null,
   emergencyPending = null,
-  overlayMode = false,
 }: EmergencyAccessProps) {
   const { t, i18n } = useTranslation('common');
   const { isReady, request, createEmergencyEscrow, verifyEscrows } = useEncryptionContext();
@@ -813,9 +811,8 @@ export function EmergencyAccess({
   // + centered card), exactly like VerifyRecipients, or the page sprawls
   // full-width and see-through over the product. Navigated normally (the settings
   // sub-page), we ARE the page, so the host modal already frames us.
-  // `overlayMode` is the synchronous signal (URL hash); `emergencyPending` is kept
-  // as a fallback for callers that pass the context directly (stories, tests).
-  const isOverlay = overlayMode || emergencyPending !== null;
+  // The SDK sets that context only when it opened us on its own.
+  const isOverlay = emergencyPending !== null;
   const frame = (children: ReactNode, open = true): ReactNode =>
     isOverlay ? (
       <Modal isOpen={open} onClose={onClose} closeOnClickOutside={false} size={ModalSize.MEDIUM} aria-label={t('emergency.title')}>
