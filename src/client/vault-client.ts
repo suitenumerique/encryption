@@ -1,12 +1,11 @@
 import {
   MSG_INTERFACE_CLOSED,
   MSG_INTERFACE_CONTEXT,
-  MSG_INTERFACE_HOST_SIZE,
   MSG_INTERFACE_ONBOARDING_COMPLETE,
   MSG_INTERFACE_REQUEST_CLOSE,
   MSG_INTERFACE_REQUEST_CONTEXT,
-  MSG_INTERFACE_RESIZE,
   MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_SHOWN,
   MSG_INTERFACE_VERIFY_COMPLETE,
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_DECRYPT_WITH_KEY,
@@ -93,11 +92,11 @@ export interface EncryptionClientEventMap {
   /** Fired when the user cancels or closes the interface */
   [MSG_INTERFACE_CLOSED]: void;
   /**
-   * Fired when the shown screen wants a modal of another width: the product
-   * switches its modal between the design system's small (350px) and medium
-   * (600px) sizes. Emitted on every screen change, so a product can also ignore it.
+   * Fired when the interface opened by an open* call is on screen: the product
+   * dismisses the loader it showed meanwhile. Not fired for the overlays the SDK
+   * opens on its own (verify recipients, the emergency prompt).
    */
-  'interface:size': { size: 'small' | 'medium' };
+  'interface:ready': void;
   /** Fired on errors from the vault or the interface */
   error: Error;
   /** Fired when keys changed from another tab/product (via BroadcastChannel) */
@@ -129,8 +128,8 @@ type Listener<K extends keyof EncryptionClientEventMap> = (data: EncryptionClien
  *     await encryption.init();
  *
  *     if (!(await encryption.hasKeys()).hasKeys) {
- *       // Opens visible interface iframe for onboarding
- *       encryption.openOnboarding(document.getElementById('modal-container'));
+ *       // Opens the interface over the page (it draws its own modal)
+ *       encryption.openOnboarding();
  *       encryption.on('onboarding:complete', ({ publicKey }) => { ... });
  *     }
  *
@@ -149,7 +148,8 @@ interface EmergencyPendingContext {
 // booted before removing itself (see surfaceEmergencyPending). Generous enough
 // for a cold bundle on a slow connection, short enough that a broken interface
 // does not hold the product page hostage.
-const EMERGENCY_OVERLAY_BOOT_TIMEOUT_MS = 15_000;
+const OVERLAY_BOOT_TIMEOUT_MS = 15_000;
+const OVERLAY_READY_FALLBACK_MS = 500;
 
 export class VaultClient {
   private vaultIframe: HTMLIFrameElement | null = null;
@@ -167,16 +167,19 @@ export class VaultClient {
   private theme: string;
   private lang: string | null;
   private authContext: AuthContext | null = null;
-  // "Verify recipients" trust modal: the SDK-created full-screen overlay hosting
-  // the interface iframe and the resolver awaiting its outcome.
-  private verifyOverlay: HTMLElement | null = null;
+  // The full-viewport, transparent layer hosting the interface iframe, for every
+  // flow: the interface draws its own modal (backdrop and card) inside it, so
+  // nothing is ever sized across the two windows. Kept invisible until the app
+  // inside mounted (see openOverlay), with a watchdog for a page that never comes up.
+  private overlay: HTMLDivElement | null = null;
+  private overlayWatchdog: ReturnType<typeof setTimeout> | null = null;
+  private overlayBootFailure: 'silent' | 'report' = 'report';
+  private overlayReadyFallback: ReturnType<typeof setTimeout> | null = null;
+  // "Verify recipients": the resolver awaiting the overlay's outcome.
   private verifyResolve: ((outcome: 'resolved' | 'cancelled') => void) | null = null;
-  // SDK-owned overlay for the auto-surfaced emergency-access prompt, plus a
-  // once-per-page-load latch (it reappears on the next load while actionable,
-  // without nagging within a session).
-  private emergencyOverlay: HTMLDivElement | null = null;
+  // Once-per-page-load latch for the auto-surfaced emergency-access prompt (it
+  // reappears on the next load while actionable, without nagging within a session).
   private emergencySurfaced = false;
-  private emergencyWatchdog: ReturnType<typeof setTimeout> | null = null;
   // The per-flow context owed to the interface iframe, set when a flow opens and
   // cleared on teardown / closeInterface. Ephemeral by design: recipient labels
   // (name/email) are display-only and never persisted, synced, or sent to any
@@ -308,9 +311,8 @@ export class VaultClient {
     this.completeVerify('cancelled');
 
     this.removeIframe(this.vaultIframe);
-    this.removeIframe(this.interfaceIframe);
     this.vaultIframe = null;
-    this.interfaceIframe = null;
+    this.closeInterface();
     this.pending.clear();
     this.listeners.clear();
   }
@@ -704,62 +706,63 @@ export class VaultClient {
 
   /**
    * Open the encryption interface for onboarding (key generation + backup).
-   * The product provides a container element where the interface iframe will be mounted.
-   * The product is responsible for showing/hiding this container (e.g. in a modal).
    *
-   * Listen to 'onboarding:complete' and 'interface:closed' events for results.
+   * Every open* call lays a transparent, full-viewport layer over the page and
+   * loads the interface in it; the interface draws its own modal there (card,
+   * backdrop, close control, width), so the product shows nothing but a loader
+   * until 'interface:ready', and unmounts that loader on 'interface:closed'.
+   * Listen to 'onboarding:complete' for the result.
    */
-  openOnboarding(container: HTMLElement): void {
-    this.openInterface(container, '/onboarding');
+  openOnboarding(): void {
+    this.openOverlay('/onboarding');
   }
 
   /**
    * Open the encryption interface for key backup/export.
    */
-  openBackup(container: HTMLElement): void {
-    this.openInterface(container, '/backup');
+  openBackup(): void {
+    this.openOverlay('/backup');
   }
 
   /**
    * Open the encryption interface for key restoration from backup.
    */
-  openRestore(container: HTMLElement): void {
-    this.openInterface(container, '/restore');
+  openRestore(): void {
+    this.openOverlay('/restore');
   }
 
   /**
    * Open the encryption settings (view fingerprint, delete keys).
    */
-  openSettings(container: HTMLElement): void {
-    this.openInterface(container, '/settings');
+  openSettings(): void {
+    this.openOverlay('/settings');
   }
 
   /**
    * Open device approval: enroll this device from another, or approve a new one.
    */
-  openDeviceApproval(container: HTMLElement): void {
-    this.openInterface(container, '/device-approval');
+  openDeviceApproval(): void {
+    this.openOverlay('/device-approval');
   }
 
   /**
    * Open the emergency-access (trusted contacts) management screen: designate
    * contacts, accept a designation, follow or refuse a running recovery.
    */
-  openEmergencyAccess(container: HTMLElement): void {
-    this.openInterface(container, '/emergency-access');
+  openEmergencyAccess(): void {
+    this.openOverlay('/emergency-access');
   }
 
   /**
    * Open the per-recipient profile: the recipient's current trust decision, their
    * identity fingerprint (for out-of-band comparison), and Trust / Refuse actions.
-   * Opened explicitly by the product (e.g. clicking a person in its share UI), so
-   * it mounts in a product-provided container like the other open* methods.
+   * Opened explicitly by the product (e.g. clicking a person in its share UI).
    * `userId` is the recipient's OIDC sub, like every id a product passes.
    */
-  openRecipientProfile(container: HTMLElement, userId: string, label: RecipientLabel): void {
+  openRecipientProfile(userId: string, label: RecipientLabel): void {
     // Reset per-flow state, then set the profile target so the context handshake
     // carries it (and its display label) once the iframe loads / requests context.
-    this.openInterface(container, '/recipient-profile');
+    this.openOverlay('/recipient-profile');
     this.pendingContext = { recipientProfile: { userId, label } };
     this.sendContext(this.interfaceIframe?.contentWindow);
   }
@@ -789,15 +792,23 @@ export class VaultClient {
    * Close the interface iframe if it is open.
    */
   closeInterface(): void {
-    if (this.interfaceIframe) {
-      this.removeIframe(this.interfaceIframe);
-      this.interfaceIframe = null;
+    if (this.overlayWatchdog !== null) {
+      clearTimeout(this.overlayWatchdog);
+      this.overlayWatchdog = null;
     }
+    if (this.overlayReadyFallback !== null) {
+      clearTimeout(this.overlayReadyFallback);
+      this.overlayReadyFallback = null;
+    }
+
+    // The overlay owns the interface iframe, so it goes with it.
+    if (this.overlay?.parentNode) this.overlay.parentNode.removeChild(this.overlay);
+    this.overlay = null;
+    this.interfaceIframe = null;
 
     // Context scoped to a single interface flow — clear it so a later open()
     // of another screen never re-sends a stale flow block.
     this.pendingContext = null;
-    this.teardownEmergencyOverlay();
   }
 
   // =========================================================================
@@ -820,15 +831,87 @@ export class VaultClient {
   // Private
   // =========================================================================
 
-  private openInterface(container: HTMLElement, path: string): void {
+  /**
+   * Lay the transparent full-viewport layer over the page and load the interface
+   * in it. The layer stays `visibility: hidden` until the app inside reports its
+   * modal painted, and that is the only right way to hide it:
+   *  - `display: none` would stop the iframe laying out, so the app inside could
+   *    mount at zero size;
+   *  - `opacity: 0` would keep the layer in the hit-test, so this full-viewport
+   *    element would silently swallow every click on the product underneath;
+   *  - `visibility: hidden` still loads and lays the iframe out, but drops it
+   *    from hit-testing, so clicks pass through to the product until the reveal.
+   * A watchdog tears down a page that never comes up: reported to the product
+   * (an 'error' then 'interface:closed', so its loader goes) for a flow it asked
+   * for, silently for the overlays the SDK opens on its own.
+   */
+  private openOverlay(path: string, bootFailure: 'silent' | 'report' = 'report'): void {
     this.closeInterface();
 
-    this.interfaceIframe = this.buildInterfaceIframe(path);
-    // A placeholder height while the interface loads, so the product's modal does
-    // not open collapsed; dropped on the first size report, otherwise a screen
-    // shorter than this shows the difference as empty space under its content.
-    this.interfaceIframe.style.minHeight = '300px';
-    container.appendChild(this.interfaceIframe);
+    const overlay = document.createElement('div');
+    overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647', 'visibility: hidden'].join(';');
+
+    const iframe = this.buildInterfaceIframe(path);
+    // Fill the layer and stay transparent, so the product shows through the
+    // backdrop the interface draws.
+    iframe.style.height = '100%';
+    iframe.style.background = 'transparent';
+    iframe.setAttribute('allowtransparency', 'true');
+
+    this.interfaceIframe = iframe;
+    overlay.appendChild(iframe);
+    document.body.appendChild(overlay);
+    this.overlay = overlay;
+    this.overlayBootFailure = bootFailure;
+
+    this.overlayWatchdog = setTimeout(() => {
+      this.overlayWatchdog = null;
+      if (!this.overlay) return;
+
+      this.closeInterface();
+      if (bootFailure === 'report') {
+        this.emit('error', new Error('The encryption interface did not load.'));
+        this.emit(MSG_INTERFACE_CLOSED, undefined as never);
+      }
+    }, OVERLAY_BOOT_TIMEOUT_MS);
+  }
+
+  /**
+   * The app inside came up: stand the watchdog down and wait for its modal
+   * (`revealOverlay`), for a bounded time. The layer stays hidden meanwhile,
+   * over the product's own loader.
+   */
+  private overlayBooted(): void {
+    if (this.overlayWatchdog !== null) {
+      clearTimeout(this.overlayWatchdog);
+      this.overlayWatchdog = null;
+    }
+
+    if (!this.overlay || this.overlayReadyFallback !== null) return;
+
+    // Should the report never come, the layer must still show and the loader go.
+    this.overlayReadyFallback = setTimeout(() => this.revealOverlay(), OVERLAY_READY_FALLBACK_MS);
+  }
+
+  /**
+   * The app inside has its modal in the DOM: show the layer and have the
+   * product drop its loader, in one go, so both land in the same paint. The
+   * layer is transparent and both modals dim the page the same way, so a
+   * moment with the two of them, or with neither, would show as a blink.
+   * Once per opening.
+   */
+  private revealOverlay(): void {
+    if (this.overlayReadyFallback !== null) {
+      clearTimeout(this.overlayReadyFallback);
+      this.overlayReadyFallback = null;
+    }
+
+    if (!this.overlay || this.overlay.style.visibility === 'visible') return;
+
+    // The product's state update first, so its render is queued before the
+    // layer's style change and neither waits a frame for the other.
+    if (this.overlayBootFailure === 'report') this.emit('interface:ready', undefined as never);
+    this.overlay.style.visibility = 'visible';
   }
 
   /**
@@ -843,7 +926,7 @@ export class VaultClient {
    * variant first (full-width and opaque, over the product) and swap to the modal
    * only once the handshake lands, which reads as a flash.
    */
-  private buildInterfaceIframe(path: string, options: { overlay?: boolean } = {}): HTMLIFrameElement {
+  private buildInterfaceIframe(path: string): HTMLIFrameElement {
     const iframe = document.createElement('iframe');
     const hashParams = new URLSearchParams({ theme: this.theme });
 
@@ -851,17 +934,9 @@ export class VaultClient {
       hashParams.set('lang', this.lang);
     }
 
-    if (options.overlay) {
-      hashParams.set('overlay', '1');
-    }
-
     iframe.src = `${this.interfaceUrl}${path}#${hashParams.toString()}`;
     iframe.style.width = '100%';
     iframe.style.border = 'none';
-    iframe.style.overflow = 'hidden';
-    // The frame is sized to its content (see MSG_INTERFACE_RESIZE); its own
-    // viewport must never scroll, or a rounding pixel shows up as a scrollbar.
-    iframe.setAttribute('scrolling', 'no');
     // Sandbox permissions (principle of least privilege):
     // - allow-scripts: required for the React app and OIDC client
     // - allow-same-origin: required for sessionStorage (OIDC state)
@@ -913,28 +988,8 @@ export class VaultClient {
    * rest of the interface UI. Tears the overlay down once the outcome is in.
    */
   private openVerifyRecipients(recipients: Record<string, RecipientLabel>): Promise<'resolved' | 'cancelled'> {
-    this.closeInterface();
-    this.teardownVerifyOverlay();
-
+    this.openOverlay('/verify-recipients', 'silent');
     this.pendingContext = { verifyRecipients: { recipients } };
-
-    // Minimal full-viewport layer: no background, no card. The React app inside
-    // draws the modal; keeping this transparent lets its backdrop show through.
-    const overlay = document.createElement('div');
-    overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647'].join(';');
-
-    const iframe = this.buildInterfaceIframe('/verify-recipients', { overlay: true });
-    // Fill the layer and stay transparent so the interface-drawn backdrop is what
-    // the user sees (not an SDK-managed card).
-    iframe.style.height = '100%';
-    iframe.style.background = 'transparent';
-    iframe.setAttribute('allowtransparency', 'true');
-    // Assigning to interfaceIframe lets the shared context handshake and theme
-    // updates target this iframe exactly like any other flow.
-    this.interfaceIframe = iframe;
-    overlay.appendChild(iframe);
-    document.body.appendChild(overlay);
-    this.verifyOverlay = overlay;
 
     return new Promise<'resolved' | 'cancelled'>((resolve) => {
       this.verifyResolve = resolve;
@@ -969,79 +1024,17 @@ export class VaultClient {
     if (this.emergencySurfaced || this.interfaceIframe) return;
     this.emergencySurfaced = true;
 
+    this.openOverlay('/emergency-access', 'silent');
     this.pendingContext = {
       emergencyPending: { recovery: state.recovery, invitation: state.invitation },
     };
-
-    const overlay = document.createElement('div');
-    // `visibility: hidden` is load-bearing here, and it is the only one of the
-    // three obvious ways to hide this that does the right thing:
-    //  - `display: none` would stop the iframe laying out, so the app inside can
-    //    mount at zero height and measure itself wrong;
-    //  - `opacity: 0` would keep the layer in the hit-test, so this full-viewport
-    //    element would silently swallow every click on the product underneath;
-    //  - `visibility: hidden` still loads and sizes the iframe, but drops the
-    //    element from hit-testing entirely, so clicks pass through to the product
-    //    until the overlay is revealed. Verified in Chromium.
-    overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647', 'visibility: hidden'].join(';');
-
-    const iframe = this.buildInterfaceIframe('/emergency-access', { overlay: true });
-    iframe.style.height = '100%';
-    iframe.style.background = 'transparent';
-    iframe.setAttribute('allowtransparency', 'true');
-    this.interfaceIframe = iframe;
-    overlay.appendChild(iframe);
-    document.body.appendChild(overlay);
-    this.emergencyOverlay = overlay;
-
-    this.emergencyWatchdog = setTimeout(() => {
-      this.emergencyWatchdog = null;
-      if (this.emergencyOverlay) this.closeInterface();
-    }, EMERGENCY_OVERLAY_BOOT_TIMEOUT_MS);
-  }
-
-  /**
-   * The interface app mounted. Reveal the overlay we kept hidden and stand the
-   * watchdog down. No-op for every other flow (the product owns their container).
-   */
-  private revealEmergencyOverlay(): void {
-    if (this.emergencyWatchdog !== null) {
-      clearTimeout(this.emergencyWatchdog);
-      this.emergencyWatchdog = null;
-    }
-
-    if (this.emergencyOverlay) this.emergencyOverlay.style.visibility = 'visible';
-  }
-
-  private teardownEmergencyOverlay(): void {
-    if (this.emergencyWatchdog !== null) {
-      clearTimeout(this.emergencyWatchdog);
-      this.emergencyWatchdog = null;
-    }
-
-    if (this.emergencyOverlay?.parentNode) {
-      this.emergencyOverlay.parentNode.removeChild(this.emergencyOverlay);
-    }
-
-    this.emergencyOverlay = null;
   }
 
   private completeVerify(outcome: 'resolved' | 'cancelled'): void {
     const resolve = this.verifyResolve;
     this.verifyResolve = null;
-    this.teardownVerifyOverlay();
+    this.closeInterface();
     resolve?.(outcome);
-  }
-
-  private teardownVerifyOverlay(): void {
-    if (this.verifyOverlay?.parentNode) {
-      this.verifyOverlay.parentNode.removeChild(this.verifyOverlay);
-    }
-
-    this.verifyOverlay = null;
-    this.pendingContext = null;
-    // The overlay owned the interface iframe, so it is gone with it.
-    this.interfaceIframe = null;
   }
 
   /**
@@ -1192,31 +1185,18 @@ export class VaultClient {
       return;
     }
 
-    const msg = data as { type: string; publicKey?: string; height?: number; size?: string; outcome?: 'resolved' | 'cancelled' };
+    const msg = data as { type: string; publicKey?: string; outcome?: 'resolved' | 'cancelled' };
 
     switch (msg.type) {
       case MSG_INTERFACE_REQUEST_CONTEXT:
         // Handshake: interface iframe requests its context on mount. That request
-        // is also the proof the remote page came up, which is what the SDK-owned
-        // emergency overlay waits for before showing itself.
+        // is also the proof the remote page came up.
         this.sendContext(this.interfaceIframe?.contentWindow);
-        this.revealEmergencyOverlay();
+        this.overlayBooted();
         break;
-      case MSG_INTERFACE_RESIZE:
-        // Auto-resize: the interface iframe communicates its content height.
-        // `Math.ceil` alone is sufficient to avoid subpixel scrollbars; an
-        // additional buffer compounded with the child's ResizeObserver
-        // into a feedback loop that grew the iframe ~2px per interaction.
-        // Skipped for the verify overlay: it is a full-viewport iframe drawing
-        // its own modal, so collapsing it to content height would break the
-        // backdrop.
-        if (msg.height && this.interfaceIframe && !this.verifyOverlay) {
-          this.interfaceIframe.style.minHeight = '';
-          this.interfaceIframe.style.height = `${Math.ceil(msg.height)}px`;
-        }
-        break;
-      case MSG_INTERFACE_HOST_SIZE:
-        this.emit('interface:size', { size: msg.size === 'medium' ? 'medium' : 'small' });
+      case MSG_INTERFACE_SHOWN:
+        // The interface has its modal in the DOM: swap the product's loader for it.
+        this.revealOverlay();
         break;
       case MSG_INTERFACE_ONBOARDING_COMPLETE:
         this.emit('onboarding:complete', { publicKey: msg.publicKey ?? '' });

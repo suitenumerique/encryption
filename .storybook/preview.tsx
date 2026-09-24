@@ -168,14 +168,13 @@ const preview: Preview = {
       // content grow and scroll rather than being clipped.
       const isFullscreen = context.parameters.layout === 'fullscreen';
 
-      // Interface screens are content for a modal the PRODUCT draws around the
-      // iframe (card, padding, close control). `hostModal` stands in for that
-      // chrome so a story shows the screen at the width it really gets: the
-      // design system's small modal (350px) or, for list-heavy screens, the
-      // medium one. The cross is the product's: it raises the same close request
-      // the SDK relays, so a screen holding a guard reacts like it does in the
-      // product, and an unguarded one only logs. `'card'` is the width alone, for
-      // a component that lives inside a screen and has no close control of its own.
+      // Interface screens are the content of the modal the interface draws over
+      // the product (App.tsx). `hostModal` stands in for that chrome so a story
+      // shows the screen at the width it really gets: the design system's small
+      // modal (350px) or, for list-heavy screens, the medium one. The cross
+      // raises the same close request the modal's does, so a screen holding a
+      // guard reacts like it does in the product, and an unguarded one only logs.
+      // `'card'` is the width alone, for a component that lives inside a screen.
       return (
         <I18nextProvider i18n={i18n}>
           <CunninghamProvider theme={cunninghamTheme}>

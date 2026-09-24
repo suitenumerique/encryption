@@ -6,12 +6,37 @@
  * anatomy (24px card padding, 16px between sections, 40px buttons).
  */
 
-/* The interface's own padding around a screen: the product's modal gives the
-   iframe its box with none, so controls may hang into this area, as the product's
-   cross hangs into the modal's. Same 24px the design system's modal uses. */
-.host {
-  box-sizing: border-box;
-  padding: var(--c--globals--spacings--md);
+/* The modals the interface draws over the product (every screen, and the
+   confirmations on top of one): the design system's small modal widened to 350px,
+   and its close control anchored to the box rather than sticky in the scroller,
+   so it keeps one place whether the content scrolls or not, with a halo that
+   masks what scrolls under it. */
+:global(.c__modal--small) {
+  width: 350px;
+}
+
+/* The design system fades the backdrop in over 200ms. The product already
+   dims the page under its loader and drops it as soon as this modal is
+   painted, so a fade here would let the page show through undimmed in between:
+   the modal appears at once instead. */
+:global(.c__modal__backdrop) {
+  animation: none;
+  opacity: 1;
+}
+
+:global(.c__modal .c__modal__close) {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  height: auto;
+  z-index: 1;
+}
+
+:global(.c__modal .c__modal__close .c__button) {
+  top: 0;
+  right: 0;
+  background: var(--c--components--modal--background-color);
+  box-shadow: 0 0 0 4px var(--c--components--modal--background-color);
 }
 
 .screen {

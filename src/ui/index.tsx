@@ -5,7 +5,6 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import '@encryption/src/i18n';
-import { MSG_INTERFACE_RESIZE } from '@encryption/src/shared/constants';
 import { App } from '@encryption/src/ui/App';
 import { applyBrandFont } from '@encryption/src/ui/brand-font';
 import { installErrorReporting } from '@encryption/src/ui/monitoring';
@@ -39,38 +38,5 @@ if (isIframe || isAuthRoute) {
         <App />
       </StrictMode>
     );
-
-    // Auto-resize: communicate content height to the parent frame (only in iframe mode).
-    // We measure `document.body`, NOT `document.documentElement`:
-    // `<html>` can pick up the iframe's own set height via `height: 100%` /
-    // normalize styles, which creates a feedback loop with the parent's
-    // resize handler — every interaction ratchets the iframe ~2px taller
-    // each time. `<body>` only reflects actual content and is stable.
-    if (isIframe) {
-      let lastPosted = -1;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-
-      const post = () => {
-        // `scrollHeight` rounds a fractional layout height down, and a frame one
-        // pixel shorter than its content grows a scrollbar; the rect keeps the
-        // fraction, and the ceiling covers it.
-        const height = Math.ceil(document.body.getBoundingClientRect().height);
-        if (height === lastPosted) return;
-        lastPosted = height;
-        window.parent.postMessage({ type: MSG_INTERFACE_RESIZE, height }, '*');
-      };
-
-      // A single interaction triggers a burst of reflows (a loading state, a step
-      // change, and — when the new height crosses the parent viewport — a parent
-      // scrollbar toggling our width, which rewraps text and changes our height
-      // again). Posting each one resizes the iframe repeatedly and flickers that
-      // scrollbar. Debounce so the burst settles into a single post.
-      const observer = new ResizeObserver(() => {
-        clearTimeout(timer);
-        timer = setTimeout(post, 50);
-      });
-
-      observer.observe(document.body);
-    }
   }
 }

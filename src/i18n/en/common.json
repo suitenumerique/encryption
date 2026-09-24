@@ -491,6 +491,9 @@
   "docs": {
     "disabled": "Documentation is not available on this instance."
   },
+  "interface": {
+    "title": "Encryption"
+  },
   "identity": {
     "copied": "Copied",
     "copy_fingerprint": "Copy the fingerprint"

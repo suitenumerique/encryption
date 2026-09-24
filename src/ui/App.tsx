@@ -1,13 +1,13 @@
-import { Alert, Button, CunninghamProvider, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import {
   MSG_INTERFACE_CLOSED,
-  MSG_INTERFACE_HOST_SIZE,
   MSG_INTERFACE_ONBOARDING_COMPLETE,
   MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_SHOWN,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
 import { ApiError } from '@encryption/src/ui/api/client';
@@ -25,7 +25,6 @@ import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEn
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
 import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
-import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
 import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
@@ -52,17 +51,6 @@ function getThemeFromHash(): string {
 
 function getLangFromHash(): string | null {
   return getHashParams().get('lang');
-}
-
-/**
- * Whether the SDK mounted us as a full-viewport overlay over a product page
- * (rather than inside a product-provided container). Read from the hash so it is
- * known on the FIRST render: screens that draw their own modal chrome when
- * overlaid would otherwise paint their page variant until the async context
- * handshake lands, which shows up as a flash over the product.
- */
-function isOverlayFromHash(): boolean {
-  return getHashParams().get('overlay') === '1';
 }
 
 /** Send a result back to the parent frame */
@@ -95,28 +83,82 @@ function decodeJwtUserInfo(token: string): UserInfo {
  * state here (auth gates included) guarantees a request is always answered.
  */
 function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Route) => void }) {
+  const { t } = useTranslation('common');
   const parentContext = useParentMessages();
+  // A screen opened from another one (settings -> emergency access, onboarding
+  // -> device approval) replaces it without changing the URL; lives here so the
+  // modal around the screens can follow the one actually shown.
+  const [routeOverride, setRouteOverride] = useState<Route | null>(null);
+  const activeRoute = routeOverride ?? route;
+  // The interface's own modal is closed like the product's used to be: a close
+  // request, which the shown screen may hold (an unsaved recovery phrase).
+  const [ownCloseRequests, setOwnCloseRequests] = useState(0);
+  const requestClose = useCallback(() => setOwnCloseRequests((n) => n + 1), []);
+
+  // The SDK keeps the frame invisible until this report, so the frame gets no
+  // animation frame before it and cannot wait for a paint: the report follows
+  // the first commit, by which time the modal and its backdrop are in the DOM
+  // (the design system opens its modal in that same commit), and the SDK shows
+  // the frame and has the product drop its loader together.
+  useEffect(() => {
+    if (window.parent === window) return;
+
+    window.parent.postMessage({ type: MSG_INTERFACE_SHOWN }, '*');
+  }, []);
   const handleClose = useCallback(() => {
     notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
   }, [parentContext.parentOrigin]);
 
-  // The product's modal gives the iframe its box without padding: the interface
-  // pads its own screens, so a control may sit in that padding (the back link
-  // mirrors the product's cross). Documentation pages and the overlays (which
-  // draw their own modal) are the whole viewport and get none.
-  const bare = route === 'docs-user' || route === 'docs-technical' || route === 'verify-recipients' || isOverlayFromHash();
+  // The SDK lays a transparent full-viewport iframe over the product; the modal
+  // the user sees (backdrop, card, close control, width) is drawn HERE, so no
+  // size ever crosses the two windows. Documentation pages are whole pages, and
+  // two screens draw a modal of their own: the verify overlay, and the emergency
+  // prompt the SDK opens on its own (told apart by the context it carries).
+  const fullPage = route === 'docs-user' || route === 'docs-technical';
+  const drawsOwnModal = route === 'verify-recipients' || (activeRoute === 'emergency-access' && parentContext.emergencyPending !== null);
+  const screens = (
+    <InterfaceScreens
+      route={route}
+      navigate={navigate}
+      parentContext={parentContext}
+      routeOverride={routeOverride}
+      setRouteOverride={setRouteOverride}
+    />
+  );
 
   return (
-    <CloseRequestProvider requests={parentContext.closeRequests} onClose={handleClose}>
-      <div className={bare ? undefined : styles.host}>
-        <InterfaceScreens route={route} navigate={navigate} parentContext={parentContext} />
-      </div>
+    <CloseRequestProvider requests={parentContext.closeRequests + ownCloseRequests} onClose={handleClose}>
+      {fullPage || drawsOwnModal ? (
+        screens
+      ) : (
+        <Modal
+          isOpen
+          onClose={requestClose}
+          closeOnClickOutside={false}
+          size={activeRoute === 'emergency-access' ? ModalSize.MEDIUM : ModalSize.SMALL}
+          aria-label={t('interface.title')}
+        >
+          {screens}
+        </Modal>
+      )}
     </CloseRequestProvider>
   );
 }
 
 /** Inner component that has access to the EncryptionContext */
-function InterfaceScreens({ route, navigate, parentContext }: { route: Route; navigate: (to: Route) => void; parentContext: ParentContext }) {
+function InterfaceScreens({
+  route,
+  navigate,
+  parentContext,
+  routeOverride,
+  setRouteOverride,
+}: {
+  route: Route;
+  navigate: (to: Route) => void;
+  parentContext: ParentContext;
+  routeOverride: Route | null;
+  setRouteOverride: (to: Route | null) => void;
+}) {
   const { t } = useTranslation('common');
   const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
 
@@ -358,18 +400,7 @@ function InterfaceScreens({ route, navigate, parentContext }: { route: Route; na
 
   // Lets a screen (e.g. settings) push into device-approval in place without a
   // real navigation, then return to where it was.
-  const [routeOverride, setRouteOverride] = useState<Route | null>(null);
   const activeRoute = routeOverride ?? route;
-
-  // Tell the product how wide the shown screen wants its modal: the emergency
-  // access lists need the design system's medium one, everything else fits the
-  // small one. The product decides (see integration.mdx); an overlay draws its
-  // own modal and asks for nothing.
-  useEffect(() => {
-    if (window.parent === window || isOverlayFromHash()) return;
-
-    window.parent.postMessage({ type: MSG_INTERFACE_HOST_SIZE, size: activeRoute === 'emergency-access' ? 'medium' : 'small' }, '*');
-  }, [activeRoute]);
 
   const userInfo = useMemo<UserInfo | null>(() => {
     if (!oidcToken) return null;
@@ -566,7 +597,6 @@ function InterfaceScreens({ route, navigate, parentContext }: { route: Route; na
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
           emergencyPending={parentContext.emergencyPending}
-          overlayMode={isOverlayFromHash()}
         />
       );
 

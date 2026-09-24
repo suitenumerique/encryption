@@ -33,7 +33,6 @@ declare const styles: {
   readonly hint: string;
   readonly hintCenter: string;
   readonly hintInvalid: string;
-  readonly host: string;
   readonly identity: string;
   readonly identityName: string;
   readonly identitySecondary: string;
