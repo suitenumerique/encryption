@@ -9,7 +9,10 @@ import { emailPalette as c } from '@encryption/src/server/email/palette';
 // The light backgrounds live on the elements themselves (inline mj-attributes), so
 // they render in the Storybook preview too (which injects the email HTML into a
 // <div>, where a bare `body {}` rule would target the page, not the email). The
-// dark overrides below use `!important` to beat those inline values.
+// dark overrides below use `!important` to beat those inline values. The body's
+// own background (what a client shows below a short email) is lost in that
+// injection, so the Storybook stylesheet paints the page with it on purpose:
+// there, the page stands for the client's viewport.
 
 // The palette can be overridden at startup (EMAIL_PALETTE_PATH), so the CSS is
 // built lazily on each render rather than frozen into a module-load const, which
@@ -110,6 +113,10 @@ ${baseStyles()}
 export function getStorybookStyles(): string {
   return `
 ${baseStyles()}
+
+body.sb-show-main {
+  background: ${c.lightBody} !important;
+}
 
 body.sb-show-main.dark,
 body.sb-show-main.dark .body-wrapper {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
-import { MSG_INTERFACE_CONTEXT, MSG_INTERFACE_REQUEST_CONTEXT } from '@encryption/src/shared/constants';
+import { MSG_INTERFACE_CONTEXT, MSG_INTERFACE_REQUEST_CLOSE, MSG_INTERFACE_REQUEST_CONTEXT } from '@encryption/src/shared/constants';
 import { type InterfaceContext, type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 
-interface ParentContext {
+export interface ParentContext {
   /** suiteUserId from the parent product (the cross-product user identifier) */
   suiteUserId: string | null;
   /** Origin of the parent frame that sent the context message */
@@ -22,6 +22,12 @@ interface ParentContext {
    * The interface re-fetches the authoritative state; this only leads the prompt.
    */
   emergencyPending: InterfaceContext['emergencyPending'] | null;
+  /**
+   * Incremented each time the product asks the interface to close (its own
+   * close control). The interface decides what closing means for the screen it
+   * shows, so it is a request, never an unmount.
+   */
+  closeRequests: number;
 }
 
 /**
@@ -37,11 +43,23 @@ export function useParentMessages(): ParentContext {
     verifyRecipients: null,
     recipientProfile: null,
     emergencyPending: null,
+    closeRequests: 0,
   });
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
-      if (!event.data || typeof event.data !== 'object' || event.data.type !== MSG_INTERFACE_CONTEXT) {
+      if (!event.data || typeof event.data !== 'object') {
+        return;
+      }
+
+      if (event.data.type === MSG_INTERFACE_REQUEST_CLOSE) {
+        // Only the frame that established the context may ask us to close.
+        setContext((prev) => (prev.parentOrigin === event.origin ? { ...prev, closeRequests: prev.closeRequests + 1 } : prev));
+
+        return;
+      }
+
+      if (event.data.type !== MSG_INTERFACE_CONTEXT) {
         return;
       }
 
@@ -51,13 +69,14 @@ export function useParentMessages(): ParentContext {
         return;
       }
 
-      setContext({
+      setContext((prev) => ({
         suiteUserId: parsed.data.suiteUserId,
         parentOrigin: event.origin,
         verifyRecipients: parsed.data.verifyRecipients?.recipients ?? null,
         recipientProfile: parsed.data.recipientProfile ?? null,
         emergencyPending: parsed.data.emergencyPending ?? null,
-      });
+        closeRequests: prev.closeRequests,
+      }));
     };
 
     window.addEventListener('message', handler);

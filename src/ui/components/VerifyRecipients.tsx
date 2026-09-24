@@ -1,4 +1,4 @@
-import { Alert, Button, Loader, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -10,8 +10,11 @@ import {
 } from '@encryption/src/shared/constants';
 import { type RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
 import { SessionExpiredError } from '@encryption/src/ui/auth/session-expired';
-import { RecipientFingerprint, RecipientIdentity, TrustRefuseButtons } from '@encryption/src/ui/components/RecipientFingerprintControls';
+import { TrustRefuseButtons, recipientLabel } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import {
   type FingerprintCheckResult,
   type SurfacedRecipient,
@@ -42,8 +45,9 @@ interface VerifyRecipientsProps {
  * /verify-recipients whenever a share is blocked because some recipients are not
  * shareable (their key changed, or they were refused). It surfaces each blocking
  * recipient's safety fingerprint for out-of-band comparison and enforces
- * all-or-nothing: the share proceeds only if the user trusts EVERY surfaced
- * recipient; refusing any (or cancelling) aborts the whole share.
+ * all-or-nothing: the share proceeds only once the user trusts EVERY surfaced
+ * recipient (it resolves by itself at that point); refusing any (or cancelling)
+ * aborts the whole share.
  *
  * The whole modal chrome (backdrop + card) is drawn HERE, by a Cunningham Modal,
  * so it matches the rest of the interface; the SDK only mounts this iframe in a
@@ -155,14 +159,22 @@ export function VerifyRecipients({
 
       try {
         await request(MSG_VAULT_ACCEPT_FINGERPRINT, { sub: recipient.userId, fingerprint: recipient.fingerprint });
-        setRecipients((prev) => prev.map((r) => (r.userId === recipient.userId ? { ...r, trusted: true } : r)));
+        setRecipients((prev) => {
+          const next = prev.map((r) => (r.userId === recipient.userId ? { ...r, trusted: true } : r));
+
+          // The last decision was the only thing holding the share back: hand
+          // the outcome over now rather than asking for one more click.
+          if (allRecipientsTrusted(next)) onComplete('resolved');
+
+          return next;
+        });
       } catch (err) {
         onError(err);
       } finally {
         setBusy(false);
       }
     },
-    [request, onError]
+    [request, onError, onComplete]
   );
 
   // Refusing a single recipient aborts the WHOLE share (all-or-nothing). Record
@@ -186,106 +198,100 @@ export function VerifyRecipients({
     [request, onComplete]
   );
 
-  const allTrusted = allRecipientsTrusted(recipients);
-
   // Closing the modal (backdrop click / close button) aborts the whole share.
   const close = useCallback(() => {
     if (!busy) onComplete('cancelled');
   }, [busy, onComplete]);
 
+  const banner = sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />;
+
   return (
-    <Modal isOpen onClose={close} closeOnClickOutside={!busy} size={ModalSize.MEDIUM} title={t('verify.title')}>
-      <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
-        {sessionExpired && onReconnect && (
-          <div style={{ marginBottom: 8 }}>
-            <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-          </div>
-        )}
-
-        {phase === 'loading' ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
-            <Loader />
-          </div>
-        ) : phase === 'unreachable' ? (
-          // These recipients have no registered identity, so nothing can be
-          // encrypted for them. The share is blocked rather than silently
-          // dropping them: there is no decision for the user to make here.
-          <>
-            <Alert type={VariantType.ERROR}>{t('verify.recipients_without_keys')}</Alert>
-            <ul style={{ fontSize: 13, marginTop: 12, paddingLeft: 20 }}>
-              {unreachable.map((sub) => (
-                <li key={sub}>{sub}</li>
-              ))}
-            </ul>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-              <Button onClick={() => onComplete('cancelled')}>{t('verify.btn_close')}</Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p style={{ fontSize: 13 }}>{t('verify.explanation')}</p>
-
-            {error && (
-              <div style={{ marginTop: 8 }}>
-                <Alert type={VariantType.ERROR}>{error}</Alert>
-              </div>
-            )}
-
+    <Modal isOpen onClose={close} closeOnClickOutside={!busy} size={ModalSize.SMALL} aria-label={t('verify.title')}>
+      {phase === 'loading' ? (
+        <LoadingScreen />
+      ) : phase === 'unreachable' ? (
+        // These recipients have no registered identity, so nothing can be
+        // encrypted for them. The share is blocked rather than silently
+        // dropping them: there is no decision for the user to make here.
+        <Screen
+          title={t('verify.title')}
+          description={t('verify.recipients_without_keys')}
+          banner={banner}
+          actions={<Button onClick={() => onComplete('cancelled')}>{t('verify.btn_close')}</Button>}
+        >
+          <ul className={styles.list}>
+            {unreachable.map((sub) => (
+              <li key={sub}>{recipientLabel(recipientLabels[sub] ?? { email: sub }).primary}</li>
+            ))}
+          </ul>
+        </Screen>
+      ) : (
+        <Screen
+          title={t('verify.title')}
+          description={
+            recipients.length > 1 ? (
+              <>
+                <p>{t('verify.explanation_many')}</p>
+                <p>{t('verify.compare_instruction_many')}</p>
+              </>
+            ) : recipients[0]?.trusted ? undefined : (
+              <>
+                <p>{recipients[0]?.status === 'mismatch' ? t('verify.note_changed') : t('verify.note_refused')}</p>
+                <p>{t('profile.compare_instruction')}</p>
+              </>
+            )
+          }
+          banner={
             <>
-              <Alert type={VariantType.WARNING}>{t('verify.refuse_aborts')}</Alert>
-              <p style={{ fontSize: 13, marginTop: 12 }}>{t('verify.compare_instruction')}</p>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-                {recipients.map((recipient) => (
-                  <div
-                    key={recipient.userId}
-                    style={{
-                      padding: 'var(--c--globals--spacings--sm)',
-                      background: 'var(--c--contextuals--background--surface--secondary)',
-                      borderRadius: 4,
-                      borderLeft: `4px solid ${
-                        recipient.trusted ? 'var(--c--globals--colors--success-500)' : 'var(--c--globals--colors--error-500)'
-                      }`,
-                    }}
-                  >
-                    <RecipientIdentity label={recipientLabels[recipient.userId]} />
-                    {/* Why this recipient is blocking, dropped once trusted: the
-                        warning describes a situation the user has just resolved, and
-                        leaving it next to the success alert contradicts it. A CHANGED
-                        identity is the dangerous case (re-enrolment, or a compromised
-                        account), so it gets a full error alert rather than the small
-                        red note used for a plain refusal. */}
-                    {!recipient.trusted &&
-                      (recipient.status === 'mismatch' ? (
-                        <div style={{ margin: '8px 0' }}>
-                          <Alert type={VariantType.ERROR}>{t('verify.note_changed')}</Alert>
-                        </div>
-                      ) : (
-                        <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--globals--colors--error-500)' }}>{t('verify.note_refused')}</p>
-                      ))}
-                    <RecipientFingerprint fingerprint={recipient.fingerprint} />
-
-                    {recipient.trusted ? (
-                      <Alert type={VariantType.SUCCESS}>{t('verify.trusted')}</Alert>
-                    ) : (
-                      <TrustRefuseButtons busy={busy} onTrust={() => handleTrust(recipient)} onRefuse={() => handleRefuse(recipient)} />
-                    )}
-                  </div>
-                ))}
-              </div>
+              {banner}
+              {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
             </>
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 16 }}>
-              <Button variant="secondary" disabled={busy} onClick={() => onComplete('cancelled')}>
+          }
+          actions={
+            recipients.length > 1 && (
+              <Button variant="tertiary" color="neutral" disabled={busy} onClick={() => onComplete('cancelled')}>
                 {t('verify.btn_cancel')}
               </Button>
-              <Button disabled={busy || !allTrusted} onClick={() => onComplete('resolved')}>
-                {t('verify.btn_confirm')}
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
+            )
+          }
+        >
+          {recipients.map((recipient) => {
+            const { primary, secondary } = recipientLabel(recipientLabels[recipient.userId] ?? { email: recipient.userId });
+            // A CHANGED identity is the dangerous case (re-enrolment, or a
+            // compromised account); a plain refusal is the user's own earlier call.
+            const tone = recipient.trusted ? 'success' : recipient.status === 'mismatch' ? 'warning' : 'error';
+
+            return (
+              <div key={recipient.userId} className={styles.screenBody}>
+                <IdentityCard
+                  name={primary}
+                  secondary={secondary}
+                  fingerprint={recipient.fingerprint}
+                  tone={tone}
+                  aside={
+                    recipient.trusted ? (
+                      <Chip tone="success" icon="check_circle">
+                        {t('verify.trusted')}
+                      </Chip>
+                    ) : recipient.status === 'mismatch' ? (
+                      <Chip tone="warning" icon="warning">
+                        {t('profile.decision_changed')}
+                      </Chip>
+                    ) : (
+                      <Chip tone="error" icon="block">
+                        {t('profile.decision_refused')}
+                      </Chip>
+                    )
+                  }
+                />
+                {!recipient.trusted && (
+                  <TrustRefuseButtons busy={busy} onTrust={() => handleTrust(recipient)} onRefuse={() => handleRefuse(recipient)} />
+                )}
+              </div>
+            );
+          })}
+        </Screen>
+      )}
     </Modal>
   );
 }

@@ -195,7 +195,7 @@ psql "$ADMIN_DATABASE_URL" -v password="'…'" -f deploy/postgres/create-migrato
 psql "$ADMIN_DATABASE_URL" -v password="'…'" -f deploy/postgres/create-runtime-role.sql
 ```
 
-The split means a compromised server process cannot change the schema, and a schema change cannot happen by accident from a pod: it only happens where the migrator credentials are, which is the release step. Every table lives in the `encryption` schema, never in `public`, so other roles on a shared server cannot even list them. Both connection strings carry `?schema=encryption`: the migration tooling reads it to place its own `_prisma_migrations` table there (the migrator has no right to create anything in `public`), and the server ignores it since its queries name the schema explicitly.
+The split means a compromised server process cannot change the schema, and a schema change cannot happen by accident from a pod: it only happens where the migrator credentials are, which is the release step. Every table lives in the `encryption` schema, never in `public`, so other roles on a shared server cannot even list them. Both connection strings carry `?schema=encryption`: the migration tooling reads it to place the tables and its own `_prisma_migrations` table there (the migrator has no right to create anything in `public`), and the server reads it to query that schema. A local database can leave it out and use `public`.
 
 ### Migrations
 

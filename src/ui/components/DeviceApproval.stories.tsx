@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
-import { playFindAlert, playFindButton } from '@encryption/.storybook/testing';
+import { playFindAlert, playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
 import {
   handleGetApiVaultApprovalsByRequestId,
@@ -23,6 +23,7 @@ export default {
   ...generateMetaDefault({
     parameters: {
       layout: 'centered',
+      hostModal: true,
     },
   }),
 } as Meta<ComponentType>;
@@ -31,6 +32,7 @@ const Template: StoryFn<ComponentType> = (args) => <DeviceApproval {...args} />;
 
 const baseArgs = {
   getToken: async () => 'mock-jwt-token',
+  onBack: () => console.log('onBack'),
   onClose: () => console.log('onClose'),
 };
 
@@ -110,7 +112,15 @@ NewDeviceCodeRevealedStory.args = { ...baseArgs };
 NewDeviceCodeRevealedStory.parameters = NewDeviceStory.parameters;
 NewDeviceCodeRevealedStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_start')));
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.new_reveal_code')));
+  // The label carries a line break, which the accessible name may keep or collapse.
+  const revealLabel = new RegExp(
+    i18n
+      .t('device_approval.new_reveal_code')
+      .split(/\s+/)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s+')
+  );
+  await userEvent.click(await playFindButton(canvasElement, revealLabel));
 };
 
 export const NewDeviceCodeRevealed = prepareStory(NewDeviceCodeRevealedStory);
@@ -133,7 +143,7 @@ NewDeviceAdoptedStory.parameters = {
 // Reached by the 3s poll, so the default 1s wait would give up before the first tick.
 NewDeviceAdoptedStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_start')));
-  await playFindAlert(canvasElement, i18n.t('device_approval.new_success'), { timeout: 10000 });
+  await playFindHeading(canvasElement, i18n.t('device_approval.new_success_title'), { timeout: 10000 });
 };
 
 export const NewDeviceAdopted = prepareStory(NewDeviceAdoptedStory);
@@ -235,7 +245,7 @@ EnrolledDeviceApprovedStory.parameters = {
 EnrolledDeviceApprovedStory.play = async ({ canvasElement }) => {
   await fillPairingCode(canvasElement, sampleFingerprint);
   await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_approve')));
-  await playFindAlert(canvasElement, i18n.t('device_approval.approve_success'));
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_success_title'));
 };
 
 export const EnrolledDeviceApproved = prepareStory(EnrolledDeviceApprovedStory);

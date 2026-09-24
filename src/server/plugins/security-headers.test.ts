@@ -156,6 +156,19 @@ describe('securityHeadersPlugin', () => {
       expect((await headersFor('/login'))['cross-origin-resource-policy']).toBe('same-site');
     });
 
+    it('lets a product load the client SDK from its own origin with a plain script tag', async () => {
+      const app = await buildApp();
+      const headersFor = async (url: string, host = VAULT_HOST) => (await app.inject({ method: 'GET', url, headers: { host } })).headers;
+
+      for (const url of ['/client.js', '/client.mjs', '/client.d.ts', '/client.js?v=1']) {
+        expect((await headersFor(url))['cross-origin-resource-policy']).toBe('cross-origin');
+        expect((await headersFor(url))['content-security-policy']).toBeUndefined();
+      }
+      // The vault bundle itself, and the same paths on any other host, stay locked.
+      expect((await headersFor('/vault.js'))['cross-origin-resource-policy']).toBe('same-origin');
+      expect((await headersFor('/client.js', UI_HOST))['cross-origin-resource-policy']).toBe('same-site');
+    });
+
     it('keeps COOP on the vault, which opens no popup', async () => {
       expect((await headersFor(VAULT_HOST))['cross-origin-opener-policy']).toBe('same-origin');
     });

@@ -15,7 +15,8 @@ CREATE ROLE encryption_migrator LOGIN PASSWORD :password;
 
 CREATE SCHEMA encryption AUTHORIZATION encryption_migrator;
 
--- The first migration opens with `CREATE SCHEMA IF NOT EXISTS "encryption"`, and
+-- Prisma Migrate opens with `CREATE SCHEMA IF NOT EXISTS "encryption"` (the schema named
+-- in the connection string), and
 -- PostgreSQL checks the CREATE privilege on the database BEFORE looking at whether the
 -- schema already exists, so without this the migration fails with "permission denied
 -- for database" even though the schema is there. `:DBNAME` is the database psql is

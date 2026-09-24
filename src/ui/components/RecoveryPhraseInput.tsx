@@ -1,11 +1,17 @@
+import { Button } from '@gouvfr-lasuite/cunningham-react';
+import { Icon } from '@gouvfr-lasuite/ui-kit';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { englishWordlist, frenchWordlist } from '@encryption/src/crypto/mnemonic';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
 // A word is "known" if it belongs to either supported BIP-39 wordlist, so we can
 // flag obvious typos without forcing the user to pick a language first.
-const KNOWN_WORDS = new Set<string>([...englishWordlist, ...frenchWordlist]);
+// The lists come NFKD-decomposed (BIP-39 hashes them that way) while a keyboard
+// produces composed accents, so both sides are compared in the same form.
+const KNOWN_WORDS = new Set<string>([...englishWordlist, ...frenchWordlist].map((w) => w.normalize('NFC')));
+const isKnownWord = (word: string) => KNOWN_WORDS.has(word.normalize('NFC').toLowerCase());
 
 interface RecoveryPhraseInputProps {
   wordCount?: number;
@@ -109,47 +115,30 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
   );
 
   const indices = useMemo(() => Array.from({ length: wordCount }, (_, i) => i), [wordCount]);
-  const hasInvalidWord = words.some((w, i) => touched[i] && w.length > 0 && !KNOWN_WORDS.has(w));
+  const hasInvalidWord = words.some((w, i) => touched[i] && w.length > 0 && !isKnownWord(w));
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <button
+    <div className={styles.section}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          size="small"
+          variant="tertiary"
+          color="neutral"
           type="button"
           onClick={() => setRevealed((v) => !v)}
           aria-pressed={revealed}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: 13,
-            color: 'var(--c--globals--colors--brand-400)',
-          }}
+          icon={<Icon aria-hidden name={revealed ? 'visibility_off' : 'visibility'} size={16} />}
         >
-          <span className="material-icons" style={{ fontSize: 18 }}>
-            {revealed ? 'visibility_off' : 'visibility'}
-          </span>
           {revealed ? t('onboarding.hide_words') : t('onboarding.reveal_words')}
-        </button>
+        </Button>
       </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 8,
-        }}
-      >
+      <div className={styles.wordInputs}>
         {indices.map((i) => {
-          const invalid = touched[i] && words[i].length > 0 && !KNOWN_WORDS.has(words[i]);
+          const invalid = touched[i] && words[i].length > 0 && !isKnownWord(words[i]);
 
           return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, color: 'var(--c--contextuals--content--semantic--neutral--secondary)', width: 18, textAlign: 'right' }}>
-                {i + 1}
-              </span>
+            <div key={i} className={styles.wordInputsCell}>
+              <span className={styles.wordInputsIndex}>{i + 1}</span>
               <input
                 ref={(el) => {
                   refs.current[i] = el;
@@ -164,25 +153,13 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
                 onKeyDown={(e) => handleKeyDown(i, e)}
                 onBlur={() => markTouched(i)}
                 aria-label={`word ${i + 1}`}
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  padding: '6px 8px',
-                  borderRadius: 4,
-                  border: `1px solid ${invalid ? 'var(--c--globals--colors--error-500)' : 'var(--c--contextuals--border--surface--primary)'}`,
-                  background: 'var(--c--contextuals--background--surface--primary)',
-                  color: 'var(--c--contextuals--content--semantic--neutral--primary)',
-                }}
+                className={invalid ? `${styles.input} ${styles.inputInvalid}` : styles.input}
               />
             </div>
           );
         })}
       </div>
-      {hasInvalidWord && (
-        <p style={{ fontSize: 12, color: 'var(--c--globals--colors--error-500)', margin: '8px 0 0' }}>{t('onboarding.invalid_word_hint')}</p>
-      )}
+      {hasInvalidWord && <p className={`${styles.hint} ${styles.hintInvalid}`}>{t('onboarding.invalid_word_hint')}</p>}
     </div>
   );
 }

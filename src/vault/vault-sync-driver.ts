@@ -21,8 +21,16 @@ import { loadVault } from '@encryption/src/vault/vault-keys';
 
 const EVENTS_PATH = '/api/vault/events';
 const RECONNECT_MS = 3000;
+const MAX_BACKOFF_MS = 60_000;
 
-let current: { userId: string; abort: AbortController } | null = null;
+/**
+ * `halted`: the server refused the identity signature. That is not a transient
+ * condition a retry can clear (the identity is unknown to, or disabled on, this
+ * server, which the settings screen explains to the user), so the driver stays
+ * off until something that can change it happens: a privileged operation from
+ * the interface, or the user coming back to the tab.
+ */
+let current: { userId: string; abort: AbortController; halted: boolean; outcome: Promise<boolean>; settle: (ok: boolean) => void } | null = null;
 
 /**
  * Start (or re-target) the driver for `userId`. Idempotent for the same user;
@@ -31,10 +39,7 @@ let current: { userId: string; abort: AbortController } | null = null;
 export function ensureVaultSyncDriver(userId: string): void {
   if (current?.userId === userId) return;
 
-  stopVaultSyncDriver();
-  const abort = new AbortController();
-  current = { userId, abort };
-  void drive(userId, abort.signal);
+  start(userId);
 }
 
 export function stopVaultSyncDriver(): void {
@@ -42,7 +47,41 @@ export function stopVaultSyncDriver(): void {
   current = null;
 }
 
-async function drive(userId: string, signal: AbortSignal): Promise<void> {
+/** Give a halted driver another chance; a running one is left alone. */
+export function resumeVaultSyncDriver(userId: string): void {
+  if (current?.userId === userId && !current.halted) return;
+
+  start(userId);
+}
+
+/**
+ * Whether the driver's first connection attempt for the current user got through
+ * (true), or was refused or failed (false). A courtesy call that signs with the
+ * same identity waits for this rather than making its own refused request.
+ */
+export function vaultSyncDriverOutcome(): Promise<boolean> {
+  return current?.outcome ?? Promise.resolve(true);
+}
+
+/** For tests: whether the driver gave up on the current user. */
+export function isVaultSyncDriverHalted(): boolean {
+  return current?.halted ?? false;
+}
+
+function start(userId: string): void {
+  stopVaultSyncDriver();
+  const abort = new AbortController();
+  let settle: (ok: boolean) => void = () => undefined;
+  const outcome = new Promise<boolean>((resolve) => {
+    settle = resolve;
+  });
+  current = { userId, abort, halted: false, outcome, settle };
+  void drive(userId, abort.signal, settle);
+}
+
+async function drive(userId: string, signal: AbortSignal, settle: (ok: boolean) => void): Promise<void> {
+  let delay = RECONNECT_MS;
+
   while (!signal.aborted) {
     try {
       // Only sync a COMMITTED (persisted) vault. During onboarding the vault is
@@ -53,15 +92,29 @@ async function drive(userId: string, signal: AbortSignal): Promise<void> {
       // next backoff rather than spamming failed requests.
       const headers = await eventsAuthHeader(userId);
 
-      if (headers) {
-        // Catch-up pull on (re)connect: a wake could have fired (or another
-        // instance handled the write) while we were disconnected, so the SSE
-        // alone is never trusted to have delivered everything.
-        await safeSync(userId);
+      if (!headers) settle(true); // Nothing to sign with: nothing was refused either.
 
+      if (headers) {
         const res = await fetch(EVENTS_PATH, { headers, signal });
 
+        if (res.status === 401 || res.status === 403) {
+          if (current?.abort.signal === signal) current.halted = true;
+          settle(false);
+
+          return;
+        }
+
+        settle(res.ok);
+
         if (res.ok && res.body) {
+          delay = RECONNECT_MS;
+
+          // Catch-up pull once (re)connected: a wake could have fired (or another
+          // instance handled the write) while we were disconnected, so the SSE
+          // alone is never trusted to have delivered everything. After the
+          // connect, not before, so a refused identity costs a single request.
+          await safeSync(userId);
+
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
@@ -84,9 +137,11 @@ async function drive(userId: string, signal: AbortSignal): Promise<void> {
       }
     } catch {
       // Network drop / abort: reconnect below unless aborted.
+      settle(false);
     }
 
-    if (!signal.aborted) await backoff(signal);
+    if (!signal.aborted) await backoff(delay, signal);
+    delay = Math.min(delay * 2, MAX_BACKOFF_MS);
   }
 }
 
@@ -121,9 +176,9 @@ async function eventsAuthHeader(userId: string): Promise<Record<string, string> 
   return { [REQUEST_SIG_HEADER]: token };
 }
 
-function backoff(signal: AbortSignal): Promise<void> {
+function backoff(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, RECONNECT_MS);
+    const timer = setTimeout(resolve, ms);
 
     signal.addEventListener(
       'abort',
@@ -143,6 +198,9 @@ function backoff(signal: AbortSignal): Promise<void> {
 // restart, or a connection that was down. See architecture.md §8.
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && current) void safeSync(current.userId);
+    if (document.visibilityState !== 'visible' || !current) return;
+
+    if (current.halted) resumeVaultSyncDriver(current.userId);
+    else void safeSync(current.userId);
   });
 }

@@ -19,7 +19,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - `src/ui/` — React app (Cunningham, i18next, MDX docs, browser check)
 - `src/server/` — Fastify server, Host-based routing, API routes, security headers
 - `src/shared/` — constants, Zod schemas, error codes (shared between server and client)
-- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; every model and enum sits in the `encryption` PostgreSQL schema (`@@schema`), never `public`, and `DATABASE_URL` carries `?schema=encryption` for the migration tooling
+- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; the PostgreSQL schema comes from the `?schema=` parameter of `DATABASE_URL` (read by both the migration tooling and the runtime adapter): deployments use a dedicated `encryption` schema, never `public` (see README), while the local `.env.test*` files leave it out and use `public`
 - `src/demo/` — fake product pages for testing (two instances on different ports)
 - `src/i18n/` — French translations, i18next setup
 - `src/build/` — build-time helpers (browser versions from browserslist)
@@ -82,6 +82,8 @@ Two categories of operations:
 - **Privileged operations** (only `encryption`): `generate-keys`, `sign-key-registration`, `respond-to-key-challenge`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
 
 The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
+
+**Interface screens are modal content, not modals.** A product hosts the interface iframe inside its own modal (Docs and Drive use the design system's 350px small modal; `src/demo` shows the reference wiring) and the interface only lays out the content with the primitives in `src/ui/components/layout/` (`Screen`: illustration, title, description, body, stacked full-width actions; `IdentityCard` + `FingerprintBoxes`; `layout.module.css`, a CSS module whose keys are typed by the generated `layout.module.css.d.ts`: run `npm run css:types` after editing the stylesheet, `src/build/css-module-types.test.ts` fails when it is stale, and a removed class then fails `tsc` at every call site). The product's modal gives the iframe its box with **no padding** (`.c__modal__scroller { padding: 0 }` scoped to the host): the interface pads its screens itself (`.host`), so its back link can hang into that padding the way the product's cross hangs into the modal's, and it asks for the modal width it needs through `MSG_INTERFACE_HOST_SIZE`, relayed by the SDK as the `interface:size` event (`'small'` = 350px, `'medium'` = 600px, the latter for the emergency access lists), which Docs, Drive and the demo apply to their modal's `size`. The product's close control must call `vaultClient.requestClose()` (`MSG_INTERFACE_REQUEST_CLOSE`): the screen shown may hold a guard (`useCloseGuard`, e.g. an unsaved recovery phrase asks "cancel the setup?") and the interface confirms with `MSG_INTERFACE_CLOSED` once it has really closed, so the product unmounts its modal on `interface:closed`, never on the click. The SDK-owned overlays (verify recipients, emergency prompt) draw their own Cunningham Modal instead. In Storybook, `parameters.hostModal` (`true` = 350px, `'medium'` = 600px, both with the product's close control; `'card'` = the 350px width alone, for a component that lives inside a screen) stands in for the product's modal.
 
 ## Security measures
 

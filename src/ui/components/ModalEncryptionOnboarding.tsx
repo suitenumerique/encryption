@@ -1,7 +1,8 @@
-import { Alert, Button, Loader, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, Checkbox, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Icon } from '@gouvfr-lasuite/ui-kit';
 import type { TFunction } from 'i18next';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 
 import { formatFingerprint } from '@encryption/src/crypto/fingerprint';
 import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
@@ -11,14 +12,18 @@ import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultError, VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import type { UserInfo } from '@encryption/src/ui/App';
 import { ApiError } from '@encryption/src/ui/api/client';
+import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { deletePublicKeys, fetchNextKeyVersion, fetchPublicKeys, registerKeyInit } from '@encryption/src/ui/api/public-keys-client';
 import { createVault } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
-import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { UntrustedRearmError } from '@encryption/src/ui/components/emergency-access-logic';
+import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
+import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
@@ -39,82 +44,78 @@ type OnboardingStep =
   | 'forced-rotation-done';
 
 /**
- * "Start from scratch" confirmation step.
- * Requires the user to type their existing fingerprint before allowing deletion.
+ * "Reset encryption" confirmation step. The user acknowledges the data loss and
+ * types their current fingerprint before the old key can be disabled.
  */
 function LastResortStep({
   existingKeyFingerprint,
   isPending,
   onConfirm,
-  onBack,
+  banner,
   t,
 }: {
   existingKeyFingerprint: string | null | undefined;
   isPending: boolean;
   onConfirm: () => void;
-  onBack: () => void;
+  banner?: ReactNode;
   t: TFunction;
 }) {
   const [confirmInput, setConfirmInput] = useState('');
+  const [understood, setUnderstood] = useState(false);
   const hasFingerprint = !!existingKeyFingerprint;
-  const inputNormalized = confirmInput.toLowerCase().replace(/\s/g, '');
+  const inputNormalized = confirmInput.replace(/\s/g, '');
   const fingerprintMatch = hasFingerprint && inputNormalized === existingKeyFingerprint;
-  const canDelete = hasFingerprint ? fingerprintMatch : true; // if no fingerprint available, allow (shouldn't happen)
+  const canDelete = understood && (hasFingerprint ? fingerprintMatch : true); // if no fingerprint available, allow (shouldn't happen)
 
   return (
-    <>
-      <h2>{t('onboarding.title_last_resort')}</h2>
-
-      <Alert type={VariantType.ERROR}>{t('onboarding.last_resort_warning')}</Alert>
-
-      <ul style={{ fontSize: 13, lineHeight: 1.6, margin: 'var(--c--globals--spacings--sm) 0', paddingLeft: 20 }}>
-        <li>{t('onboarding.last_resort_consequence_1')}</li>
-        <li>{t('onboarding.last_resort_consequence_2')}</li>
-        <li>{t('onboarding.last_resort_consequence_3')}</li>
-      </ul>
+    <Screen
+      title={t('onboarding.title_last_resort')}
+      description={
+        <>
+          <p>{t('onboarding.last_resort_warning')}</p>
+          <ul className={styles.list}>
+            <li>{t('onboarding.last_resort_consequence_1')}</li>
+            <li>{t('onboarding.last_resort_consequence_2')}</li>
+            <li>{t('onboarding.last_resort_consequence_3')}</li>
+          </ul>
+        </>
+      }
+      banner={banner}
+      actions={
+        <>
+          <Button color="error" onClick={onConfirm} disabled={isPending || !canDelete}>
+            {isPending ? t('onboarding.btn_generating') : t('onboarding.btn_confirm_reset')}
+          </Button>
+        </>
+      }
+    >
+      <Alert type={VariantType.ERROR}>
+        <div className={styles.alertStack}>
+          <span>{t('onboarding.last_resort_alert')}</span>
+          <Checkbox label={t('onboarding.i_understand')} checked={understood} onChange={() => setUnderstood((v) => !v)} />
+        </div>
+      </Alert>
 
       {hasFingerprint && (
-        <div style={{ marginTop: 12, borderTop: '1px solid var(--c--contextuals--border--surface--primary)', paddingTop: 12 }}>
-          <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('onboarding.confirm_fingerprint_to_delete')}</p>
-          <div
-            style={{
-              fontSize: 14,
-              padding: 'var(--c--globals--spacings--t)',
-              background: 'var(--c--contextuals--background--surface--secondary)',
-              borderRadius: 4,
-              marginBottom: 8,
-            }}
-          >
-            <FingerprintDisplay fingerprint={existingKeyFingerprint!} style={{ fontSize: 14 }} />
+        <div>
+          <label className={styles.label} htmlFor="onboarding-confirm-fingerprint">
+            {t('onboarding.confirm_fingerprint_to_delete')}
+          </label>
+          <div style={{ marginBottom: 8 }}>
+            <FingerprintBoxes fingerprint={existingKeyFingerprint!} />
           </div>
           <input
+            id="onboarding-confirm-fingerprint"
             type="text"
+            inputMode="numeric"
             value={confirmInput}
             onChange={(e) => setConfirmInput(e.target.value)}
             placeholder={formatFingerprint(existingKeyFingerprint!)}
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              fontFamily: 'monospace',
-              fontSize: 14,
-              letterSpacing: '0.05em',
-              padding: 'var(--c--globals--spacings--t)',
-              borderRadius: 4,
-              border: `1px solid ${fingerprintMatch ? 'var(--c--globals--colors--success-500)' : 'var(--c--contextuals--border--surface--primary)'}`,
-            }}
+            className={fingerprintMatch ? `${styles.input} ${styles.inputMono} ${styles.inputValid}` : `${styles.input} ${styles.inputMono}`}
           />
         </div>
       )}
-
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-        <Button variant="secondary" onClick={onBack}>
-          {t('onboarding.btn_back')}
-        </Button>
-        <Button color="error" onClick={onConfirm} disabled={isPending || !canDelete}>
-          {isPending ? t('onboarding.btn_generating') : t('onboarding.btn_confirm_reset')}
-        </Button>
-      </div>
-    </>
+    </Screen>
   );
 }
 
@@ -124,6 +125,7 @@ interface ModalEncryptionOnboardingProps {
   parentOrigin?: string | null;
   hasExistingBackendKey?: boolean;
   existingKeyFingerprint?: string | null;
+  /** Accepted for parity with the settings screen; the onboarding screens do not show it. */
   userInfo?: UserInfo | null;
   onSuccess?: (publicKey: string) => void;
   onClose: () => void;
@@ -174,7 +176,6 @@ export function ModalEncryptionOnboarding({
   hasExistingBackendKey = false,
   parentOrigin = null,
   existingKeyFingerprint = null,
-  userInfo = null,
   onSuccess,
   onClose,
   onUseAnotherDevice,
@@ -219,6 +220,8 @@ export function ModalEncryptionOnboarding({
   // modal (not window.confirm) before reactivating, since that demotes the current one.
   const [reactivatePrompt, setReactivatePrompt] = useState<{ date: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The "cancel the setup?" prompt raised by the product's close control on the backup step.
+  const [cancelPrompt, setCancelPrompt] = useState(false);
   const { sessionExpired, markSessionExpired, clearSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
   // MANDATORY phrase rotation after an emergency unlock: the phrase just used
   // was an escrowed one the trusted contact has seen, so it is burned by
@@ -260,6 +263,10 @@ export function ModalEncryptionOnboarding({
   // Right after a reset we go straight to enable. On error we fail open to enable
   // so onboarding is never blocked. Runs once.
   const historyChecked = useRef(false);
+  // Trusted contacts who accepted their designation before the identity was
+  // disabled: their escrow still opens that vault, so they can hand the phrase
+  // back. Best effort, only worth a sentence when there is at least one.
+  const [helpfulContacts, setHelpfulContacts] = useState<string[]>([]);
 
   useEffect(() => {
     if (hasExistingBackendKey || step !== 'checking-history') return;
@@ -280,7 +287,19 @@ export function ModalEncryptionOnboarding({
         }
 
         const next = await withFreshToken(getToken, (token) => fetchNextKeyVersion(token));
-        setStep(next.next_version > 1 ? 'previous-identity' : 'explanation');
+        if (next.next_version <= 1) {
+          setStep('explanation');
+
+          return;
+        }
+
+        setStep('previous-identity');
+        try {
+          const { contacts } = await withFreshToken(getToken, (token) => fetchTrustedContacts(token));
+          setHelpfulContacts(contacts.filter((contact) => contact.status !== 'invited').map((contact) => contact.grantee_email));
+        } catch {
+          // The hint is a courtesy: without the list the screen still offers every way in.
+        }
       } catch {
         setStep('explanation');
       }
@@ -438,15 +457,20 @@ export function ModalEncryptionOnboarding({
 
   // Back out of the backup step before committing: nothing is on the server yet,
   // but the local keys were minted, so destroy them to return to a clean state.
+  // The screen goes back to the start as well: the product closes the interface
+  // on `onClose`, but until it does (or where it does not, as in a story) the
+  // flow must not sit on an empty backup step behind an open prompt.
   const handleCancelBackup = useCallback(async () => {
     try {
       await request(MSG_VAULT_DESTROY_KEYS);
     } catch {
       // Best-effort cleanup
     }
+    setCancelPrompt(false);
     setOnboardingBundle(null);
     setBackupPassphrase(null);
     setCommitError(null);
+    setStep('explanation');
     onClose();
   }, [request, onClose]);
 
@@ -677,279 +701,276 @@ export function ModalEncryptionOnboarding({
   // (initial onboarding backup, or the forced post-emergency rotation).
   useUnsavedPhraseGuard((step === 'backup' && !isCommitting) || (step === 'forced-rotation' && !rotationBusy));
 
-  return (
-    <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
+  // The product's close control mid-backup: nothing is on the server yet, so
+  // closing throws the setup away. Ask first instead of closing silently.
+  useCloseGuard(step === 'backup' && !isCommitting, () => setCancelPrompt(true));
+
+  const banner = (
+    <>
       {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
       {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+    </>
+  );
 
+  const anotherDeviceButton = onUseAnotherDevice && (
+    <Button variant="tertiary" onClick={onUseAnotherDevice} icon={<Icon aria-hidden name="laptop" />}>
+      {t('onboarding.btn_use_another_device')}
+    </Button>
+  );
+
+  return (
+    <>
       <Modal
         isOpen={reactivatePrompt !== null}
         onClose={isPending ? () => undefined : () => setReactivatePrompt(null)}
         closeOnClickOutside={false}
-        size={ModalSize.MEDIUM}
-        title={t('onboarding.reactivate_title')}
+        size={ModalSize.SMALL}
+        aria-label={t('onboarding.reactivate_title')}
       >
-        <p style={{ fontSize: 14 }}>{reactivatePrompt ? t('onboarding.reactivate_confirm', { date: reactivatePrompt.date }) : ''}</p>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button variant="secondary" onClick={() => setReactivatePrompt(null)} disabled={isPending}>
-            {t('onboarding.btn_cancel')}
-          </Button>
-          <Button onClick={handleConfirmReactivate} disabled={isPending}>
-            {isPending ? t('onboarding.btn_restoring') : t('onboarding.reactivate_confirm_button')}
-          </Button>
-        </div>
+        <Screen
+          title={t('onboarding.reactivate_title')}
+          description={reactivatePrompt ? t('onboarding.reactivate_confirm', { date: reactivatePrompt.date }) : ''}
+          actions={
+            <>
+              <Button onClick={handleConfirmReactivate} disabled={isPending}>
+                {isPending ? t('onboarding.btn_restoring') : t('onboarding.reactivate_confirm_button')}
+              </Button>
+              <Button variant="bordered" color="neutral" onClick={() => setReactivatePrompt(null)} disabled={isPending}>
+                {t('onboarding.btn_cancel')}
+              </Button>
+            </>
+          }
+        />
       </Modal>
 
-      {step === 'checking-history' && (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 160 }}>
-          <Loader />
-        </div>
+      {/* Asked by the product's close control while the phrase is unsaved. */}
+      <Modal
+        isOpen={cancelPrompt}
+        onClose={() => setCancelPrompt(false)}
+        closeOnClickOutside={false}
+        size={ModalSize.SMALL}
+        aria-label={t('onboarding.cancel_setup_title')}
+      >
+        <Screen
+          title={t('onboarding.cancel_setup_title')}
+          description={t('onboarding.cancel_setup_text')}
+          actions={
+            <>
+              <Button onClick={() => setCancelPrompt(false)}>{t('onboarding.btn_go_back')}</Button>
+              <Button variant="bordered" color="error" onClick={handleCancelBackup}>
+                {t('onboarding.btn_close_anyway')}
+              </Button>
+            </>
+          }
+        />
+      </Modal>
+
+      {(step === 'checking-history' || step === 'generating') && (
+        <LoadingScreen label={step === 'generating' ? t('onboarding.title_generating') : undefined} />
       )}
 
       {step === 'explanation' && (
-        <>
-          {hasJustReset && (
-            <Alert type={VariantType.SUCCESS}>
-              {t('onboarding.reset_success', 'Your previous keys have been disabled (not deleted). You can now set up new ones.')}
-            </Alert>
-          )}
-          <h2>{t('onboarding.title_enable')}</h2>
-          {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-              {userInfo.name}
-              {userInfo.email ? ` (${userInfo.email})` : ''}
+        <Screen
+          illustration="shield-check"
+          title={t('onboarding.title_enable')}
+          description={
+            <p>
+              <Trans t={t} i18nKey="onboarding.explanation" components={{ strong: <strong /> }} />
             </p>
-          )}
-          <p>{t('onboarding.explanation')}</p>
-          <p>{t('onboarding.explanation_backup_prompt')}</p>
-          <SecurityNotice t={t} />
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button variant="secondary" onClick={onClose}>
-              {t('onboarding.btn_cancel')}
-            </Button>
+          }
+          banner={
+            <>
+              {hasJustReset && <Alert type={VariantType.SUCCESS}>{t('onboarding.reset_success')}</Alert>}
+              {banner}
+            </>
+          }
+          actions={
             <Button onClick={handleGenerateKeys} disabled={isPending}>
-              {isPending ? t('onboarding.btn_generating') : t('onboarding.btn_enable')}
+              {isPending ? t('onboarding.btn_generating') : t('onboarding.btn_continue')}
             </Button>
-          </div>
-        </>
+          }
+        >
+          <SecurityNotice t={t} />
+        </Screen>
       )}
 
       {step === 'existing-key-choice' && (
-        <>
-          <h2>{t('onboarding.title_existing')}</h2>
-          {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-              {userInfo.name}
-              {userInfo.email ? ` (${userInfo.email})` : ''}
-            </p>
-          )}
-
-          <Alert type={VariantType.INFO}>{t('onboarding.existing_server_detected')}</Alert>
-
-          {existingKeyFingerprint && (
-            <div
-              style={{
-                padding: 'var(--c--globals--spacings--sm)',
-                background: 'var(--c--contextuals--background--surface--secondary)',
-                borderRadius: 4,
-                margin: 'var(--c--globals--spacings--sm) 0',
-              }}
-            >
-              <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 4px' }}>{t('settings.fingerprint_label')}</p>
-              <div
-                style={{
-                  fontSize: 16,
-                  padding: 'var(--c--globals--spacings--t)',
-                  background: 'var(--c--contextuals--background--surface--primary)',
-                  borderRadius: 4,
-                }}
+        <Screen
+          illustration="shield-check"
+          title={t('onboarding.title_existing')}
+          description={t('onboarding.existing_recovery_hint')}
+          banner={banner}
+          actions={
+            <>
+              {onUseAnotherDevice && (
+                <Button variant="secondary" onClick={onUseAnotherDevice} icon={<Icon aria-hidden name="laptop" />}>
+                  {t('onboarding.btn_use_another_device')}
+                </Button>
+              )}
+              <Button
+                variant={onUseAnotherDevice ? 'tertiary' : 'secondary'}
+                onClick={() => setStep('restore')}
+                icon={<Icon aria-hidden name="key" />}
               >
-                <FingerprintDisplay fingerprint={existingKeyFingerprint} style={{ fontSize: 16 }} />
-              </div>
-            </div>
-          )}
-
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('onboarding.existing_recovery_hint')}
-          </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-            <Button variant="secondary" fullWidth onClick={() => setStep('restore')}>
-              {t('onboarding.btn_restore_from_backup')}
-            </Button>
-            {onUseAnotherDevice && (
-              <Button variant="secondary" fullWidth onClick={onUseAnotherDevice}>
-                {t('onboarding.btn_use_another_device')}
+                {t('onboarding.btn_restore_from_backup')}
               </Button>
-            )}
-            <Button variant="tertiary" fullWidth onClick={() => setStep('last-resort')}>
-              {t('onboarding.btn_last_resort')}
-            </Button>
-            <Button variant="tertiary" fullWidth onClick={onClose}>
-              {t('onboarding.btn_cancel')}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {step === 'previous-identity' && (
-        <>
-          <h2>{t('onboarding.title_previous_identity')}</h2>
-          {userInfo?.name && (
-            <p style={{ color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-              {userInfo.name}
-              {userInfo.email ? ` (${userInfo.email})` : ''}
-            </p>
-          )}
-          <Alert type={VariantType.INFO}>{t('onboarding.previous_identity_detected')}</Alert>
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('onboarding.previous_identity_hint')}
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-            <Button fullWidth onClick={() => setStep('restore')}>
-              {t('onboarding.btn_restore_from_backup')}
-            </Button>
-            {onUseAnotherDevice && (
-              <Button variant="secondary" fullWidth onClick={onUseAnotherDevice}>
-                {t('onboarding.btn_use_another_device')}
+              <Button variant="tertiary" color="neutral" onClick={() => setStep('last-resort')}>
+                {t('onboarding.btn_last_resort')}
               </Button>
-            )}
-            <Button variant="tertiary" fullWidth onClick={() => setStep('explanation')}>
-              {t('onboarding.btn_start_new_identity')}
-            </Button>
-            <Button variant="tertiary" fullWidth onClick={onClose}>
-              {t('onboarding.btn_cancel')}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {step === 'last-resort' && (
-        <LastResortStep
-          existingKeyFingerprint={existingKeyFingerprint}
-          isPending={isPending}
-          onConfirm={handleResetFromZero}
-          onBack={() => setStep('existing-key-choice')}
-          t={t}
+            </>
+          }
         />
       )}
 
-      {step === 'generating' && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <Loader />
-          <p>{t('onboarding.title_generating')}</p>
-        </div>
+      {step === 'previous-identity' && (
+        <Screen
+          illustration="shield-check"
+          title={t('onboarding.title_previous_identity')}
+          description={
+            <>
+              <p>{t('onboarding.previous_identity_detected')}</p>
+              <p>{t('onboarding.previous_identity_hint')}</p>
+            </>
+          }
+          banner={banner}
+          actions={
+            <>
+              <Button variant="secondary" onClick={() => setStep('restore')} icon={<Icon aria-hidden name="key" />}>
+                {t('onboarding.btn_restore_from_backup')}
+              </Button>
+              {anotherDeviceButton}
+              <Button variant="tertiary" color="neutral" onClick={() => setStep('explanation')}>
+                {t('onboarding.btn_start_new_identity')}
+              </Button>
+            </>
+          }
+        >
+          {helpfulContacts.length > 0 && (
+            <div className={`${styles.card} ${styles.contacts}`}>
+              <strong>{t('onboarding.previous_identity_contacts_title')}</strong>
+              <p>{t('onboarding.previous_identity_contacts_text')}</p>
+              <ul className={styles.list}>
+                {helpfulContacts.map((email) => (
+                  <li key={email}>{email}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Screen>
+      )}
+
+      {step === 'last-resort' && (
+        <LastResortStep existingKeyFingerprint={existingKeyFingerprint} isPending={isPending} onConfirm={handleResetFromZero} banner={banner} t={t} />
       )}
 
       {step === 'restore' && (
-        <>
-          <h2>{t('onboarding.title_restore')}</h2>
-          <SecurityNotice t={t} />
-          <p style={{ fontSize: 13, margin: '8px 0' }}>{t('onboarding.restore_placeholder')}</p>
+        <Screen
+          title={t('onboarding.title_restore')}
+          description={t('onboarding.restore_description')}
+          banner={banner}
+          actions={
+            <>
+              <Button onClick={handleRestoreKeys} disabled={isPending || !restoreComplete}>
+                {isPending ? t('onboarding.btn_restoring') : t('onboarding.btn_restore')}
+              </Button>
+            </>
+          }
+        >
           <RecoveryPhraseInput
             onChange={(phrase, complete) => {
               setRestoreInput(phrase);
               setRestoreComplete(complete);
             }}
           />
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setError(null);
-                setRestoreInput('');
-                setRestoreComplete(false);
-                // Return to wherever restore was entered from: the active-key
-                // choice, the previous-identity choice (disabled/dormant history),
-                // or the bare enable screen.
-                setStep(hasExistingBackendKey ? 'existing-key-choice' : historyChecked.current ? 'previous-identity' : 'explanation');
-              }}
-            >
-              {t('onboarding.btn_back')}
-            </Button>
-            <Button onClick={handleRestoreKeys} disabled={isPending || !restoreComplete}>
-              {isPending ? t('onboarding.btn_restoring') : t('onboarding.btn_restore')}
-            </Button>
-          </div>
-        </>
+        </Screen>
       )}
 
       {step === 'backup' && backupPassphrase && (
-        <>
-          <h2>{t('onboarding.title_backup')}</h2>
-          <Alert type={VariantType.INFO}>{t('onboarding.backup_success')}</Alert>
-          <RecoveryKitBackup
-            passphrase={backupPassphrase}
-            parentOrigin={parentOrigin}
-            onConfirm={handleCommitOnboarding}
-            confirmLabel={t('onboarding.btn_backup_done')}
-            busyLabel={t('onboarding.finalizing')}
-            isBusy={isCommitting}
-            error={commitError}
-            onCancel={handleCancelBackup}
-            cancelLabel={t('onboarding.btn_cancel')}
-          />
-        </>
+        <RecoveryKitBackup
+          passphrase={backupPassphrase}
+          parentOrigin={parentOrigin}
+          onConfirm={handleCommitOnboarding}
+          confirmLabel={t('onboarding.btn_backup_done')}
+          busyLabel={t('onboarding.finalizing')}
+          isBusy={isCommitting}
+          error={commitError}
+          banner={banner}
+        />
       )}
 
       {/* Success screen after the kit backup is confirmed, with the one-time
           trusted-contact suggestion (our recommended fallback if the kit is lost). */}
       {step === 'done' && (
-        <>
-          <h2>{t('emergency.onboarding_done_title')}</h2>
-          <Alert type={VariantType.SUCCESS}>{t('emergency.onboarding_done_text')}</Alert>
-          <p style={{ fontSize: 13, margin: '16px 0 0' }}>{t('emergency.nudge_text')}</p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
-            <Button variant="secondary" onClick={onClose}>
-              {t('settings.close')}
-            </Button>
-            {onOpenEmergencyAccess && <Button onClick={onOpenEmergencyAccess}>{t('emergency.nudge_button')}</Button>}
-          </div>
-        </>
+        <Screen
+          illustration="shield-check"
+          title={t('emergency.onboarding_done_title')}
+          description={
+            <>
+              <p>{t('emergency.onboarding_done_text')}</p>
+              <p>{t('emergency.nudge_text')}</p>
+            </>
+          }
+          actions={
+            <>
+              {onOpenEmergencyAccess && (
+                <Button variant="secondary" onClick={onOpenEmergencyAccess} icon={<Icon aria-hidden name="group" />}>
+                  {t('emergency.nudge_button')}
+                </Button>
+              )}
+              <Button variant={onOpenEmergencyAccess ? 'tertiary' : 'primary'} color={onOpenEmergencyAccess ? 'neutral' : 'brand'} onClick={onClose}>
+                {t('settings.close')}
+              </Button>
+            </>
+          }
+        />
       )}
 
       {/* Mandatory rotation after an emergency unlock: no skip, no cancel. */}
       {step === 'forced-rotation' && forcedRotation && (
-        <>
-          <h2>{t('emergency.rotation_title')}</h2>
-          <Alert type={VariantType.WARNING}>{t('emergency.rotation_explanation')}</Alert>
-          <p style={{ fontSize: 13, margin: '8px 0 0', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('emergency.rotation_rearm_note')}
-          </p>
-          {rotationBlocked && (
-            <div style={{ marginTop: 8 }}>
-              <Alert type={VariantType.WARNING}>
-                {t('emergency.rearm_blocked', { emails: rotationBlocked.map((contact) => contact.email).join(', ') })}
-              </Alert>
-              <div style={{ marginTop: 8 }}>
-                <Button size="small" color="error" onClick={handleRotationRevokeAndRetry} disabled={rotationBusy}>
-                  {t('emergency.rearm_revoke_retry')}
-                </Button>
-              </div>
-            </div>
-          )}
-          <RecoveryKitBackup
-            passphrase={forcedRotation.recoveryPhrase}
-            parentOrigin={parentOrigin}
-            onConfirm={handleConfirmForcedRotation}
-            confirmLabel={t('settings.change_phrase_confirm_saved')}
-            busyLabel={t('settings.change_phrase_applying')}
-            isBusy={rotationBusy}
-            error={rotationError}
-          />
-        </>
+        <RecoveryKitBackup
+          title={t('emergency.rotation_title')}
+          description={
+            <>
+              <p>{t('emergency.rotation_explanation')}</p>
+              <p>{t('emergency.rotation_rearm_note')}</p>
+            </>
+          }
+          banner={
+            <>
+              {banner}
+              {rotationBlocked && (
+                <Alert type={VariantType.WARNING}>
+                  <div className={styles.alertStack}>
+                    <span>{t('emergency.rearm_blocked', { emails: rotationBlocked.map((contact) => contact.email).join(', ') })}</span>
+                    <div>
+                      <Button size="small" color="error" onClick={handleRotationRevokeAndRetry} disabled={rotationBusy}>
+                        {t('emergency.rearm_revoke_retry')}
+                      </Button>
+                    </div>
+                  </div>
+                </Alert>
+              )}
+            </>
+          }
+          passphrase={forcedRotation.recoveryPhrase}
+          parentOrigin={parentOrigin}
+          onConfirm={handleConfirmForcedRotation}
+          confirmLabel={t('settings.change_phrase_confirm_saved')}
+          busyLabel={t('settings.change_phrase_applying')}
+          isBusy={rotationBusy}
+          error={rotationError}
+        />
       )}
 
       {step === 'forced-rotation-done' && (
-        <>
-          <h2>{t('emergency.rotation_title')}</h2>
-          <Alert type={VariantType.SUCCESS}>{t('emergency.rotation_done')}</Alert>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button onClick={onClose}>{t('settings.close')}</Button>
-          </div>
-        </>
+        <Screen
+          illustration="shield-check"
+          title={t('emergency.rotation_title')}
+          description={t('emergency.rotation_done')}
+          actions={<Button onClick={onClose}>{t('settings.close')}</Button>}
+        />
       )}
-    </div>
+    </>
   );
 }
 
@@ -959,9 +980,5 @@ export function ModalEncryptionOnboarding({
  * that browser extensions can potentially access page content.
  */
 function SecurityNotice({ t }: { t: TFunction }) {
-  return (
-    <div style={{ marginTop: 'var(--c--globals--spacings--sm)', marginBottom: 'var(--c--globals--spacings--sm)' }}>
-      <Alert type={VariantType.INFO}>{t('onboarding.extensions_warning')}</Alert>
-    </div>
-  );
+  return <Alert type={VariantType.INFO}>{t('onboarding.extensions_warning')}</Alert>;
 }

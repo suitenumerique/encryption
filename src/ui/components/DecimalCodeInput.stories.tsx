@@ -12,6 +12,10 @@ export default {
   ...generateMetaDefault({
     parameters: {
       layout: 'centered',
+      // The boxes size themselves from their container (an inline-size container
+      // query), so they need the width the product gives them: without the host
+      // card, the centered layout shrink-wraps them to nothing.
+      hostModal: 'card',
     },
   }),
 } as Meta<ComponentType>;

@@ -1,4 +1,5 @@
-import { Alert, Button, Loader, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Icon } from '@gouvfr-lasuite/ui-kit';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -28,7 +29,7 @@ import {
   searchEmergencyContact,
 } from '@encryption/src/ui/api/emergency-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
-import { RecipientFingerprint, RecipientIdentity, TrustRefuseButtons } from '@encryption/src/ui/components/RecipientFingerprintControls';
+import { TrustRefuseButtons } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import {
@@ -41,6 +42,9 @@ import {
   parseWaitDays,
   rearmBodyFromDesignation,
 } from '@encryption/src/ui/components/emergency-access-logic';
+import { Chip, Identity, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { Actions, LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
@@ -49,6 +53,7 @@ type EscrowAuditStatus = 'ok' | 'tampered' | 'stale-identity' | 'outdated-key';
 
 interface EmergencyAccessProps {
   getToken: () => Promise<string | null>;
+  onBack?: () => void;
   onClose: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
@@ -69,51 +74,16 @@ function countdownLabel(countdown: Countdown, locale: string): string {
   return rtf.format(Math.max(countdown.minutes, 1), 'minute');
 }
 
-// Tinted semantic pairs (light `--secondary` background + dark `--primary` text):
-// Cunningham's Alert pairing, which meets WCAG AA in BOTH themes, unlike the solid
-// `X-550 + on-X` pair whose warning shade falls to ~3.9:1 in dark mode.
-const CHIP_STYLES: Record<string, { background: string; color: string }> = {
-  invited: {
-    background: 'var(--c--contextuals--background--semantic--info--secondary)',
-    color: 'var(--c--contextuals--content--semantic--info--primary)',
-  },
-  confirmed: {
-    background: 'var(--c--contextuals--background--semantic--success--secondary)',
-    color: 'var(--c--contextuals--content--semantic--success--primary)',
-  },
-  requested: {
-    background: 'var(--c--contextuals--background--semantic--error--secondary)',
-    color: 'var(--c--contextuals--content--semantic--error--primary)',
-  },
-  approved: {
-    background: 'var(--c--contextuals--background--semantic--warning--secondary)',
-    color: 'var(--c--contextuals--content--semantic--warning--primary)',
-  },
-};
+const CHIP_TONES = { invited: 'info', confirmed: 'success', requested: 'error', approved: 'warning' } as const;
+const CHIP_ICONS = { invited: 'schedule', confirmed: 'check_circle', requested: 'error', approved: 'lock_open' } as const;
 
 function StatusChip({ phase, t }: { phase: 'invited' | 'confirmed' | 'requested' | 'approved'; t: TFunction }) {
   return (
-    <span
-      style={{
-        fontSize: 11,
-        fontWeight: 700,
-        padding: '2px 8px',
-        borderRadius: 10,
-        background: CHIP_STYLES[phase].background,
-        color: CHIP_STYLES[phase].color,
-        whiteSpace: 'nowrap',
-      }}
-    >
+    <Chip tone={CHIP_TONES[phase]} icon={CHIP_ICONS[phase]}>
       {t(`emergency.status_${phase}`)}
-    </span>
+    </Chip>
   );
 }
-
-const rowStyle = {
-  padding: 'var(--c--globals--spacings--sm)',
-  background: 'var(--c--contextuals--background--surface--secondary)',
-  borderRadius: 4,
-} as const;
 
 // ---------------------------------------------------------------------------
 // Designation flow (sub-screen): email search -> out-of-band verification ->
@@ -127,9 +97,10 @@ interface DesignateFlowProps {
   onBack: () => void;
   onDesignated: () => void;
   markSessionExpired: () => void;
+  banner?: ReactNode;
 }
 
-function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, markSessionExpired }: DesignateFlowProps) {
+function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, markSessionExpired, banner }: DesignateFlowProps) {
   const { t, i18n } = useTranslation('common');
   const { request, createEmergencyEscrow } = useEncryptionContext();
 
@@ -276,191 +247,160 @@ function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, ma
     }
   }, [contact, effectiveWaitDays, createEmergencyEscrow, request, getToken, i18n.language, markSessionExpired, t]);
 
+  const errorAlert = error && <Alert type={VariantType.ERROR}>{error}</Alert>;
+
   if (step === 'success' && contact) {
     return (
-      <>
-        <h2>{t('emergency.designate_title')}</h2>
-        <Alert type={VariantType.SUCCESS}>{t('emergency.designate_success', { email: contact.email })}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button onClick={onDesignated}>{t('emergency.btn_back_to_list')}</Button>
-        </div>
-      </>
+      <Screen
+        illustration="shield-check"
+        title={t('emergency.designate_title')}
+        description={t('emergency.designate_success', { email: contact.email })}
+        actions={<Button onClick={onDesignated}>{t('emergency.btn_back_to_list')}</Button>}
+      />
     );
   }
 
   if (step === 'verify' && contact) {
     return (
-      <>
-        <h2>{t('emergency.designate_title')}</h2>
-        <Alert type={VariantType.INFO}>{t('emergency.designate_verify_required')}</Alert>
-
-        {error && (
-          <div style={{ marginTop: 8 }}>
-            <Alert type={VariantType.ERROR}>{error}</Alert>
-          </div>
-        )}
-
-        <div style={{ ...rowStyle, marginTop: 12 }}>
-          <RecipientIdentity label={{ email: contact.email }} />
-          <p style={{ fontSize: 13, margin: '8px 0' }}>{t('profile.compare_instruction')}</p>
-          <RecipientFingerprint fingerprint={contact.fingerprint} />
-          <TrustRefuseButtons busy={busy} onTrust={handleTrust} onRefuse={handleRefuse} />
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 16 }}>
-          <Button variant="secondary" onClick={onBack} disabled={busy}>
-            {t('onboarding.btn_back')}
-          </Button>
-        </div>
-      </>
+      <Screen
+        title={t('emergency.designate_title')}
+        description={t('emergency.designate_verify_required')}
+        banner={
+          <>
+            {banner}
+            {errorAlert}
+          </>
+        }
+        back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: busy }}
+        actions={<TrustRefuseButtons busy={busy} onTrust={handleTrust} onRefuse={handleRefuse} />}
+      >
+        <IdentityCard name={contact.email} fingerprint={contact.fingerprint} />
+        <p className={styles.hint}>{t('profile.compare_instruction')}</p>
+      </Screen>
     );
   }
 
   if (step === 'wait' && contact) {
     return (
-      <>
-        <h2>{t('emergency.designate_title')}</h2>
-        <div style={rowStyle}>
-          <RecipientIdentity label={{ email: contact.email }} />
-        </div>
-
-        <p style={{ fontSize: 13, margin: '16px 0 8px', fontWeight: 700 }}>{t('emergency.designate_wait_title')}</p>
-        <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('emergency.designate_wait_explanation')}</p>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {WAIT_TIME_PRESETS.map((days) => (
-            <Button
-              key={days}
-              size="small"
-              variant={!useCustom && waitChoice === days ? 'primary' : 'secondary'}
-              onClick={() => {
-                setUseCustom(false);
-                setWaitChoice(days);
-              }}
-            >
-              {t('emergency.wait_days_option', { count: days })}
+      <Screen
+        title={t('emergency.designate_title')}
+        description={t('emergency.designate_wait_explanation')}
+        banner={
+          <>
+            {banner}
+            {errorAlert}
+          </>
+        }
+        actions={
+          <>
+            <Button onClick={handleDesignate} disabled={busy || effectiveWaitDays === null}>
+              {busy ? t('emergency.designating') : t('emergency.btn_designate_confirm')}
             </Button>
-          ))}
-          <Button size="small" variant={useCustom ? 'primary' : 'secondary'} onClick={() => setUseCustom(true)}>
-            {t('emergency.wait_custom')}
-          </Button>
+            <Button variant="bordered" color="neutral" onClick={onBack} disabled={busy}>
+              {t('emergency.btn_cancel')}
+            </Button>
+          </>
+        }
+      >
+        <div className={styles.card}>
+          <div className={styles.cardHeader}>
+            <Identity name={contact.email} />
+            <Chip tone="success" icon="check_circle">
+              {t('verify.trusted')}
+            </Chip>
+          </div>
         </div>
 
-        {useCustom && (
-          <div style={{ marginTop: 8 }}>
-            <label style={{ fontSize: 13, display: 'block', marginBottom: 4 }} htmlFor="emergency-custom-wait">
-              {t('emergency.wait_custom_label', { min: MIN_WAIT_DAYS, max: MAX_WAIT_DAYS })}
-            </label>
-            <input
-              id="emergency-custom-wait"
-              type="number"
-              min={MIN_WAIT_DAYS}
-              max={MAX_WAIT_DAYS}
-              value={customWait}
-              onChange={(e) => setCustomWait(e.target.value)}
-              style={{
-                width: 120,
-                boxSizing: 'border-box',
-                fontSize: 14,
-                padding: 'var(--c--globals--spacings--t)',
-                borderRadius: 4,
-                border: '1px solid var(--c--contextuals--border--surface--primary)',
-              }}
-            />
+        <div className={styles.section}>
+          <p className={styles.sectionTitle}>{t('emergency.designate_wait_title')}</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {WAIT_TIME_PRESETS.map((days) => (
+              <Button
+                key={days}
+                size="small"
+                variant={!useCustom && waitChoice === days ? 'primary' : 'bordered'}
+                onClick={() => {
+                  setUseCustom(false);
+                  setWaitChoice(days);
+                }}
+              >
+                {t('emergency.wait_days_option', { count: days })}
+              </Button>
+            ))}
+            <Button size="small" variant={useCustom ? 'primary' : 'bordered'} onClick={() => setUseCustom(true)}>
+              {t('emergency.wait_custom')}
+            </Button>
           </div>
-        )}
+          {useCustom && (
+            <div>
+              <label className={styles.label} htmlFor="emergency-custom-wait">
+                {t('emergency.wait_custom_label', { min: MIN_WAIT_DAYS, max: MAX_WAIT_DAYS })}
+              </label>
+              <input
+                id="emergency-custom-wait"
+                className={styles.input}
+                type="number"
+                min={MIN_WAIT_DAYS}
+                max={MAX_WAIT_DAYS}
+                value={customWait}
+                onChange={(e) => setCustomWait(e.target.value)}
+                style={{ width: 140 }}
+              />
+            </div>
+          )}
+          <p className={styles.hint}>{t('emergency.designate_wait_hint')}</p>
+        </div>
 
-        <p style={{ fontSize: 12, margin: '8px 0 0', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-          {t('emergency.designate_wait_hint')}
-        </p>
-
-        <div style={{ marginTop: 16 }}>
-          <p style={{ fontSize: 13, margin: '0 0 4px', fontWeight: 700 }}>{t('emergency.designate_scope_title')}</p>
-          <ul style={{ fontSize: 13, lineHeight: 1.6, margin: 0, paddingLeft: 20 }}>
+        <div className={styles.section}>
+          <p className={styles.sectionTitle}>{t('emergency.designate_scope_title')}</p>
+          <ul className={styles.list}>
             <li>{t('emergency.designate_scope_1')}</li>
             <li>{t('emergency.designate_scope_2')}</li>
             <li>{t('emergency.designate_scope_3')}</li>
           </ul>
         </div>
-
-        {error && (
-          <div style={{ marginTop: 8 }}>
-            <Alert type={VariantType.ERROR}>{error}</Alert>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button variant="secondary" onClick={onBack} disabled={busy}>
-            {t('emergency.btn_cancel')}
-          </Button>
-          <Button onClick={handleDesignate} disabled={busy || effectiveWaitDays === null}>
-            {busy ? t('emergency.designating') : t('emergency.btn_designate_confirm')}
-          </Button>
-        </div>
-      </>
+      </Screen>
     );
   }
 
   // Step 1: exact-email search.
   return (
-    <>
-      <h2>{t('emergency.designate_title')}</h2>
-      <p style={{ fontSize: 13 }}>{t('emergency.designate_intro')}</p>
-
-      <label style={{ fontSize: 13, display: 'block', marginBottom: 4, fontWeight: 700 }} htmlFor="emergency-contact-email">
-        {t('emergency.designate_email_label')}
-      </label>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          id="emergency-contact-email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSearch();
-          }}
-          placeholder={t('emergency.designate_email_placeholder')}
-          style={{
-            flex: 1,
-            boxSizing: 'border-box',
-            fontSize: 14,
-            padding: 'var(--c--globals--spacings--t)',
-            borderRadius: 4,
-            border: '1px solid var(--c--contextuals--border--surface--primary)',
-            // Without theme tokens a raw input keeps the UA light default, which
-            // is unreadable on the dark theme.
-            backgroundColor: 'var(--c--contextuals--background--surface--primary)',
-            color: 'var(--c--contextuals--content--semantic--neutral--primary)',
-          }}
-        />
-        <Button onClick={() => handleSearch()} disabled={busy || email.trim().length === 0}>
-          {busy ? t('emergency.searching') : t('emergency.btn_search')}
-        </Button>
+    <Screen
+      title={t('emergency.designate_title')}
+      description={t('emergency.designate_intro')}
+      banner={
+        <>
+          {banner}
+          {errorAlert}
+        </>
+      }
+      back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: busy }}
+    >
+      <div>
+        <label className={styles.label} htmlFor="emergency-contact-email">
+          {t('emergency.designate_email_label')}
+        </label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            id="emergency-contact-email"
+            className={styles.input}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSearch();
+            }}
+            placeholder={t('emergency.designate_email_placeholder')}
+          />
+          <Button onClick={() => handleSearch()} disabled={busy || email.trim().length === 0} icon={<Icon aria-hidden name="search" />}>
+            {busy ? t('emergency.searching') : t('emergency.btn_search')}
+          </Button>
+        </div>
       </div>
 
-      {searchOutcome === 'not-found' && (
-        <div style={{ marginTop: 12 }}>
-          <Alert type={VariantType.INFO}>{t('emergency.designate_not_found')}</Alert>
-        </div>
-      )}
-      {searchOutcome === 'not-onboarded' && (
-        <div style={{ marginTop: 12 }}>
-          <Alert type={VariantType.INFO}>{t('emergency.designate_not_onboarded')}</Alert>
-        </div>
-      )}
-
-      {error && (
-        <div style={{ marginTop: 12 }}>
-          <Alert type={VariantType.ERROR}>{error}</Alert>
-        </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: 16 }}>
-        <Button variant="secondary" onClick={onBack} disabled={busy}>
-          {t('onboarding.btn_back')}
-        </Button>
-      </div>
-    </>
+      {searchOutcome === 'not-found' && <Alert type={VariantType.INFO}>{t('emergency.designate_not_found')}</Alert>}
+      {searchOutcome === 'not-onboarded' && <Alert type={VariantType.INFO}>{t('emergency.designate_not_onboarded')}</Alert>}
+    </Screen>
   );
 }
 
@@ -474,9 +414,10 @@ interface RevealViewProps {
   getToken: () => Promise<string | null>;
   onDone: () => void;
   markSessionExpired: () => void;
+  banner?: ReactNode;
 }
 
-function RevealView({ entry, getToken, onDone, markSessionExpired }: RevealViewProps) {
+function RevealView({ entry, getToken, onDone, markSessionExpired, banner }: RevealViewProps) {
   const { t } = useTranslation('common');
   const { isReady, request, revealEmergencyPhrase } = useEncryptionContext();
 
@@ -547,68 +488,70 @@ function RevealView({ entry, getToken, onDone, markSessionExpired }: RevealViewP
     }
   }, [grantorFingerprint, entry.grantor_user_id, request, markSessionExpired]);
 
-  return (
+  const back = { label: t('emergency.btn_back_to_list'), onClick: onDone };
+  const description = (
     <>
-      <h2>{t('emergency.reveal_title')}</h2>
-      <p style={{ fontSize: 13, fontWeight: 700 }}>{t('emergency.reveal_grantor', { email: entry.grantor_email })}</p>
-
-      <ul style={{ fontSize: 13, lineHeight: 1.6, margin: 'var(--c--globals--spacings--sm) 0', paddingLeft: 20 }}>
+      <p>
+        <strong>{t('emergency.reveal_grantor', { email: entry.grantor_email })}</strong>
+      </p>
+      <ul className={styles.list}>
         <li>{t('emergency.reveal_instruction_1')}</li>
         <li>{t('emergency.reveal_instruction_2')}</li>
         <li>{t('emergency.reveal_instruction_3')}</li>
         <li>{t('emergency.reveal_instruction_4')}</li>
       </ul>
-
-      {untrustedGrantor && (
-        <div style={{ marginTop: 12 }}>
-          <Alert type={VariantType.WARNING}>{t('emergency.reveal_untrusted_grantor', { email: entry.grantor_email })}</Alert>
-          {grantorFingerprint ? (
-            <div style={{ marginTop: 12 }}>
-              <RecipientFingerprint fingerprint={grantorFingerprint} />
-              <TrustRefuseButtons
-                busy={approving}
-                onTrust={handleApproveGrantor}
-                onRefuse={onDone}
-                trustLabel={t('emergency.btn_grantor_verified')}
-                refuseLabel={t('emergency.btn_back_to_list')}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-              <Button variant="secondary" onClick={onDone}>
-                {t('emergency.btn_back_to_list')}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {error && (
-        <>
-          <Alert type={VariantType.ERROR}>{error}</Alert>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button variant="secondary" onClick={onDone}>
-              {t('emergency.btn_back_to_list')}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {!untrustedGrantor && !error && !phrase && (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
-          <Loader />
-        </div>
-      )}
-
-      {phrase && (
-        <>
-          <RecoveryKitBackup passphrase={phrase} parentOrigin={null} onConfirm={onDone} confirmLabel={t('emergency.reveal_done')} mode="handover" />
-          <p style={{ fontSize: 12, marginTop: 8, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('emergency.reveal_still_available')}
-          </p>
-        </>
-      )}
     </>
+  );
+
+  if (error) {
+    return <Screen back={back} title={t('emergency.reveal_title')} banner={<Alert type={VariantType.ERROR}>{error}</Alert>} />;
+  }
+
+  if (untrustedGrantor) {
+    return (
+      <Screen
+        back={back}
+        title={t('emergency.reveal_title')}
+        description={t('emergency.reveal_untrusted_grantor', { email: entry.grantor_email })}
+        banner={banner}
+        actions={
+          grantorFingerprint && (
+            <TrustRefuseButtons
+              busy={approving}
+              onTrust={handleApproveGrantor}
+              onRefuse={onDone}
+              trustLabel={t('emergency.btn_grantor_verified')}
+              refuseLabel={t('emergency.btn_back_to_list')}
+            />
+          )
+        }
+      >
+        {grantorFingerprint && <IdentityCard name={entry.grantor_email} fingerprint={grantorFingerprint} tone="warning" />}
+      </Screen>
+    );
+  }
+
+  if (!phrase) {
+    return <LoadingScreen />;
+  }
+
+  return (
+    <RecoveryKitBackup
+      mode="handover"
+      back={back}
+      title={t('emergency.reveal_title')}
+      description={
+        <>
+          {description}
+          <p>{t('emergency.reveal_still_available')}</p>
+        </>
+      }
+      banner={banner}
+      passphrase={phrase}
+      parentOrigin={null}
+      onConfirm={onDone}
+      confirmLabel={t('emergency.reveal_done')}
+    />
   );
 }
 
@@ -620,6 +563,7 @@ function RevealView({ entry, getToken, onDone, markSessionExpired }: RevealViewP
 
 export function EmergencyAccess({
   getToken,
+  onBack,
   onClose,
   onReconnect,
   isAuthenticating = false,
@@ -860,70 +804,61 @@ export function EmergencyAccess({
     }
   }, [trusted, getToken, loadLists, markSessionExpired, t]);
 
-  const dateFormatter = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'long', timeStyle: 'short' });
+  const dateFormatter = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'long' });
+  const timeFormatter = new Intl.DateTimeFormat(i18n.language, { timeStyle: 'short' });
 
   // Sub-screens replace the whole view (early-return pattern).
   // When the SDK auto-opened us over a product, the host iframe is a bare
   // transparent full-viewport layer: we must draw our OWN modal chrome (backdrop
   // + centered card), exactly like VerifyRecipients, or the page sprawls
   // full-width and see-through over the product. Navigated normally (the settings
-  // sub-page), we ARE the page, so render inline in a padded block.
+  // sub-page), we ARE the page, so the host modal already frames us.
   // `overlayMode` is the synchronous signal (URL hash); `emergencyPending` is kept
   // as a fallback for callers that pass the context directly (stories, tests).
   const isOverlay = overlayMode || emergencyPending !== null;
   const frame = (children: ReactNode, open = true): ReactNode =>
     isOverlay ? (
-      <Modal isOpen={open} onClose={onClose} closeOnClickOutside={false} size={ModalSize.LARGE} aria-label={t('emergency.title')}>
-        <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>{children}</div>
+      <Modal isOpen={open} onClose={onClose} closeOnClickOutside={false} size={ModalSize.MEDIUM} aria-label={t('emergency.title')}>
+        {children}
       </Modal>
     ) : (
-      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>{children}</div>
+      children
     );
+
+  const sessionBanner = sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />;
 
   if (view === 'designate') {
     return frame(
-      <>
-        {sessionExpired && onReconnect && (
-          <div style={{ marginBottom: 8 }}>
-            <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-          </div>
-        )}
-        <DesignateFlow
-          getToken={getToken}
-          prefillEmail={designatePrefill}
-          onBack={() => {
-            setDesignatePrefill(null);
-            setView('list');
-          }}
-          onDesignated={() => {
-            setDesignatePrefill(null);
-            setView('list');
-            loadLists();
-          }}
-          markSessionExpired={markSessionExpired}
-        />
-      </>
+      <DesignateFlow
+        getToken={getToken}
+        prefillEmail={designatePrefill}
+        banner={sessionBanner}
+        onBack={() => {
+          setDesignatePrefill(null);
+          setView('list');
+        }}
+        onDesignated={() => {
+          setDesignatePrefill(null);
+          setView('list');
+          loadLists();
+        }}
+        markSessionExpired={markSessionExpired}
+      />
     );
   }
 
   if (view === 'reveal' && revealEntry) {
     return frame(
-      <>
-        {sessionExpired && onReconnect && (
-          <div style={{ marginBottom: 8 }}>
-            <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-          </div>
-        )}
-        <RevealView
-          entry={revealEntry}
-          getToken={getToken}
-          onDone={() => {
-            setRevealEntry(null);
-            setView('list');
-          }}
-          markSessionExpired={markSessionExpired}
-        />
-      </>
+      <RevealView
+        entry={revealEntry}
+        getToken={getToken}
+        banner={sessionBanner}
+        onDone={() => {
+          setRevealEntry(null);
+          setView('list');
+        }}
+        markSessionExpired={markSessionExpired}
+      />
     );
   }
 
@@ -939,160 +874,151 @@ export function EmergencyAccess({
         isOpen={prompt === 'recovery'}
         onClose={busyId === 'prompt' ? () => undefined : onClose}
         closeOnClickOutside={false}
-        size={ModalSize.MEDIUM}
+        size={ModalSize.SMALL}
         aria-label={t('emergency.prompt_recovery_title')}
       >
-        <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
-          <h2 style={{ fontSize: 18, margin: '0 0 12px', textAlign: 'left' }}>{t('emergency.prompt_recovery_title')}</h2>
-          {pendingRequests.map((req) => (
-            <p key={req.id} style={{ fontSize: 14, margin: '0 0 12px' }}>
-              {emergencyPhase(req, now) === 'approved' || req.deadline_millis === null ? (
-                <Trans t={t} i18nKey="emergency.prompt_recovery_approved" values={{ email: req.grantee_email }} components={{ strong: <strong /> }} />
-              ) : (
-                <Trans
-                  t={t}
-                  i18nKey="emergency.prompt_recovery_body"
-                  values={{ email: req.grantee_email, date: dateFormatter.format(new Date(req.deadline_millis)) }}
-                  components={{ strong: <strong /> }}
-                />
-              )}
+        <Screen
+          illustration="shield-x"
+          title={t('emergency.prompt_recovery_title')}
+          description={pendingRequests.map((req) => (
+            <p key={req.id}>
+              <Trans
+                t={t}
+                i18nKey={
+                  emergencyPhase(req, now) === 'approved' || req.deadline_millis === null
+                    ? 'emergency.prompt_recovery_approved'
+                    : 'emergency.prompt_recovery_body'
+                }
+                values={{ email: req.grantee_email }}
+                components={{ strong: <strong /> }}
+              />
             </p>
           ))}
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{t('emergency.prompt_recovery_hint')}</p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
+          actions={
             <Button color="error" onClick={handlePromptRefuseAll} disabled={busyId === 'prompt'}>
               {busyId === 'prompt' ? t('emergency.refusing') : t('emergency.btn_prompt_refuse')}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          {/* The date is the one thing to retain: its own box, large. */}
+          {pendingRequests
+            .filter((req) => emergencyPhase(req, now) !== 'approved' && req.deadline_millis !== null)
+            .map((req) => (
+              <div key={req.id} className={styles.deadline}>
+                <span className={styles.groupLabel}>{t('emergency.prompt_recovery_deadline')}</span>
+                <span className={styles.deadlineValue}>{dateFormatter.format(new Date(req.deadline_millis as number))}</span>
+                <span className={styles.deadlineTime}>{timeFormatter.format(new Date(req.deadline_millis as number))}</span>
+              </div>
+            ))}
+          <p className={styles.hint}>{t('emergency.prompt_recovery_hint')}</p>
+          <p className={styles.hint}>{t('emergency.prompt_recovery_hint_refuse')}</p>
+        </Screen>
       </Modal>
 
       <Modal
         isOpen={prompt === 'invite'}
         onClose={() => setPromptDismissed(true)}
         closeOnClickOutside={false}
-        size={ModalSize.MEDIUM}
-        title={t('emergency.prompt_invite_title')}
+        size={ModalSize.SMALL}
+        aria-label={t('emergency.prompt_invite_title')}
       >
-        <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
-          <p style={{ fontSize: 14 }}>{t('emergency.prompt_invite_body')}</p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <Button onClick={() => setPromptDismissed(true)}>{t('emergency.btn_prompt_see_invite')}</Button>
-          </div>
-        </div>
+        <Screen
+          illustration="shield-check"
+          title={t('emergency.prompt_invite_title')}
+          description={t('emergency.prompt_invite_body')}
+          actions={<Button onClick={() => setPromptDismissed(true)}>{t('emergency.btn_prompt_see_invite')}</Button>}
+        />
+      </Modal>
+
+      {/* Shared confirmation dialog for the destructive / serious actions. */}
+      <Modal
+        isOpen={confirm !== null}
+        onClose={() => setConfirm(null)}
+        closeOnClickOutside={false}
+        size={ModalSize.SMALL}
+        aria-label={confirm ? t(`emergency.confirm_${confirm.kind}_title`) : undefined}
+      >
+        {confirm && (
+          <Screen
+            title={t(`emergency.confirm_${confirm.kind}_title`)}
+            description={
+              <p>
+                {confirm.kind === 'revoke' && (
+                  <Trans
+                    t={t}
+                    i18nKey="emergency.confirm_revoke_body"
+                    values={{ email: (confirm.entry as EmergencyTrustedEntry).grantee_email }}
+                    components={{ strong: <strong /> }}
+                  />
+                )}
+                {confirm.kind === 'decline' && (
+                  <Trans
+                    t={t}
+                    i18nKey="emergency.confirm_decline_body"
+                    values={{ email: (confirm.entry as EmergencyGrantedEntry).grantor_email }}
+                    components={{ strong: <strong /> }}
+                  />
+                )}
+                {confirm.kind === 'request' && (
+                  <Trans
+                    t={t}
+                    i18nKey="emergency.confirm_request_body"
+                    values={{ email: (confirm.entry as EmergencyGrantedEntry).grantor_email, count: confirm.entry.wait_time_days }}
+                    components={{ strong: <strong /> }}
+                  />
+                )}
+              </p>
+            }
+            actions={
+              <>
+                <Button
+                  color={confirm.kind === 'request' ? undefined : 'error'}
+                  onClick={() => {
+                    const { kind, entry } = confirm;
+
+                    setConfirm(null);
+
+                    if (kind === 'revoke') handleRevoke(entry as EmergencyTrustedEntry);
+                    else if (kind === 'decline') handleRevoke(entry as EmergencyGrantedEntry);
+                    else handleRequestAccess(entry as EmergencyGrantedEntry);
+                  }}
+                >
+                  {t(`emergency.confirm_${confirm.kind}_button`)}
+                </Button>
+                <Button variant="bordered" color="neutral" onClick={() => setConfirm(null)}>
+                  {t('emergency.btn_cancel')}
+                </Button>
+              </>
+            }
+          />
+        )}
       </Modal>
 
       {frame(
-        <>
-          <h2>{t('emergency.title')}</h2>
-
-          {sessionExpired && onReconnect && (
-            <div style={{ marginBottom: 8 }}>
-              <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-            </div>
-          )}
-
-          {/* Shared confirmation dialog for the destructive / serious actions. */}
-          <Modal
-            isOpen={confirm !== null}
-            onClose={() => setConfirm(null)}
-            closeOnClickOutside={false}
-            size={ModalSize.MEDIUM}
-            aria-label={confirm ? t(`emergency.confirm_${confirm.kind}_title`) : undefined}
-          >
-            <div style={{ paddingBottom: 'var(--c--globals--spacings--md)' }}>
-              {confirm && (
-                <>
-                  <h2 style={{ fontSize: 18, margin: '0 0 12px', textAlign: 'left' }}>{t(`emergency.confirm_${confirm.kind}_title`)}</h2>
-                  <p style={{ fontSize: 14 }}>
-                    {confirm.kind === 'revoke' && (
-                      <Trans
-                        t={t}
-                        i18nKey="emergency.confirm_revoke_body"
-                        values={{ email: (confirm.entry as EmergencyTrustedEntry).grantee_email }}
-                        components={{ strong: <strong /> }}
-                      />
-                    )}
-                    {confirm.kind === 'decline' && (
-                      <Trans
-                        t={t}
-                        i18nKey="emergency.confirm_decline_body"
-                        values={{ email: (confirm.entry as EmergencyGrantedEntry).grantor_email }}
-                        components={{ strong: <strong /> }}
-                      />
-                    )}
-                    {confirm.kind === 'request' && (
-                      <Trans
-                        t={t}
-                        i18nKey="emergency.confirm_request_body"
-                        values={{ email: (confirm.entry as EmergencyGrantedEntry).grantor_email, count: confirm.entry.wait_time_days }}
-                        components={{ strong: <strong /> }}
-                      />
-                    )}
-                  </p>
-                </>
-              )}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-                <Button variant="secondary" onClick={() => setConfirm(null)}>
-                  {t('emergency.btn_cancel')}
-                </Button>
-                {confirm && (
-                  <Button
-                    color={confirm.kind === 'request' ? undefined : 'error'}
-                    onClick={() => {
-                      const { kind, entry } = confirm;
-
-                      setConfirm(null);
-
-                      if (kind === 'revoke') handleRevoke(entry as EmergencyTrustedEntry);
-                      else if (kind === 'decline') handleRevoke(entry as EmergencyGrantedEntry);
-                      else handleRequestAccess(entry as EmergencyGrantedEntry);
-                    }}
-                  >
-                    {t(`emergency.confirm_${confirm.kind}_button`)}
-                  </Button>
-                )}
-              </div>
-            </div>
-          </Modal>
-
-          <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{t('emergency.intro')}</p>
-
-          {notice && (
-            <div style={{ marginBottom: 8 }}>
-              <Alert type={VariantType.SUCCESS}>{notice}</Alert>
-            </div>
-          )}
-
-          {actionError && (
-            <div style={{ marginBottom: 8 }}>
-              <Alert type={VariantType.ERROR}>{actionError}</Alert>
-            </div>
-          )}
-
-          {loadError && (
-            <div style={{ marginBottom: 8 }}>
-              <Alert type={VariantType.ERROR}>{loadError}</Alert>
-            </div>
-          )}
-
+        <Screen
+          back={onBack && !isOverlay ? { label: t('onboarding.btn_back'), onClick: onBack } : undefined}
+          title={t('emergency.title')}
+          description={t('emergency.intro')}
+          banner={
+            <>
+              {sessionBanner}
+              {notice && <Alert type={VariantType.SUCCESS}>{notice}</Alert>}
+              {actionError && <Alert type={VariantType.ERROR}>{actionError}</Alert>}
+              {loadError && <Alert type={VariantType.ERROR}>{loadError}</Alert>}
+            </>
+          }
+        >
           {loading && !loadError ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
-              <Loader />
-            </div>
+            <LoadingScreen />
           ) : (
             <>
               {/* Section A: contacts I designated (grantor side). */}
-              <h3 style={{ fontSize: 16, margin: '16px 0 2px' }}>{t('emergency.trusted_title')}</h3>
-              <p style={{ fontSize: 13, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-                {t('emergency.trusted_subtitle')}
-              </p>
+              <div className={styles.section}>
+                <p className={styles.sectionTitle}>{t('emergency.trusted_title')}</p>
+                <p className={styles.sectionSubtitle}>{t('emergency.trusted_subtitle')}</p>
 
-              {trusted && trusted.length === 0 && (
-                <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{t('emergency.trusted_empty')}</p>
-              )}
+                {trusted && trusted.length === 0 && <div className={styles.empty}>{t('emergency.trusted_empty')}</div>}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(trusted ?? []).map((entry) => {
                   const phase = emergencyPhase(entry, now);
                   const rowAudit = entry.vault_active === false ? undefined : audit[entry.id];
@@ -1100,160 +1026,137 @@ export function EmergencyAccess({
                   const busy = busyId === entry.id;
 
                   return (
-                    <div key={entry.id} style={rowStyle}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, wordBreak: 'break-all', flex: 1, minWidth: 0 }}>{entry.grantee_email}</span>
+                    <div key={entry.id} className={rowAudit === 'tampered' ? `${styles.card} ${styles.cardError}` : styles.card}>
+                      <div className={styles.cardHeader}>
+                        <Identity name={entry.grantee_email} secondary={t('emergency.wait_label', { count: entry.wait_time_days })} />
                         <StatusChip phase={phase} t={t} />
                       </div>
 
-                      <p style={{ fontSize: 12, margin: '4px 0 0', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-                        {t('emergency.wait_label', { count: entry.wait_time_days })}
-                      </p>
+                      {entry.vault_active === false && <p className={styles.hint}>{t('emergency.vault_inactive_note')}</p>}
 
-                      {entry.vault_active === false && (
-                        <p style={{ fontSize: 12, margin: '4px 0 0', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-                          {t('emergency.vault_inactive_note')}
-                        </p>
-                      )}
-
-                      {rowAudit === 'tampered' && (
-                        <div style={{ marginTop: 8 }}>
-                          <Alert type={VariantType.ERROR}>{t('emergency.audit_tampered')}</Alert>
-                        </div>
-                      )}
+                      {rowAudit === 'tampered' && <Alert type={VariantType.ERROR}>{t('emergency.audit_tampered')}</Alert>}
 
                       {rowAudit === 'stale-identity' && (
-                        <div style={{ marginTop: 8 }}>
-                          <Alert type={VariantType.WARNING}>{t('emergency.audit_stale')}</Alert>
-                          <div style={{ marginTop: 8 }}>
-                            <Button size="small" variant="secondary" disabled={busy} onClick={() => handleRenew(entry)}>
-                              {t('emergency.btn_renew')}
-                            </Button>
+                        <Alert type={VariantType.WARNING}>
+                          <div className={styles.alertStack}>
+                            <span>{t('emergency.audit_stale')}</span>
+                            <div>
+                              <Button size="small" variant="bordered" disabled={busy} onClick={() => handleRenew(entry)}>
+                                {t('emergency.btn_renew')}
+                              </Button>
+                            </div>
                           </div>
-                        </div>
+                        </Alert>
                       )}
 
                       {rowAudit === 'outdated-key' && (
-                        <div style={{ marginTop: 8 }}>
-                          <Alert type={VariantType.INFO}>{t('emergency.audit_outdated')}</Alert>
-                          <div style={{ marginTop: 8 }}>
-                            <Button size="small" variant="secondary" disabled={busy} onClick={() => handleUpdateEscrow(entry)}>
-                              {t('emergency.btn_update_escrow')}
-                            </Button>
+                        <Alert type={VariantType.INFO}>
+                          <div className={styles.alertStack}>
+                            <span>{t('emergency.audit_outdated')}</span>
+                            <div>
+                              <Button size="small" variant="bordered" disabled={busy} onClick={() => handleUpdateEscrow(entry)}>
+                                {t('emergency.btn_update_escrow')}
+                              </Button>
+                            </div>
                           </div>
-                        </div>
+                        </Alert>
                       )}
 
                       {rowAudit !== 'tampered' && phase === 'requested' && countdown && !countdown.expired && (
-                        <div style={{ marginTop: 8 }}>
-                          <Alert type={VariantType.WARNING}>
-                            {t('emergency.trusted_requested_warning', { email: entry.grantee_email, time: countdownLabel(countdown, i18n.language) })}
-                          </Alert>
-                        </div>
+                        <Alert type={VariantType.WARNING}>
+                          {t('emergency.trusted_requested_warning', { email: entry.grantee_email, time: countdownLabel(countdown, i18n.language) })}
+                        </Alert>
                       )}
 
                       {rowAudit !== 'tampered' && phase === 'approved' && (
-                        <div style={{ marginTop: 8 }}>
-                          <Alert type={VariantType.WARNING}>{t('emergency.trusted_approved_warning', { email: entry.grantee_email })}</Alert>
-                        </div>
+                        <Alert type={VariantType.WARNING}>{t('emergency.trusted_approved_warning', { email: entry.grantee_email })}</Alert>
                       )}
 
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                      <Actions layout="row">
+                        <Button size="small" variant="tertiary" color="error" disabled={busy} onClick={() => setConfirm({ kind: 'revoke', entry })}>
+                          {t('emergency.btn_revoke')}
+                        </Button>
                         {(phase === 'requested' || phase === 'approved') && (
                           <Button size="small" color="error" disabled={busy} onClick={() => handleReject(entry)}>
                             {phase === 'approved' ? t('emergency.btn_relock') : t('emergency.btn_refuse_request')}
                           </Button>
                         )}
-                        <Button size="small" variant="tertiary" color="error" disabled={busy} onClick={() => setConfirm({ kind: 'revoke', entry })}>
-                          {t('emergency.btn_revoke')}
-                        </Button>
-                      </div>
+                      </Actions>
                     </div>
                   );
                 })}
-              </div>
 
-              <div style={{ marginTop: 12 }}>
-                <Button variant="secondary" onClick={() => setView('designate')}>
+                <Button variant="secondary" onClick={() => setView('designate')} icon={<Icon aria-hidden name="person_add" />} fullWidth>
                   {t('emergency.btn_designate')}
                 </Button>
               </div>
 
               {/* Section B: vaults entrusted to me (contact side). */}
-              <h3 style={{ fontSize: 16, margin: '24px 0 2px' }}>{t('emergency.granted_title')}</h3>
-              <p style={{ fontSize: 13, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-                {t('emergency.granted_subtitle')}
-              </p>
+              <div className={styles.section}>
+                <p className={styles.sectionTitle}>{t('emergency.granted_title')}</p>
+                <p className={styles.sectionSubtitle}>{t('emergency.granted_subtitle')}</p>
 
-              {granted && granted.length === 0 && (
-                <p style={{ fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{t('emergency.granted_empty')}</p>
-              )}
+                {granted && granted.length === 0 && <div className={styles.empty}>{t('emergency.granted_empty')}</div>}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(granted ?? []).map((entry) => {
                   const phase = emergencyPhase(entry, now);
                   const countdown = entry.deadline_millis !== null ? countdownTo(entry.deadline_millis, now) : null;
                   const busy = busyId === entry.id;
 
                   return (
-                    <div key={entry.id} style={rowStyle}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, wordBreak: 'break-all', flex: 1, minWidth: 0 }}>{entry.grantor_email}</span>
+                    <div key={entry.id} className={styles.card}>
+                      <div className={styles.cardHeader}>
+                        <Identity name={entry.grantor_email} secondary={t('emergency.wait_label', { count: entry.wait_time_days })} />
                         <StatusChip phase={phase} t={t} />
                       </div>
 
-                      <p style={{ fontSize: 12, margin: '4px 0 0', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-                        {t('emergency.wait_label', { count: entry.wait_time_days })}
-                      </p>
-
                       {phase === 'invited' && (
                         <>
-                          <p style={{ fontSize: 13, margin: '8px 0 0' }}>{t('emergency.granted_invited_text', { email: entry.grantor_email })}</p>
-                          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                            <Button size="small" disabled={busy} onClick={() => handleAccept(entry)}>
-                              {t('emergency.btn_accept')}
-                            </Button>
+                          <p className={styles.hint}>{t('emergency.granted_invited_text', { email: entry.grantor_email })}</p>
+                          <Actions layout="row">
                             <Button
                               size="small"
-                              variant="secondary"
+                              variant="bordered"
                               color="error"
                               disabled={busy}
                               onClick={() => setConfirm({ kind: 'decline', entry })}
                             >
                               {t('emergency.btn_decline')}
                             </Button>
-                          </div>
+                            <Button size="small" disabled={busy} onClick={() => handleAccept(entry)}>
+                              {t('emergency.btn_accept')}
+                            </Button>
+                          </Actions>
                         </>
                       )}
 
                       {phase === 'confirmed' && (
-                        <div style={{ marginTop: 8 }}>
-                          <Button size="small" variant="secondary" disabled={busy} onClick={() => setConfirm({ kind: 'request', entry })}>
+                        <Actions layout="row">
+                          <Button size="small" variant="bordered" disabled={busy} onClick={() => setConfirm({ kind: 'request', entry })}>
                             {t('emergency.btn_request_access')}
                           </Button>
-                        </div>
+                        </Actions>
                       )}
 
                       {phase === 'requested' && countdown && !countdown.expired && (
                         <>
-                          <p style={{ fontSize: 13, margin: '8px 0 0' }}>
-                            {t('emergency.granted_requested_text', { time: countdownLabel(countdown, i18n.language) })}
-                          </p>
-                          <div style={{ marginTop: 8 }}>
-                            <Button size="small" variant="secondary" disabled={busy} onClick={() => handleCancelRequest(entry)}>
+                          <p className={styles.hint}>{t('emergency.granted_requested_text', { time: countdownLabel(countdown, i18n.language) })}</p>
+                          <Actions layout="row">
+                            <Button size="small" variant="bordered" disabled={busy} onClick={() => handleCancelRequest(entry)}>
                               {t('emergency.btn_cancel_request')}
                             </Button>
-                          </div>
+                          </Actions>
                         </>
                       )}
 
                       {phase === 'approved' && (
                         <>
-                          <p style={{ fontSize: 13, margin: '8px 0 0' }}>{t('emergency.granted_approved_text', { email: entry.grantor_email })}</p>
-                          <div style={{ marginTop: 8 }}>
+                          <p className={styles.hint}>{t('emergency.granted_approved_text', { email: entry.grantor_email })}</p>
+                          <Actions layout="row">
                             <Button
                               size="small"
                               disabled={busy}
+                              icon={<Icon aria-hidden name="key" size={16} />}
                               onClick={() => {
                                 setRevealEntry(entry);
                                 setView('reveal');
@@ -1261,7 +1164,7 @@ export function EmergencyAccess({
                             >
                               {t('emergency.btn_reveal')}
                             </Button>
-                          </div>
+                          </Actions>
                         </>
                       )}
                     </div>
@@ -1270,13 +1173,7 @@ export function EmergencyAccess({
               </div>
             </>
           )}
-
-          <div style={{ marginTop: 'var(--c--globals--spacings--base)' }}>
-            <Button variant="secondary" onClick={onClose}>
-              {t('settings.close')}
-            </Button>
-          </div>
-        </>,
+        </Screen>,
         !prompt
       )}
     </>

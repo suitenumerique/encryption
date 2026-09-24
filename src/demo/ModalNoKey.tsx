@@ -1,4 +1,5 @@
 import { Button, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
+import { Icon } from '@gouvfr-lasuite/ui-kit';
 
 interface ModalNoKeyProps {
   userName: string;
@@ -19,9 +20,7 @@ export function ModalNoKey({ userName, onClose }: ModalNoKeyProps) {
       rightActions={<Button onClick={onClose}>Understood</Button>}
       title={
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, fontWeight: 700 }}>
-          <span className="material-icons" style={{ color: 'var(--c--globals--colors--warning-500)' }}>
-            lock
-          </span>
+          <Icon aria-hidden name="lock" color={'var(--c--globals--colors--warning-500)'} />
           Encryption not enabled
         </span>
       }

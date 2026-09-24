@@ -18,6 +18,9 @@ import { BROWSER_REPORT_PATH, UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLIC
 // merges headers set with `setHeader()` into the later `writeHead()` Fastify does for
 // its own replies. This plugin must therefore stay registered BEFORE the Vite plugin,
 // since Fastify runs onRequest hooks in registration order.
+/** The client SDK as products load it, served by the vault host. */
+const SDK_PATHS = new Set(['/client.js', '/client.mjs', '/client.d.ts']);
+
 export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const isDev = process.env.NODE_ENV === 'development';
   const productFrameAncestors = env.ALLOWED_FRAME_ANCESTORS.split(',')
@@ -30,11 +33,16 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
   const oidcOrigin = new URL(env.OIDC_ISSUER).origin;
 
   app.addHook('onRequest', async (request, reply) => {
-    // Public assets are meant to be embedded cross-origin — the logo in a mail
-    // client, the fonts in a generated PDF — so they get a relaxed CORP and skip
-    // the iframe-only CSP. This is the ONLY exception; everything else below stays
-    // same-site / same-origin.
-    if (request.url.startsWith('/public-assets/')) {
+    const path = request.url.split('?')[0];
+
+    // Two kinds of files are meant to be fetched from another origin, so they get
+    // a relaxed CORP and skip the iframe-only CSP: the public assets (the logo in
+    // a mail client, the fonts in a generated PDF) and the client SDK, which a
+    // product loads with a plain <script src> from its own origin, a no-cors
+    // request that `same-origin` would make the browser refuse. The SDK is inert
+    // without the iframes, and who may embed those stays governed by
+    // frame-ancestors. Everything else below stays same-site / same-origin.
+    if (request.url.startsWith('/public-assets/') || (request.host === env.VAULT_HOST && SDK_PATHS.has(path))) {
       reply.raw.setHeader('X-Content-Type-Options', 'nosniff');
       reply.raw.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
@@ -43,7 +51,6 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
 
     // The interface opens these two as a popup and talks back to itself through
     // `window.opener`; see the COOP exception below.
-    const path = request.url.split('?')[0];
     const isAuthDocument = path === '/login' || path === '/auth/callback';
 
     // `request.host` keeps the port; env.VAULT_HOST/UI_HOST are derived from

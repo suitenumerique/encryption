@@ -56,6 +56,9 @@ const config: StorybookConfig = {
 
     config.plugins = [...(config.plugins ?? []), vendorMarianneFonts()];
 
+    // Must mirror src/ui/vite.config.ts: the typed keys of the CSS modules are camelCased.
+    config.css = { ...(config.css ?? {}), modules: { ...(config.css?.modules ?? {}), localsConvention: 'camelCaseOnly' } };
+
     return config;
   },
 };

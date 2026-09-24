@@ -1,8 +1,11 @@
 import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Icon } from '@gouvfr-lasuite/ui-kit';
 import { pdf } from '@react-pdf/renderer';
-import { useCallback, useState } from 'react';
+import { type ReactNode, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { type IllustrationName, Screen } from '@encryption/src/ui/components/layout/Screen';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { RecoveryKitDocument } from '@encryption/src/ui/documents/RecoveryKitDocument';
 
 interface RecoveryKitBackupProps {
@@ -13,16 +16,19 @@ interface RecoveryKitBackupProps {
   busyLabel?: string;
   isBusy?: boolean;
   error?: string | null;
-  onCancel?: () => void;
-  cancelLabel?: string;
   /**
-   * 'backup' (default): the OWNER saves their OWN new phrase — full ranked options
-   * (password manager / file / print) + the "this is your backup" warning.
+   * 'backup' (default): the OWNER saves their OWN new phrase — copy / file /
+   * print, with the confirmation gated on one of them having happened.
    * 'handover': a trusted contact is looking at the GRANTOR's phrase to pass on —
-   * the persistent-storage options make no sense (it is not theirs to keep), so it
-   * shows only the phrase + a copy action to send it through a secure channel.
+   * persistent-storage options make no sense (it is not theirs to keep), so it
+   * shows the phrase itself and a copy action to send it through a secure channel.
    */
   mode?: 'backup' | 'handover';
+  title?: ReactNode;
+  description?: ReactNode;
+  illustration?: IllustrationName;
+  banner?: ReactNode;
+  back?: { label: string; onClick: () => void; disabled?: boolean };
 }
 
 // Split a space-separated recovery phrase into its words. Recovery phrases are
@@ -33,12 +39,24 @@ function phraseWords(passphrase: string): string[] {
   return passphrase.trim().split(/\s+/).filter(Boolean);
 }
 
+function WordGrid({ passphrase }: { passphrase: string }) {
+  return (
+    <ol className={styles.words}>
+      {phraseWords(passphrase).map((word, index) => (
+        <li key={index}>
+          <span>{word}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 /**
- * The "Recovery Kit" backup screen: a WARNING, three save options (password
- * manager, file, print) ranked by safety, and a reveal-to-copy fallback, ending
- * in a single confirm button. Shared by the initial onboarding backup step and
- * the change-recovery-phrase flow so both offer the exact same, complete backup
- * UX before anything is committed to the server.
+ * The "Recovery Kit" backup screen: three ways to keep the phrase (copy, file,
+ * print), an on-demand reveal, and a single confirm button that only unlocks
+ * once the user did at least one of them. Shared by the initial onboarding
+ * backup step, the change-recovery-phrase flow and the post-emergency rotation,
+ * so all of them offer the exact same backup UX before anything is committed.
  */
 export function RecoveryKitBackup({
   passphrase,
@@ -48,18 +66,25 @@ export function RecoveryKitBackup({
   busyLabel,
   isBusy = false,
   error = null,
-  onCancel,
-  cancelLabel,
   mode = 'backup',
+  title,
+  description,
+  illustration,
+  banner,
+  back,
 }: RecoveryKitBackupProps) {
   const { t, i18n } = useTranslation('common');
-  const [showPassphrase, setShowPassphrase] = useState(false);
+  const [showPassphrase, setShowPassphrase] = useState(mode === 'handover');
   const [isCopied, setIsCopied] = useState(false);
+  // The phrase left the screen through at least one channel (copied, saved,
+  // printed, or read on screen): only then may the user claim it is saved.
+  const [saved, setSaved] = useState(mode === 'handover');
 
   const handleCopyPassphrase = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(passphrase);
       setIsCopied(true);
+      setSaved(true);
       setTimeout(() => setIsCopied(false), 3000);
     } catch {
       // Clipboard may not be available in iframes
@@ -78,6 +103,7 @@ export function RecoveryKitBackup({
     a.download = 'encryption-recovery-phrase.txt';
     a.click();
     URL.revokeObjectURL(url);
+    setSaved(true);
   }, [passphrase, t]);
 
   const handlePrint = useCallback(async () => {
@@ -104,219 +130,82 @@ export function RecoveryKitBackup({
       }, 1000);
     };
     document.body.appendChild(printFrame);
+    setSaved(true);
   }, [passphrase, parentOrigin, i18n.language]);
+
+  const confirmButton = (
+    <Button onClick={onConfirm} disabled={isBusy || !saved} fullWidth>
+      {isBusy && busyLabel ? busyLabel : confirmLabel}
+    </Button>
+  );
 
   // Handover (a contact revealing the grantor's phrase): no persistent-backup
   // framing — just show the phrase and a copy action to send it on. The
   // surrounding RevealView already explains it is the owner's phrase to hand over.
   if (mode === 'handover') {
     return (
-      <>
-        <div
-          style={{
-            marginTop: 12,
-            padding: 'var(--c--globals--spacings--sm)',
-            border: '1px solid var(--c--contextuals--border--surface--primary)',
-            borderRadius: 4,
-            background: 'var(--c--contextuals--background--surface--secondary)',
-          }}
+      <Screen back={back} title={title} description={description} banner={banner} actions={<>{confirmButton}</>}>
+        <WordGrid passphrase={passphrase} />
+        <Button
+          variant="secondary"
+          fullWidth
+          color={isCopied ? 'success' : 'brand'}
+          onClick={handleCopyPassphrase}
+          icon={<Icon aria-hidden name={isCopied ? 'check' : 'content_copy'} />}
         >
-          <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>{t('emergency.reveal_phrase_label')}</p>
-          <textarea
-            readOnly
-            value={passphrase}
-            rows={4}
-            style={{
-              width: '100%',
-              fontFamily: 'monospace',
-              fontSize: 12,
-              boxSizing: 'border-box',
-              lineHeight: 1.4,
-              userSelect: 'all',
-              borderRadius: 4,
-              border: '1px solid var(--c--contextuals--border--surface--primary)',
-              background: 'var(--c--contextuals--background--surface--primary)',
-              color: 'var(--c--contextuals--content--semantic--neutral--primary)',
-            }}
-          />
-          <div style={{ marginTop: 8 }}>
-            <Button
-              size="small"
-              onClick={handleCopyPassphrase}
-              icon={
-                isCopied ? (
-                  <span className="material-icons" style={{ fontSize: 16 }}>
-                    check
-                  </span>
-                ) : undefined
-              }
-            >
-              {isCopied ? t('onboarding.btn_copied') : t('emergency.reveal_copy_to_send')}
-            </Button>
-          </div>
-        </div>
-
-        {error && (
-          <div style={{ marginTop: 12 }}>
-            <Alert type={VariantType.ERROR}>{error}</Alert>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          {onCancel && (
-            <Button variant="secondary" onClick={onCancel} disabled={isBusy}>
-              {cancelLabel}
-            </Button>
-          )}
-          <Button onClick={onConfirm} disabled={isBusy}>
-            {isBusy && busyLabel ? busyLabel : confirmLabel}
-          </Button>
-        </div>
-      </>
+          {isCopied ? t('onboarding.btn_copied') : t('emergency.reveal_copy_to_send')}
+        </Button>
+        {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+      </Screen>
     );
   }
 
   return (
-    <>
-      <div style={{ marginTop: 12 }}>
-        <Alert type={VariantType.WARNING}>{t('onboarding.backup_warning')}</Alert>
+    <Screen
+      back={back}
+      illustration={illustration ?? 'shield-check'}
+      title={title ?? t('onboarding.title_backup')}
+      description={description ?? t('onboarding.backup_description')}
+      banner={banner}
+      actions={<>{confirmButton}</>}
+    >
+      <div className={styles.actions}>
+        <Button
+          variant="secondary"
+          color={isCopied ? 'success' : 'brand'}
+          onClick={handleCopyPassphrase}
+          icon={<Icon aria-hidden name={isCopied ? 'check' : 'content_copy'} />}
+        >
+          {isCopied ? t('onboarding.btn_copied') : t('onboarding.btn_copy_clipboard')}
+        </Button>
+        <Button variant="bordered" onClick={handleSaveFile} icon={<Icon aria-hidden name="download" />}>
+          {t('onboarding.btn_save_file')}
+        </Button>
+        <Button variant="bordered" onClick={handlePrint} icon={<Icon aria-hidden name="print" />}>
+          {t('onboarding.btn_print')}
+        </Button>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
-        {/* Option 1: Copy to password manager - Recommended */}
-        <div
-          style={{
-            padding: 'var(--c--globals--spacings--sm)',
-            border: '2px solid var(--c--globals--colors--success-500)',
-            borderRadius: 4,
-            background: 'var(--c--contextuals--background--semantic--success--secondary)',
-            color: 'var(--c--contextuals--content--semantic--success--secondary)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{t('onboarding.backup_option_copy')}</span>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '2px 8px',
-                borderRadius: 10,
-                background: 'var(--c--contextuals--background--semantic--success--primary)',
-                color: 'var(--c--contextuals--content--semantic--success--on-success)',
-              }}
-            >
-              {t('onboarding.badge_recommended')}
-            </span>
-          </div>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('onboarding.backup_option_copy_description')}
-          </p>
+      {showPassphrase ? (
+        <WordGrid passphrase={passphrase} />
+      ) : (
+        <div style={{ textAlign: 'center' }}>
           <Button
             size="small"
-            variant="secondary"
-            onClick={handleCopyPassphrase}
-            icon={
-              isCopied ? (
-                <span className="material-icons" style={{ fontSize: 16 }}>
-                  check
-                </span>
-              ) : undefined
-            }
+            variant="tertiary"
+            color="neutral"
+            onClick={() => {
+              setShowPassphrase(true);
+              setSaved(true);
+            }}
+            icon={<Icon aria-hidden name="visibility" size={16} />}
           >
-            {isCopied ? t('onboarding.btn_copied') : t('onboarding.btn_copy_clipboard')}
+            {t('onboarding.btn_reveal')}
           </Button>
-        </div>
-
-        {/* Option 2: Save as file */}
-        <div
-          style={{
-            padding: 'var(--c--globals--spacings--sm)',
-            border: '1px solid var(--c--contextuals--border--surface--primary)',
-            borderRadius: 4,
-          }}
-        >
-          <span style={{ fontWeight: 700, fontSize: 14, display: 'block', marginBottom: 4 }}>{t('onboarding.backup_option_file')}</span>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('onboarding.backup_option_file_description')}
-          </p>
-          <Button size="small" variant="secondary" onClick={handleSaveFile}>
-            {t('onboarding.btn_save_file')}
-          </Button>
-        </div>
-
-        {/* Option 3: Print on paper */}
-        <div
-          style={{
-            padding: 'var(--c--globals--spacings--sm)',
-            border: '1px solid var(--c--contextuals--border--surface--primary)',
-            borderRadius: 4,
-          }}
-        >
-          <span style={{ fontWeight: 700, fontSize: 14, display: 'block', marginBottom: 4 }}>{t('onboarding.backup_option_print')}</span>
-          <p style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>
-            {t('onboarding.backup_option_print_description')}
-          </p>
-          <Button size="small" variant="secondary" onClick={handlePrint}>
-            {t('onboarding.btn_print')}
-          </Button>
-        </div>
-
-        {/* Reveal passphrase - hidden by default */}
-        <div
-          style={{
-            padding: 'var(--c--globals--spacings--sm)',
-            border: '1px solid var(--c--contextuals--border--surface--primary)',
-            borderRadius: 4,
-          }}
-        >
-          {!showPassphrase ? (
-            <>
-              <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('onboarding.reveal_description')}</p>
-              <Button size="small" variant="tertiary" onClick={() => setShowPassphrase(true)}>
-                {t('onboarding.btn_reveal')}
-              </Button>
-            </>
-          ) : (
-            <>
-              <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>{t('onboarding.passphrase_label')}</p>
-              <textarea
-                readOnly
-                value={passphrase}
-                rows={4}
-                style={{
-                  width: '100%',
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  boxSizing: 'border-box',
-                  lineHeight: 1.4,
-                  userSelect: 'all',
-                  borderRadius: 4,
-                  border: '1px solid var(--c--contextuals--border--surface--primary)',
-                  background: 'var(--c--contextuals--background--surface--primary)',
-                  color: 'var(--c--contextuals--content--semantic--neutral--primary)',
-                }}
-              />
-            </>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <div style={{ marginTop: 12 }}>
-          <Alert type={VariantType.ERROR}>{error}</Alert>
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-        {onCancel && (
-          <Button variant="secondary" onClick={onCancel} disabled={isBusy}>
-            {cancelLabel}
-          </Button>
-        )}
-        <Button onClick={onConfirm} disabled={isBusy}>
-          {isBusy && busyLabel ? busyLabel : confirmLabel}
-        </Button>
-      </div>
-    </>
+      {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+    </Screen>
   );
 }

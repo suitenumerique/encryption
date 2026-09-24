@@ -1,4 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
+import { expect, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton } from '@encryption/.storybook/testing';
@@ -30,9 +31,14 @@ DefaultStory.play = async ({ canvasElement }) => {
 
 export const Default = prepareStory(DefaultStory);
 
+// The login tab is open: the button waits, and the hint says where to look.
 const AuthenticatingStory = Template.bind({});
 AuthenticatingStory.args = {
   isAuthenticating: true,
+};
+AuthenticatingStory.play = async ({ canvasElement }) => {
+  expect(await playFindButton(canvasElement, i18n.t('auth.signing_in'))).toBeDisabled();
+  await within(canvasElement).findByText(i18n.t('auth.finish_in_tab'));
 };
 
 export const Authenticating = prepareStory(AuthenticatingStory);

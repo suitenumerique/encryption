@@ -1,6 +1,8 @@
 import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { useTranslation } from 'react-i18next';
 
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
+
 interface SessionExpiredAlertProps {
   /** Wired to `oidcAuth.requestAuth` — opens a new tab to /login. */
   onReconnect: () => void;
@@ -20,18 +22,14 @@ export function SessionExpiredAlert({ onReconnect, isAuthenticating = false }: S
   const { t } = useTranslation('common');
   return (
     <Alert type={VariantType.ERROR}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-        }}
-      >
-        <span style={{ flex: 1, minWidth: 0 }}>{t('errors.vault.session_expired')}</span>
-        <Button size="small" onClick={onReconnect} disabled={isAuthenticating}>
-          {isAuthenticating ? t('auth.authenticating', 'Signing in…') : t('auth.reconnect', 'Reconnect')}
-        </Button>
+      <div className={styles.alertStack}>
+        <span>{t('errors.vault.session_expired')}</span>
+        <div>
+          <Button size="small" onClick={onReconnect} disabled={isAuthenticating}>
+            {isAuthenticating ? t('auth.signing_in') : t('auth.reconnect')}
+          </Button>
+        </div>
+        {isAuthenticating && <span className={styles.hint}>{t('auth.finish_in_tab')}</span>}
       </div>
     </Alert>
   );

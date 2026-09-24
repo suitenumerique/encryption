@@ -1,4 +1,4 @@
-import { Alert, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -10,9 +10,11 @@ import {
 } from '@encryption/src/shared/constants';
 import { type RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
 import { SessionExpiredError } from '@encryption/src/ui/auth/session-expired';
-import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { TrustRefuseButtons, recipientLabel } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
@@ -29,44 +31,15 @@ interface RecipientProfileProps {
 
 /** The persisted TOFU decision for a recipient (never 'mismatch': that is transient). */
 type Decision = 'unknown' | 'trusted' | 'refused';
-
-/** Initials avatar for the identity card (from the recipient's name or email). */
-function ProfileAvatar({ label }: { label: string }) {
-  const initials =
-    label
-      .split(/\s+/)
-      .map((p) => p[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase() || '?';
-
-  return (
-    <div
-      style={{
-        width: 48,
-        height: 48,
-        borderRadius: '50%',
-        flexShrink: 0,
-        background: 'var(--c--globals--colors--brand-400)',
-        color: 'white',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: 18,
-        fontWeight: 700,
-      }}
-    >
-      {initials}
-    </div>
-  );
-}
+/** What the card shows: the recorded decision, unless the key it was taken on is gone. */
+type Standing = Decision | 'changed';
 
 /**
  * Per-recipient "Encryption Identity" card, opened explicitly by the product
  * (e.g. clicking a person in its share UI). Shows who the recipient is
  * (avatar + product-supplied name/email), their 40-digit identity fingerprint
- * from the registry for out-of-band comparison, and Trust / Refuse controls.
- * There is no "not verified" note: the fingerprint and the actions carry that.
+ * from the registry for out-of-band comparison, and Trust / Don't trust
+ * controls. The recorded decision, if any, is the chip on the card.
  */
 export function RecipientProfile({ userId, label, onReconnect, isAuthenticating = false, currentAccessToken = null }: RecipientProfileProps) {
   const { t } = useTranslation('common');
@@ -74,7 +47,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
 
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [fingerprint, setFingerprint] = useState<string | null>(null);
-  const [decision, setDecision] = useState<Decision>('unknown');
+  const [decision, setDecision] = useState<Standing>('unknown');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { sessionExpired, markSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
@@ -107,7 +80,10 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
     const { fingerprints } = (await request(MSG_VAULT_GET_KNOWN_FINGERPRINTS)) as {
       fingerprints: Record<string, { fingerprint: string; status: Decision }>;
     };
-    setDecision(entry ? (fingerprints[entry.userId]?.status ?? 'unknown') : 'unknown');
+    const known = entry ? fingerprints[entry.userId] : undefined;
+    // A decision was taken on a fingerprint the registry no longer shows: it
+    // says nothing about the current key, which has to be verified again.
+    setDecision(!known ? 'unknown' : entry?.verified && known.fingerprint !== entry.identityFingerprint ? 'changed' : known.status);
   }, [userId, request]);
 
   useEffect(() => {
@@ -150,93 +126,70 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
 
   const { primary, secondary } = userId ? recipientLabel(label) : { primary: '', secondary: null };
 
+  if (phase === 'loading') {
+    return <LoadingScreen />;
+  }
+
   return (
-    <div style={{ padding: '4px 16px 16px' }}>
-      <h2 style={{ margin: '0 0 12px' }}>{t('profile.title')}</h2>
-
-      {sessionExpired && onReconnect && (
-        <div style={{ marginBottom: 8 }}>
-          <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-        </div>
-      )}
-
-      {phase === 'loading' ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--c--globals--spacings--md)' }}>
-          <Loader />
-        </div>
+    <Screen
+      title={t('profile.title')}
+      description={fingerprint ? t('profile.compare_instruction') : undefined}
+      banner={
+        <>
+          {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
+          {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+        </>
+      }
+      actions={
+        fingerprint &&
+        // A decision already taken only offers its reversal.
+        (decision === 'trusted' ? (
+          <Button variant="bordered" color="error" disabled={busy} onClick={() => act(MSG_VAULT_REFUSE_FINGERPRINT)}>
+            {t('profile.btn_refuse')}
+          </Button>
+        ) : decision === 'refused' ? (
+          <Button disabled={busy} onClick={() => act(MSG_VAULT_ACCEPT_FINGERPRINT)}>
+            {t('profile.btn_trust')}
+          </Button>
+        ) : (
+          <TrustRefuseButtons
+            busy={busy}
+            onTrust={() => act(MSG_VAULT_ACCEPT_FINGERPRINT)}
+            onRefuse={() => act(MSG_VAULT_REFUSE_FINGERPRINT)}
+            trustLabel={t('profile.btn_trust')}
+            refuseLabel={t('profile.btn_refuse')}
+          />
+        ))
+      }
+    >
+      {fingerprint ? (
+        <IdentityCard
+          name={primary}
+          secondary={secondary}
+          fingerprint={fingerprint}
+          tone={decision === 'trusted' ? 'success' : decision === 'refused' ? 'error' : decision === 'changed' ? 'warning' : 'default'}
+          aside={
+            decision === 'trusted' ? (
+              <Chip tone="success" icon="check_circle">
+                {t('profile.decision_trusted')}
+              </Chip>
+            ) : decision === 'refused' ? (
+              <Chip tone="error" icon="block">
+                {t('profile.decision_refused')}
+              </Chip>
+            ) : decision === 'changed' ? (
+              <Chip tone="warning" icon="warning">
+                {t('profile.decision_changed')}
+              </Chip>
+            ) : undefined
+          }
+        />
       ) : (
         <>
-          {/* Identity header: avatar + name (prominent) + email. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 }}>
-            <ProfileAvatar label={primary} />
-            <div style={{ minWidth: 0 }}>
-              <p style={{ fontSize: 18, fontWeight: 700, margin: 0, wordBreak: 'break-word' }}>{primary}</p>
-              {secondary && (
-                <p
-                  style={{
-                    fontSize: 13,
-                    margin: '2px 0 0',
-                    color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
-                    wordBreak: 'break-all',
-                  }}
-                >
-                  {secondary}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {error && (
-            <div style={{ margin: '12px 0 0' }}>
-              <Alert type={VariantType.ERROR}>{error}</Alert>
-            </div>
-          )}
-
-          {fingerprint ? (
-            <>
-              <p style={{ fontSize: 13, textAlign: 'left', margin: '20px 0 12px' }}>{t('profile.compare_instruction')}</p>
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <FingerprintDisplay fingerprint={fingerprint} style={{ fontSize: 22, lineHeight: 1.5, textAlign: 'center' }} />
-              </div>
-
-              {(decision === 'trusted' || decision === 'refused') && (
-                <p
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    margin: '16px 0 0',
-                    color: decision === 'trusted' ? 'var(--c--globals--colors--success-600)' : 'var(--c--globals--colors--error-500)',
-                  }}
-                >
-                  {t(`profile.decision_${decision}`)}
-                </p>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 32 }}>
-                <TrustRefuseButtons
-                  busy={busy}
-                  size="medium"
-                  onTrust={() => act(MSG_VAULT_ACCEPT_FINGERPRINT)}
-                  onRefuse={() => act(MSG_VAULT_REFUSE_FINGERPRINT)}
-                  trustLabel={t('profile.btn_trust')}
-                  refuseLabel={t('profile.btn_refuse')}
-                />
-              </div>
-            </>
-          ) : (
-            <p
-              style={{
-                fontSize: 13,
-                textAlign: 'center',
-                margin: '24px 0 0',
-                color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
-              }}
-            >
-              {t('profile.no_key')}
-            </p>
-          )}
+          <IdentityCard name={primary} secondary={secondary} />
+          <p className={styles.hint}>{t('profile.no_key')}</p>
         </>
       )}
-    </div>
+    </Screen>
   );
 }

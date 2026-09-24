@@ -1,23 +1,20 @@
--- CreateSchema
-CREATE SCHEMA IF NOT EXISTS "encryption";
+-- CreateEnum
+CREATE TYPE "SignatureAlgo" AS ENUM ('ed25519');
 
 -- CreateEnum
-CREATE TYPE "encryption"."SignatureAlgo" AS ENUM ('ed25519');
+CREATE TYPE "EncryptionAlgo" AS ENUM ('x-wing');
 
 -- CreateEnum
-CREATE TYPE "encryption"."EncryptionAlgo" AS ENUM ('x-wing');
+CREATE TYPE "VaultItemType" AS ENUM ('identity', 'encryptionKey', 'tofu', 'active');
 
 -- CreateEnum
-CREATE TYPE "encryption"."VaultItemType" AS ENUM ('identity', 'encryptionKey', 'tofu', 'active');
+CREATE TYPE "VaultCredentialType" AS ENUM ('primary', 'emergency');
 
 -- CreateEnum
-CREATE TYPE "encryption"."VaultCredentialType" AS ENUM ('primary', 'emergency');
-
--- CreateEnum
-CREATE TYPE "encryption"."EmergencyAccessStatus" AS ENUM ('invited', 'confirmed', 'recovery_requested', 'recovery_approved');
+CREATE TYPE "EmergencyAccessStatus" AS ENUM ('invited', 'confirmed', 'recovery_requested', 'recovery_approved');
 
 -- CreateTable
-CREATE TABLE "encryption"."users" (
+CREATE TABLE "users" (
     "id" UUID NOT NULL,
     "email" TEXT NOT NULL,
     "language" TEXT NOT NULL DEFAULT 'en',
@@ -28,7 +25,7 @@ CREATE TABLE "encryption"."users" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."oidc_accounts" (
+CREATE TABLE "oidc_accounts" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "issuer" TEXT NOT NULL,
@@ -41,11 +38,11 @@ CREATE TABLE "encryption"."oidc_accounts" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."identities" (
+CREATE TABLE "identities" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "signature_public_key" BYTEA NOT NULL,
-    "algo" "encryption"."SignatureAlgo" NOT NULL DEFAULT 'ed25519',
+    "algo" "SignatureAlgo" NOT NULL DEFAULT 'ed25519',
     "generation" INTEGER NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "disabled_at" TIMESTAMP(3),
@@ -56,12 +53,12 @@ CREATE TABLE "encryption"."identities" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."encryption_keys" (
+CREATE TABLE "encryption_keys" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "identity_id" UUID NOT NULL,
     "encryption_public_key" BYTEA NOT NULL,
-    "algo" "encryption"."EncryptionAlgo" NOT NULL DEFAULT 'x-wing',
+    "algo" "EncryptionAlgo" NOT NULL DEFAULT 'x-wing',
     "key_binding_signature" BYTEA NOT NULL,
     "version" INTEGER NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -72,7 +69,7 @@ CREATE TABLE "encryption"."encryption_keys" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."key_possession_challenges" (
+CREATE TABLE "key_possession_challenges" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "encryption_public_key" BYTEA NOT NULL,
@@ -88,11 +85,11 @@ CREATE TABLE "encryption"."key_possession_challenges" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."vault_items" (
+CREATE TABLE "vault_items" (
     "id" UUID NOT NULL,
     "vault_id" UUID NOT NULL,
     "item_id" TEXT NOT NULL,
-    "type" "encryption"."VaultItemType" NOT NULL,
+    "type" "VaultItemType" NOT NULL,
     "ciphertext" TEXT NOT NULL,
     "revision_date" TIMESTAMP(3) NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -102,7 +99,7 @@ CREATE TABLE "encryption"."vault_items" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."vault_meta" (
+CREATE TABLE "vault_meta" (
     "vault_id" UUID NOT NULL,
     "account_revision" INTEGER NOT NULL DEFAULT 0,
     "manifest" TEXT NOT NULL,
@@ -113,7 +110,7 @@ CREATE TABLE "encryption"."vault_meta" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."vault_keyring" (
+CREATE TABLE "vault_keyring" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "identity_id" UUID NOT NULL,
@@ -125,10 +122,10 @@ CREATE TABLE "encryption"."vault_keyring" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."vault_credentials" (
+CREATE TABLE "vault_credentials" (
     "id" UUID NOT NULL,
     "vault_id" UUID NOT NULL,
-    "type" "encryption"."VaultCredentialType" NOT NULL,
+    "type" "VaultCredentialType" NOT NULL,
     "wrapped_vrk" TEXT NOT NULL,
     "auth_public_key" BYTEA NOT NULL,
     "auth_pub_sig" BYTEA NOT NULL,
@@ -142,11 +139,11 @@ CREATE TABLE "encryption"."vault_credentials" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."emergency_access" (
+CREATE TABLE "emergency_access" (
     "id" UUID NOT NULL,
     "grantor_user_id" UUID NOT NULL,
     "grantee_user_id" UUID NOT NULL,
-    "status" "encryption"."EmergencyAccessStatus" NOT NULL,
+    "status" "EmergencyAccessStatus" NOT NULL,
     "wait_time_days" INTEGER NOT NULL,
     "credential_id" UUID NOT NULL,
     "wrapped_phrase_for_grantee" TEXT NOT NULL,
@@ -163,7 +160,7 @@ CREATE TABLE "encryption"."emergency_access" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."vault_challenges" (
+CREATE TABLE "vault_challenges" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "nonce" BYTEA NOT NULL,
@@ -174,7 +171,7 @@ CREATE TABLE "encryption"."vault_challenges" (
 );
 
 -- CreateTable
-CREATE TABLE "encryption"."vault_approvals" (
+CREATE TABLE "vault_approvals" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
     "request_id" TEXT NOT NULL,
@@ -187,134 +184,134 @@ CREATE TABLE "encryption"."vault_approvals" (
 );
 
 -- CreateIndex
-CREATE INDEX "oidc_accounts_user_id_idx" ON "encryption"."oidc_accounts"("user_id");
+CREATE INDEX "oidc_accounts_user_id_idx" ON "oidc_accounts"("user_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "oidc_accounts_issuer_subject_key" ON "encryption"."oidc_accounts"("issuer", "subject");
+CREATE UNIQUE INDEX "oidc_accounts_issuer_subject_key" ON "oidc_accounts"("issuer", "subject");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "identities_signature_public_key_key" ON "encryption"."identities"("signature_public_key");
+CREATE UNIQUE INDEX "identities_signature_public_key_key" ON "identities"("signature_public_key");
 
 -- CreateIndex
-CREATE INDEX "identities_user_id_disabled_at_idx" ON "encryption"."identities"("user_id", "disabled_at");
+CREATE INDEX "identities_user_id_disabled_at_idx" ON "identities"("user_id", "disabled_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "identities_user_id_generation_key" ON "encryption"."identities"("user_id", "generation");
+CREATE UNIQUE INDEX "identities_user_id_generation_key" ON "identities"("user_id", "generation");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "encryption_keys_encryption_public_key_key" ON "encryption"."encryption_keys"("encryption_public_key");
+CREATE UNIQUE INDEX "encryption_keys_encryption_public_key_key" ON "encryption_keys"("encryption_public_key");
 
 -- CreateIndex
-CREATE INDEX "encryption_keys_user_id_disabled_at_idx" ON "encryption"."encryption_keys"("user_id", "disabled_at");
+CREATE INDEX "encryption_keys_user_id_disabled_at_idx" ON "encryption_keys"("user_id", "disabled_at");
 
 -- CreateIndex
-CREATE INDEX "encryption_keys_user_id_created_at_idx" ON "encryption"."encryption_keys"("user_id", "created_at");
+CREATE INDEX "encryption_keys_user_id_created_at_idx" ON "encryption_keys"("user_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "encryption_keys_identity_id_idx" ON "encryption"."encryption_keys"("identity_id");
+CREATE INDEX "encryption_keys_identity_id_idx" ON "encryption_keys"("identity_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "encryption_keys_user_id_version_key" ON "encryption"."encryption_keys"("user_id", "version");
+CREATE UNIQUE INDEX "encryption_keys_user_id_version_key" ON "encryption_keys"("user_id", "version");
 
 -- CreateIndex
-CREATE INDEX "key_possession_challenges_user_id_idx" ON "encryption"."key_possession_challenges"("user_id");
+CREATE INDEX "key_possession_challenges_user_id_idx" ON "key_possession_challenges"("user_id");
 
 -- CreateIndex
-CREATE INDEX "key_possession_challenges_expires_at_idx" ON "encryption"."key_possession_challenges"("expires_at");
+CREATE INDEX "key_possession_challenges_expires_at_idx" ON "key_possession_challenges"("expires_at");
 
 -- CreateIndex
-CREATE INDEX "vault_items_vault_id_idx" ON "encryption"."vault_items"("vault_id");
+CREATE INDEX "vault_items_vault_id_idx" ON "vault_items"("vault_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "vault_items_vault_id_item_id_key" ON "encryption"."vault_items"("vault_id", "item_id");
+CREATE UNIQUE INDEX "vault_items_vault_id_item_id_key" ON "vault_items"("vault_id", "item_id");
 
 -- CreateIndex
-CREATE INDEX "vault_keyring_user_id_idx" ON "encryption"."vault_keyring"("user_id");
+CREATE INDEX "vault_keyring_user_id_idx" ON "vault_keyring"("user_id");
 
 -- CreateIndex
-CREATE INDEX "vault_keyring_user_id_disabled_at_idx" ON "encryption"."vault_keyring"("user_id", "disabled_at");
+CREATE INDEX "vault_keyring_user_id_disabled_at_idx" ON "vault_keyring"("user_id", "disabled_at");
 
 -- CreateIndex
-CREATE INDEX "vault_credentials_vault_id_idx" ON "encryption"."vault_credentials"("vault_id");
+CREATE INDEX "vault_credentials_vault_id_idx" ON "vault_credentials"("vault_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "emergency_access_credential_id_key" ON "encryption"."emergency_access"("credential_id");
+CREATE UNIQUE INDEX "emergency_access_credential_id_key" ON "emergency_access"("credential_id");
 
 -- CreateIndex
-CREATE INDEX "emergency_access_grantee_user_id_idx" ON "encryption"."emergency_access"("grantee_user_id");
+CREATE INDEX "emergency_access_grantee_user_id_idx" ON "emergency_access"("grantee_user_id");
 
 -- CreateIndex
-CREATE INDEX "emergency_access_grantee_identity_id_idx" ON "encryption"."emergency_access"("grantee_identity_id");
+CREATE INDEX "emergency_access_grantee_identity_id_idx" ON "emergency_access"("grantee_identity_id");
 
 -- CreateIndex
-CREATE INDEX "emergency_access_status_recovery_requested_at_idx" ON "encryption"."emergency_access"("status", "recovery_requested_at");
+CREATE INDEX "emergency_access_status_recovery_requested_at_idx" ON "emergency_access"("status", "recovery_requested_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "emergency_access_grantor_user_id_grantee_user_id_key" ON "encryption"."emergency_access"("grantor_user_id", "grantee_user_id");
+CREATE UNIQUE INDEX "emergency_access_grantor_user_id_grantee_user_id_key" ON "emergency_access"("grantor_user_id", "grantee_user_id");
 
 -- CreateIndex
-CREATE INDEX "vault_challenges_user_id_idx" ON "encryption"."vault_challenges"("user_id");
+CREATE INDEX "vault_challenges_user_id_idx" ON "vault_challenges"("user_id");
 
 -- CreateIndex
-CREATE INDEX "vault_challenges_expires_at_idx" ON "encryption"."vault_challenges"("expires_at");
+CREATE INDEX "vault_challenges_expires_at_idx" ON "vault_challenges"("expires_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "vault_approvals_request_id_key" ON "encryption"."vault_approvals"("request_id");
+CREATE UNIQUE INDEX "vault_approvals_request_id_key" ON "vault_approvals"("request_id");
 
 -- CreateIndex
-CREATE INDEX "vault_approvals_user_id_idx" ON "encryption"."vault_approvals"("user_id");
+CREATE INDEX "vault_approvals_user_id_idx" ON "vault_approvals"("user_id");
 
 -- CreateIndex
-CREATE INDEX "vault_approvals_expires_at_idx" ON "encryption"."vault_approvals"("expires_at");
+CREATE INDEX "vault_approvals_expires_at_idx" ON "vault_approvals"("expires_at");
 
 -- AddForeignKey
-ALTER TABLE "encryption"."oidc_accounts" ADD CONSTRAINT "oidc_accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "oidc_accounts" ADD CONSTRAINT "oidc_accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."identities" ADD CONSTRAINT "identities_previous_identity_id_fkey" FOREIGN KEY ("previous_identity_id") REFERENCES "encryption"."identities"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "identities" ADD CONSTRAINT "identities_previous_identity_id_fkey" FOREIGN KEY ("previous_identity_id") REFERENCES "identities"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."identities" ADD CONSTRAINT "identities_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "identities" ADD CONSTRAINT "identities_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."encryption_keys" ADD CONSTRAINT "encryption_keys_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "encryption_keys" ADD CONSTRAINT "encryption_keys_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."encryption_keys" ADD CONSTRAINT "encryption_keys_identity_id_fkey" FOREIGN KEY ("identity_id") REFERENCES "encryption"."identities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "encryption_keys" ADD CONSTRAINT "encryption_keys_identity_id_fkey" FOREIGN KEY ("identity_id") REFERENCES "identities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."key_possession_challenges" ADD CONSTRAINT "key_possession_challenges_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "key_possession_challenges" ADD CONSTRAINT "key_possession_challenges_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_items" ADD CONSTRAINT "vault_items_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "encryption"."vault_keyring"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "vault_items" ADD CONSTRAINT "vault_items_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "vault_keyring"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_meta" ADD CONSTRAINT "vault_meta_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "encryption"."vault_keyring"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "vault_meta" ADD CONSTRAINT "vault_meta_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "vault_keyring"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_keyring" ADD CONSTRAINT "vault_keyring_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "vault_keyring" ADD CONSTRAINT "vault_keyring_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_keyring" ADD CONSTRAINT "vault_keyring_identity_id_fkey" FOREIGN KEY ("identity_id") REFERENCES "encryption"."identities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "vault_keyring" ADD CONSTRAINT "vault_keyring_identity_id_fkey" FOREIGN KEY ("identity_id") REFERENCES "identities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_credentials" ADD CONSTRAINT "vault_credentials_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "encryption"."vault_keyring"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "vault_credentials" ADD CONSTRAINT "vault_credentials_vault_id_fkey" FOREIGN KEY ("vault_id") REFERENCES "vault_keyring"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."emergency_access" ADD CONSTRAINT "emergency_access_grantor_user_id_fkey" FOREIGN KEY ("grantor_user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "emergency_access" ADD CONSTRAINT "emergency_access_grantor_user_id_fkey" FOREIGN KEY ("grantor_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."emergency_access" ADD CONSTRAINT "emergency_access_grantee_user_id_fkey" FOREIGN KEY ("grantee_user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "emergency_access" ADD CONSTRAINT "emergency_access_grantee_user_id_fkey" FOREIGN KEY ("grantee_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."emergency_access" ADD CONSTRAINT "emergency_access_grantee_identity_id_fkey" FOREIGN KEY ("grantee_identity_id") REFERENCES "encryption"."identities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "emergency_access" ADD CONSTRAINT "emergency_access_grantee_identity_id_fkey" FOREIGN KEY ("grantee_identity_id") REFERENCES "identities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."emergency_access" ADD CONSTRAINT "emergency_access_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "encryption"."vault_credentials"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "emergency_access" ADD CONSTRAINT "emergency_access_credential_id_fkey" FOREIGN KEY ("credential_id") REFERENCES "vault_credentials"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_challenges" ADD CONSTRAINT "vault_challenges_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "vault_challenges" ADD CONSTRAINT "vault_challenges_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "encryption"."vault_approvals" ADD CONSTRAINT "vault_approvals_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "encryption"."users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "vault_approvals" ADD CONSTRAINT "vault_approvals_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 

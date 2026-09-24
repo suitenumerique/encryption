@@ -76,16 +76,20 @@ async function resolveViaRegistry(sub: string): Promise<string | null> {
   }
 }
 
-export async function resolveInternalUserId(sub: string): Promise<string | null> {
+/** What this device already knows for `sub`, without asking the registry. */
+export async function resolveLocalUserId(sub: string): Promise<string | null> {
   const cached = memoryAliases.get(sub);
   if (cached) return cached;
 
   const stored = await readStoredAlias(sub);
-  if (stored) {
-    memoryAliases.set(sub, stored);
+  if (stored) memoryAliases.set(sub, stored);
 
-    return stored;
-  }
+  return stored;
+}
+
+export async function resolveInternalUserId(sub: string): Promise<string | null> {
+  const local = await resolveLocalUserId(sub);
+  if (local) return local;
 
   const fetched = await resolveViaRegistry(sub);
   if (fetched) {

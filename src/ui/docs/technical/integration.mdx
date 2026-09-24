@@ -319,16 +319,20 @@ encryption.destroy();`}
 | `openOnboarding(container)` | Open the onboarding interface in the HTML container |
 | `openBackup(container)`     | Open the key backup interface                       |
 | `openRestore(container)`    | Open the restore interface                          |
-| `closeInterface()`          | Close the interface iframe                          |
+| `requestClose()`            | Ask the interface to close (see below)              |
+| `closeInterface()`          | Remove the interface iframe immediately             |
+
+The interface renders the _content_ of a modal: the product draws the modal itself (card and close control) around the container, so it looks like the rest of the product, and the interface pads that content itself: remove the modal's own padding around the container (`.c__modal__scroller { padding: 0 }` scoped to your host), or the padding doubles and the interface's back link is clipped. Use the design system's small modal (350px) and switch it to the medium one (600px) when the `interface:size` event asks for it: the emergency access lists need the room. Wire the modal's close control to `requestClose()` rather than closing the modal yourself: the interface may be holding an unsaved recovery phrase and answers with its own confirmation. Unmount the modal on the `interface:closed` event, which the interface emits once it has really closed. `closeInterface()` remains for the cases where the product must tear the iframe down regardless (the user signed out, the page navigates away).
 
 ### Events
 
-| Event                 | Payload         | Description                   |
-| --------------------- | --------------- | ----------------------------- |
-| `vault:ready`         | —               | The vault is initialized      |
-| `onboarding:complete` | `{ publicKey }` | The user completed onboarding |
-| `interface:closed`    | —               | The interface was closed      |
-| `error`               | `Error`         | An error occurred             |
+| Event                 | Payload         | Description                                            |
+| --------------------- | --------------- | ------------------------------------------------------ |
+| `vault:ready`         | —               | The vault is initialized                               |
+| `onboarding:complete` | `{ publicKey }` | The user completed onboarding                          |
+| `interface:closed`    | —               | The interface closed (also after a `requestClose()`)   |
+| `interface:size`      | `{ size }`      | The shown screen wants a `'small'` or `'medium'` modal |
+| `error`               | `Error`         | An error occurred                                      |
 
 ---
 
