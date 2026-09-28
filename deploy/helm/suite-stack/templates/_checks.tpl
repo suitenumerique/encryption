@@ -86,6 +86,17 @@ render error naming the two values that disagree. Included once, from the bootst
 {{- if and (ne (toString $env.AWS_STORAGE_BUCKET_NAME) $v.shared.minio.bucket) (not (has (toString $env.AWS_STORAGE_BUCKET_NAME) $v.bootstrap.minio.buckets)) }}
 {{- fail (printf "%s.backend.envVars.AWS_STORAGE_BUCKET_NAME %q must be shared.minio.bucket or listed in bootstrap.minio.buckets" $product (toString $env.AWS_STORAGE_BUCKET_NAME)) }}
 {{- end }}
+{{- /* media-auth signs S3 headers for the host of AWS_S3_ENDPOINT_URL, and MinIO verifies them against the Host the ingress forwards. */}}
+{{- $s3Host := get (urlParse (toString $env.AWS_S3_ENDPOINT_URL)) "host" }}
+{{- range $ingress := list "ingressMedia" "ingressMediaPreview" }}
+{{- $i := get $p $ingress }}
+{{- if and $i $i.enabled }}
+{{- $vhost := get ($i.annotations | default dict) "nginx.ingress.kubernetes.io/upstream-vhost" }}
+{{- if ne (toString $vhost) $s3Host }}
+{{- fail (printf "%s.%s upstream-vhost must be the host of AWS_S3_ENDPOINT_URL, %q (got %q): MinIO would refuse the media-auth signature" $product $ingress $s3Host (toString $vhost)) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if ne (toString $env.OIDC_OP_JWKS_ENDPOINT) (printf "%s/protocol/openid-connect/certs" $issuer) }}
 {{- fail (printf "%s.backend.envVars.OIDC_OP_JWKS_ENDPOINT must be under the shared Keycloak's realm %q (got %q)" $product $issuer (toString $env.OIDC_OP_JWKS_ENDPOINT)) }}
 {{- end }}

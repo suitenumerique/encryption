@@ -427,7 +427,7 @@ docs:
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://docs.suite.example.org/api/v1.0/documents/media-auth/
       nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
-      nginx.ingress.kubernetes.io/upstream-vhost: minio.suite.svc.cluster.local:9000
+      nginx.ingress.kubernetes.io/upstream-vhost: minio:9000
       nginx.ingress.kubernetes.io/rewrite-target: /docs-media-storage/$1
   # An ExternalName Service, so it needs the fully qualified name of the shared MinIO.
   serviceMedia:
@@ -632,7 +632,7 @@ drive:
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://drive.suite.example.org/api/v1.0/items/media-auth/
       nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
-      nginx.ingress.kubernetes.io/upstream-vhost: minio.suite.svc.cluster.local:9000
+      nginx.ingress.kubernetes.io/upstream-vhost: s3.suite.example.org
       nginx.ingress.kubernetes.io/rewrite-target: /drive-media-storage/$1
   ingressMediaPreview:
     enabled: true
@@ -640,7 +640,7 @@ drive:
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://drive.suite.example.org/api/v1.0/items/media-auth/
       nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
-      nginx.ingress.kubernetes.io/upstream-vhost: minio.suite.svc.cluster.local:9000
+      nginx.ingress.kubernetes.io/upstream-vhost: s3.suite.example.org
       nginx.ingress.kubernetes.io/rewrite-target: /drive-media-storage/$1
   serviceMedia:
     host: minio.suite.svc.cluster.local

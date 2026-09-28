@@ -139,7 +139,7 @@ docs:
     host: {{ $docs }}
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://{{ $docs }}/api/v1.0/documents/media-auth/
-      nginx.ingress.kubernetes.io/upstream-vhost: {{ $minio }}:9000
+      nginx.ingress.kubernetes.io/upstream-vhost: minio:9000
   serviceMedia:
     host: {{ $minio }}
 
@@ -184,12 +184,12 @@ drive:
     host: {{ $drive }}
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://{{ $drive }}/api/v1.0/items/media-auth/
-      nginx.ingress.kubernetes.io/upstream-vhost: {{ $minio }}:9000
+      nginx.ingress.kubernetes.io/upstream-vhost: {{ $s3 }}
   ingressMediaPreview:
     className: {{ .Values.ingressClassName }}
     host: {{ $drive }}
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://{{ $drive }}/api/v1.0/items/media-auth/
-      nginx.ingress.kubernetes.io/upstream-vhost: {{ $minio }}:9000
+      nginx.ingress.kubernetes.io/upstream-vhost: {{ $s3 }}
   serviceMedia:
     host: {{ $minio }}
