@@ -12,6 +12,13 @@ export const VaultErrorCode = {
   /** No key pair stored locally on this device — user must onboard. */
   MISSING_KEYS: 'MISSING_KEYS',
   /**
+   * This device holds keys, but not the encryption key version the content was
+   * wrapped for: typically a key from before the user reset their encryption,
+   * whose private half is gone. The content must be shared again with the
+   * current key; it is not a reason to onboard.
+   */
+  KEY_VERSION_UNAVAILABLE: 'KEY_VERSION_UNAVAILABLE',
+  /**
    * AEAD verification failed. Either the ciphertext is for a different
    * recipient (their wrapped symmetric key was encrypted against another
    * pubkey) or the underlying KEM secret didn't match. Bubbles up from
