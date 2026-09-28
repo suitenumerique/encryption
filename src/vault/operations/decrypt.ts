@@ -1,4 +1,5 @@
 import { decryptContent } from '@encryption/src/crypto';
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
 
 /**
@@ -36,7 +37,17 @@ export async function handleDecryptWithKey(
     symmetricKey = await resolveSymmetricKey(userId, encryptedKey, payload.keyVersion);
   }
 
-  const decrypted = await decryptContent(encryptedContent, symmetricKey);
+  let decrypted: Uint8Array;
+
+  try {
+    decrypted = await decryptContent(encryptedContent, symmetricKey);
+  } catch (err) {
+    if (err instanceof VaultError && err.code === VaultErrorCode.WRONG_SECRET_KEY) {
+      throw new VaultError(VaultErrorCode.CONTENT_INTEGRITY_FAILED, 'The content failed its integrity check under its unwrapped key.');
+    }
+
+    throw err;
+  }
 
   return { data: decrypted.buffer as ArrayBuffer };
 }

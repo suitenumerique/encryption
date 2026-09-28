@@ -25,6 +25,15 @@ export const VaultErrorCode = {
    * libsodium's "wrong secret key for the given ciphertext".
    */
   WRONG_SECRET_KEY: 'WRONG_SECRET_KEY',
+  /**
+   * The symmetric key was unwrapped, but the content failed its integrity check
+   * under it (the AEAD tag did not verify): the content was damaged or altered
+   * in storage, or encrypted under another key. The vault cannot tell which, so
+   * the name states the check, not a cause. Raised by `decrypt-with-key` for the
+   * content step only, so a product can tell "your key does not open this" from
+   * "this content cannot be trusted". Mirrors VAULT_INTEGRITY_FAILED.
+   */
+  CONTENT_INTEGRITY_FAILED: 'CONTENT_INTEGRITY_FAILED',
   /** Backup payload is corrupted, truncated, or from an unsupported version. */
   INVALID_BACKUP: 'INVALID_BACKUP',
   /** BIP-39-style mnemonic input that doesn't checksum. */

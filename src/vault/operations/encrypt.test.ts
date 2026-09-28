@@ -108,6 +108,20 @@ describe('vault encrypt operations', () => {
       (hasVaultKeys as Mock).mockResolvedValue(false);
       await expect(handleDecryptWithKey(USER_ID, request)).rejects.toMatchObject({ code: VaultErrorCode.MISSING_KEYS });
     });
+
+    it('blames the content, not the key, when only the content fails its integrity check', async () => {
+      const publicKey = await setupKeyPair();
+      const { encryptedContent, encryptedKeys } = await handleEncryptWithoutKey(USER_ID, {
+        data: new TextEncoder().encode('stored content').buffer,
+        userPublicKeys: { [USER_ID]: publicKey },
+      });
+      const damaged = new Uint8Array(encryptedContent);
+      damaged[damaged.length - 1] ^= 0xff;
+
+      await expect(
+        handleDecryptWithKey(USER_ID, { keyVersion: 1, encryptedData: damaged.buffer, encryptedSymmetricKey: encryptedKeys[USER_ID] })
+      ).rejects.toMatchObject({ code: VaultErrorCode.CONTENT_INTEGRITY_FAILED });
+    });
   });
 
   describe('handleEncryptNestedWithoutKey', () => {

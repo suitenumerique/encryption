@@ -458,8 +458,10 @@ export class VaultClient {
    * @param encryptedSymmetricKey - user's encrypted copy of the symmetric key
    * @param keyVersion - the recipient's encryption-key VERSION this wrap was
    *   produced against, as stored by the product on the access row. The vault
-   *   unwraps with exactly that retained key (a version this device no longer
-   *   holds throws WRONG_SECRET_KEY).
+   *   unwraps with exactly that retained key: a version this vault does not
+   *   hold throws KEY_VERSION_UNAVAILABLE, a wrap that key cannot open throws
+   *   WRONG_SECRET_KEY, and content that fails its integrity check under the
+   *   unwrapped key throws CONTENT_INTEGRITY_FAILED.
    * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
    *   When provided, resolves the chain from entry point to target before decrypting.
    */
