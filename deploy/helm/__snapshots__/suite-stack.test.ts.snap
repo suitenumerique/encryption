@@ -535,7 +535,7 @@ spec:
             - name: tmp
               mountPath: /tmp
         - name: minio
-          image: "quay.io/minio/mc"
+          image: "pgsty/mc"
           command: [/bin/sh, /scripts/minio.sh]
           env:
             - name: MC_CONFIG_DIR

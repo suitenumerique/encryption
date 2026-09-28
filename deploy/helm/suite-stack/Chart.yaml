@@ -27,6 +27,6 @@ dependencies:
     condition: drive.enabled
   - name: dev-backend
     alias: shared
-    version: 0.0.12
+    version: 0.0.13
     repository: https://suitenumerique.github.io/helm-dev-backend
     condition: shared.enabled

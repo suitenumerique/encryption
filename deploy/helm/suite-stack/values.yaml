@@ -44,9 +44,9 @@ shared:
     enabled: true
     name: minio
     serviceNameOverride: minio
-    image: quay.io/minio/minio
+    image: pgsty/silo
     mc:
-      image: quay.io/minio/mc
+      image: pgsty/mc
     # Drive's browser uploads go straight to the bucket with presigned URLs, so the API
     # needs a public hostname. Docs only reaches it from inside the cluster.
     ingress:
