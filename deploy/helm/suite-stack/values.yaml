@@ -406,15 +406,6 @@ docs:
   docSpec:
     enabled: true
     replicas: 1
-    image:
-      repository: ghcr.io/docspecio/api
-      pullPolicy: IfNotPresent
-      tag: 2.6.3
-    probes:
-      liveness:
-        path: /health
-      readiness:
-        path: /health
   ingress:
     enabled: true
     host: docs.suite.example.org
