@@ -18,11 +18,11 @@ dependencies:
     repository: file://../encryption
     condition: encryption.enabled
   - name: docs
-    version: 4.5.0
+    version: 5.7.0
     repository: https://suitenumerique.github.io/docs
     condition: docs.enabled
   - name: drive
-    version: 0.15.0
+    version: 0.22.1
     repository: https://suitenumerique.github.io/drive
     condition: drive.enabled
   - name: dev-backend
