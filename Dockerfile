@@ -80,6 +80,9 @@ COPY --from=migrator-tree --chown=nonroot:nonroot /opt/migrator ./
 # - dist/*/sbom.cdx.json   (what each bundle is made of, for security scanners)
 COPY --from=builder --chown=nonroot:nonroot /app/dist ./dist
 
+# Assets that are not build ouput (email logos...)
+COPY --from=builder --chown=nonroot:nonroot /app/src/server/public-assets ./src/server/public-assets
+
 EXPOSE 7200
 
 HEALTHCHECK --interval=10s --timeout=2s --start-period=15s \
