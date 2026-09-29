@@ -62,6 +62,9 @@ export function StandardLayout(props: PropsWithChildren<StandardLayoutProps>) {
         </MjmlAttributes>
         <MjmlStyle>{brandFontFaceCss(getServerBrandFont(), emailAssetBaseUrl())}</MjmlStyle>
         <MjmlStyle>{isStorybookEnvironment ? getStorybookStyles() : getEmailStyles()}</MjmlStyle>
+        {/* Also hidden inline: many clients drop <head> styles or class names, and would
+            then show both logos. The dark-mode rule overrides it with !important. */}
+        {!isStorybookEnvironment && <MjmlStyle inline>{'.logo-dark { display: none; mso-hide: all; }'}</MjmlStyle>}
         <MjmlRaw>
           {!isStorybookEnvironment && (
             <>
