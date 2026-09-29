@@ -231,6 +231,34 @@ onlyoffice:
       enabled: true
       secretName: ''
 
+# The relay of Drive's encrypted office editor (src/frontend/servers/collaboration on
+# Drive's encryption branch): the testers editing one encrypted document exchange their
+# changes through it, as blobs it cannot read. It checks each connection against
+# Drive's API with the tester's session cookie, so the browser reaches it on Drive's own
+# host, under the path Drive's frontend connects to. Rooms live in memory: one replica.
+driveRelay:
+  enabled: true
+  image:
+    repository: lasuite/drive-collaboration-relay
+    pullPolicy: Always
+    tag: main
+  # Drive's host (drive.ingress.host, checked).
+  host: drive.suite.example.org
+  # Where it checks the cookie: Drive's public origin, like Docs' y-provider, since
+  # Drive's backend only answers to the hosts of DJANGO_ALLOWED_HOSTS.
+  driveApiUrl: https://drive.suite.example.org
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      # The editor holds a WebSocket open for the whole session.
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+      nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    tls:
+      enabled: true
+      # The certificate of Drive's own ingress, for the same host.
+      secretName: drive-tls
+
 # ---------------------------------------------------------------------------------------
 # The encryption service (deploy/helm/encryption, every key documented there)
 # ---------------------------------------------------------------------------------------

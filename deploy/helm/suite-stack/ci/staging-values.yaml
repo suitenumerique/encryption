@@ -29,3 +29,8 @@ drive:
     image:
       repository: myaccount/drive-frontend
       tag: e2ee
+
+driveRelay:
+  image:
+    repository: myaccount/drive-collaboration-relay
+    tag: e2ee

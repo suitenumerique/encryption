@@ -128,6 +128,43 @@
         }
       }
     },
+    "driveRelay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "host", "driveApiUrl"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "host": { "type": "string" },
+        "driveApiUrl": { "type": "string", "minLength": 1 },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "secretName": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "mailpit": {
       "type": "object",
       "additionalProperties": false,

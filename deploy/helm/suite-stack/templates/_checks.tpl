@@ -155,4 +155,16 @@ render error naming the two values that disagree. Included once, from the bootst
 {{- fail "drive.backend.envVars.WOPI_ONLYOFFICE_CONVERT_JWT_SECRET differs from onlyoffice.jwtSecret" }}
 {{- end }}
 {{- end }}
+
+{{- /* Drive against the relay of its encrypted office editor: the browser connects to it
+on Drive's own host, and it checks the session cookie against Drive's origin. */}}
+{{- if and $v.driveRelay.enabled $v.drive.enabled }}
+{{- if ne (toString $v.driveRelay.host) (toString $v.drive.ingress.host) }}
+{{- fail (printf "driveRelay.host must be Drive's host, %q, where its frontend connects to the relay (got %q)" (toString $v.drive.ingress.host) (toString $v.driveRelay.host)) }}
+{{- end }}
+{{- $origin := printf "https://%s" $v.drive.ingress.host }}
+{{- if ne (toString $v.driveRelay.driveApiUrl) $origin }}
+{{- fail (printf "driveRelay.driveApiUrl must be %q, the origin Drive's backend answers to (got %q)" $origin (toString $v.driveRelay.driveApiUrl)) }}
+{{- end }}
+{{- end }}
 {{- end }}

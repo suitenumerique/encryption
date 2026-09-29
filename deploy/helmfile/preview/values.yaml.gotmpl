@@ -64,6 +64,15 @@ onlyoffice:
     annotations:
       cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
 
+driveRelay:
+  image:
+    repository: {{ $i.driveRelay.repository }}
+    tag: {{ $i.driveRelay.tag | quote }}
+  host: {{ $drive }}
+  driveApiUrl: https://{{ $drive }}
+  ingress:
+    className: {{ .Values.ingressClassName }}
+
 encryption:
   image:
     repository: {{ $i.encryption.repository }}

@@ -196,6 +196,9 @@ describe('the stack chart', () => {
         'Deployment/onlyoffice',
         'Service/onlyoffice',
         'Ingress/onlyoffice',
+        'Deployment/drive-collaboration-relay',
+        'Service/drive-collaboration-relay',
+        'Ingress/drive-collaboration-relay',
       ].sort()
     );
     expect(
@@ -340,6 +343,7 @@ describe('the stack chart', () => {
     expect(mainContainer(find(staging.docs, 'Deployment', 'docs-y-provider')).image).toBe('myaccount/impress-y-provider:e2ee');
     expect(mainContainer(find(staging.docs, 'Deployment', 'drive-backend')).image).toBe('myaccount/drive-backend:e2ee');
     expect(mainContainer(find(staging.docs, 'Deployment', 'drive-frontend')).image).toBe('myaccount/drive-frontend:e2ee');
+    expect(mainContainer(find(staging.own, 'Deployment', 'drive-collaboration-relay')).image).toBe('myaccount/drive-collaboration-relay:e2ee');
     expect(mainContainer(find(staging.docs, 'Deployment', 'stack-encryption')).image).toBe('myaccount/encryption:e2ee');
     expect(mainContainer(find(staging.own, 'Job', 'stack-suite-stack-bootstrap-1'), 'migrate').image).toBe('myaccount/encryption:e2ee');
   });
@@ -367,6 +371,8 @@ describe('the stack chart', () => {
       ],
       ['drive.backend.envVars.WOPI_SRC_BASE_URL=https://other', /WOPI_SRC_BASE_URL must be "https:\/\/drive\.suite\.example\.org"/],
       ['drive.backend.envVars.WOPI_ONLYOFFICE_CONVERT_JWT_SECRET=other', /WOPI_ONLYOFFICE_CONVERT_JWT_SECRET differs from onlyoffice\.jwtSecret/],
+      ['driveRelay.host=other.example.org', /driveRelay\.host must be Drive's host, "drive\.suite\.example\.org"/],
+      ['driveRelay.driveApiUrl=http://drive-backend', /driveRelay\.driveApiUrl must be "https:\/\/drive\.suite\.example\.org"/],
       ['encryption.database.url=postgresql://other', /encryption\.database\.url must be the runtime role's URL/],
       ['encryption.config.oidc.issuer=https://other/realms/suite', /issuer must be the shared Keycloak's realm/],
       ['encryption.config.oidc.jwksUrl=https://other/certs', /jwksUrl must be/],
@@ -459,7 +465,7 @@ describe('the stack chart', () => {
       '--state-values-set',
       'feature=42,domain=ppr.example.net',
       '--state-values-set',
-      'images.docs.tag=pr-42,images.docsFrontend.tag=pr-42,images.docsYProvider.tag=pr-42,images.drive.tag=pr-42,images.driveFrontend.tag=pr-42,images.encryption.tag=pr-42',
+      'images.docs.tag=pr-42,images.docsFrontend.tag=pr-42,images.docsYProvider.tag=pr-42,images.drive.tag=pr-42,images.driveFrontend.tag=pr-42,images.driveRelay.tag=pr-42,images.encryption.tag=pr-42',
       'template',
     ]);
 
@@ -482,6 +488,9 @@ describe('the stack chart', () => {
     }
 
     expect(text).toContain('namespace: "preview-42"');
+    // The editor's relay, on Drive's own host where its frontend connects
+    expect(text).toMatch(/- host: "42-drive\.ppr\.example\.net"\n\s+http:\n\s+paths:\n\s+# The path Drive's frontend connects to/);
+    expect(text).toContain('image: "lasuite/drive-collaboration-relay:pr-42"');
     expect(text).toContain('minio.preview-42.svc.cluster.local');
     expect(text).toContain('image: "lasuite/impress-backend:pr-42"');
     expect(text).toContain('image: "lasuite/drive-backend:pr-42"');
@@ -522,7 +531,7 @@ describe('the stack chart', () => {
     for (const image of ['impress-backend', 'impress-frontend', 'impress-y-provider']) {
       expect(products).toContain(`image: "lasuite/${image}:pr-2694"`);
     }
-    for (const image of ['drive-backend', 'drive-frontend']) {
+    for (const image of ['drive-backend', 'drive-frontend', 'drive-collaboration-relay']) {
       expect(products).toContain(`image: "lasuite/${image}:encryption"`);
     }
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);

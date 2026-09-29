@@ -23,6 +23,31 @@ data:
 
 ---
 
+# Source: suite-stack/templates/drive-relay.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive-collaboration-relay
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: drive-collaboration-relay
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/component: drive-collaboration-relay
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+
 # Source: suite-stack/templates/mailpit.yaml
 apiVersion: v1
 kind: Service
@@ -75,6 +100,79 @@ spec:
     - name: http
       port: 80
       targetPort: http
+
+---
+
+# Source: suite-stack/templates/drive-relay.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive-collaboration-relay
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: drive-collaboration-relay
+spec:
+  replicas: 1
+  # Rooms live in memory: two instances would split the editors of one document.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: suite-stack
+      app.kubernetes.io/instance: stack
+      app.kubernetes.io/component: drive-collaboration-relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: suite-stack
+        app.kubernetes.io/instance: stack
+        app.kubernetes.io/component: drive-collaboration-relay
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: relay
+          image: "lasuite/drive-collaboration-relay:main"
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 4100
+          env:
+            - name: RELAY_PORT
+              value: '4100'
+            - name: DRIVE_API_URL
+              value: "https://drive.suite.example.org"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              # A relayed message can reach 75 MB (an image pasted in a document).
+              memory: 1Gi
 
 ---
 
@@ -241,6 +339,42 @@ spec:
         - name: config
           configMap:
             name: onlyoffice
+
+---
+
+# Source: suite-stack/templates/drive-relay.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: drive-collaboration-relay
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: drive-collaboration-relay
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: "nginx"
+  tls:
+    - hosts:
+        - "drive.suite.example.org"
+      secretName: "drive-tls"
+  rules:
+    - host: "drive.suite.example.org"
+      http:
+        paths:
+          # The path Drive's frontend connects to (encryptedRelay.ts).
+          - path: /collaboration/relay
+            pathType: Exact
+            backend:
+              service:
+                name: drive-collaboration-relay
+                port:
+                  name: http
 
 ---
 

@@ -39,7 +39,7 @@ The hooks run again at every sync, which is what makes editing the testers' list
 
 ## Coherence checks
 
-The four subcharts each read their own block, so a hostname or a client id is written in several places. `templates/_checks.tpl` makes the render fail, naming both values, when they disagree: a product's `DB_NAME` absent from the databases the bootstrap creates, an `OIDC_RP_CLIENT_ID` without a client, a client secret that differs, a redirect URI that does not cover the product's origin, `ENCRYPTION_VAULT_URL` that is not the vault's host, a product origin missing from `allowedFrameAncestors`, two products on the same Redis database index, and the encryption database URL not being the runtime role the bootstrap creates. `helm template` on your values is therefore the first test to run.
+The four subcharts each read their own block, so a hostname or a client id is written in several places. `templates/_checks.tpl` makes the render fail, naming both values, when they disagree: a product's `DB_NAME` absent from the databases the bootstrap creates, an `OIDC_RP_CLIENT_ID` without a client, a client secret that differs, a redirect URI that does not cover the product's origin, `ENCRYPTION_VAULT_URL` that is not the vault's host, a product origin missing from `allowedFrameAncestors`, two products on the same Redis database index, the encryption database URL not being the runtime role the bootstrap creates, and Drive's editor relay not being on Drive's host. `helm template` on your values is therefore the first test to run.
 
 ## Images
 
@@ -53,9 +53,10 @@ Whichever way the product images are produced, the stack only ever sees a refere
    docker build --target backend-production -t myaccount/impress-backend:e2ee .
    docker build --target frontend-production -t myaccount/impress-frontend:e2ee -f src/frontend/Dockerfile .
    docker build --target y-provider -t myaccount/impress-y-provider:e2ee -f src/frontend/servers/y-provider/Dockerfile .
-   # Drive: backend, frontend
+   # Drive: backend, frontend, the relay of the encrypted office editor
    docker build --target backend-production -t myaccount/drive-backend:e2ee .
    docker build --target frontend-production -t myaccount/drive-frontend:e2ee -f src/frontend/Dockerfile .
+   docker build -t myaccount/drive-collaboration-relay:e2ee src/frontend/servers/collaboration
    # The encryption service (this repository): the preview workflow publishes it, see below
    docker build -t myaccount/encryption:e2ee .
    docker push ...
@@ -73,7 +74,7 @@ Prerequisites on the cluster: an ingress controller answering to the `nginx` cla
 helmfile -e preview -f deploy/helmfile/preview/helmfile.yaml.gotmpl \
   --state-values-set feature=beta,domain=suite.example.org \
   --state-values-set images.docs.tag=pr-2694,images.docsFrontend.tag=pr-2694,images.docsYProvider.tag=pr-2694 \
-  --state-values-set images.drive.tag=e2ee,images.driveFrontend.tag=e2ee \
+  --state-values-set images.drive.tag=e2ee,images.driveFrontend.tag=e2ee,images.driveRelay.tag=e2ee \
   template > /dev/null   # then `apply` instead of `template`
 kubectl -n preview-beta get jobs,pods -w
 ```

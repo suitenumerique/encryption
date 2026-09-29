@@ -26,7 +26,7 @@
 # publishes, `sha-<8 chars>`, gets a rollout on every push instead of a moving tag.
 #
 # The products' tags come from DOCS_TAG and DRIVE_TAG, one per product for all its
-# images (Docs' CI tags its three images alike, Drive's two alike), `main` when unset.
+# images (Docs' CI tags its three images alike, Drive's three alike), `main` when unset.
 # The ApplicationSet reads them from labels of the pull request, `docs:pr-2694` and
 # `drive:encryption`, so the committed defaults stay `main` and a pull request tests a
 # product branch without a commit to undo before merging.
@@ -74,6 +74,9 @@ environments:
             tag: {{ $driveTag | quote }}
           driveFrontend:
             repository: lasuite/drive-frontend
+            tag: {{ $driveTag | quote }}
+          driveRelay:
+            repository: lasuite/drive-collaboration-relay
             tag: {{ $driveTag | quote }}
         ingressClassName: nginx
         clusterIssuer: letsencrypt
