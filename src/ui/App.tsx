@@ -20,6 +20,7 @@ import { clearToken, readToken, storeToken } from '@encryption/src/ui/auth/token
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
+import { EmergencySignedOutPrompt } from '@encryption/src/ui/components/EmergencySignedOutPrompt';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
@@ -487,6 +488,12 @@ function InterfaceScreens({
 
     // Auth needed — show explanation and "Continue" button
     if (oidcAuth.needsAuth) {
+      // The emergency prompt the SDK opened on its own: say what is pending at once.
+      const emergencyPending = activeRoute === 'emergency-access' ? parentContext.emergencyPending : null;
+      if (emergencyPending?.recovery || emergencyPending?.invitation) {
+        return frameGate(<EmergencySignedOutPrompt recovery={emergencyPending.recovery} onSignIn={oidcAuth.requestAuth} />);
+      }
+
       return frameGate(
         <Screen
           illustration="shield-check"
