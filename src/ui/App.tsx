@@ -1,5 +1,5 @@
 import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
@@ -117,17 +117,18 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // prompt the SDK opens on its own (told apart by the context it carries).
   const fullPage = route === 'docs-user' || route === 'docs-technical';
   const drawsOwnModal = route === 'verify-recipients' || (activeRoute === 'emergency-access' && parentContext.emergencyPending !== null);
-  const modalSize = activeRoute === 'emergency-access' ? ModalSize.MEDIUM : ModalSize.SMALL;
+  const [gateShown, setGateShown] = useState(false);
+  const modalSize = activeRoute === 'emergency-access' && !gateShown ? ModalSize.MEDIUM : ModalSize.SMALL;
 
-  // Those two draw their modal only once shown: the screens that can stand in their
-  // place (loading, sign-in, errors) still need one, or they sprawl see-through.
+  // The two screens drawing their own modal do so only once shown: in their place,
+  // those screens still need one, or they sprawl see-through.
   const frameGate = (screen: ReactNode): ReactNode =>
     drawsOwnModal ? (
       <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={ModalSize.SMALL} aria-label={t('interface.title')}>
         {screen}
       </Modal>
     ) : (
-      screen
+      <GateShown onShown={setGateShown}>{screen}</GateShown>
     );
 
   const screens = (
@@ -152,6 +153,17 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       )}
     </CloseRequestProvider>
   );
+}
+
+/** Tells the modal around it that a gate screen is shown, before the frame is painted. */
+function GateShown({ onShown, children }: { onShown: (shown: boolean) => void; children: ReactNode }) {
+  useLayoutEffect(() => {
+    onShown(true);
+
+    return () => onShown(false);
+  }, [onShown]);
+
+  return children;
 }
 
 /** Inner component that has access to the EncryptionContext */
