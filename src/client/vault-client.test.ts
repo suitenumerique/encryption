@@ -88,6 +88,15 @@ describe('VaultClient recipient verification', () => {
     expect(vaultRequest).toHaveBeenCalledTimes(2);
     expect(result).toEqual(encrypted);
   });
+
+  it('settles as cancelled when the interface closes before answering', async () => {
+    const { client, internal } = makeClient();
+    const outcome = internal.openVerifyRecipients(recipients);
+
+    client.closeInterface();
+
+    await expect(outcome).resolves.toBe('cancelled');
+  });
 });
 
 const INTERFACE_ORIGIN = 'https://encryption.test';

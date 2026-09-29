@@ -1,5 +1,5 @@
 import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
@@ -116,6 +116,19 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // prompt the SDK opens on its own (told apart by the context it carries).
   const fullPage = route === 'docs-user' || route === 'docs-technical';
   const drawsOwnModal = route === 'verify-recipients' || (activeRoute === 'emergency-access' && parentContext.emergencyPending !== null);
+  const modalSize = activeRoute === 'emergency-access' ? ModalSize.MEDIUM : ModalSize.SMALL;
+
+  // Those two draw their modal only once shown: the screens that can stand in their
+  // place (loading, sign-in, errors) still need one, or they sprawl see-through.
+  const frameGate = (screen: ReactNode): ReactNode =>
+    drawsOwnModal ? (
+      <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={ModalSize.SMALL} aria-label={t('interface.title')}>
+        {screen}
+      </Modal>
+    ) : (
+      screen
+    );
+
   const screens = (
     <InterfaceScreens
       route={route}
@@ -123,6 +136,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       parentContext={parentContext}
       routeOverride={routeOverride}
       setRouteOverride={setRouteOverride}
+      frameGate={frameGate}
     />
   );
 
@@ -131,13 +145,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       {fullPage || drawsOwnModal ? (
         screens
       ) : (
-        <Modal
-          isOpen
-          onClose={requestClose}
-          closeOnClickOutside={false}
-          size={activeRoute === 'emergency-access' ? ModalSize.MEDIUM : ModalSize.SMALL}
-          aria-label={t('interface.title')}
-        >
+        <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={modalSize} aria-label={t('interface.title')}>
           {screens}
         </Modal>
       )}
@@ -152,12 +160,14 @@ function InterfaceScreens({
   parentContext,
   routeOverride,
   setRouteOverride,
+  frameGate,
 }: {
   route: Route;
   navigate: (to: Route) => void;
   parentContext: ParentContext;
   routeOverride: Route | null;
   setRouteOverride: (to: Route | null) => void;
+  frameGate: (screen: ReactNode) => ReactNode;
 }) {
   const { t } = useTranslation('common');
   const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
@@ -448,25 +458,25 @@ function InterfaceScreens({
   // All hooks declared above — conditional returns are safe below this point.
   // OIDC must be configured for the interface to work.
   if (!oidcAuth.isConfigured) {
-    return <Screen banner={<Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>} />;
+    return frameGate(<Screen banner={<Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>} />);
   }
 
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
   if (!oidcAuth.token && !tokenRestoreAttempted && !handshakeTimedOut) {
-    return <LoadingScreen />;
+    return frameGate(<LoadingScreen />);
   }
 
   // Wait for OIDC authentication.
   if (!oidcAuth.token) {
     // Waiting for the login tab to complete
     if (oidcAuth.isAuthenticating) {
-      return <LoadingScreen label={t('auth.authenticating')} />;
+      return frameGate(<LoadingScreen label={t('auth.authenticating')} />);
     }
 
     // Error from a previous attempt
     if (oidcAuth.error) {
-      return (
+      return frameGate(
         <Screen
           title={t('auth.required_title')}
           banner={<Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>}
@@ -477,7 +487,7 @@ function InterfaceScreens({
 
     // Auth needed — show explanation and "Continue" button
     if (oidcAuth.needsAuth) {
-      return (
+      return frameGate(
         <Screen
           illustration="shield-check"
           title={t('auth.required_title')}
@@ -492,10 +502,10 @@ function InterfaceScreens({
     // way, show the warning rather than spin — the interface cannot proceed
     // without knowing which user is authenticated.
     if ((tokenRestoreAttempted || handshakeTimedOut) && !parentContext.suiteUserId) {
-      return <Screen banner={<Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>} />;
+      return frameGate(<Screen banner={<Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>} />);
     }
 
-    return <LoadingScreen />;
+    return frameGate(<LoadingScreen />);
   }
 
   // Any unrecoverable failure to resolve the internal id (a 403 with no usable
@@ -505,7 +515,7 @@ function InterfaceScreens({
   // resort) with a reconnect action, so the user always knows what happened and
   // has a way out instead of an endless loader.
   if (userResolveError && !internalUserId) {
-    return (
+    return frameGate(
       <Screen
         banner={<Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>}
         actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}

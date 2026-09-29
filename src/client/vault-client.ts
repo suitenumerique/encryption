@@ -808,6 +808,12 @@ export class VaultClient {
     this.overlay = null;
     this.interfaceIframe = null;
 
+    // Closed before the verify screen answered (from the sign-in screen shown in
+    // its place, or by the product): the share is abandoned, never left pending.
+    const verifyResolve = this.verifyResolve;
+    this.verifyResolve = null;
+    verifyResolve?.('cancelled');
+
     // Context scoped to a single interface flow — clear it so a later open()
     // of another screen never re-sends a stale flow block.
     this.pendingContext = null;
