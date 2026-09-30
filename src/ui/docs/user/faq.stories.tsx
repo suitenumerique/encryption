@@ -12,6 +12,8 @@ export default {
   ...generateMetaDefault({
     parameters: {
       layout: 'fullscreen',
+      // Only the first screen: enough to catch a styling change, any text edit would shift everything below it.
+      chromatic: { cropToViewport: true },
     },
   }),
 } as Meta<ComponentType>;

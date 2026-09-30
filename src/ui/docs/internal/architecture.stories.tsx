@@ -12,6 +12,9 @@ export default {
   ...generateMetaDefault({
     parameters: {
       layout: 'fullscreen',
+      // Only the first screen: enough to catch a styling change, while the whole page exceeds
+      // Chromatic's capture limit (25M pixels) and any text edit would shift everything below it.
+      chromatic: { cropToViewport: true },
     },
   }),
 } as Meta<ComponentType>;
