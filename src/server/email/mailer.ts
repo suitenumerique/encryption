@@ -1,8 +1,7 @@
 import { renderToMjml } from '@faire/mjml-react/utils/renderToMjml';
 import mjml2html from 'mjml';
 import { readFileSync } from 'node:fs';
-import nodemailer, { Transporter } from 'nodemailer';
-import type { Options as MailOptions } from 'nodemailer/lib/mailer/index';
+import nodemailer, { type SendMailOptions, Transporter } from 'nodemailer';
 import { ReactElement } from 'react';
 
 import { setEmailAssetBaseUrl } from '@encryption/src/server/email/assets';
@@ -130,7 +129,7 @@ export class Mailer {
       throw new Error(`SMTP is not configured, refusing to silently drop the email "${options.subject}"`);
     }
 
-    const parameters: MailOptions = {
+    const parameters: SendMailOptions = {
       from: options.sender || this.defaultSender,
       replyTo: options.replyTo ?? undefined,
       to: options.recipients.join(','),

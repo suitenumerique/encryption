@@ -4,8 +4,8 @@
   "author": "Suite numérique",
   "role": "Maintainers of suitenumerique/encryption",
   "timestamp": "2026-09-02T00:00:00Z",
-  "last_updated": "2026-09-14T00:00:00Z",
-  "version": 2,
+  "last_updated": "2026-09-30T00:00:00Z",
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -27,6 +27,26 @@
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
       "impact_statement": "The only consumer in the image is `@prisma/config`, which merges the defaults of the Prisma CLI with the operator's own `prisma.config.ts` when `migrate deploy` starts. Both inputs are authored by the operator and shipped inside the image; no external party can supply an object to that merge. The server bundle carries its own, fixed copy (8.x) for html-to-text. Prisma pins the exact version, so it moves when Prisma does."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-75804",
+        "description": "OpenSSL: denial of service via unenforced QUIC connection flow control"
+      },
+      "products": [{ "@id": "pkg:deb/debian/libssl3t64@3.5.7-1~deb13u2" }],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Neither the server nor the migration tooling uses QUIC or DTLS. Node carries its own statically linked OpenSSL and never loads the system library (`node_shared_openssl` is false, no `libssl` in its dynamic dependencies). The only consumer of the system `libssl3t64` is Prisma's `schema-engine` binary, run by `migrate deploy`, which opens a TLS-over-TCP client connection to PostgreSQL: it imports `TLS_method` and the `SSL_*` client calls, and no QUIC or DTLS function at all. Scoped to this exact version: the statement stops matching once the distroless base image ships Debian's fix (`3.5.7-1~deb13u3`), which had not happened when it was written."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84782",
+        "description": "OpenSSL: information disclosure via DTLS handshake retransmission"
+      },
+      "products": [{ "@id": "pkg:deb/debian/libssl3t64@3.5.7-1~deb13u2" }],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Neither the server nor the migration tooling uses QUIC or DTLS. Node carries its own statically linked OpenSSL and never loads the system library (`node_shared_openssl` is false, no `libssl` in its dynamic dependencies). The only consumer of the system `libssl3t64` is Prisma's `schema-engine` binary, run by `migrate deploy`, which opens a TLS-over-TCP client connection to PostgreSQL: it imports `TLS_method` and the `SSL_*` client calls, and no QUIC or DTLS function at all. Scoped to this exact version: the statement stops matching once the distroless base image ships Debian's fix (`3.5.7-1~deb13u3`), which had not happened when it was written."
     }
   ]
 }
