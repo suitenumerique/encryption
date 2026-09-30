@@ -115,6 +115,10 @@ npm run ci:simulate      # Run the CI pipeline locally with `act`
 
 It's not designed to release a new version, but to test most of the pipeline (packages, tests, build). Note the flags stay in the npm script rather than in `.actrc`, so they do not leak into other `act` invocations. Also, we cannot use concurrent jobs feature here due to our setup upgrading npm (jobs share the same folders and there is a conflict). Lastly, `act` copies the working tree without its `.git`, so the steps comparing against committed files are skipped locally: a green local run does not prove the generated API client is in sync.
 
+### Published Storybook
+
+The CI publishes the Storybook to [Chromatic](https://www.chromatic.com/), which hosts it and compares every story with its last accepted snapshot. Pushes to the CI branch are accepted as they come and are the baseline behind the permalink (https://main--6abd0198abd0e47162cae7c9.chromatic.com, any branch that was built is at `https://<branch>--6abd0198abd0e47162cae7c9.chromatic.com`); a pull request gets its own Storybook and its visual changes listed for review, without ever failing the pipeline. It needs the `CHROMATIC_PROJECT_TOKEN` repository secret (the project's settings in Chromatic).
+
 ## Tech stack
 
 - **Crypto**: libsodium-wrappers-sumo (WASM), hybrid X25519 + post-quantum placeholder, XChaCha20-Poly1305

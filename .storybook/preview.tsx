@@ -10,6 +10,7 @@ import { I18nextProvider } from 'react-i18next';
 import { addons } from 'storybook/preview-api';
 import { themes } from 'storybook/theming';
 
+import { installClock } from '@encryption/.storybook/clock';
 import { useNavigationGuard } from '@encryption/.storybook/navigation-guard';
 import i18n from '@encryption/src/i18n';
 import { DEFAULT_LOCALE } from '@encryption/src/shared/locale';
@@ -95,6 +96,8 @@ const preview: Preview = {
       return worker;
     }),
   ],
+  // `parameters.date` pins "now" for a story that displays a date derived from it.
+  beforeEach: ({ parameters }) => (parameters.date instanceof Date ? installClock(parameters.date) : undefined),
   globalTypes: {
     locale: {
       description: 'Interface language',

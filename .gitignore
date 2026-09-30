@@ -19,6 +19,8 @@ node_modules
 !/.storybook/**/*
 /storybook-static/
 /build-storybook.log
+/chromatic.log
+/chromatic-diagnostics.json
 
 # misc
 .DS_Store

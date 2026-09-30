@@ -176,6 +176,47 @@ jobs:
       - name: Test end-to-end
         run: npm run test:e2e:headless -- --max-workers $(nproc)
 
+  chromatic:
+    name: Publish Storybook
+    # Pull requests to review visual changes, and the CI branch whose builds are the baselines
+    # and the public permalink. A tag's commit was already published from its branch.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # TurboSnap walks the history to find the baseline build and the files changed since
+          ref: ${{ github.event.pull_request.head.sha || github.sha }} # the pull request's own commit, not the synthetic merge commit Chromatic cannot match to a branch
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          npm-version: ${{ env.NPM_VERSION }}
+
+      - name: Publish to Chromatic
+        # No token on a fork's pull request, a Dependabot one, or "act": skipped, not failed.
+        # Changes never fail the job (`exitZeroOnChanges`), they are reviewed in Chromatic. A push accepts
+        # them since it is what was merged, so the next pull requests are compared with it.
+        env:
+          CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -z "${CHROMATIC_PROJECT_TOKEN}" ]; then
+            echo "::notice::No CHROMATIC_PROJECT_TOKEN available, Storybook is not published"
+            exit 0
+          fi
+          if [ "${EVENT_NAME}" = "push" ]; then
+            npm run chromatic -- --auto-accept-changes
+          else
+            npm run chromatic
+          fi
+
   build:
     name: Build
     # when releasing the build will be done with docker, so only target pull requests here
