@@ -17,6 +17,7 @@ import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Scre
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
+import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
 
 interface DeviceApprovalProps {
   getToken: () => Promise<string | null>;
@@ -238,7 +239,9 @@ function NewDeviceSide({
       // The QR encodes the 128-bit decimal fingerprint (small QR). Scanning it is
       // the same verification as typing it: the enrolled device fetches the key
       // from the server and refuses to wrap unless its fingerprint matches.
-      setQr(await QRCode.toDataURL(dfp, { width: 220, margin: 2 }));
+      // Inline SVG markup rather than a `data:` PNG: the interface CSP keeps
+      // `img-src 'self'`, which blocks data URIs.
+      setQr(await QRCode.toString(dfp, { type: 'svg', width: 220, margin: 2 }));
       setDecimalFingerprint(dfp);
       setStarted(true);
     } catch (err) {
@@ -350,10 +353,11 @@ function NewDeviceSide({
     <Screen back={backLink} title={t('device_approval.new_title')} description={t('device_approval.new_code_hint')} banner={banner}>
       <div className={styles.center}>
         {qr && (
-          <img
-            src={qr}
-            alt="pairing QR code"
-            style={{ display: 'block', borderRadius: 8, border: '1px solid var(--c--contextuals--border--surface--primary)' }}
+          <div
+            role="img"
+            aria-label="pairing QR code"
+            style={{ lineHeight: 0, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--c--contextuals--border--surface--primary)' }}
+            dangerouslySetInnerHTML={{ __html: toTrustedMarkup(qr) }}
           />
         )}
 
