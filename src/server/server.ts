@@ -133,7 +133,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   app.register(corsPlugin);
   app.register(jwtAuthPlugin);
 
-  // Cross-origin-fetchable assets (email logo, PDF fonts), served on every host.
+  // Cross-origin-fetchable assets (email logo, SDK type declaration), served on every host.
   const { publicAssetsPlugin } = await import('@encryption/src/server/plugins/public-assets');
   app.register(publicAssetsPlugin);
 

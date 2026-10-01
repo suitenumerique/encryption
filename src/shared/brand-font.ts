@@ -1,5 +1,5 @@
-// The single brand font for the whole product: the emails, the Recovery Kit PDF
-// and the interface UI all use the same one. It is NOT known at build time (one
+// The single brand font for the whole product: the emails and the interface UI
+// (the printed Recovery Kit included) all use the same one. It is NOT known at build time (one
 // Docker image serves every deployment), so it is configured at runtime through
 // the BRAND_FONT env (JSON: a family name + per-weight woff URLs). Unset = each
 // surface's generic fallback, no embedded/loaded custom font. Marianne is reserved
@@ -8,7 +8,7 @@
 //
 // The server reads BRAND_FONT once and (1) stashes it here for email rendering and
 // (2) injects it into the interface runtime config data block (see
-// src/shared/runtime-config.ts) for the PDF and the UI.
+// src/shared/runtime-config.ts) for the UI.
 
 export interface BrandFont {
   family: string;

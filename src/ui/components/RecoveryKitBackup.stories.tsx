@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton } from '@encryption/.storybook/testing';
@@ -56,6 +56,37 @@ RevealedStory.play = async ({ canvasElement }) => {
 };
 
 export const Revealed = prepareStory(RevealedStory);
+
+// Printing mounts the sheet only while the print dialog is open, hidden on
+// screen: the stub stands in for the dialog, recording what it would print,
+// then closes it.
+const PrintedStory = Template.bind({});
+PrintedStory.args = { ...baseArgs };
+PrintedStory.play = async ({ canvasElement }) => {
+  const confirm = await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done'));
+  let printedWords: string[] = [];
+
+  const originalPrint = window.print;
+  window.print = () => {
+    const sheet = within(document.body).getByRole('article', { name: i18n.t('onboarding.print_title'), hidden: true });
+    printedWords = within(sheet)
+      .getAllByRole('listitem', { hidden: true })
+      .map((item) => item.lastElementChild?.textContent ?? '');
+    window.dispatchEvent(new Event('afterprint'));
+  };
+
+  try {
+    await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_print')));
+    await waitFor(() => expect(printedWords).toEqual(sampleRecoveryPhrase.split(' ')));
+  } finally {
+    window.print = originalPrint;
+  }
+
+  await waitFor(() => expect(within(document.body).queryByRole('article', { hidden: true })).toBeNull());
+  expect(confirm).toBeEnabled();
+};
+
+export const Printed = prepareStory(PrintedStory);
 
 const BusyStory = Template.bind({});
 BusyStory.args = { ...baseArgs, isBusy: true };

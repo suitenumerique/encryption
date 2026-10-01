@@ -71,7 +71,7 @@ export const envSchema = z.object({
       .optional()
   ),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
-  // shared by the emails, the Recovery Kit PDF and the interface UI. Unset = each
+  // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.
   BRAND_FONT: z.string().optional(),
 });

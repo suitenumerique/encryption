@@ -166,7 +166,7 @@ const preview: Preview = {
           : 'var(--c--contextuals--background--surface--primary)';
       }, [isDark, hostModal]);
 
-      // Fullscreen stories (a document PDF preview, an email, a docs page) only drop
+      // Fullscreen stories (a printable document, an email, a docs page) only drop
       // the padding to go edge-to-edge; minHeight (not a fixed height) lets taller
       // content grow and scroll rather than being clipped.
       const isFullscreen = context.parameters.layout === 'fullscreen';

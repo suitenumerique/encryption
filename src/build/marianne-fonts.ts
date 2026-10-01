@@ -3,17 +3,16 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import type { Plugin } from 'vite';
 
-// react-pdf needs the raw Marianne .woff files (it cannot read woff2), and they
+// A BRAND_FONT pointing at Marianne needs its .woff files (the brand-font
+// @font-face declares the woff format, which mail clients read too), and they
 // are already shipped by @gouvfr-lasuite/ui-kit. Rather than commit the binaries
 // (which git cannot diff), we treat them as ordinary build assets: emitted under
 // `/assets/fonts/*` at build (so production serves them through the existing
 // `/assets` static route, with no committed file and nothing to gitignore) and
 // served straight from the dependency in dev/Storybook. The package only exports
 // the @font-face CSS, so resolve THAT and read the .woff files next to it.
-// Regular is the fallback for any unmatched weight (see pdf-fonts.ts).
 export const MARIANNE_WOFF = ['Marianne-Regular.woff', 'Marianne-Medium.woff', 'Marianne-Bold.woff'];
 
-// The URL prefix react-pdf fetches from; must match pdf-fonts.ts.
 const FONTS_URL_PREFIX = '/assets/fonts/';
 
 function marianneFontsDir(): string {

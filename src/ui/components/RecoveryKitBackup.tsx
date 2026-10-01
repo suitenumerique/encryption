@@ -1,12 +1,11 @@
 import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { Icon } from '@gouvfr-lasuite/ui-kit';
-import { pdf } from '@react-pdf/renderer';
 import { type ReactNode, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { type IllustrationName, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { RecoveryKitDocument } from '@encryption/src/ui/documents/RecoveryKitDocument';
+import { RecoveryKitPrint } from '@encryption/src/ui/documents/RecoveryKitSheet';
 
 interface RecoveryKitBackupProps {
   passphrase: string;
@@ -73,7 +72,7 @@ export function RecoveryKitBackup({
   banner,
   back,
 }: RecoveryKitBackupProps) {
-  const { t, i18n } = useTranslation('common');
+  const { t } = useTranslation('common');
   const [showPassphrase, setShowPassphrase] = useState(mode === 'handover');
   const [isCopied, setIsCopied] = useState(false);
   // The phrase left the screen through at least one channel (copied, saved,
@@ -106,32 +105,12 @@ export function RecoveryKitBackup({
     setSaved(true);
   }, [passphrase, t]);
 
-  const handlePrint = useCallback(async () => {
-    const domain = parentOrigin ?? window.location.origin;
-    const blob = await pdf(<RecoveryKitDocument words={phraseWords(passphrase)} lang={i18n.language} domain={domain} />).toBlob();
-    const url = URL.createObjectURL(blob);
+  const [printing, setPrinting] = useState(false);
 
-    // Print via a hidden iframe pointed at the PDF blob: the browser loads its PDF
-    // viewer in the frame and prints that. A hidden iframe (rather than a new tab)
-    // keeps this working inside the sandboxed interface iframe, with no popup
-    // permission needed.
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.left = '-9999px';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    printFrame.src = url;
-    printFrame.onload = () => {
-      printFrame.contentWindow?.focus();
-      printFrame.contentWindow?.print();
-      setTimeout(() => {
-        printFrame.parentNode?.removeChild(printFrame);
-        URL.revokeObjectURL(url);
-      }, 1000);
-    };
-    document.body.appendChild(printFrame);
+  const handlePrintDone = useCallback(() => {
+    setPrinting(false);
     setSaved(true);
-  }, [passphrase, parentOrigin, i18n.language]);
+  }, []);
 
   const confirmButton = (
     <Button onClick={onConfirm} disabled={isBusy || !saved} fullWidth>
@@ -181,10 +160,12 @@ export function RecoveryKitBackup({
         <Button variant="bordered" onClick={handleSaveFile} icon={<Icon aria-hidden name="download" />}>
           {t('onboarding.btn_save_file')}
         </Button>
-        <Button variant="bordered" onClick={handlePrint} icon={<Icon aria-hidden name="print" />}>
+        <Button variant="bordered" onClick={() => setPrinting(true)} disabled={printing} icon={<Icon aria-hidden name="print" />}>
           {t('onboarding.btn_print')}
         </Button>
       </div>
+
+      {printing && <RecoveryKitPrint words={phraseWords(passphrase)} domain={parentOrigin ?? window.location.origin} onDone={handlePrintDone} />}
 
       {showPassphrase ? (
         <WordGrid passphrase={passphrase} />

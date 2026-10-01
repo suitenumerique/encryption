@@ -41,7 +41,7 @@ function camelCase(name: string): string {
     .join('');
 }
 
-export const CSS_MODULES = ['src/ui/components/layout/layout.module.css'];
+export const CSS_MODULES = ['src/ui/components/layout/layout.module.css', 'src/ui/documents/recovery-kit.module.css'];
 
 export function declarationPath(cssPath: string): string {
   return `${cssPath}.d.ts`;

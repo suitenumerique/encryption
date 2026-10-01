@@ -1,0 +1,106 @@
+/* Lengths are in pt, A4 is 595.28 x 841.89 pt. */
+
+.sheet {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 210mm;
+  height: 297mm;
+  padding: 48pt;
+  overflow: hidden;
+  background: #ffffff;
+  color: #161616;
+  font-family: var(--recovery-kit-font, Helvetica, Arial, sans-serif);
+  font-size: 11pt;
+  line-height: 1.1;
+  text-align: left;
+  /* Browsers drop backgrounds when printing unless told otherwise. */
+  print-color-adjust: exact;
+}
+
+.sheet * {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+.title {
+  margin-bottom: 10pt;
+  font-size: 18pt;
+  font-weight: 700;
+}
+
+.warning {
+  margin-bottom: 16pt;
+  padding: 10pt;
+  border-left: 4pt solid #b34000;
+  background: #ffe9e6;
+  color: #5a2200;
+  font-size: 10pt;
+}
+
+.label {
+  margin-bottom: 12pt;
+}
+
+.words {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 12pt;
+  border: 1pt solid #cccccc;
+  border-radius: 4pt;
+  background: #f9f9f9;
+  list-style: none;
+}
+
+.word {
+  display: flex;
+  width: 33.33%;
+  padding: 3pt 0;
+  break-inside: avoid;
+}
+
+.num {
+  flex-shrink: 0;
+  width: 22pt;
+  margin-right: 6pt;
+  color: #888888;
+  text-align: right;
+}
+
+.footer {
+  position: absolute;
+  right: 48pt;
+  bottom: 24pt;
+  left: 48pt;
+  display: flex;
+  justify-content: space-between;
+  color: #999999;
+  font-size: 8pt;
+}
+
+/* Mounted only while the print dialog is open (RecoveryKitPrint), so the rules
+   below never apply to an ordinary print of the interface. */
+.printRoot {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  :global(body):has(> .printRoot) {
+    margin: 0;
+    background: #ffffff;
+  }
+
+  :global(body):has(> .printRoot) > :not(.printRoot) {
+    display: none !important;
+  }
+
+  .printRoot {
+    display: block;
+  }
+}

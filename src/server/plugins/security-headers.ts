@@ -37,7 +37,7 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
 
     // Two kinds of files are meant to be fetched from another origin, so they get
     // a relaxed CORP and skip the iframe-only CSP: the public assets (the logo in
-    // a mail client, the fonts in a generated PDF) and the client SDK, which a
+    // a mail client, the SDK type declaration) and the client SDK, which a
     // product loads with a plain <script src> from its own origin, a no-cors
     // request that `same-origin` would make the browser refuse. The SDK is inert
     // without the iframes, and who may embed those stays governed by

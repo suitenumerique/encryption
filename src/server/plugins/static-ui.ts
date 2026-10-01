@@ -61,8 +61,8 @@ export const staticUiPlugin = fp(async (app: FastifyInstance): Promise<void> => 
   }
 
   // Serve static assets (JS, CSS, etc.) for the UI domain. The vendored Marianne
-  // .woff for the react-pdf Recovery Kit are emitted under assets/fonts at build,
-  // so they are served here too (see src/build/marianne-fonts.ts).
+  // .woff a BRAND_FONT can point at are emitted under assets/fonts at build, so
+  // they are served here too (see src/build/marianne-fonts.ts).
   app.register(fastifyStatic, {
     root: resolve(distDir, 'assets'),
     prefix: '/assets/',

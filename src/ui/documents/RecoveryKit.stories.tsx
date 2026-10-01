@@ -1,18 +1,17 @@
 import { Meta, StoryFn } from '@storybook/react';
+import { expect, within } from 'storybook/test';
 
-import { WithDocumentRenderer } from '@encryption/.storybook/WithDocumentRenderer';
 import { commonDocumentsParameters } from '@encryption/.storybook/document';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
-import { playFindDocumentStructure } from '@encryption/.storybook/testing';
-import { RecoveryKitDocument } from '@encryption/src/ui/documents/RecoveryKitDocument';
+import { RecoveryKitSheet } from '@encryption/src/ui/documents/RecoveryKitSheet';
 import { sampleRecoveryPhrase } from '@encryption/src/ui/testing/fixtures';
 
-type ComponentType = typeof RecoveryKitDocument;
+type ComponentType = typeof RecoveryKitSheet;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
 
 export default {
   title: 'Preview/Documents/RecoveryKit',
-  component: RecoveryKitDocument,
+  component: RecoveryKitSheet,
   ...generateMetaDefault({
     parameters: {
       ...commonDocumentsParameters,
@@ -20,18 +19,28 @@ export default {
   }),
 } as Meta<ComponentType>;
 
-// The language follows the Storybook locale toolbar (same as the email stories),
-// so one story shows both locales rather than duplicating them.
-const Template: StoryFn<ComponentType> = (_args, { globals }) => {
-  const lang = (globals.locale as string) ?? 'en';
+const sampleWords = sampleRecoveryPhrase.split(' ');
 
-  return <RecoveryKitDocument words={sampleRecoveryPhrase.split(' ')} lang={lang} domain="encryption.numerique.gouv.fr" />;
-};
+// The sheet on a grey desk, as a PDF reader would show the printed page. The
+// language follows the Storybook locale toolbar.
+const Template: StoryFn<ComponentType> = (args) => (
+  <div style={{ display: 'flex', justifyContent: 'center', padding: 24, minHeight: '100vh', background: '#525659' }}>
+    <div style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.5)' }}>
+      <RecoveryKitSheet {...args} />
+    </div>
+  </div>
+);
 
 const DefaultStory = Template.bind({});
-DefaultStory.decorators = [WithDocumentRenderer];
+DefaultStory.args = { words: sampleWords, domain: 'encryption.numerique.gouv.fr' };
 DefaultStory.play = async ({ canvasElement }) => {
-  await playFindDocumentStructure(canvasElement);
+  const sheet = await within(canvasElement).findByRole('article');
+  const items = within(sheet).getAllByRole('listitem');
+
+  await expect(items).toHaveLength(sampleWords.length);
+  for (const [index, word] of sampleWords.entries()) {
+    await expect(items[index]).toHaveTextContent(`${index + 1}.${word}`);
+  }
 };
 
 export const Default = prepareStory(DefaultStory);

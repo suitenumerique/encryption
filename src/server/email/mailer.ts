@@ -28,7 +28,7 @@ if (env.EMAIL_PALETTE_PATH) {
   }
 }
 
-// The brand font is shared with the interface (PDF + UI); resolve it once here so
+// The brand font is shared with the interface; resolve it once here so
 // email rendering can name it in `font-family`. Unset = a generic stack.
 setServerBrandFont(parseBrandFont(env.BRAND_FONT));
 
