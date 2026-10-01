@@ -314,6 +314,9 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--c--globals--spacings--st);
   width: 100%;
+  /* Safari only reads the prefixed property, and the dev server serves this
+     file as written (only the production build adds prefixes). */
+  -webkit-user-select: all;
   user-select: all;
 }
 
@@ -561,6 +564,7 @@
   font-family: monospace;
   font-size: 12px;
   line-height: 1.5;
+  -webkit-user-select: all;
   user-select: all;
 }
 
@@ -576,6 +580,7 @@
   background: var(--c--contextuals--background--surface--secondary);
   list-style: none;
   counter-reset: word;
+  -webkit-user-select: all;
   user-select: all;
 }
 
@@ -598,6 +603,7 @@
   text-align: right;
   font-size: 11px;
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  -webkit-user-select: none;
   user-select: none;
 }
 
