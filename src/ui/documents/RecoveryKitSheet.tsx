@@ -27,11 +27,7 @@ export function RecoveryKitSheet({ words, domain }: { words: string[]; domain: s
           </li>
         ))}
       </ol>
-      {/* The kit always fits one sheet, so the page count is fixed. */}
-      <footer className={styles.footer}>
-        <span>{t('onboarding.print_footer', { domain })}</span>
-        <span>1 / 1</span>
-      </footer>
+      <footer className={styles.footer}>{t('onboarding.print_footer', { domain })}</footer>
     </article>
   );
 }
