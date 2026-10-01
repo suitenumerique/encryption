@@ -39,6 +39,16 @@
   box-shadow: 0 0 0 4px var(--c--components--modal--background-color);
 }
 
+/* The opaque halo above outranks the design system's hover colour, so the hover
+   tint is laid over it as an image, keeping what scrolls underneath masked. */
+:global(.c__modal .c__modal__close .c__button:hover),
+:global(.c__modal .c__modal__close .c__button:focus-visible) {
+  background-image: linear-gradient(
+    var(--c--contextuals--background--semantic--contextual--primary),
+    var(--c--contextuals--background--semantic--contextual--primary)
+  );
+}
+
 .screen {
   display: flex;
   flex-direction: column;
