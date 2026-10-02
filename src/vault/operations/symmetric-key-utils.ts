@@ -2,6 +2,7 @@ import { decryptContent, decryptSymmetricKeyForUser } from '@encryption/src/cryp
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { type KeyVersionSelector, getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { getCachedSymmetricKey, setCachedSymmetricKey } from '@encryption/src/vault/symmetric-key-cache';
+import { hasVaultKeys } from '@encryption/src/vault/vault-keys';
 
 export type { KeyVersionSelector };
 
@@ -24,6 +25,10 @@ export async function resolveSymmetricKey(userId: string, encryptedKey: Uint8Arr
   const pair = await getStoredKeyPair(userId, version);
 
   if (!pair) {
+    if (version !== 'active' && (await hasVaultKeys(userId))) {
+      throw new VaultError(VaultErrorCode.KEY_VERSION_UNAVAILABLE, `Encryption key version ${version} is not held by this vault.`);
+    }
+
     throw new VaultError(VaultErrorCode.MISSING_KEYS, 'No key pair found. Generate or restore keys first.');
   }
 

@@ -12,12 +12,28 @@ export const VaultErrorCode = {
   /** No key pair stored locally on this device — user must onboard. */
   MISSING_KEYS: 'MISSING_KEYS',
   /**
+   * This device holds keys, but not the encryption key version the content was
+   * wrapped for: typically a key from before the user reset their encryption,
+   * whose private half is gone. The content must be shared again with the
+   * current key; it is not a reason to onboard.
+   */
+  KEY_VERSION_UNAVAILABLE: 'KEY_VERSION_UNAVAILABLE',
+  /**
    * AEAD verification failed. Either the ciphertext is for a different
    * recipient (their wrapped symmetric key was encrypted against another
    * pubkey) or the underlying KEM secret didn't match. Bubbles up from
    * libsodium's "wrong secret key for the given ciphertext".
    */
   WRONG_SECRET_KEY: 'WRONG_SECRET_KEY',
+  /**
+   * The symmetric key was unwrapped, but the content failed its integrity check
+   * under it (the AEAD tag did not verify): the content was damaged or altered
+   * in storage, or encrypted under another key. The vault cannot tell which, so
+   * the name states the check, not a cause. Raised by `decrypt-with-key` for the
+   * content step only, so a product can tell "your key does not open this" from
+   * "this content cannot be trusted". Mirrors VAULT_INTEGRITY_FAILED.
+   */
+  CONTENT_INTEGRITY_FAILED: 'CONTENT_INTEGRITY_FAILED',
   /** Backup payload is corrupted, truncated, or from an unsupported version. */
   INVALID_BACKUP: 'INVALID_BACKUP',
   /** BIP-39-style mnemonic input that doesn't checksum. */

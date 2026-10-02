@@ -1,4 +1,5 @@
-import { Alert, Button, Checkbox, Loader, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, Checkbox, Modal, ModalSize, Radio, RadioGroup, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Icon } from '@gouvfr-lasuite/ui-kit';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -16,10 +17,13 @@ import {
   registerKeyInit,
 } from '@encryption/src/ui/api/public-keys-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
-import { FingerprintDisplay } from '@encryption/src/ui/components/FingerprintDisplay';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { UntrustedRearmError, grantedRearmRows } from '@encryption/src/ui/components/emergency-access-logic';
+import { Chip, CopyFingerprintButton, FingerprintBoxes, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
+import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
@@ -209,8 +213,11 @@ export function EncryptionSettings({
   // Reconciliation choice B — adopt the SERVER's identity instead. This device's
   // local keys are the wrong identity, so discard them and re-acquire the active
   // one from a device that holds it (device approval) or its recovery phrase.
+  // Asked in-app (never window.confirm) before adopting the server's identity,
+  // since that deletes this device's keys.
+  const [adoptPrompt, setAdoptPrompt] = useState(false);
   const handleAdoptServerIdentity = useCallback(async () => {
-    if (!window.confirm(t('settings.reconcile_adopt_confirm'))) return;
+    setAdoptPrompt(false);
 
     try {
       await request(MSG_VAULT_DESTROY_KEYS);
@@ -220,7 +227,7 @@ export function EncryptionSettings({
 
     if (onOpenDeviceApproval) onOpenDeviceApproval();
     else onKeysDestroyed();
-  }, [request, onOpenDeviceApproval, onKeysDestroyed, t]);
+  }, [request, onOpenDeviceApproval, onKeysDestroyed]);
 
   // Warn on tab reload/close while the new (un-committed, unsaved) phrase is shown.
   useUnsavedPhraseGuard(changePhraseStep === 'backup' && !isChangingPhrase);
@@ -228,11 +235,8 @@ export function EncryptionSettings({
   const [keysExist, setKeysExist] = useState<boolean | null>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [showDangerZone, setShowDangerZone] = useState(false);
-  // The safety fingerprint is revealed on demand, not shown by default.
-  const [showFingerprint, setShowFingerprint] = useState(false);
   const [confirmDataLoss, setConfirmDataLoss] = useState(false);
   const [alsoDisableServer, setAlsoDisableServer] = useState(false);
-  const [confirmServerDisable, setConfirmServerDisable] = useState(false);
   const [confirmFingerprint, setConfirmFingerprint] = useState('');
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -352,8 +356,8 @@ export function EncryptionSettings({
     };
   }, [fingerprint, userId, getToken]);
 
-  const fingerprintMatch = !!fingerprint && confirmFingerprint.toLowerCase().replace(/\s/g, '') === fingerprint;
-  const canDelete = confirmDataLoss && (!alsoDisableServer || confirmServerDisable) && fingerprintMatch;
+  const fingerprintMatch = !!fingerprint && confirmFingerprint.replace(/\s/g, '') === fingerprint;
+  const canDelete = confirmDataLoss && fingerprintMatch;
 
   const handleDeleteKeys = useCallback(async () => {
     if (!canDelete) return;
@@ -394,26 +398,22 @@ export function EncryptionSettings({
     setShowDangerZone(false);
     setConfirmDataLoss(false);
     setAlsoDisableServer(false);
-    setConfirmServerDisable(false);
     setConfirmFingerprint('');
     setError(null);
   }, []);
 
+  // The product's close control while the new phrase is unsaved: dropping it is
+  // harmless (nothing was sent yet), but make the choice explicit.
+  const [cancelPrompt, setCancelPrompt] = useState(false);
+  useCloseGuard(changePhraseStep === 'backup' && !isChangingPhrase, () => setCancelPrompt(true));
+
+  const displayName = userInfo?.name || userInfo?.email || t('settings.you');
+  const displayEmail = userInfo?.name ? userInfo.email : null;
+
+  const sessionBanner = sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />;
+
   if (keysExist === null) {
-    return (
-      <div
-        style={{
-          padding: 'var(--c--globals--spacings--base)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Loader />
-        <p>{t('settings.loading')}</p>
-      </div>
-    );
+    return <LoadingScreen label={t('settings.loading')} />;
   }
 
   // Hard-gate: when this device's identity disagrees with the server directory,
@@ -422,75 +422,130 @@ export function EncryptionSettings({
   // (Detection is async, so settings may render for a moment first — that is
   // deliberate; we never block the whole screen on a vault/network round-trip.)
   if (keysExist && !showDangerZone && remoteStatus !== 'checking' && remoteStatus !== 'in-sync') {
+    const banner = (
+      <>
+        {sessionBanner}
+        {reconcileError && <Alert type={VariantType.ERROR}>{reconcileError}</Alert>}
+      </>
+    );
+    const removeLocalButton = (
+      <Button variant="tertiary" color="error" onClick={() => setShowDangerZone(true)} disabled={reconciling}>
+        {t('settings.reconcile_delete_local')}
+      </Button>
+    );
+
     // remote-never has no legitimate re-enable: the identity was never on the
     // server, so the only coherent action is to remove the orphaned local keys
     // and onboard from scratch.
-    const canReenable = remoteStatus !== 'remote-never';
-    const warning =
-      remoteStatus === 'remote-never'
-        ? t('settings.remote_never_warning')
-        : remoteStatus === 'remote-disabled'
-          ? t('settings.remote_disabled_warning')
-          : t('settings.remote_diverged_warning');
-    const hint =
-      remoteStatus === 'remote-never'
-        ? t('settings.remote_never_hint')
-        : remoteStatus === 'remote-disabled'
-          ? t('settings.reconcile_reenable_hint')
-          : t('settings.reconcile_diverged_hint');
+    if (remoteStatus === 'remote-never') {
+      return (
+        <Screen
+          illustration="shield-x"
+          title={t('settings.remote_never_title')}
+          description={
+            <>
+              <p>{t('settings.remote_never_warning')}</p>
+              <p>{t('settings.remote_never_hint')}</p>
+            </>
+          }
+          banner={banner}
+          actions={
+            <Button onClick={() => setShowDangerZone(true)} disabled={reconciling}>
+              {t('settings.reconcile_onboard_fresh')}
+            </Button>
+          }
+        />
+      );
+    }
+
+    if (remoteStatus === 'remote-disabled') {
+      return (
+        <Screen
+          illustration="shield-x"
+          title={t('settings.remote_disabled_title')}
+          description={
+            <>
+              <p>{t('settings.remote_disabled_warning')}</p>
+              <p>{t('settings.reconcile_reenable_hint')}</p>
+            </>
+          }
+          banner={banner}
+          actions={
+            <>
+              <Button variant="secondary" onClick={handleReactivateIdentity} disabled={reconciling}>
+                {reconciling ? t('settings.reconcile_working') : t('settings.reconcile_reenable')}
+              </Button>
+              {removeLocalButton}
+            </>
+          }
+        />
+      );
+    }
 
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
-        <h2>{t('settings.reconcile_title')}</h2>
-        {sessionExpired && onReconnect && (
-          <div style={{ marginBottom: 8 }}>
-            <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-          </div>
-        )}
-        <Alert type={VariantType.WARNING}>{warning}</Alert>
-
-        {remoteStatus === 'remote-diverged' && fingerprint && remoteFingerprint && (
-          <div style={{ margin: '12px 0', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div>
-              <p style={{ margin: '0 0 4px', fontWeight: 700 }}>{t('settings.remote_this_device')}</p>
-              <FingerprintDisplay fingerprint={fingerprint} style={{ fontSize: 14 }} />
-            </div>
-            <div>
-              <p style={{ margin: '0 0 4px', fontWeight: 700 }}>{t('settings.remote_server')}</p>
-              <FingerprintDisplay fingerprint={remoteFingerprint} style={{ fontSize: 14 }} />
-            </div>
-          </div>
-        )}
-
-        {reconcileError && (
-          <div style={{ marginTop: 8 }}>
-            <Alert type={VariantType.ERROR}>{reconcileError}</Alert>
-          </div>
-        )}
-
-        <p style={{ margin: '16px 0 8px', fontSize: 13, color: 'var(--c--contextuals--content--semantic--neutral--secondary)' }}>{hint}</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-          {canReenable && (
-            <Button fullWidth onClick={handleReactivateIdentity} disabled={reconciling}>
-              {reconciling
-                ? t('settings.reconcile_working')
-                : remoteStatus === 'remote-disabled'
-                  ? t('settings.reconcile_reenable')
-                  : t('settings.reconcile_keep_local')}
-            </Button>
+      <>
+        <Modal
+          isOpen={adoptPrompt}
+          onClose={() => setAdoptPrompt(false)}
+          closeOnClickOutside={false}
+          size={ModalSize.SMALL}
+          aria-label={t('settings.reconcile_adopt_title')}
+        >
+          <Screen
+            title={t('settings.reconcile_adopt_title')}
+            description={t('settings.reconcile_adopt_confirm')}
+            actions={
+              <>
+                <Button onClick={() => setAdoptPrompt(false)}>{t('onboarding.btn_go_back')}</Button>
+                <Button variant="bordered" color="error" onClick={handleAdoptServerIdentity}>
+                  {t('settings.reconcile_adopt_button')}
+                </Button>
+              </>
+            }
+          />
+        </Modal>
+        <Screen
+          title={t('settings.title')}
+          banner={banner}
+          actions={
+            <>
+              <Button onClick={() => setAdoptPrompt(true)} disabled={reconciling}>
+                {t('settings.reconcile_adopt_server')}
+              </Button>
+              <Button variant="secondary" onClick={handleReactivateIdentity} disabled={reconciling}>
+                {reconciling ? t('settings.reconcile_working') : t('settings.reconcile_keep_local')}
+              </Button>
+              {removeLocalButton}
+            </>
+          }
+        >
+          <p className={styles.hint}>{t('settings.remote_diverged_warning')}</p>
+          {fingerprint && (
+            <IdentityCard
+              name={displayName}
+              secondary={displayEmail}
+              tone="warning"
+              aside={
+                <Chip tone="warning" icon="warning">
+                  {t('settings.key_mismatch')}
+                </Chip>
+              }
+            >
+              <div>
+                <p className={styles.groupLabel}>{t('settings.remote_this_device')}</p>
+                <FingerprintBoxes fingerprint={fingerprint} tone="warning" />
+              </div>
+              {remoteFingerprint && (
+                <div>
+                  <p className={styles.groupLabel}>{t('settings.remote_server')}</p>
+                  <FingerprintBoxes fingerprint={remoteFingerprint} />
+                </div>
+              )}
+            </IdentityCard>
           )}
-          {remoteStatus === 'remote-diverged' && (
-            <Button variant="secondary" fullWidth onClick={handleAdoptServerIdentity} disabled={reconciling}>
-              {t('settings.reconcile_adopt_server')}
-            </Button>
-          )}
-          {/* Remove local keys. For remote-never this is the only path (onboard
-              fresh); otherwise it is the fallback to reactivation. */}
-          <Button variant={canReenable ? 'tertiary' : 'primary'} fullWidth onClick={() => setShowDangerZone(true)} disabled={reconciling}>
-            {canReenable ? t('settings.reconcile_delete_local') : t('settings.reconcile_onboard_fresh')}
-          </Button>
-        </div>
-      </div>
+          <p className={styles.hint}>{t('settings.reconcile_diverged_hint')}</p>
+        </Screen>
+      </>
     );
   }
 
@@ -499,27 +554,55 @@ export function EncryptionSettings({
   // warning is the only part shown as a modal (below).
   if (changePhraseStep === 'backup' && newRecoveryPhrase) {
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
-        <h2>{t('onboarding.title_backup')}</h2>
-        {sessionExpired && onReconnect && (
-          <div style={{ marginBottom: 8 }}>
-            <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />
-          </div>
-        )}
-        <Alert type={VariantType.INFO}>{t('settings.change_phrase_success')}</Alert>
-        {rearmBlocked && (
-          <div style={{ marginTop: 8 }}>
-            <Alert type={VariantType.WARNING}>
-              {t('emergency.rearm_blocked', { emails: rearmBlocked.map((contact) => contact.email).join(', ') })}
-            </Alert>
-            <div style={{ marginTop: 8 }}>
-              <Button size="small" color="error" onClick={handleRevokeBlockedAndRetry} disabled={isChangingPhrase}>
-                {t('emergency.rearm_revoke_retry')}
-              </Button>
-            </div>
-          </div>
-        )}
+      <>
+        <Modal
+          isOpen={cancelPrompt}
+          onClose={() => setCancelPrompt(false)}
+          closeOnClickOutside={false}
+          size={ModalSize.SMALL}
+          aria-label={t('settings.cancel_change_title')}
+        >
+          <Screen
+            title={t('settings.cancel_change_title')}
+            description={t('settings.cancel_change_text')}
+            actions={
+              <>
+                <Button onClick={() => setCancelPrompt(false)}>{t('onboarding.btn_go_back')}</Button>
+                <Button
+                  variant="bordered"
+                  color="error"
+                  onClick={() => {
+                    setCancelPrompt(false);
+                    handleCancelPhrase();
+                    onClose();
+                  }}
+                >
+                  {t('onboarding.btn_close_anyway')}
+                </Button>
+              </>
+            }
+          />
+        </Modal>
         <RecoveryKitBackup
+          title={t('settings.change_phrase_new_title')}
+          description={t('settings.change_phrase_success')}
+          banner={
+            <>
+              {sessionBanner}
+              {rearmBlocked && (
+                <Alert type={VariantType.WARNING}>
+                  <div className={styles.alertStack}>
+                    <span>{t('emergency.rearm_blocked', { emails: rearmBlocked.map((contact) => contact.email).join(', ') })}</span>
+                    <div>
+                      <Button size="small" color="error" onClick={handleRevokeBlockedAndRetry} disabled={isChangingPhrase}>
+                        {t('emergency.rearm_revoke_retry')}
+                      </Button>
+                    </div>
+                  </div>
+                </Alert>
+              )}
+            </>
+          }
           passphrase={newRecoveryPhrase}
           parentOrigin={null}
           onConfirm={handleConfirmPhraseBackup}
@@ -527,10 +610,8 @@ export function EncryptionSettings({
           busyLabel={t('settings.change_phrase_applying')}
           isBusy={isChangingPhrase}
           error={changeError}
-          onCancel={handleCancelPhrase}
-          cancelLabel={t('settings.change_phrase_cancel')}
         />
-      </div>
+      </>
     );
   }
 
@@ -538,216 +619,97 @@ export function EncryptionSettings({
   // dismissed back to the settings home (no lingering banner there).
   if (changePhraseStep === 'done') {
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
-        <h2>{t('settings.change_phrase')}</h2>
-        <Alert type={VariantType.SUCCESS}>{t('settings.change_phrase_committed')}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button onClick={() => setChangePhraseStep('idle')}>{t('settings.change_phrase_done')}</Button>
-        </div>
-      </div>
+      <Screen
+        illustration="shield-check"
+        title={t('settings.change_phrase')}
+        description={t('settings.change_phrase_committed')}
+        actions={<Button onClick={() => setChangePhraseStep('idle')}>{t('settings.change_phrase_done')}</Button>}
+      />
     );
   }
 
-  // The "delete local keys" danger zone takes over the whole view rather than
-  // sitting inside a box on the settings home, since it is a destructive action.
+  // The "remove encryption" flow takes over the whole view rather than sitting
+  // inside a box on the settings home, since it is a destructive action.
   if (showDangerZone) {
     return (
-      <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
-        <h2 style={{ color: 'var(--c--globals--colors--error-500)' }}>{t('settings.delete_title')}</h2>
-
-        <Alert type={VariantType.WARNING}>{t('settings.delete_warning_backup')}</Alert>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
-          <Checkbox label={t('settings.confirm_data_loss')} checked={confirmDataLoss} onChange={() => setConfirmDataLoss(!confirmDataLoss)} />
-
-          <div style={{ marginTop: 8, borderTop: '1px solid var(--c--contextuals--border--surface--primary)', paddingTop: 12 }}>
-            <Checkbox
-              label={t('settings.also_disable_server')}
-              checked={alsoDisableServer}
-              onChange={() => {
-                setAlsoDisableServer(!alsoDisableServer);
-                setConfirmServerDisable(false);
-              }}
-            />
-            {alsoDisableServer && (
-              <div style={{ marginLeft: 24, marginTop: 8 }}>
-                <Alert type={VariantType.ERROR}>{t('settings.disable_server_warning')}</Alert>
-                <div style={{ marginTop: 8 }}>
-                  <Checkbox
-                    label={t('settings.confirm_server_disable')}
-                    checked={confirmServerDisable}
-                    onChange={() => setConfirmServerDisable(!confirmServerDisable)}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ marginTop: 8, borderTop: '1px solid var(--c--contextuals--border--surface--primary)', paddingTop: 12 }}>
-            <p style={{ fontSize: 13, margin: '0 0 8px' }}>{t('settings.confirm_fingerprint_prompt')}</p>
-            {fingerprint && (
-              <div
-                style={{
-                  fontSize: 14,
-                  padding: 'var(--c--globals--spacings--t)',
-                  background: 'var(--c--contextuals--background--surface--secondary)',
-                  borderRadius: 4,
-                  marginBottom: 8,
-                }}
-              >
-                <FingerprintDisplay fingerprint={fingerprint} style={{ fontSize: 14 }} />
-              </div>
-            )}
-            <input
-              type="text"
-              value={confirmFingerprint}
-              onChange={(e) => setConfirmFingerprint(e.target.value)}
-              placeholder={fingerprint ? formatFingerprint(fingerprint) : ''}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                fontFamily: 'monospace',
-                fontSize: 14,
-                letterSpacing: '0.05em',
-                padding: 'var(--c--globals--spacings--t)',
-                borderRadius: 4,
-                border: '1px solid var(--c--contextuals--border--surface--primary)',
-              }}
-            />
-          </div>
-        </div>
-
-        {error && (
-          <div style={{ marginTop: 8 }}>
-            <Alert type={VariantType.ERROR}>{error}</Alert>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <Button variant="secondary" onClick={resetDangerZone}>
-            {t('onboarding.btn_cancel')}
-          </Button>
+      <Screen
+        back={{ label: t('onboarding.btn_back'), onClick: resetDangerZone, disabled: isPending }}
+        title={t('settings.delete_title')}
+        banner={
+          <>
+            {sessionBanner}
+            {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+          </>
+        }
+        actions={
           <Button color="error" onClick={handleDeleteKeys} disabled={isPending || !canDelete}>
             {isPending ? t('settings.deleting') : t('settings.delete_button')}
           </Button>
+        }
+      >
+        <RadioGroup>
+          <Radio
+            name="delete-scope"
+            label={t('settings.delete_scope_device')}
+            text={t('settings.delete_scope_device_hint')}
+            checked={!alsoDisableServer}
+            onChange={() => setAlsoDisableServer(false)}
+          />
+          <Radio
+            name="delete-scope"
+            label={t('settings.delete_scope_account')}
+            text={t('settings.delete_scope_account_hint')}
+            checked={alsoDisableServer}
+            onChange={() => setAlsoDisableServer(true)}
+          />
+        </RadioGroup>
+
+        <Alert type={VariantType.ERROR}>
+          <div className={styles.alertStack}>
+            <span>{alsoDisableServer ? t('settings.disable_server_warning') : t('settings.delete_warning_backup')}</span>
+            <Checkbox label={t('onboarding.i_understand')} checked={confirmDataLoss} onChange={() => setConfirmDataLoss(!confirmDataLoss)} />
+          </div>
+        </Alert>
+
+        <div>
+          <label className={styles.label} htmlFor="settings-confirm-fingerprint">
+            {t('settings.confirm_fingerprint_prompt')}
+          </label>
+          {fingerprint && (
+            <div style={{ marginBottom: 8 }}>
+              <FingerprintBoxes fingerprint={fingerprint} />
+            </div>
+          )}
+          <input
+            id="settings-confirm-fingerprint"
+            type="text"
+            inputMode="numeric"
+            value={confirmFingerprint}
+            onChange={(e) => setConfirmFingerprint(e.target.value)}
+            placeholder={fingerprint ? formatFingerprint(fingerprint) : ''}
+            className={fingerprintMatch ? `${styles.input} ${styles.inputMono} ${styles.inputValid}` : `${styles.input} ${styles.inputMono}`}
+          />
         </div>
-      </div>
+      </Screen>
     );
   }
 
   return (
-    <div style={{ padding: 'var(--c--globals--spacings--base)' }}>
-      <h2>{t('settings.title')}</h2>
-
-      {userInfo?.name && (
-        <p
-          style={{
-            color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
-            marginBottom: 'var(--c--globals--spacings--sm)',
-          }}
-        >
-          {userInfo.name}
-          {userInfo.email ? ` (${userInfo.email})` : ''}
-        </p>
-      )}
-
-      {!keysExist && (
-        <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
-          <Alert type={VariantType.INFO}>{t('settings.no_keys')}</Alert>
-        </div>
-      )}
-
-      {liveEmergencyPhrases.length > 0 && changePhraseStep === 'idle' && (
-        <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
-          <Alert type={VariantType.WARNING}>
-            {t('settings.emergency_phrase_live', { emails: liveEmergencyPhrases.join(', '), count: liveEmergencyPhrases.length })}
-          </Alert>
-          <div style={{ marginTop: 'var(--c--globals--spacings--sm)' }}>
-            <Button size="small" onClick={() => setChangePhraseStep('warning')}>
-              {t('settings.change_phrase')}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {keysExist && fingerprint && (
-        <>
-          {/* Safety fingerprint: an action button like the others. The digits and
-              their explanation live in the modal, not inline. */}
-          <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
-            <Button variant="secondary" onClick={() => setShowFingerprint(true)}>
-              {t('settings.reveal_fingerprint')}
-            </Button>
-          </div>
-
-          <Modal isOpen={showFingerprint} onClose={() => setShowFingerprint(false)} size={ModalSize.MEDIUM} title={t('settings.fingerprint_label')}>
-            <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
-              <div
-                style={{
-                  textAlign: 'center',
-                  padding: 'var(--c--globals--spacings--sm)',
-                  background: 'var(--c--contextuals--background--surface--secondary)',
-                  borderRadius: 4,
-                }}
-              >
-                <FingerprintDisplay fingerprint={fingerprint} style={{ fontSize: 18, letterSpacing: '0.08em', lineHeight: 1.8 }} />
-              </div>
-              <p
-                style={{
-                  fontSize: 13,
-                  marginTop: 'var(--c--globals--spacings--sm)',
-                  color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
-                }}
-              >
-                {t('settings.safety_fingerprint_hint')}
-              </p>
-            </div>
-          </Modal>
-
-          {/* Add another device via approval (forwards the VRK). */}
-          {onOpenDeviceApproval && (
-            <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
-              <Button variant="secondary" onClick={onOpenDeviceApproval}>
-                {t('settings.add_device')}
-              </Button>
-            </div>
-          )}
-
-          {/* Emergency access: designate trusted contacts, manage entrusted vaults. */}
-          {onOpenEmergencyAccess && (
-            <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
-              <Button variant="secondary" onClick={onOpenEmergencyAccess}>
-                {t('emergency.settings_entry')}
-              </Button>
-            </div>
-          )}
-
-          {/* Change the recovery phrase (re-wraps the VRK; documents untouched).
-              Stepped so the new phrase is fully backed up before the old one is
-              invalidated on the server. */}
-          <div style={{ marginBottom: 'var(--c--globals--spacings--base)' }}>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setChangeError(null);
-                setChangePhraseStep('warning');
-              }}
-            >
-              {t('settings.change_phrase')}
-            </Button>
-          </div>
-
-          {/* Only the confirm-before warning is a modal; on Continue the backup
-              step takes over the whole view (handled by the early return above). */}
-          <Modal
-            isOpen={changePhraseStep === 'warning'}
-            onClose={isChangingPhrase ? () => undefined : handleCancelPhrase}
-            closeOnClickOutside={false}
-            size={ModalSize.LARGE}
-            title={t('settings.change_phrase')}
-          >
-            <div style={{ paddingBottom: 'var(--c--globals--spacings--base)' }}>
-              <Alert type={VariantType.WARNING}>{t('settings.change_phrase_warning')}</Alert>
+    <>
+      {/* Only the confirm-before warning is a modal; on Continue the backup
+          step takes over the whole view (handled by the early return above). */}
+      <Modal
+        isOpen={changePhraseStep === 'warning'}
+        onClose={isChangingPhrase ? () => undefined : handleCancelPhrase}
+        closeOnClickOutside={false}
+        size={ModalSize.SMALL}
+        aria-label={t('settings.change_phrase')}
+      >
+        <Screen
+          title={t('settings.change_phrase')}
+          description={
+            <>
+              <p>{t('settings.change_phrase_warning')}</p>
               {/* There is only ONE flow: this rewrite replaces the owner's phrase
                   AND, in the same server write, burns every emergency phrase a
                   contact obtained and re-arms a fresh dormant one. The user never
@@ -755,43 +717,82 @@ export function EncryptionSettings({
                   about to happen to their contacts rather than leave them guessing
                   which phrase this is about. */}
               {liveEmergencyPhrases.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <Alert type={VariantType.INFO}>
-                    {t('settings.change_phrase_emergency_note', {
-                      emails: liveEmergencyPhrases.join(', '),
-                      count: liveEmergencyPhrases.length,
-                    })}
-                  </Alert>
-                </div>
+                <p>
+                  {t('settings.change_phrase_emergency_note', {
+                    emails: liveEmergencyPhrases.join(', '),
+                    count: liveEmergencyPhrases.length,
+                  })}
+                </p>
               )}
-              {changeError && (
-                <div style={{ marginTop: 8 }}>
-                  <Alert type={VariantType.ERROR}>{changeError}</Alert>
-                </div>
+            </>
+          }
+          banner={changeError && <Alert type={VariantType.ERROR}>{changeError}</Alert>}
+          actions={
+            <>
+              <Button onClick={handleGeneratePhrase} disabled={isChangingPhrase}>
+                {isChangingPhrase ? t('settings.changing_phrase') : t('settings.change_phrase_continue')}
+              </Button>
+              <Button variant="bordered" color="neutral" onClick={handleCancelPhrase} disabled={isChangingPhrase}>
+                {t('settings.change_phrase_cancel')}
+              </Button>
+            </>
+          }
+        />
+      </Modal>
+
+      <Screen
+        title={t('settings.title')}
+        banner={sessionBanner}
+        actions={
+          keysExist && (
+            <>
+              {onOpenDeviceApproval && (
+                <Button variant="secondary" onClick={onOpenDeviceApproval} icon={<Icon aria-hidden name="laptop" />}>
+                  {t('settings.add_device')}
+                </Button>
               )}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-                <Button variant="secondary" onClick={handleCancelPhrase} disabled={isChangingPhrase}>
-                  {t('settings.change_phrase_cancel')}
+              {onOpenEmergencyAccess && (
+                <Button variant="secondary" onClick={onOpenEmergencyAccess} icon={<Icon aria-hidden name="group" />}>
+                  {t('emergency.settings_entry')}
                 </Button>
-                <Button color="error" onClick={handleGeneratePhrase} disabled={isChangingPhrase}>
-                  {isChangingPhrase ? t('settings.changing_phrase') : t('settings.change_phrase_continue')}
-                </Button>
-              </div>
-            </div>
-          </Modal>
+              )}
+              <Button
+                variant="tertiary"
+                onClick={() => {
+                  setChangeError(null);
+                  setChangePhraseStep('warning');
+                }}
+                icon={<Icon aria-hidden name="key" />}
+              >
+                {t('settings.change_phrase')}
+              </Button>
+              <Button variant="tertiary" color="error" onClick={() => setShowDangerZone(true)}>
+                {t('settings.show_danger_zone')}
+              </Button>
+            </>
+          )
+        }
+      >
+        {!keysExist && <Alert type={VariantType.INFO}>{t('settings.no_keys')}</Alert>}
 
-          {/* Danger zone opens as its own full view (early return above). */}
-          <Button variant="tertiary" color="error" onClick={() => setShowDangerZone(true)}>
-            {t('settings.show_danger_zone')}
-          </Button>
-        </>
-      )}
+        {keysExist && fingerprint && (
+          <div className={styles.section}>
+            <IdentityCard
+              name={displayName}
+              secondary={displayEmail}
+              fingerprint={fingerprint}
+              aside={<CopyFingerprintButton fingerprint={fingerprint} />}
+            />
+            <p className={styles.hint}>{t('settings.safety_fingerprint_hint')}</p>
+          </div>
+        )}
 
-      <div style={{ marginTop: 'var(--c--globals--spacings--base)' }}>
-        <Button variant="secondary" onClick={onClose}>
-          {t('settings.close')}
-        </Button>
-      </div>
-    </div>
+        {liveEmergencyPhrases.length > 0 && changePhraseStep === 'idle' && (
+          <Alert type={VariantType.WARNING}>
+            {t('settings.emergency_phrase_live', { emails: liveEmergencyPhrases.join(', '), count: liveEmergencyPhrases.length })}
+          </Alert>
+        )}
+      </Screen>
+    </>
   );
 }

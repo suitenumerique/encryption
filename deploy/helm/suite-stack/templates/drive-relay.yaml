@@ -1,0 +1,124 @@
+{{- /* Drive's own piece: nothing to relay without Drive. */}}
+{{- if and .Values.driveRelay.enabled .Values.drive.enabled }}
+{{- $r := .Values.driveRelay }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive-collaboration-relay
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: drive-collaboration-relay
+spec:
+  replicas: 1
+  # Rooms live in memory: two instances would split the editors of one document.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "suite-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: drive-collaboration-relay
+  template:
+    metadata:
+      labels:
+        {{- include "suite-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: drive-collaboration-relay
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: relay
+          image: {{ printf "%s:%s" $r.image.repository $r.image.tag | quote }}
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 4100
+          env:
+            - name: RELAY_PORT
+              value: '4100'
+            - name: DRIVE_API_URL
+              value: {{ $r.driveApiUrl | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              # A relayed message can reach 75 MB (an image pasted in a document).
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive-collaboration-relay
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: drive-collaboration-relay
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "suite-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: drive-collaboration-relay
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if $r.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: drive-collaboration-relay
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: drive-collaboration-relay
+  {{- with $r.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $r.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $r.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $r.host | quote }}
+      secretName: {{ $r.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $r.host | quote }}
+      http:
+        paths:
+          # The path Drive's frontend connects to (encryptedRelay.ts).
+          - path: /collaboration/relay
+            pathType: Exact
+            backend:
+              service:
+                name: drive-collaboration-relay
+                port:
+                  name: http
+{{- end }}
+{{- end }}

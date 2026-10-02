@@ -19,11 +19,12 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - `src/ui/` — React app (Cunningham, i18next, MDX docs, browser check)
 - `src/server/` — Fastify server, Host-based routing, API routes, security headers
 - `src/shared/` — constants, Zod schemas, error codes (shared between server and client)
-- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; every model and enum sits in the `encryption` PostgreSQL schema (`@@schema`), never `public`, and `DATABASE_URL` carries `?schema=encryption` for the migration tooling
+- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; the PostgreSQL schema comes from the `?schema=` parameter of `DATABASE_URL` (read by both the migration tooling and the runtime adapter): deployments use a dedicated `encryption` schema, never `public` (see README), while the local `.env.test*` files leave it out and use `public`
 - `src/demo/` — fake product pages for testing (two instances on different ports)
 - `src/i18n/` — French translations, i18next setup
 - `src/build/` — build-time helpers (browser versions from browserslist)
-- `.storybook/` — Storybook config with factory pattern from assistant-declaration
+- `deploy/` — deployment material: PostgreSQL role scripts, the Helm chart and its tests (`deploy/helm/encryption.test.ts` renders it with the real `helm` binary and checks the Deployment against `src/server/env-schema.ts`), helmfile and Argo CD examples. The chart is versioned apart from the application: `chart/vX.Y.Z` tags publish `lasuite/encryption-chart` on Docker Hub and run only the chart jobs; `vX.Y.Z` tags release the image and skip the chart. A push to the CI branch republishes the image as `main` only when something outside `deploy/helm` changed, and the chart as `0.0.0-main` only when `deploy/helm/encryption` or `.github` changed, both compared with the commit of the last successful run on the branch (the `changes` job), so a failed release is published again by the next push. `image.tag` is therefore required in the values. `deploy/helm/suite-stack` is a second, unpublished chart for beta testing: the encryption chart (from the checkout) plus the published Docs, Drive and `dev-backend` (PostgreSQL, Redis, MinIO, Keycloak) charts as dependencies, a bootstrap Job that creates the databases, roles, buckets, OIDC clients and tester accounts and runs the encryption migration, Mailpit, and render-time checks that the blocks agree (`templates/_checks.tpl`); `deploy/helm/suite-stack.test.ts` covers it and needs the network for `helm dependency update`. `deploy/helmfile/preview` renders that stack as one environment per pull request (`feature` + `domain` inputs, hostnames derived, namespace `preview-<n>`), deployed per pull request by an Argo CD ApplicationSet in the deployment repository (`deploy/argocd/applicationset-preview.example.yaml`, a pull request generator on the `preview` label); `.github/workflows/preview.yml` publishes the pull request's own image to `lasuite/encryption` on Docker Hub (`pr-<n>`, which the helmfile derives from the number, and `sha-<8>`; the branch name on a manual run, allowed on `feat/*` branches only), with the Docker Hub token of the `release` environment (whose branch rules must admit `refs/pull/*/merge` and `feat/*`), comments the URLs, nudges Argo CD's webhook, and cleans its tags (a pull request's on close or unlabel, the rest after thirty days). The image build and scan steps are shared with the release job through `.github/actions/build-image`.
+- `.storybook/` — Storybook config with factory pattern from assistant-declaration. The CI's `chromatic` job publishes it to Chromatic (`chromatic.config.json`: TurboSnap, never fails on visual changes, a push auto-accepts them as the new baseline), skipped when `CHROMATIC_PROJECT_TOKEN` is absent (forks, Dependabot, `act`). A story displaying a date derived from "now" must set `parameters.date` and build its fixtures from that instant, or its snapshot changes every day.
 
 ## Tech stack
 
@@ -81,6 +82,8 @@ Two categories of operations:
 - **Privileged operations** (only `encryption`): `generate-keys`, `sign-key-registration`, `respond-to-key-challenge`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
 
 The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
+
+**The interface draws its own modal over the product.** Every SDK `open*` call (`openOnboarding()`, `openSettings()`, `openEmergencyAccess()`, `openRecipientProfile(userId, label)`, no container) lays a transparent full-viewport iframe over the page, kept `visibility: hidden` until the app inside asks for its context, then revealed with the `interface:ready` event; the product shows only a loader in a modal of its own until then (Docs and Drive `EncryptionHostBody`, the demo) and unmounts it on `interface:closed`. Inside, `App.tsx` wraps every screen in a Cunningham `Modal` (small = 350px via `layout.module.css`, medium for emergency access, close control anchored to the box), so no size ever crosses the two windows; the verify overlay and the SDK-opened emergency prompt draw their own modal, documentation pages are whole pages. Screens are laid out with the primitives in `src/ui/components/layout/` (`Screen`: illustration, title, description, body, stacked full-width actions, an optional `back` link above the title for a step back inside a flow; `IdentityCard` + `FingerprintBoxes`; `layout.module.css`, a CSS module whose keys are typed by the generated `layout.module.css.d.ts`: run `npm run css:types` after editing the stylesheet, `src/build/css-module-types.test.ts` fails when it is stale, and a removed class then fails `tsc` at every call site). The modal's close control raises a close request that the shown screen may hold (`useCloseGuard`, e.g. an unsaved recovery phrase asks "cancel the setup?"); the interface confirms with `MSG_INTERFACE_CLOSED` once it has really closed, and a product can raise the same request with `vaultClient.requestClose()`. In Storybook, `parameters.hostModal` (`true` = 350px, `'medium'` = 600px, both with the close control; `'card'` = the width alone, for a component that lives inside a screen) stands in for that modal.
 
 ## Security measures
 
@@ -141,14 +144,19 @@ Optional, off unless `SENTRY_DSN` is set, and never a dependency of the service.
     vault host does not serve, and the vault build fails on it.
 - **Source maps are files for the server, never for the browser.** The build writes
   a `.map` next to every bundle and the image ships both. Nobody uploads them and no
-  browser ever fetches one. They are read in exactly two places, both inside the
-  container: Node reads `dist/server/main.mjs.map` itself (`--enable-source-maps` in
-  the `Dockerfile`), so server stacks in logs and reports name `src/server/*.ts`
-  lines; and when the interface reports an exception, its stack points at positions
-  in the minified bundle, and `src/server/symbolicate.ts` opens the matching
-  `dist/ui/assets/*.map` from disk to translate them back to `src/ui/*.tsx` lines
-  before the event leaves. It uses `node:module`'s `SourceMap`, so no package is
-  added. This is the shape that fits an image many organizations deploy against
+  browser ever fetches one. They are read only when an error is reported, by
+  `src/server/symbolicate.ts`, inside the container: an interface exception points
+  at positions in the minified bundle, translated through the matching
+  `dist/ui/assets/*.map` back to `src/ui/*.tsx` lines, and a server exception points
+  at `dist/server/main.mjs`, translated through `main.mjs.map` to `src/server/*.ts`
+  lines, before the event leaves. It uses `node:module`'s `SourceMap`, so no package
+  is added. Node is deliberately NOT started with `--enable-source-maps`: it decodes
+  the whole server map up front and keeps it, about 200 MB of heap for the rare
+  error, so the server map is opened when a report needs it and dropped a minute
+  later. Server logs therefore carry bundle positions (`main.mjs:312045:12`); the
+  bundle is not minified, so they already name functions, and
+  `npm run stack:resolve` translates them (`--map` for the map copied out of a
+  deployed image). This is the shape that fits an image many organizations deploy against
   their own collector: a CI job uploading maps would upload them to OUR collector,
   and a deployment needs nothing beyond `SENTRY_DSN`. Consequently `release` is only
   a label (the `/api/version` build hash by default) and no commit SHA has to travel
@@ -217,6 +225,7 @@ exercise). Open http://localhost:7209 and log in as `dev@example.com` /
 npm run dev              # Start server (API + vault + UI) + demos + storybook
 npm run build            # Build server + vault + UI + client SDK
 npm run test:unit        # Run tests
+npm run test:helm        # Render and check the Helm chart in deploy/helm (needs helm + kubeconform)
 npm run test:e2e:headless # Render every story in a headless browser
 npm run test:e2e         # Same, with the browser visible
 npm run lint             # ESLint + TypeScript check

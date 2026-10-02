@@ -1,4 +1,4 @@
-import { CunninghamProvider } from '@gouvfr-lasuite/cunningham-react';
+import { CunninghamProvider, Loader, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { VaultClient } from '@encryption/src/client/vault-client';
@@ -86,6 +86,9 @@ function base64ToAb(s: string): ArrayBuffer {
 export function DemoApp() {
   const [vaultClient] = useState(() => new VaultClient({ vaultUrl: VAULT_URL, interfaceUrl: INTERFACE_URL, theme: 'light' }));
   const [interfaceOpen, setInterfaceOpen] = useState(false);
+  // The interface draws its own modal over the page; the product only shows a
+  // loader until the SDK reports it on screen.
+  const [interfaceReady, setInterfaceReady] = useState(false);
   const [state, setState] = useState<EncryptionState>('not-connected');
   const [currentUser, setCurrentUser] = useState<DemoUser | null>(null);
   const currentUserRef = useRef<DemoUser | null>(null);
@@ -106,7 +109,6 @@ export function DemoApp() {
   }, [allDocuments, currentUser, currentKeycloakId]);
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocContent, setNewDocContent] = useState('');
-  const [interfaceContainer, setInterfaceContainer] = useState<HTMLDivElement | null>(null);
   const [shareDoc, setShareDoc] = useState<FakeDocument | null>(null);
   // A standing prompt raised when a vault operation fails with a code that needs
   // user action (integrity failure, missing keys, ...). Persists across the raw
@@ -171,9 +173,11 @@ export function DemoApp() {
       setState('ready');
       log(`Onboarding complete. Public key: ${publicKey.slice(0, 30)}...`);
     });
+    client.on('interface:ready', () => setInterfaceReady(true));
     client.on('interface:closed', () => {
       log('Interface closed');
       setInterfaceOpen(false);
+      setInterfaceReady(false);
       // Re-check key state after the interface closes (keys may have been created/deleted)
       client
         .hasKeys()
@@ -276,18 +280,16 @@ export function DemoApp() {
   );
 
   const handleOpenOnboarding = useCallback(() => {
-    if (!interfaceContainer) return;
-    vaultClient.openOnboarding(interfaceContainer);
     setInterfaceOpen(true);
+    vaultClient.openOnboarding();
     log('Opening onboarding interface...');
-  }, [interfaceContainer, log, vaultClient]);
+  }, [vaultClient, log]);
 
   const handleOpenSettings = useCallback(() => {
-    if (!interfaceContainer) return;
-    vaultClient.openSettings(interfaceContainer);
     setInterfaceOpen(true);
+    vaultClient.openSettings();
     log('Opening settings...');
-  }, [interfaceContainer, log, vaultClient]);
+  }, [vaultClient, log]);
 
   const handleCreateDocument = useCallback(async () => {
     const client = vaultClient;
@@ -555,11 +557,26 @@ export function DemoApp() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           {/* Left: Documents + Interface container */}
           <div>
-            {/* Interface iframe container — only visible when an interface is open */}
-            <div style={{ marginBottom: 16, display: interfaceOpen ? 'block' : 'none' }}>
-              <h3 style={{ margin: '0 0 8px', fontSize: 14, color: '#666' }}>Encryption interface</h3>
-              <div ref={setInterfaceContainer} style={{ border: '1px dashed #ddd', borderRadius: 8, minHeight: 40 }} />
-            </div>
+            {/* The interface draws its own modal over the page (the SDK lays a
+                transparent full-viewport iframe); like Docs and Drive, the product
+                only shows a loader until 'interface:ready', and this modal goes
+                away then. Its close control asks the interface to close, which
+                also covers a load that never completes. */}
+            <Modal
+              isOpen={interfaceOpen && !interfaceReady}
+              onClose={() => {
+                // Nothing is at stake before the interface is on screen: tear the frame down outright.
+                vaultClient.closeInterface();
+                setInterfaceOpen(false);
+              }}
+              closeOnClickOutside={false}
+              size={ModalSize.SMALL}
+              aria-label="Encryption"
+            >
+              <div className="demo-encryption-loading">
+                <Loader />
+              </div>
+            </Modal>
 
             {/* Create document — hidden while the onboarding/settings interface is
                 open, so it only appears once encryption is fully set up. */}

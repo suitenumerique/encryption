@@ -4,7 +4,7 @@
 import { type Mock, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RUNTIME_CONFIG_ELEMENT_ID } from '@encryption/src/shared/runtime-config';
-import type { refreshTokenWithLock as RefreshTokenWithLock, TokenSet } from '@encryption/src/ui/auth/oidc-client';
+import type { decodeJwtClaims as DecodeJwtClaims, refreshTokenWithLock as RefreshTokenWithLock, TokenSet } from '@encryption/src/ui/auth/oidc-client';
 
 // A JWT whose payload segment base64-decodes to the given claims (signature not verified).
 function makeJwt(claims: Record<string, unknown>): string {
@@ -159,5 +159,22 @@ describe('refreshTokenWithLock', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
     await expect(refreshTokenWithLock(staleToken(), async () => null, vi.fn())).rejects.not.toMatchObject({ name: 'InvalidGrantError' });
+  });
+});
+
+describe('decodeJwtClaims', () => {
+  let decodeJwtClaims: typeof DecodeJwtClaims;
+
+  beforeAll(async () => {
+    ({ decodeJwtClaims } = await import('@encryption/src/ui/auth/oidc-client'));
+  });
+
+  it('reads non-ASCII claims as UTF-8 from a base64url segment', () => {
+    const name = 'Léa Dupré-Gaël ?>?';
+    const segment = Buffer.from(JSON.stringify({ sub: 'u1', name })).toString('base64url');
+
+    // A real token is base64url, which atob rejects: the fixture must contain one of its two characters.
+    expect(segment).toMatch(/[-_]/);
+    expect(decodeJwtClaims(`header.${segment}.sig`)).toEqual({ sub: 'u1', name });
   });
 });

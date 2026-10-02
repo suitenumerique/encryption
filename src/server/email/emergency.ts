@@ -1,4 +1,5 @@
 import { mailer } from '@encryption/src/server/email/mailer';
+import type { SendOptions, Sender } from '@encryption/src/server/email/mailer';
 import { EmergencyAcceptedEmail, subject as emergencyAcceptedSubject } from '@encryption/src/server/email/templates/EmergencyAccepted';
 import { EmergencyDeclinedEmail, subject as emergencyDeclinedSubject } from '@encryption/src/server/email/templates/EmergencyDeclined';
 import { EmergencyDesignatedEmail, subject as emergencyDesignatedSubject } from '@encryption/src/server/email/templates/EmergencyDesignated';
@@ -35,6 +36,17 @@ import {
   EmergencyVaultRecoveredContactEmail,
   subject as emergencyVaultRecoveredContactSubject,
 } from '@encryption/src/server/email/templates/EmergencyVaultRecoveredContact';
+import { env } from '@encryption/src/server/env';
+import { t } from '@encryption/src/server/i18n';
+
+/** The sender as the recipient reads it: the service's name in their language, the operator's address. */
+export function senderFor(locale: string): Sender {
+  return { name: t(locale, 'emails.senderName'), address: env.MAILER_SENDER_ADDRESS };
+}
+
+function send(locale: string, options: Omit<SendOptions, 'sender'>): Promise<void> {
+  return mailer.send({ ...options, sender: senderFor(locale) });
+}
 
 export async function sendEmergencyDesignated(params: {
   recipient: string;
@@ -43,7 +55,7 @@ export async function sendEmergencyDesignated(params: {
   waitTimeDays: number;
   productUrl: string;
 }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyDesignatedSubject(params.locale),
     emailComponent: EmergencyDesignatedEmail(params),
@@ -51,7 +63,7 @@ export async function sendEmergencyDesignated(params: {
 }
 
 export async function sendEmergencyAccepted(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyAcceptedSubject(params.locale),
     emailComponent: EmergencyAcceptedEmail(params),
@@ -59,7 +71,7 @@ export async function sendEmergencyAccepted(params: { recipient: string; locale:
 }
 
 export async function sendEmergencyDeclined(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyDeclinedSubject(params.locale),
     emailComponent: EmergencyDeclinedEmail(params),
@@ -74,7 +86,7 @@ export async function sendEmergencyRecoveryRequested(params: {
   deadlineMillis: number;
   productUrl: string;
 }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryRequestedSubject(params.locale),
     emailComponent: EmergencyRecoveryRequestedEmail(params),
@@ -88,7 +100,7 @@ export async function sendEmergencyRecoveryReminder(params: {
   daysRemaining: number;
   productUrl: string;
 }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryReminderSubject(params.locale),
     emailComponent: EmergencyRecoveryReminderEmail(params),
@@ -101,7 +113,7 @@ export async function sendEmergencyRecoveryApprovedGrantor(params: {
   granteeEmail: string;
   productUrl: string;
 }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryApprovedGrantorSubject(params.locale),
     emailComponent: EmergencyRecoveryApprovedGrantorEmail(params),
@@ -114,7 +126,7 @@ export async function sendEmergencyRecoveryApprovedContact(params: {
   grantorEmail: string;
   productUrl: string;
 }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryApprovedContactSubject(params.locale),
     emailComponent: EmergencyRecoveryApprovedContactEmail(params),
@@ -122,7 +134,7 @@ export async function sendEmergencyRecoveryApprovedContact(params: {
 }
 
 export async function sendEmergencyRecoveryRejected(params: { recipient: string; locale: string; grantorEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryRejectedSubject(params.locale),
     emailComponent: EmergencyRecoveryRejectedEmail(params),
@@ -130,7 +142,7 @@ export async function sendEmergencyRecoveryRejected(params: { recipient: string;
 }
 
 export async function sendEmergencyRecoveryCancelled(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryCancelledSubject(params.locale),
     emailComponent: EmergencyRecoveryCancelledEmail(params),
@@ -138,7 +150,7 @@ export async function sendEmergencyRecoveryCancelled(params: { recipient: string
 }
 
 export async function sendEmergencyVaultRecovered(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyVaultRecoveredSubject(params.locale),
     emailComponent: EmergencyVaultRecoveredEmail(params),
@@ -146,7 +158,7 @@ export async function sendEmergencyVaultRecovered(params: { recipient: string; l
 }
 
 export async function sendEmergencyVaultRecoveredContact(params: { recipient: string; locale: string; grantorEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyVaultRecoveredContactSubject(params.locale),
     emailComponent: EmergencyVaultRecoveredContactEmail(params),
@@ -154,7 +166,7 @@ export async function sendEmergencyVaultRecoveredContact(params: { recipient: st
 }
 
 export async function sendEmergencyRevoked(params: { recipient: string; locale: string; grantorEmail: string }): Promise<void> {
-  await mailer.send({
+  await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRevokedSubject(params.locale),
     emailComponent: EmergencyRevokedEmail(params),

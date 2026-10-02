@@ -1,6 +1,9 @@
 import { Meta, StoryFn } from '@storybook/react';
+import { within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
+import { playFindButton } from '@encryption/.storybook/testing';
+import i18n from '@encryption/src/i18n';
 import { MSG_VAULT_FETCH_PUBLIC_KEYS, MSG_VAULT_GET_KNOWN_FINGERPRINTS } from '@encryption/src/shared/constants';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
 import { sampleFingerprint, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
@@ -13,7 +16,8 @@ export default {
   component: RecipientProfile,
   ...generateMetaDefault({
     parameters: {
-      layout: 'padded',
+      layout: 'centered',
+      hostModal: true,
     },
   }),
 } as Meta<ComponentType>;
@@ -95,3 +99,22 @@ RefusedStory.parameters = {
 };
 
 export const Refused = prepareStory(RefusedStory);
+
+// Trusted once, but on another key: the registry now shows a different
+// fingerprint, so the old decision is void and both choices come back.
+const KeyChangedStory = Template.bind({});
+KeyChangedStory.args = { ...baseArgs };
+KeyChangedStory.parameters = {
+  encryption: {
+    request: vaultReturning(registeredRecipient, {
+      [samplePublicKey.user_id]: { fingerprint: '00000 00000 00000 00000 00000 00000 00000 00001', status: 'trusted' },
+    }),
+  },
+};
+KeyChangedStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText(i18n.t('profile.decision_changed'));
+  await playFindButton(canvasElement, i18n.t('profile.btn_trust'));
+  await playFindButton(canvasElement, i18n.t('profile.btn_refuse'));
+};
+
+export const KeyChanged = prepareStory(KeyChangedStory);

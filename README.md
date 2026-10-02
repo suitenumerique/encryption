@@ -98,6 +98,7 @@ In development, a single Fastify server on port 7200 embeds Vault and UI via Vit
 npm run dev              # Start server (API + vault + UI) + demos + storybook
 npm run build            # Build server + vault + UI + client SDK
 npm run test:unit        # Run tests
+npm run test:helm        # Render and check the Helm chart (needs helm + kubeconform)
 npm run lint             # ESLint + TypeScript check
 npm run format           # Prettier write
 npm run format:check     # Prettier check
@@ -113,6 +114,10 @@ npm run ci:simulate      # Run the CI pipeline locally with `act`
 [act](https://github.com/nektos/act), which has to be installed separately.
 
 It's not designed to release a new version, but to test most of the pipeline (packages, tests, build). Note the flags stay in the npm script rather than in `.actrc`, so they do not leak into other `act` invocations. Also, we cannot use concurrent jobs feature here due to our setup upgrading npm (jobs share the same folders and there is a conflict). Lastly, `act` copies the working tree without its `.git`, so the steps comparing against committed files are skipped locally: a green local run does not prove the generated API client is in sync.
+
+### Published Storybook
+
+The CI publishes the Storybook to [Chromatic](https://www.chromatic.com/), which hosts it and compares every story with its last accepted snapshot. Pushes to the CI branch are accepted as they come and are the baseline behind the permalink (https://main--6abd0198abd0e47162cae7c9.chromatic.com, any branch that was built is at `https://<branch>--6abd0198abd0e47162cae7c9.chromatic.com`); a pull request gets its own Storybook and its visual changes listed for review, without ever failing the pipeline. It needs the `CHROMATIC_PROJECT_TOKEN` repository secret (the project's settings in Chromatic).
 
 ## Tech stack
 
@@ -155,6 +160,19 @@ The release is a single container image, `lasuite/encryption`, published on Dock
 - **Shutdown**: on `SIGTERM` the server stops accepting connections, drains, flushes pending error reports and exits. Give it a grace period of a few seconds.
 - **Egress needed**: PostgreSQL, the SMTP host(s), the OIDC provider (`OIDC_JWKS_URL`) and, if set, the host in `SENTRY_DSN`. Nothing else: no registry, no CDN, no download at startup.
 
+### Kubernetes
+
+A Helm chart, [`deploy/helm/encryption`](deploy/helm/encryption), deploys the image as described on this page: the Deployment with the hardening of `docker-compose.production.yaml`, one Service for both hostnames, the migration Job as a pre-upgrade hook with the migrator role, and optional Ingress, network policy and error reporting. It manages none of the dependencies and has no default image: `image.tag` is required, because the chart is versioned on its own. A `chart/vX.Y.Z` git tag publishes it to Docker Hub as an OCI artifact, `lasuite/encryption-chart`, attested like the image; an application tag never touches it, and a chart tag runs nothing else.
+
+Take it by version, keep the digest Helm prints, verify the digest with `cosign verify-attestation` exactly as for the image, then reference it as tag plus digest, which Helm refuses to deviate from:
+
+```sh
+helm pull oci://registry-1.docker.io/lasuite/encryption-chart --version 1.4.0   # prints Digest: sha256:…
+helm install encryption oci://registry-1.docker.io/lasuite/encryption-chart:1.4.0@sha256:… --values my-values.yaml
+```
+
+Its values are schema-checked, so a typo or a missing required value fails the install rather than the pod. `npm run test:helm` renders it and checks it against the Kubernetes API schemas and against the server's own environment contract; `deploy/helm/smoke-k3d.sh` installs it for real in a local k3d cluster. Examples for helmfile and Argo CD live in [`deploy/helmfile`](deploy/helmfile) and [`deploy/argocd`](deploy/argocd). See [the chart README](deploy/helm/encryption/README.md).
+
 ### Environment
 
 Every variable is listed in [`.env.model`](.env.model) with a production-shaped value; the server refuses to start and prints the offending names when one is missing or malformed. The ones that shape the deployment:
@@ -181,7 +199,7 @@ psql "$ADMIN_DATABASE_URL" -v password="'…'" -f deploy/postgres/create-migrato
 psql "$ADMIN_DATABASE_URL" -v password="'…'" -f deploy/postgres/create-runtime-role.sql
 ```
 
-The split means a compromised server process cannot change the schema, and a schema change cannot happen by accident from a pod: it only happens where the migrator credentials are, which is the release step. Every table lives in the `encryption` schema, never in `public`, so other roles on a shared server cannot even list them. Both connection strings carry `?schema=encryption`: the migration tooling reads it to place its own `_prisma_migrations` table there (the migrator has no right to create anything in `public`), and the server ignores it since its queries name the schema explicitly.
+The split means a compromised server process cannot change the schema, and a schema change cannot happen by accident from a pod: it only happens where the migrator credentials are, which is the release step. Every table lives in the `encryption` schema, never in `public`, so other roles on a shared server cannot even list them. Both connection strings carry `?schema=encryption`: the migration tooling reads it to place the tables and its own `_prisma_migrations` table there (the migrator has no right to create anything in `public`), and the server reads it to query that schema. A local database can leave it out and use `public`.
 
 ### Migrations
 
@@ -195,7 +213,7 @@ docker run --rm \
 
 The command is idempotent and exits non-zero when a migration fails, which is what you want a deployment to stop on. Where it belongs:
 
-- **Kubernetes**: a `Job` run as a Helm `pre-install`/`pre-upgrade` hook, or an Argo CD `PreSync` hook. A failed migration is then a failed Job and the rollout does not start. Not an init container: it would run on every replica and every restart, and each of those pods would need the migrator credentials.
+- **Kubernetes**: a `Job` run as a Helm `pre-install`/`pre-upgrade` hook, or an Argo CD `PreSync` hook, which is what the chart does. A failed migration is then a failed Job and the rollout does not start. Not an init container: it would run on every replica and every restart, and each of those pods would need the migrator credentials.
 - **Plain Docker**: a release step in the pipeline, before the new version starts.
 - **PaaS that builds from source** (Scalingo, Clever Cloud, Heroku-like): there is no image, the platform runs `npm ci` and `npm run build` itself, so the migration is an npm script run between the build and the start, with the migrator credentials, then the server starts with the runtime ones. Scalingo, for example, runs the `postdeploy` entry of the `Procfile` after the build and before the new release takes traffic:
 

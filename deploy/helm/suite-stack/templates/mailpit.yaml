@@ -1,0 +1,132 @@
+{{- if .Values.mailpit.enabled }}
+{{- $m := .Values.mailpit }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "suite-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mailpit
+  template:
+    metadata:
+      labels:
+        {{- include "suite-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mailpit
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mailpit
+          image: {{ $m.image | quote }}
+          ports:
+            - name: smtp
+              containerPort: 1025
+            - name: http
+              containerPort: 8025
+          env:
+            # Messages live in memory: a restart empties the mailbox, which is fine here.
+            - name: MP_SMTP_AUTH_ACCEPT_ANY
+              value: 'true'
+            - name: MP_SMTP_AUTH_ALLOW_INSECURE
+              value: 'true'
+          readinessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # A fixed name: the products' SMTP host in the values.
+  name: mailpit
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "suite-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+    - name: http
+      port: 8025
+      targetPort: http
+{{- if $m.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mailpit
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+  {{- with $m.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $m.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $m.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $m.host | quote }}
+      secretName: {{ $m.ingress.tls.secretName | default "mailpit-tls" | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $m.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mailpit
+                port:
+                  name: http
+{{- end }}
+{{- end }}

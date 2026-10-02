@@ -13,7 +13,7 @@
  * - Documents and accesses are in-memory only (local to the tab).
  */
 import { Button, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
-import { QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
+import { Icon, QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RegisteredUser, VaultClient } from '@encryption/src/client/vault-client';
@@ -80,9 +80,7 @@ function VerifyButton({ onClick }: { onClick: () => void }) {
         whiteSpace: 'nowrap',
       }}
     >
-      <span className="material-icons" style={{ fontSize: 16 }}>
-        verified_user
-      </span>
+      <Icon aria-hidden name="verified_user" size={16} />
       Verify
     </button>
   );
@@ -187,10 +185,7 @@ function InviteUserRow({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {onViewProfile && user.encryption_public_key && <VerifyButton onClick={() => onViewProfile(user.id)} />}
           <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400)', fontSize: 13 }}>
-            Add{' '}
-            <span className="material-icons" style={{ fontSize: 18 }}>
-              add
-            </span>
+            Add <Icon aria-hidden name="add" size={18} />
           </span>
         </div>
       }
@@ -255,9 +250,7 @@ function MemberRow({
               lineHeight: 1,
             }}
           >
-            <span className="material-icons" style={{ fontSize: 18 }}>
-              delete
-            </span>
+            <Icon aria-hidden name="delete" size={18} />
           </button>
         </div>
       }
@@ -489,13 +482,11 @@ export function ShareDocumentModal({
   // opens the encryption interface at that person's profile screen inside a
   // demo-owned container (the interface draws its own trust/fingerprint UI).
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
-  const [profileContainer, setProfileContainer] = useState<HTMLDivElement | null>(null);
 
-  // Mount (or re-target) the profile iframe once both the target userId and the
-  // container element exist. Re-runs when either changes, so switching between
-  // recipients re-points the same overlay.
+  // Open (or re-target) the profile once a target userId is set. The interface
+  // draws its own modal above this one; switching recipients re-points it.
   useEffect(() => {
-    if (!profileUserId || !profileContainer || !vaultClient) return;
+    if (!profileUserId || !vaultClient) return;
 
     // The label travels with the rows we already display (search results,
     // pending selection, existing accesses).
@@ -509,8 +500,8 @@ export function ShareDocumentModal({
 
     if (!label) return;
 
-    vaultClient.openRecipientProfile(profileContainer, profileUserId, label);
-  }, [profileUserId, profileContainer, vaultClient, searchUsers, selectedUsers, accesses]);
+    vaultClient.openRecipientProfile(profileUserId, label);
+  }, [profileUserId, vaultClient, searchUsers, selectedUsers, accesses]);
 
   const openProfile = useCallback(
     (userId: string) => {
@@ -521,9 +512,14 @@ export function ShareDocumentModal({
     [vaultClient]
   );
 
-  const closeProfile = useCallback(() => {
-    vaultClient?.closeInterface();
-    setProfileUserId(null);
+  // The interface reports its own close (its cross, or a decision taken).
+  useEffect(() => {
+    if (!vaultClient) return;
+
+    const handleClosed = () => setProfileUserId(null);
+    vaultClient.on('interface:closed', handleClosed);
+
+    return () => vaultClient.off('interface:closed', handleClosed);
   }, [vaultClient]);
 
   // Only expose the affordance when there is a client to open the profile with.
@@ -579,9 +575,7 @@ export function ShareDocumentModal({
                           display: 'inline-flex',
                         }}
                       >
-                        <span className="material-icons" style={{ fontSize: 16 }}>
-                          verified_user
-                        </span>
+                        <Icon aria-hidden name="verified_user" size={16} />
                       </button>
                     )}
                     <button
@@ -652,41 +646,6 @@ export function ShareDocumentModal({
           </QuickSearch>
         </div>
       </Modal>
-
-      {/* Recipient profile overlay — hosts the encryption interface iframe. Sits
-          above the share modal; click the backdrop or Close to dismiss. */}
-      {profileUserId && (
-        <div
-          onClick={closeProfile}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 10000,
-            background: 'rgba(0, 0, 0, 0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ background: 'white', borderRadius: 8, width: 'min(560px, 92vw)', maxHeight: '90vh', overflow: 'auto', padding: 12 }}
-          >
-            {/* No title here: the interface iframe renders its own "Encryption
-                Identity" heading, so a second title would be redundant. */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-              <button
-                onClick={closeProfile}
-                aria-label="Close"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 28, lineHeight: 1, padding: '0 4px', color: '#666' }}
-              >
-                ×
-              </button>
-            </div>
-            <div ref={setProfileContainer} style={{ minHeight: 200 }} />
-          </div>
-        </div>
-      )}
     </>
   );
 }

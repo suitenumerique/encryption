@@ -314,21 +314,26 @@ encryption.destroy();`}
 
 ### Interface operations (onboarding, backup)
 
-| Method                      | Description                                         |
-| --------------------------- | --------------------------------------------------- |
-| `openOnboarding(container)` | Open the onboarding interface in the HTML container |
-| `openBackup(container)`     | Open the key backup interface                       |
-| `openRestore(container)`    | Open the restore interface                          |
-| `closeInterface()`          | Close the interface iframe                          |
+| Method             | Description                                 |
+| ------------------ | ------------------------------------------- |
+| `openOnboarding()` | Open the onboarding interface over the page |
+| `openBackup()`     | Open the key backup interface               |
+| `openRestore()`    | Open the restore interface                  |
+| `openSettings()`   | Open the encryption settings                |
+| `requestClose()`   | Ask the interface to close (see below)      |
+| `closeInterface()` | Remove the interface immediately            |
+
+Every open\* call lays a transparent, full-viewport iframe over the page and loads the interface in it; the interface draws its own modal there (backdrop, card, close control, width), so the product draws nothing around it. Show a loader in a modal of your own when you call open\*, dismiss it on the `interface:ready` event, and unmount whatever you keep on the `interface:closed` event, which the interface emits once it has really closed (its close control may first ask, e.g. over an unsaved recovery phrase). If the interface never comes up, the SDK tears the frame down after a few seconds and emits an `error` then `interface:closed`, so the loader goes too. `requestClose()` asks the interface to close as its own close control would; `closeInterface()` remains for the cases where the product must tear the frame down regardless (the user signed out, the page navigates away).
 
 ### Events
 
-| Event                 | Payload         | Description                   |
-| --------------------- | --------------- | ----------------------------- |
-| `vault:ready`         | —               | The vault is initialized      |
-| `onboarding:complete` | `{ publicKey }` | The user completed onboarding |
-| `interface:closed`    | —               | The interface was closed      |
-| `error`               | `Error`         | An error occurred             |
+| Event                 | Payload         | Description                                          |
+| --------------------- | --------------- | ---------------------------------------------------- |
+| `vault:ready`         | —               | The vault is initialized                             |
+| `onboarding:complete` | `{ publicKey }` | The user completed onboarding                        |
+| `interface:ready`     | —               | The interface is on screen (dismiss your loader)     |
+| `interface:closed`    | —               | The interface closed (also after a `requestClose()`) |
+| `error`               | `Error`         | An error occurred                                    |
 
 ---
 
@@ -368,7 +373,7 @@ The service lets every user designate a **trusted contact** who can help them re
 The instance operator does have to configure the notification emails, which are an essential channel (the objection delay only protects the owner if they are told a recovery was requested):
 
 - **`EMAIL_PRODUCT_URL`**: the product page the email links point to. The links carry neither a token nor a deep route: once signed in, the pending state resurfaces on its own through the SDK.
-- **`MAILER_*`**: the SMTP configuration (`MAILER_SMTP_HOST`, `MAILER_SMTP_PORT`, `MAILER_SMTP_USER`, `MAILER_SMTP_PASSWORD`), the optional fallback transport (`MAILER_FALLBACK_SMTP_*`) and `MAILER_DEFAULT_DOMAIN`. With no SMTP host configured, the server logs the emails instead of sending them.
+- **`MAILER_*`**: the SMTP configuration (`MAILER_SMTP_HOST`, `MAILER_SMTP_PORT`, `MAILER_SMTP_USER`, `MAILER_SMTP_PASSWORD`), the optional fallback transport (`MAILER_FALLBACK_SMTP_*`) and `MAILER_SENDER_ADDRESS`, the address notifications are sent from (the relay must accept it). With no SMTP host configured, the server logs the emails instead of sending them.
 
 In local development a **maildev** container is provided in `docker-compose.yaml`: the emails sent are readable in a web interface on port **7207** (SMTP on port **7208**), and nothing leaves the machine.
 

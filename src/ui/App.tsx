@@ -1,5 +1,5 @@
-import { Alert, Button, CunninghamProvider, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
@@ -7,6 +7,7 @@ import {
   MSG_INTERFACE_CLOSED,
   MSG_INTERFACE_ONBOARDING_COMPLETE,
   MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_SHOWN,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
 import { ApiError } from '@encryption/src/ui/api/client';
@@ -19,14 +20,17 @@ import { clearToken, readToken, storeToken } from '@encryption/src/ui/auth/token
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
+import { EmergencySignedOutPrompt } from '@encryption/src/ui/components/EmergencySignedOutPrompt';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
 import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
 import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
+import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
-import { useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
+import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
 import { runtimeConfig } from '@encryption/src/ui/runtime-config';
@@ -48,17 +52,6 @@ function getThemeFromHash(): string {
 
 function getLangFromHash(): string | null {
   return getHashParams().get('lang');
-}
-
-/**
- * Whether the SDK mounted us as a full-viewport overlay over a product page
- * (rather than inside a product-provided container). Read from the hash so it is
- * known on the FIRST render: screens that draw their own modal chrome when
- * overlaid would otherwise paint their page variant until the async context
- * handshake lands, which shows up as a flash over the product.
- */
-function isOverlayFromHash(): boolean {
-  return getHashParams().get('overlay') === '1';
 }
 
 /** Send a result back to the parent frame */
@@ -83,9 +76,112 @@ function decodeJwtUserInfo(token: string): UserInfo {
   };
 }
 
-/** Inner component that has access to the EncryptionContext */
+/**
+ * Owns the parent handshake and answers the product's close requests. The
+ * product's own close control never unmounts the iframe by itself: it asks, the
+ * screen shown may object (an unsaved recovery phrase), and the interface
+ * confirms with MSG_INTERFACE_CLOSED once it is really done. Wrapping every
+ * state here (auth gates included) guarantees a request is always answered.
+ */
 function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Route) => void }) {
+  const { t } = useTranslation('common');
   const parentContext = useParentMessages();
+  // A screen opened from another one (settings -> emergency access, onboarding
+  // -> device approval) replaces it without changing the URL; lives here so the
+  // modal around the screens can follow the one actually shown.
+  const [routeOverride, setRouteOverride] = useState<Route | null>(null);
+  const activeRoute = routeOverride ?? route;
+  // The interface's own modal is closed like the product's used to be: a close
+  // request, which the shown screen may hold (an unsaved recovery phrase).
+  const [ownCloseRequests, setOwnCloseRequests] = useState(0);
+  const requestClose = useCallback(() => setOwnCloseRequests((n) => n + 1), []);
+
+  // The SDK keeps the frame invisible until this report, so the frame gets no
+  // animation frame before it and cannot wait for a paint: the report follows
+  // the first commit, by which time the modal and its backdrop are in the DOM
+  // (the design system opens its modal in that same commit), and the SDK shows
+  // the frame and has the product drop its loader together.
+  useEffect(() => {
+    if (window.parent === window) return;
+
+    window.parent.postMessage({ type: MSG_INTERFACE_SHOWN }, '*');
+  }, []);
+  const handleClose = useCallback(() => {
+    notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
+  }, [parentContext.parentOrigin]);
+
+  // The SDK lays a transparent full-viewport iframe over the product; the modal
+  // the user sees (backdrop, card, close control, width) is drawn HERE, so no
+  // size ever crosses the two windows. Documentation pages are whole pages, and
+  // two screens draw a modal of their own: the verify overlay, and the emergency
+  // prompt the SDK opens on its own (told apart by the context it carries).
+  const fullPage = route === 'docs-user' || route === 'docs-technical';
+  const drawsOwnModal = route === 'verify-recipients' || (activeRoute === 'emergency-access' && parentContext.emergencyPending !== null);
+  const [gateShown, setGateShown] = useState(false);
+  const modalSize = activeRoute === 'emergency-access' && !gateShown ? ModalSize.MEDIUM : ModalSize.SMALL;
+
+  // The two screens drawing their own modal do so only once shown: in their place,
+  // those screens still need one, or they sprawl see-through.
+  const frameGate = (screen: ReactNode): ReactNode =>
+    drawsOwnModal ? (
+      <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={ModalSize.SMALL} aria-label={t('interface.title')}>
+        {screen}
+      </Modal>
+    ) : (
+      <GateShown onShown={setGateShown}>{screen}</GateShown>
+    );
+
+  const screens = (
+    <InterfaceScreens
+      route={route}
+      navigate={navigate}
+      parentContext={parentContext}
+      routeOverride={routeOverride}
+      setRouteOverride={setRouteOverride}
+      frameGate={frameGate}
+    />
+  );
+
+  return (
+    <CloseRequestProvider requests={parentContext.closeRequests + ownCloseRequests} onClose={handleClose}>
+      {fullPage || drawsOwnModal ? (
+        screens
+      ) : (
+        <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={modalSize} aria-label={t('interface.title')}>
+          {screens}
+        </Modal>
+      )}
+    </CloseRequestProvider>
+  );
+}
+
+/** Tells the modal around it that a gate screen is shown, before the frame is painted. */
+function GateShown({ onShown, children }: { onShown: (shown: boolean) => void; children: ReactNode }) {
+  useLayoutEffect(() => {
+    onShown(true);
+
+    return () => onShown(false);
+  }, [onShown]);
+
+  return children;
+}
+
+/** Inner component that has access to the EncryptionContext */
+function InterfaceScreens({
+  route,
+  navigate,
+  parentContext,
+  routeOverride,
+  setRouteOverride,
+  frameGate,
+}: {
+  route: Route;
+  navigate: (to: Route) => void;
+  parentContext: ParentContext;
+  routeOverride: Route | null;
+  setRouteOverride: (to: Route | null) => void;
+  frameGate: (screen: ReactNode) => ReactNode;
+}) {
   const { t } = useTranslation('common');
   const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
 
@@ -327,7 +423,6 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
 
   // Lets a screen (e.g. settings) push into device-approval in place without a
   // real navigation, then return to where it was.
-  const [routeOverride, setRouteOverride] = useState<Route | null>(null);
   const activeRoute = routeOverride ?? route;
 
   const userInfo = useMemo<UserInfo | null>(() => {
@@ -376,66 +471,48 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // All hooks declared above — conditional returns are safe below this point.
   // OIDC must be configured for the interface to work.
   if (!oidcAuth.isConfigured) {
-    return (
-      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>
-      </div>
-    );
+    return frameGate(<Screen banner={<Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>} />);
   }
 
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
   if (!oidcAuth.token && !tokenRestoreAttempted && !handshakeTimedOut) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
-        <Loader />
-      </div>
-    );
+    return frameGate(<LoadingScreen />);
   }
 
   // Wait for OIDC authentication.
   if (!oidcAuth.token) {
     // Waiting for the login tab to complete
     if (oidcAuth.isAuthenticating) {
-      return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: '200px',
-            gap: '1rem',
-            padding: '2rem',
-          }}
-        >
-          <Loader />
-          <p style={{ textAlign: 'center', margin: 0 }}>{t('auth.authenticating')}</p>
-        </div>
-      );
+      return frameGate(<LoadingScreen label={t('auth.authenticating')} />);
     }
 
     // Error from a previous attempt
     if (oidcAuth.error) {
-      return (
-        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-          <Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-            <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
-          </div>
-        </div>
+      return frameGate(
+        <Screen
+          title={t('auth.required_title')}
+          banner={<Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>}
+          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
+        />
       );
     }
 
     // Auth needed — show explanation and "Continue" button
     if (oidcAuth.needsAuth) {
-      return (
-        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-          <Alert type={VariantType.INFO}>{t('auth.required_explanation')}</Alert>
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1.5rem' }}>
-            <Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>
-          </div>
-        </div>
+      // The emergency prompt the SDK opened on its own: say what is pending at once.
+      const emergencyPending = activeRoute === 'emergency-access' ? parentContext.emergencyPending : null;
+      if (emergencyPending?.recovery || emergencyPending?.invitation) {
+        return frameGate(<EmergencySignedOutPrompt recovery={emergencyPending.recovery} onSignIn={oidcAuth.requestAuth} />);
+      }
+
+      return frameGate(
+        <Screen
+          illustration="shield-check"
+          title={t('auth.required_title')}
+          description={t('auth.required_explanation')}
+          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>}
+        />
       );
     }
 
@@ -444,18 +521,10 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
     // way, show the warning rather than spin — the interface cannot proceed
     // without knowing which user is authenticated.
     if ((tokenRestoreAttempted || handshakeTimedOut) && !parentContext.suiteUserId) {
-      return (
-        <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-          <Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>
-        </div>
-      );
+      return frameGate(<Screen banner={<Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>} />);
     }
 
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '200px' }}>
-        <Loader />
-      </div>
-    );
+    return frameGate(<LoadingScreen />);
   }
 
   // Any unrecoverable failure to resolve the internal id (a 403 with no usable
@@ -465,13 +534,11 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // resort) with a reconnect action, so the user always knows what happened and
   // has a way out instead of an endless loader.
   if (userResolveError && !internalUserId) {
-    return (
-      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-          <Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>
-        </div>
-      </div>
+    return frameGate(
+      <Screen
+        banner={<Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>}
+        actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
+      />
     );
   }
 
@@ -553,12 +620,12 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       return (
         <EmergencyAccess
           getToken={getValidToken}
+          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
           onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           currentAccessToken={oidcAuth.token}
           emergencyPending={parentContext.emergencyPending}
-          overlayMode={isOverlayFromHash()}
         />
       );
 
@@ -577,6 +644,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
             // approval overlay stays until the user dismisses its success screen.
             navigate('settings');
           }}
+          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
           onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
         />
       );
@@ -697,15 +765,7 @@ export function App() {
     if (!DOCS_ENABLED) {
       return (
         <CunninghamProvider theme={cunninghamTheme}>
-          <div
-            style={{
-              padding: 'var(--c--globals--spacings--lg)',
-              textAlign: 'center',
-              color: 'var(--c--contextuals--content--semantic--neutral--secondary)',
-            }}
-          >
-            <p>{t('docs.disabled')}</p>
-          </div>
+          <Screen padded description={t('docs.disabled')} />
         </CunninghamProvider>
       );
     }

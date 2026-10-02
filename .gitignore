@@ -19,6 +19,8 @@ node_modules
 !/.storybook/**/*
 /storybook-static/
 /build-storybook.log
+/chromatic.log
+/chromatic-diagnostics.json
 
 # misc
 .DS_Store
@@ -32,3 +34,7 @@ npm-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+
+# stack chart dependencies (allow moving version of encryption chart)
+deploy/helm/suite-stack/charts/
+deploy/helm/suite-stack/Chart.lock

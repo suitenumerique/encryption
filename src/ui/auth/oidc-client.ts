@@ -9,6 +9,7 @@
  * 4. The callback page posts the token set to `window.opener`, which is the iframe
  * 5. The callback page closes itself, and the iframe proceeds
  */
+import { decodeJwt } from 'jose';
 import { User, UserManager, WebStorageStateStore } from 'oidc-client-ts';
 import { z } from 'zod';
 
@@ -48,7 +49,7 @@ export type JwtClaims = z.infer<typeof jwtClaimsSchema>;
  *  already validated the token). Returns null on any malformed input. */
 export function decodeJwtClaims(token: string): JwtClaims | null {
   try {
-    return jwtClaimsSchema.parse(JSON.parse(atob(token.split('.')[1])));
+    return jwtClaimsSchema.parse(decodeJwt(token));
   } catch {
     return null;
   }

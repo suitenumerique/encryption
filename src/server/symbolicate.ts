@@ -22,13 +22,18 @@
  * The map never leaves the container either way. What is sent is the result, a file
  * name and a line, which is what a stack was going to end up saying anyway.
  *
- * The SERVER side needs none of this: `--enable-source-maps` (see the Dockerfile)
- * has Node resolve its own stacks before they ever reach an error handler, which
- * fixes the logs at the same time.
+ * The server's own stacks go through the same translation, for the same reason,
+ * when an error is reported. Node could resolve them by itself
+ * (`--enable-source-maps`), but it decodes the whole map up front and keeps it:
+ * about 200 MB of heap for the server bundle, held for the life of the process to
+ * serve the rare error. Here the map is opened when a report needs it and dropped
+ * shortly after. Logs keep the bundle positions, which `npm run stack:resolve`
+ * translates on demand; the bundle is not minified, so they already name functions.
  */
 import { readFileSync } from 'node:fs';
 import { SourceMap } from 'node:module';
-import { basename, resolve, sep } from 'node:path';
+import { basename, isAbsolute, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { SentryFrame } from '@encryption/src/server/monitoring';
 
@@ -118,14 +123,10 @@ function normalizeSource(source: string): string {
   return source.replace(/^(?:\.\.?\/)+/, '');
 }
 
-function symbolicateFrame(frame: SentryFrame): SentryFrame {
+function symbolicateFrame(frame: SentryFrame, mapFor: (filename: string) => SourceMap | null): SentryFrame {
   if (frame.filename === undefined || frame.lineno === undefined || frame.colno === undefined) return frame;
 
-  const mapPath = mapPathFor(frame.filename);
-
-  if (mapPath === null) return frame;
-
-  const map = loadMap(mapPath);
+  const map = mapFor(frame.filename);
 
   if (map === null) return frame;
 
@@ -156,12 +157,71 @@ function symbolicateFrame(frame: SentryFrame): SentryFrame {
   };
 }
 
-/** Frames that resolve are replaced; the rest are passed through untouched. */
-export function symbolicateBrowserFrames(frames: SentryFrame[]): SentryFrame[] {
-  return frames.map(symbolicateFrame);
+function browserMapFor(filename: string): SourceMap | null {
+  const mapPath = mapPathFor(filename);
+
+  return mapPath === null ? null : loadMap(mapPath);
 }
 
-/** Lets a test start from a known state; the cache is otherwise process-lifetime. */
+/** Frames that resolve are replaced; the rest are passed through untouched. */
+export function symbolicateBrowserFrames(frames: SentryFrame[]): SentryFrame[] {
+  return frames.map((frame) => symbolicateFrame(frame, browserMapFor));
+}
+
+const SERVER_BUNDLE = 'dist/server/main.mjs';
+
+/** Long enough for a burst of errors to share one load, short enough not to keep it. */
+const SERVER_MAP_TTL_MS = 60_000;
+
+let serverMap: { map: SourceMap | null; release: NodeJS.Timeout } | undefined;
+
+/** Node writes this process's frames as `file:///app/dist/server/main.mjs`. */
+function isServerBundle(filename: string): boolean {
+  let path: string;
+
+  try {
+    path = filename.startsWith('file://') ? fileURLToPath(filename) : filename;
+  } catch {
+    return false;
+  }
+
+  return isAbsolute(path) && path === resolve(process.cwd(), SERVER_BUNDLE);
+}
+
+function serverMapFor(filename: string): SourceMap | null {
+  if (!isServerBundle(filename)) return null;
+
+  if (serverMap === undefined) {
+    const release = setTimeout(() => {
+      serverMap = undefined;
+    }, SERVER_MAP_TTL_MS);
+    release.unref();
+
+    serverMap = { map: readMap(resolve(process.cwd(), `${SERVER_BUNDLE}.map`)), release };
+  }
+
+  return serverMap.map;
+}
+
+/**
+ * Resolves this process's own frames. Outside the built bundle (tests, `tsx` in
+ * development) they already point at the sources and pass through untouched.
+ */
+export function symbolicateServerFrames(frames: SentryFrame[]): SentryFrame[] {
+  return frames.map((frame) => symbolicateFrame(frame, serverMapFor));
+}
+
+/** Resolves frames against a map read elsewhere, for `npm run stack:resolve`. */
+export function symbolicateFramesWith(frames: SentryFrame[], map: SourceMap): SentryFrame[] {
+  return frames.map((frame) => symbolicateFrame(frame, () => map));
+}
+
+/** Lets a test start from a known state; the caches otherwise outlive a test. */
 export function resetSymbolicationCache(): void {
   cache.clear();
+
+  if (serverMap !== undefined) {
+    clearTimeout(serverMap.release);
+    serverMap = undefined;
+  }
 }

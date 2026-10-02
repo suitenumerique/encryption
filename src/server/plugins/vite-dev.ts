@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { env } from '@encryption/src/server/env';
+import { FASTIFY_INFRA_PATHS } from '@encryption/src/server/plugins/infra-paths';
 
 /**
  * Development-only plugin that embeds Vault and UI Vite dev servers
@@ -22,11 +23,6 @@ import { env } from '@encryption/src/server/env';
  * Wrapped with fastify-plugin to break encapsulation — the middleware
  * must apply at the root scope so it intercepts requests before Fastify routes.
  */
-// Infrastructure paths Fastify owns on EVERY host, including the vault and UI
-// hosts whose remaining traffic belongs to Vite. Must stay in sync with the
-// matching routes in server.ts: a path missing here is shadowed by Vite in dev
-// and 404s, while working fine in production.
-const FASTIFY_INFRA_PATHS = new Set(['/health', '/robots.txt', '/favicon.ico', '/.well-known/security.txt']);
 
 export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const { createServer: createViteServer } = await import('vite');
@@ -78,7 +74,7 @@ export const viteDevPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // are Vite source files that must be served by the Vite middleware.
     const isApiRoute = path.startsWith('/api/') && !path.slice(path.lastIndexOf('/') + 1).includes('.');
     // `/public-assets/` is a Fastify-served, cross-origin asset dir (email logo,
-    // PDF fonts) that must resolve on EVERY host, including the UI/vault hosts
+    // SDK type declaration) that must resolve on EVERY host, including the UI/vault hosts
     // whose other traffic is Vite's. In production the static-ui SPA hook already
     // skips this prefix; dev must do the same or the email logo 404s here only.
     if (FASTIFY_INFRA_PATHS.has(path) || isApiRoute || path.startsWith('/public-assets/')) {

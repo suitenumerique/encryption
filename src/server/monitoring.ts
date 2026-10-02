@@ -34,7 +34,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { symbolicateBrowserFrames } from '@encryption/src/server/symbolicate';
+import { symbolicateBrowserFrames, symbolicateServerFrames } from '@encryption/src/server/symbolicate';
 
 export interface MonitoringConfig {
   dsn: string;
@@ -241,7 +241,7 @@ export function buildEvent(
         {
           type: isError ? redact(error.name, 120) : 'UnknownError',
           value: redact(isError ? error.message : String(error)),
-          ...(isError && error.stack ? { stacktrace: { frames: parseStack(error.stack) } } : {}),
+          ...(isError && error.stack ? { stacktrace: { frames: symbolicateServerFrames(parseStack(error.stack)) } } : {}),
         },
       ],
     };

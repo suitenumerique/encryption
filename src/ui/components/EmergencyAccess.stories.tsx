@@ -20,18 +20,22 @@ type TrustedContact = GetApiEmergencyAccessTrustedResponses[200]['contacts'][num
 type GrantedVault = GetApiEmergencyAccessGrantedResponses[200]['grantors'][number];
 
 type ComponentType = typeof EmergencyAccess;
+
+// The prompt shows the deadline as a date, so "now" is pinned (see `parameters.date`).
+const NOW = Date.UTC(2026, 8, 1, 10);
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
 
 export default {
   title: 'Preview/Modals/EmergencyAccess',
   component: EmergencyAccess,
-  ...generateMetaDefault({ parameters: { layout: 'padded' } }),
+  ...generateMetaDefault({ parameters: { layout: 'centered', hostModal: 'medium', date: new Date(NOW) } }),
 } as Meta<ComponentType>;
 
 const Template: StoryFn<ComponentType> = (args) => <EmergencyAccess {...args} />;
 
 const baseArgs = {
   getToken: async () => 'mock-jwt-token',
+  onBack: () => console.log('onBack'),
   onClose: () => console.log('onClose'),
 };
 
@@ -85,10 +89,7 @@ export const WithContacts = prepareStory(WithContactsStory);
 const RecoveryPendingStory = Template.bind({});
 RecoveryPendingStory.args = { ...baseArgs };
 RecoveryPendingStory.parameters = {
-  msw: lists(
-    [{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: Date.now(), deadline_millis: Date.now() + 12 * DAY }],
-    []
-  ),
+  msw: lists([{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
 };
 
 export const RecoveryPending = prepareStory(RecoveryPendingStory);
@@ -134,10 +135,7 @@ RecoveryPromptStory.args = {
   emergencyPending: { recovery: true, invitation: false },
 };
 RecoveryPromptStory.parameters = {
-  msw: lists(
-    [{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: Date.now(), deadline_millis: Date.now() + 12 * DAY }],
-    []
-  ),
+  msw: lists([{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
 };
 // The prompt opens only after the authoritative list loads and confirms a
 // running request, so assert the fetched contact's email and the refuse action
@@ -169,10 +167,7 @@ export const GrantedInvited = prepareStory(GrantedInvitedStory);
 const GrantedRecoveryRequestedStory = Template.bind({});
 GrantedRecoveryRequestedStory.args = { ...baseArgs };
 GrantedRecoveryRequestedStory.parameters = {
-  msw: lists(
-    [],
-    [{ ...grantedVault, status: 'recoveryRequested', recovery_requested_at_millis: Date.now(), deadline_millis: Date.now() + 20 * DAY }]
-  ),
+  msw: lists([], [{ ...grantedVault, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 20 * DAY }]),
 };
 GrantedRecoveryRequestedStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(/requested emergency access/i);
@@ -185,8 +180,8 @@ export const GrantedRecoveryRequested = prepareStory(GrantedRecoveryRequestedSto
 const grantedApproved: GrantedVault = {
   ...grantedVault,
   status: 'recoveryApproved',
-  recovery_requested_at_millis: Date.now() - 40 * DAY,
-  deadline_millis: Date.now() - DAY,
+  recovery_requested_at_millis: NOW - 40 * DAY,
+  deadline_millis: NOW - DAY,
 };
 
 const GrantedRecoveryApprovedStory = Template.bind({});
