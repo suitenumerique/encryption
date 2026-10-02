@@ -109,7 +109,7 @@ database:
     annotations: {}
     resources:
       requests:
-        cpu: 100m
+        cpu: 25m
         memory: 256Mi
       limits:
         memory: 512Mi
@@ -171,8 +171,8 @@ tmpVolume:
 
 resources:
   requests:
-    cpu: 100m
-    memory: 256Mi
+    cpu: 25m
+    memory: 384Mi
   limits:
     # Node sizes its heap from this limit (--max-old-space-size-percentage in the image).
     memory: 1Gi
