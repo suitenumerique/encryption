@@ -25,11 +25,12 @@
 # overrides both: an ApplicationSet that passes the commit tag the workflow also
 # publishes, `sha-<8 chars>`, gets a rollout on every push instead of a moving tag.
 #
-# The products' tags come from DOCS_TAG and DRIVE_TAG, one per product for all its
-# images (Docs' CI tags its three images alike, Drive's three alike), `main` when unset.
-# The ApplicationSet reads them from labels of the pull request, `docs:pr-2694` and
-# `drive:encryption`, so the committed defaults stay `main` and a pull request tests a
-# product branch without a commit to undo before merging.
+# The products' tags come from the state values docsImageTag and driveImageTag, one per
+# product for all its images (Docs' CI tags its three images alike, Drive's three alike),
+# `main` when unset. The deployment's plugin sets them from labels of the pull request,
+# `docs:pr-2694` and `drive:encryption`, so the committed defaults stay `main` and a pull
+# request tests a product branch without a commit to undo before merging. By hand, the
+# same keys: `--state-values-set docsImageTag=pr-2694,driveImageTag=encryption`.
 #
 # Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
 # <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
@@ -45,39 +46,37 @@
 {{- if lt (len $imageParts) 2 }}{{ fail (printf "ENCRYPTION_IMAGE must be repository:tag, got %q" $image) }}{{ end }}
 {{- $imageTag := last $imageParts }}
 {{- $imageRepository := join ":" (initial $imageParts) }}
-{{- $docsTag := coalesce (env "ARGOCD_ENV_DOCS_TAG") (env "DOCS_TAG") "main" }}
-{{- $driveTag := coalesce (env "ARGOCD_ENV_DRIVE_TAG") (env "DRIVE_TAG") "main" }}
 environments:
   preview:
     values:
       - feature: {{ $feature | quote }}
         domain: {{ $domain | quote }}
         # The images of the branches under test. The encryption one is derived above;
-        # the products' tags are either the `pr-<number>` ones their CI pushes for a
-        # labelled upstream pull request, or a build pushed by hand (see the stack README,
-        # "Images"). Either way the reference is set here, on our side.
+        # the products' run `main` unless docsImageTag / driveImageTag (see above) name
+        # the `pr-<number>` tags their CI pushes for a labelled upstream pull request, or
+        # a build pushed by hand (see the stack README, "Images").
         images:
           encryption:
             repository: {{ $imageRepository | quote }}
             tag: {{ $imageTag | quote }}
           docs:
             repository: lasuite/impress-backend
-            tag: {{ $docsTag | quote }}
+            tag: main
           docsFrontend:
             repository: lasuite/impress-frontend
-            tag: {{ $docsTag | quote }}
+            tag: main
           docsYProvider:
             repository: lasuite/impress-y-provider
-            tag: {{ $docsTag | quote }}
+            tag: main
           drive:
             repository: lasuite/drive-backend
-            tag: {{ $driveTag | quote }}
+            tag: main
           driveFrontend:
             repository: lasuite/drive-frontend
-            tag: {{ $driveTag | quote }}
+            tag: main
           driveRelay:
             repository: lasuite/drive-collaboration-relay
-            tag: {{ $driveTag | quote }}
+            tag: main
         ingressClassName: nginx
         clusterIssuer: letsencrypt
 ---

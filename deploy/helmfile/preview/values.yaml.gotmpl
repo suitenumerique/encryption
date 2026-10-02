@@ -10,6 +10,11 @@
 {{- $issuer := printf "https://%s/realms/suite" $auth -}}
 {{- $minio := printf "minio.%s.svc.cluster.local" $ns -}}
 {{- $i := .Values.images -}}
+{{- /* One tag per product for all its images, given as a state value: by the deployment
+from a pull request label (`docs:pr-2694` becomes docsImageTag=pr-2694), or by hand.
+Unset, each image keeps its own tag from the helmfile, `main` unless overridden. */ -}}
+{{- $docsTag := .Values | get "docsImageTag" "" | toString -}}
+{{- $driveTag := .Values | get "driveImageTag" "" | toString -}}
 # Rendered by helmfile on top of the chart's values.yaml: only what carries a hostname, the
 # namespace or an image is here, every other value stays the chart's default. Lists are
 # replaced whole, not merged, so the ones that carry a hostname are given in full.
@@ -67,7 +72,7 @@ onlyoffice:
 driveRelay:
   image:
     repository: {{ $i.driveRelay.repository }}
-    tag: {{ $i.driveRelay.tag | quote }}
+    tag: {{ $driveTag | default $i.driveRelay.tag | quote }}
   host: {{ $drive }}
   driveApiUrl: https://{{ $drive }}
   ingress:
@@ -98,7 +103,7 @@ encryption:
 docs:
   image:
     repository: {{ $i.docs.repository }}
-    tag: {{ $i.docs.tag | quote }}
+    tag: {{ $docsTag | default $i.docs.tag | quote }}
   backend:
     envVars:
       DJANGO_ALLOWED_HOSTS: {{ $docs }}
@@ -119,13 +124,13 @@ docs:
   frontend:
     image:
       repository: {{ $i.docsFrontend.repository }}
-      tag: {{ $i.docsFrontend.tag | quote }}
+      tag: {{ $docsTag | default $i.docsFrontend.tag | quote }}
     envVars:
       NEXT_PUBLIC_API_ORIGIN: https://{{ $docs }}
   yProvider:
     image:
       repository: {{ $i.docsYProvider.repository }}
-      tag: {{ $i.docsYProvider.tag | quote }}
+      tag: {{ $docsTag | default $i.docsYProvider.tag | quote }}
     envVars:
       COLLABORATION_BACKEND_BASE_URL: https://{{ $docs }}
       COLLABORATION_SERVER_ORIGIN: https://{{ $docs }}
@@ -155,7 +160,7 @@ docs:
 drive:
   image:
     repository: {{ $i.drive.repository }}
-    tag: {{ $i.drive.tag | quote }}
+    tag: {{ $driveTag | default $i.drive.tag | quote }}
   backend:
     envVars:
       DJANGO_ALLOWED_HOSTS: {{ $drive }}
@@ -177,7 +182,7 @@ drive:
   frontend:
     image:
       repository: {{ $i.driveFrontend.repository }}
-      tag: {{ $i.driveFrontend.tag | quote }}
+      tag: {{ $driveTag | default $i.driveFrontend.tag | quote }}
     envVars:
       NEXT_PUBLIC_API_ORIGIN: https://{{ $drive }}
   ingress:

@@ -20,6 +20,7 @@ const CHART = resolve(import.meta.dirname, 'suite-stack');
 const STAGING_VALUES = resolve(CHART, 'ci/staging-values.yaml');
 const ROLE_SCRIPTS = resolve(import.meta.dirname, '../postgres');
 const PREVIEW_HELMFILE = resolve(import.meta.dirname, '../helmfile/preview/helmfile.yaml.gotmpl');
+const PR_LABELS_EXAMPLE = resolve(import.meta.dirname, '../argocd/pr-labels-to-state-values.example.sh');
 
 interface EnvEntry {
   name: string;
@@ -525,8 +526,14 @@ describe('the stack chart', () => {
     expect(prefixed).toContain('image: "lasuite/encryption:sha-0123abcd"');
     expect(prefixed).toContain('image: "lasuite/impress-frontend:main"');
 
-    // The products under test, from labels of the pull request: one tag per product
-    const products = run('helmfile', args, undefined, { FEATURE: '7', DOMAIN: 'ppr.example.net', DOCS_TAG: 'pr-2694', DRIVE_TAG: 'encryption' });
+    // The products under test, state values the plugin sets from labels of the pull
+    // request (or given by hand): one tag per product, for all its images
+    const products = run(
+      'helmfile',
+      [...args.slice(0, -1), '--state-values-set', 'docsImageTag=pr-2694,driveImageTag=encryption', 'template'],
+      undefined,
+      { FEATURE: '7', DOMAIN: 'ppr.example.net' }
+    );
 
     for (const image of ['impress-backend', 'impress-frontend', 'impress-y-provider']) {
       expect(products).toContain(`image: "lasuite/${image}:pr-2694"`);
@@ -534,6 +541,37 @@ describe('the stack chart', () => {
     for (const image of ['drive-backend', 'drive-frontend', 'drive-collaboration-relay']) {
       expect(products).toContain(`image: "lasuite/${image}:encryption"`);
     }
+    expect(products).toContain('image: "lasuite/encryption:pr-7"');
+
+    // One product tagged, the other keeps `main`; a product tag wins over a per-image one
+    const docsOnly = run(
+      'helmfile',
+      [...args.slice(0, -1), '--state-values-set', 'docsImageTag=pr-1,images.docsFrontend.tag=other,images.drive.tag=by-hand', 'template'],
+      undefined,
+      { FEATURE: '7', DOMAIN: 'ppr.example.net' }
+    );
+
+    expect(docsOnly).toContain('image: "lasuite/impress-frontend:pr-1"');
+    expect(docsOnly).toContain('image: "lasuite/drive-backend:by-hand"');
+    expect(docsOnly).toContain('image: "lasuite/drive-frontend:main"');
+
+    // The plugin example the deployment repository starts from: the labels as the
+    // ApplicationSet passes them, turned into options and run through the eval a plugin
+    // script uses, under `sh` as a plugin runs it (dash here and on the CI runners, which
+    // has no bash syntax). A label is anyone's to set: one carrying a command is dropped.
+    const marker = resolve(mkdtempSync(resolve(tmpdir(), 'pr-labels-')), 'injected');
+    const fromLabels = run('sh', ['-c', '. "$EXAMPLE"; eval "helmfile -e preview -f $HELMFILE template $PR_LABEL_OPTIONS"'], undefined, {
+      EXAMPLE: PR_LABELS_EXAMPLE,
+      HELMFILE: PREVIEW_HELMFILE,
+      FEATURE: '7',
+      DOMAIN: 'ppr.example.net',
+      ARGOCD_ENV_PR_LABELS: `preview,docs:pr-2694,drive:encryption,drive:x$(touch ${marker})`,
+    });
+
+    expect(fromLabels).toContain('image: "lasuite/impress-y-provider:pr-2694"');
+    expect(fromLabels).toContain('image: "lasuite/drive-collaboration-relay:encryption"');
+    expect(existsSync(marker)).toBe(false);
+
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
     const overridden = run('helmfile', [...args.slice(0, -1), '--state-values-set', 'feature=9', 'template'], undefined, {
