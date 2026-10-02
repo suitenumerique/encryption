@@ -144,14 +144,19 @@ Optional, off unless `SENTRY_DSN` is set, and never a dependency of the service.
     vault host does not serve, and the vault build fails on it.
 - **Source maps are files for the server, never for the browser.** The build writes
   a `.map` next to every bundle and the image ships both. Nobody uploads them and no
-  browser ever fetches one. They are read in exactly two places, both inside the
-  container: Node reads `dist/server/main.mjs.map` itself (`--enable-source-maps` in
-  the `Dockerfile`), so server stacks in logs and reports name `src/server/*.ts`
-  lines; and when the interface reports an exception, its stack points at positions
-  in the minified bundle, and `src/server/symbolicate.ts` opens the matching
-  `dist/ui/assets/*.map` from disk to translate them back to `src/ui/*.tsx` lines
-  before the event leaves. It uses `node:module`'s `SourceMap`, so no package is
-  added. This is the shape that fits an image many organizations deploy against
+  browser ever fetches one. They are read only when an error is reported, by
+  `src/server/symbolicate.ts`, inside the container: an interface exception points
+  at positions in the minified bundle, translated through the matching
+  `dist/ui/assets/*.map` back to `src/ui/*.tsx` lines, and a server exception points
+  at `dist/server/main.mjs`, translated through `main.mjs.map` to `src/server/*.ts`
+  lines, before the event leaves. It uses `node:module`'s `SourceMap`, so no package
+  is added. Node is deliberately NOT started with `--enable-source-maps`: it decodes
+  the whole server map up front and keeps it, about 200 MB of heap for the rare
+  error, so the server map is opened when a report needs it and dropped a minute
+  later. Server logs therefore carry bundle positions (`main.mjs:312045:12`); the
+  bundle is not minified, so they already name functions, and
+  `npm run stack:resolve` translates them (`--map` for the map copied out of a
+  deployed image). This is the shape that fits an image many organizations deploy against
   their own collector: a CI job uploading maps would upload them to OUR collector,
   and a deployment needs nothing beyond `SENTRY_DSN`. Consequently `release` is only
   a label (the `/api/version` build hash by default) and no commit SHA has to travel

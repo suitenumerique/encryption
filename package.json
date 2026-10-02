@@ -19,6 +19,7 @@
     "dev:demo:product-b": "DEMO_PORT=7202 vite --config src/demo/vite.config.ts",
     "dev:storybook": "storybook dev -p 7204 --no-open",
     "css:types": "tsx src/build/css-module-types.ts",
+    "stack:resolve": "tsx src/build/resolve-stack.ts",
     "build:storybook": "storybook build",
     "start:storybook": "serve -l 7204 --no-request-logging storybook-static",
     "chromatic": "chromatic",

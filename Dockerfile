@@ -78,6 +78,9 @@ COPY --from=migrator-tree --chown=nonroot:nonroot /opt/migrator ./
 # - dist/ui/               (HTML + JS for encryption)
 # - dist/client/           (SDK served from encryption)
 # - dist/*/sbom.cdx.json   (what each bundle is made of, for security scanners)
+# - dist/**/*.map          (read from disk to resolve the stacks of reported errors,
+#                           never served; Node is NOT started with --enable-source-maps,
+#                           which would keep the server's map decoded in memory)
 COPY --from=builder --chown=nonroot:nonroot /app/dist ./dist
 
 # Assets that are not build ouput (email logos...)
@@ -90,4 +93,4 @@ HEALTHCHECK --interval=10s --timeout=2s --start-period=15s \
 
 # Below the default command running the server, but it's also possible override to it to apply database migrations:
 # `docker run [...] lasuite/encryption:latest node_modules/prisma/build/index.js migrate deploy`
-CMD ["--permission", "--allow-fs-read=/app", "--allow-fs-write=/tmp", "--max-old-space-size-percentage=70", "--enable-source-maps", "dist/server/main.mjs"]
+CMD ["--permission", "--allow-fs-read=/app", "--allow-fs-write=/tmp", "--max-old-space-size-percentage=70", "dist/server/main.mjs"]
