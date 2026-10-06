@@ -1,110 +1,320 @@
 # Encryption Service: Architecture
 
-This is the reference for how the encryption service works: how products encrypt and share documents, and how each user's keys and trust state are stored and synchronized across their devices. It states what each party stores, how trust is established, and how conflicts and failures are handled.
+This document describes how the encryption service protects the documents of LaSuite products (Docs, Drive, Meet): what it protects and from whom, which keys exist, and how each flow works.
 
-The system gives each user an encrypted vault so that their keys and trust registry follow them onto every device, while document sharing works through a public directory of users' public keys.
+How to read it:
+
+- **[Section 1](#s1)** is a self-contained summary: purpose, assets, attackers, trust roots, assumptions, security level.
+- **Sections 2 to 4** give the components, the threat model, and every key with its algorithm.
+- **Sections 5 to 10** detail each mechanism (document sharing, the synchronized vault and its flows, recovery, emergency access).
+- **Sections 11 and 12 and the appendices** cover operational behaviour (sync conflicts, failures, identity-provider migration, emails) that does not change the security model.
+
+Terms are defined at first use and in the glossary just below. A passage marked **Status** says what is not in use yet: **planned** for agreed design not implemented, **supported by the core, not used yet** for mechanisms the code handles but no flow triggers; everything else describes the code as it is.
 
 ## Contents
 
-1. [Glossary](#1-glossary)
-2. [System overview: who stores what](#2-system-overview-who-stores-what)
-3. [Document sharing](#3-document-sharing)
-4. [The synchronized vault](#4-the-synchronized-vault)
-5. [Vault flows](#5-vault-flows)
-6. [Conflict prevention and resolution](#6-conflict-prevention-and-resolution)
-7. [Integrity model](#7-integrity-model)
-8. [Failure handling](#8-failure-handling)
-9. [Recovery and lifecycle policy](#9-recovery-and-lifecycle-policy)
-10. [Why we model this on password managers](#10-why-we-model-this-on-password-managers)
-11. [Threat model summary](#11-threat-model-summary)
-12. [Emergency access (trusted contacts)](#12-emergency-access-trusted-contacts)
-
-- [Appendix A: Migrating the OIDC provider (subs change)](#appendix-a-migrating-the-oidc-provider-subs-change)
+- [Glossary](#glossary)
+- [1. Summary](#s1)
+  - [1.1 What the service does](#s1-1)
+  - [1.2 What it protects, and against whom](#s1-2)
+  - [1.3 What the security relies on](#s1-3)
+  - [1.4 Assumptions](#s1-4)
+  - [1.5 Security level](#s1-5)
+- [2. Components and trust boundaries](#s2)
+  - [2.1 How users are authenticated](#s2-1)
+  - [2.2 Who may decrypt a document](#s2-2)
+  - [2.3 Internal user id: identity outlives the OIDC provider](#s2-3)
+- [3. Threat model](#s3)
+  - [3.1 A compromised encryption server cannot decrypt, because retrieval is gated by the product, not by us](#s3-1)
+  - [3.2 Keying trust on the internal id instead of the sub barely changes this](#s3-2)
+  - [3.3 A compromised product is out of scope, by construction](#s3-3)
+  - [3.4 The vault frontend is the trusted computing base](#s3-4)
+- [4. Keys](#s4)
+  - [4.1 Key map](#s4-1)
+  - [4.2 Key inventory](#s4-2)
+  - [4.3 Derivations](#s4-3)
+  - [4.4 Rotation, and several ways into one vault](#s4-4)
+  - [4.5 Comparison with ANSSI's cryptographic rules](#s4-5)
+- [5. Document sharing](#s5)
+  - [5.1 Encrypt a document](#s5-1)
+  - [5.2 Share: Alice grants Bob access](#s5-2)
+  - [5.3 Read: Bob opens the document](#s5-3)
+  - [5.4 Contact trust and identity continuity](#s5-4)
+  - [5.5 Key registration: dual-key proof of possession](#s5-5)
+- [6. The synchronized vault](#s6)
+  - [6.1 What syncs](#s6-1)
+  - [6.2 Local storage and caching](#s6-2)
+  - [6.3 Integrity model](#s6-3)
+  - [6.4 How each server request is authorized](#s6-4)
+- [7. Vault flows](#s7)
+  - [7.1 Onboarding: vault creation](#s7-1)
+  - [7.2 Cold unlock on a new device (recovery phrase)](#s7-2)
+  - [7.3 Warm sync on an enrolled device](#s7-3)
+  - [7.4 Mutate the vault (with conflict handling)](#s7-4)
+  - [7.5 Add a device via approval (QR): the primary path](#s7-5)
+  - [7.6 Change the recovery phrase](#s7-6)
+  - [7.7 Integrity failure handling](#s7-7)
+  - [7.8 Lost access: disable, reactivate, or reset](#s7-8)
+  - [7.9 Reconciliation: when this device and the server disagree](#s7-9)
+- [8. Recovery and lifecycle policy](#s8)
+- [9. Emergency access (trusted contacts)](#s9)
+  - [9.1 The escrow: a dormant emergency passphrase, a second credential of the same vault](#s9-1)
+  - [9.2 State machine](#s9-2)
+  - [9.3 The wait period: lazy arithmetic is the authority, the hourly job is for humans](#s9-3)
+  - [9.4 Flows](#s9-4)
+  - [9.5 Recovery, then burn + re-arm](#s9-5)
+  - [9.6 Lifecycle](#s9-6)
+  - [9.7 How the emergency routes authenticate](#s9-7)
+- [10. Why the vault is modelled on password managers](#s10)
+- [Operational details](#operational-details)
+- [11. Conflict prevention and resolution](#s11)
+- [12. Failure handling](#s12)
+- [Appendix A: Migrating the OIDC provider (subs change)](#appendix-a)
+- [Appendix B: Email notifications](#appendix-b)
+- [Appendix C: Product backend request authorization (explored, not adopted)](#appendix-c)
+- [Appendix D: Auditing and monitoring](#appendix-d)
 
 ---
 
-## 1. Glossary
+## Glossary
 
-- **Product app**: the software the user sees (Docs, Drive, Meet). It runs on **its own web domain** (e.g. `docs.example.fr`), distinct from the encryption domains, and handles encrypted content without ever seeing private keys.
-- **Product backend**: that software's server. It stores the encrypted documents and the application-level sharing table (who may open what).
-- **Vault iframe** (`data.encryption.*`): an invisible, isolated frame loaded by the product. It holds the user's private keys and performs all crypto. The product talks to it only via `postMessage`.
-- **Interface iframe** (`encryption.*`): the visible frame for onboarding, settings, and recovery.
-- **Encryption server**: the central server. It hosts the public-key registry and the encrypted vault.
-- **Public-key registry**: a **public** directory holding, per user, the encryption public key, the identity (signature) public key, a binding signature, and a version. Being public, it needs integrity (the binding signature), not confidentiality.
-- **Vault**: a per-user encrypted container, decryptable only with the user's recovery phrase, synchronized through the server so it follows the user across devices. It holds the key pairs and the trust registry.
-- **TOFU registry**: the record of each contact's fingerprint and its status: **unknown** (seen on first contact, recorded but not verified), **trusted**, or **refused** (the last two only from an explicit user decision). Sharing to an unknown contact is allowed; a later **change** to a recorded fingerprint is a mismatch that blocks. It is **sensitive** (your trust decisions and relationship graph), so it lives in the vault, never in clear on the server.
-- **Vault item**: one logical record in the vault (one encryption key version, the identity key, or one TOFU entry), stored on the server as a single opaque ciphertext, one row per item.
-- **VaultState**: the in-memory representation of all items on a device.
-- **Recovery phrase (`R`)**: a machine-generated, high-entropy BIP-39 mnemonic; the user's only long-term secret. Shown once at onboarding, printed as the Recovery Kit, never displayed again, never stored by us.
-- **KEK / VRK**: the Key-Encryption Key derived from `R` (Argon2id), which wraps the random Vault Root Key that actually encrypts the vault items.
-- **Identity key**: the user's Ed25519 signature key pair; the stable identity whose fingerprint contacts verify out-of-band. It signs the vault manifest.
-- **Device key**: a per-device key pair created on enrollment; caches the VRK at rest and authenticates that device's ongoing syncs.
-- **Document key (DEK)**: the symmetric key (XChaCha20-Poly1305, 32 bytes) that encrypts one document.
-- **Wrap / unwrap a key**: encrypt a document key to a recipient's encryption public key so only they can unwrap it.
-- **Out-of-band-verified fingerprint**: a short digest of the identity key compared between two people over another channel (QR, spoken digits), impossible for a malicious server to forge.
-- **Trusted computing base (TCB)**: the set of code that must be correct for every other guarantee to hold. Nothing protects you from a bug or a backdoor inside it, so the goal is to keep it as small and as tamper-evident as possible. Here it is the vault's served code (Section 11.4).
 - **Alice and Bob**: in diagrams, Alice shares a document, Bob receives access.
+- **Binding signature**: the identity key's signature over a user's encryption public key and its metadata (version, creation date, user id), published in the directory. It proves the encryption key was chosen by the holder of the identity key ([5.5](#s5-5)).
+- **Credential**: one way into a vault (the owner's recovery phrase, or an emergency phrase), stored as a wrapped VRK plus an auth public key ([4.4](#s4-4)).
+- **Device key**: a per-device, non-extractable AES-256-GCM WebCrypto key created on enrollment. It only wraps the cached VRK at rest; it authenticates nothing (requests are authenticated by the identity key, [6.4](#s6-4)).
+- **Document key (DEK)**: the random 256-bit key that encrypts one document (XSalsa20-Poly1305).
+- **Encryption key pair**: the user's X-Wing key pair, to which document keys are wrapped. Versioned; every version is kept for decryption.
+- **Encryption server**: the central server. It hosts the public-key directory and the encrypted vaults, and serves both iframes.
+- **Fingerprint**: the first 128 bits of the SHA-256 of a public key, shown as 40 digits in groups of five. Two people compare the fingerprint of an identity key over another channel (QR code, digits read aloud) to make sure no server substituted it.
+- **Identity key pair**: the user's Ed25519 signature key pair; the stable identity whose fingerprint contacts verify. It signs the binding, the vault manifest and request proofs.
+- **Interface iframe** (`encryption.*`): the visible frame for onboarding, settings, recovery and contact verification, shown over the product page on demand.
+- **KEK / VRK**: the key-encryption key derived from the recovery phrase (Argon2id), which wraps the random vault root key that actually encrypts the vault items ([4.3](#s4-3)).
+- **Manifest**: the signed list of a vault's items with their hashes and a monotonic revision, which lets a device detect any item added, removed, swapped or rolled back by the server ([6.3](#s6-3)).
+- **OIDC, JWT, `sub`**: the standard login protocol the products and this service share (OpenID Connect), the signed access token it issues (JWT), and the user identifier inside that token (`sub`), which the service maps to its own internal id ([2.3](#s2-3)).
+- **Opaque**: stored as ciphertext the server cannot read. An "opaque item" is one encrypted vault record.
+- **Product app / product backend**: the software the user sees (Docs, Drive, Meet), on its own domain, and its server, which stores the encrypted documents and the access list with the wrapped document keys.
+- **Proof of possession**: a challenge only the holder of a private key (or of the recovery phrase) can answer, required before the server registers a key or releases a vault ([5.5](#s5-5), [7.2](#s7-2)).
+- **Public-key directory** (also "registry"): the **public** list holding, per user, the encryption public key, the identity public key, the binding signature and a version. Being public, it needs integrity (the binding signature), not confidentiality.
+- **Recovery phrase (`R`)**: a machine-generated 24-word BIP-39 mnemonic (256 bits); the user's only long-term secret. Shown once at onboarding as the Recovery Kit, never stored by the service.
+- **TOFU registry** (trust on first use): each user's record of their contacts' identity fingerprints, with a status for each: **unknown** (seen, not verified), **trusted** or **refused** (the last two only by an explicit user decision). As with SSH's known hosts, the first key seen is accepted for sharing and recorded; any later **change** of a recorded fingerprint is a mismatch that blocks sharing. Statuses and fingerprints are encrypted in the vault; which contacts have an entry is visible to the server ([1.2](#s1-2), [5.4](#s5-4)).
+- **Trusted computing base (TCB)**: the code that must be correct for every other guarantee to hold. Nothing protects against a bug or a backdoor inside it, so it is kept as small and as tamper-evident as possible. Here it is the vault's served code ([3.4](#s3-4)).
+- **Vault**: either the **vault iframe** (`data.encryption.*`, the invisible frame that holds the private keys and performs all cryptography, reached only through `postMessage`) or the **synchronized vault** (the per-user encrypted container on the server that the vault iframes download and update). See [Section 2](#s2).
+- **Vault item**: one record in the synchronized vault (one encryption key version, the identity key, or one trust entry), stored as one ciphertext.
+- **VaultState**: the in-memory, decrypted form of all items on a device.
+- **Wrap / unwrap a key**: encrypt a key to a recipient's public key (X-Wing), so only the matching private key can recover it.
+- **X-Wing**: a hybrid key-encapsulation mechanism combining X25519 (classical) and ML-KEM-768 (post-quantum); breaking it requires breaking both.
 
 ---
 
-## 2. System overview: who stores what
+<a id="s1"></a>
+
+## 1. Summary
+
+<a id="s1-1"></a>
+
+### 1.1 What the service does
+
+LaSuite products let users create and share documents. For the documents a user chooses to encrypt, the service makes the content readable only by the people it is shared with, and not by the servers that store it: neither the product's servers nor the encryption service itself.
+
+It does this with end-to-end encryption performed in the user's browser:
+
+- **Each document is encrypted with its own random key** (the document key). That key is then encrypted ("wrapped") separately for each person who has access, with that person's public key. The product stores the encrypted document and the wrapped keys, exactly where it stores a normal document and its access list.
+- **Each user has two key pairs**: an encryption key pair, which receives wrapped document keys, and an identity key pair, which signs and is what contacts verify. The public halves are published in a directory; the private halves never leave the user's browsers unencrypted.
+- **Private keys live in an isolated, invisible browser frame (the vault iframe)** served from a dedicated domain. Products never see them: they ask the vault to encrypt or decrypt through `postMessage`, the browser's message channel between frames.
+- **Keys follow the user across devices** through an encrypted vault kept on the encryption server. It can be opened only with a 24-word recovery phrase the user prints when activating encryption, or through an approval from a device that already holds the keys.
+
+<a id="s1-2"></a>
+
+### 1.2 What it protects, and against whom
+
+**Assets**, and what each needs. Each cell says whether a breach of that property would harm users; "no" means there is nothing to protect, usually because the data is public. Availability matters for keys: losing them means losing the documents they protect, which is why recovery takes so much of this document.
+
+| Asset                                         | Confidentiality                                                                                        | Integrity | Authenticity                         | Availability                                 |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- | ------------------------------------ | -------------------------------------------- |
+| Document content                              | Yes                                                                                                    | Yes       | Not provided (the product's concern) | The product's concern                        |
+| Document keys                                 | Yes                                                                                                    | Yes       | n/a                                  | Yes: lost keys mean lost documents           |
+| Users' private keys (encryption and identity) | Yes                                                                                                    | Yes       | Yes                                  | Yes: same                                    |
+| Recovery phrase, emergency phrases            | Yes                                                                                                    | Yes       | n/a                                  | Yes: the only way back without a device      |
+| Public-key directory                          | No, public by design                                                                                   | Yes       | Yes                                  | Yes                                          |
+| Trust decisions about contacts                | Yes for statuses and fingerprints; the list of contacts is visible to the server (accepted, see below) | Yes       | Yes                                  | Yes: losing them silently re-accepts any key |
+| Vault and interface code                      | No, open source                                                                                        | Yes       | Yes                                  | Yes                                          |
+
+Document authenticity (who wrote a given version) is not provided by the encryption layer: documents are encrypted, not signed, and authorship stays with the product.
+
+**Attackers in scope**, in two families:
+
+- **Remote**: a compromised or malicious encryption server or database (reads everything stored, modifies, replays old data, substitutes keys); a compromised product backend or database; a stolen login session; a trusted contact who abuses emergency access; a network attacker (TLS is assumed).
+- **Local**, with physical access to a user's device, temporary or permanent, possibly the legitimate user of that device: limited to what the assumptions below leave open, i.e. a device that is switched off or locked, with disk encryption.
+
+**Out of scope**: a device used while its session is unlocked; a compromised product frontend, which legitimately sees what its user decrypts; malicious code served as the vault itself, which is the trusted computing base. [Section 3](#s3) lists every threat with its defence.
+
+**What this gives**:
+
+- Neither server, acting alone, can read document content or private keys: the encryption server stores only ciphertext and public data, and the product stores only ciphertext and wrapped keys.
+- Tampering with stored vault data or with the directory is detected through signatures, never silently accepted.
+- A server that substitutes someone's public key is detected by contacts who already know that person's identity: any change of a recorded fingerprint blocks sharing. A contact who meets someone for the first time accepts the key they see, as in any end-to-end system, unless they verify it out-of-band.
+- A stolen login session alone reaches neither keys nor content. Its worst outcome is a recoverable one: disabling encryption for that user, or refusing a recovery.
+
+**Metadata the encryption server can see (accepted).** Encryption hides content and keys, not who interacts with whom. A hostile encryption server can learn:
+
+- **each user's contacts**: trust entries are encrypted one by one, but stored under an id that names the contact (`tofu:<contact id>`), so the server sees who a user has shared with, though not the status or the fingerprint;
+- **who looks up whom**: directory reads are not authenticated, but they come from the same browser that syncs the vault, at the moment of a share;
+- **activity**: when a vault changes and how many items it holds (roughly the number of contacts and key versions);
+- **which accounts exist**: the directory is public, and the trusted-contact search answers whether an email has an account.
+
+This is accepted on purpose: the products already hold the same relationship graph in their access lists, so hiding it from the encryption server alone would not reduce what a compromise reveals.
+
+<a id="s1-3"></a>
+
+### 1.3 What the security relies on
+
+- **The vault's served code**, the trusted computing base: kept on its own origin, pinned by Subresource Integrity hashes and a Service Worker, and confined by a strict Content Security Policy ([Section 3.4](#s3-4)).
+- **The browser**: origin isolation between the product page and the vault iframe, its cryptographically secure random generator (`crypto.getRandomValues`), and WebCrypto's non-extractable keys. There is no TPM, HSM or secure element: keys are software keys in the browser.
+- **libsodium** (compiled to WebAssembly) for all cryptography in the vault.
+- **The OIDC identity provider** of the deployment, for authentication (who is logged in). Logging in never unlocks keys by itself.
+- **Users' out-of-band fingerprint checks**, against key substitution.
+- **The product's own access control**, as an independent second gate: even with a wrong wrapped key, an attacker must also be allowed by the product to download it ([Section 3.1](#s3-1)).
+
+<a id="s1-4"></a>
+
+### 1.4 Assumptions
+
+What the service expects from its environment and does not defend against itself:
+
+- **Users lock their computer session** when they leave it. Anyone using an unlocked session can use the products, and therefore decrypt, as that user.
+- **Devices have disk encryption.** The cached vault key is wrapped by a non-extractable device key, but the browser stores that key in the same profile: a copy of the IndexedDB file alone is useless, a copy of the whole browser profile from an unencrypted disk is not.
+- **Browsers and operating systems are kept up to date**, and the browser's TLS implementation is correct.
+- **Users keep their Recovery Kit safe**, like any other credential, and verify out-of-band the identity of the contacts whose access matters to them.
+- **The operator is trusted for availability and durability** (database backups, uptime), never for confidentiality or integrity: the design assumes the operator's server and database may be hostile.
+- **The OIDC identity provider authenticates users correctly.** It cannot unlock anything by itself, but a provider that logs an attacker in as a victim enables the stolen-session attacks of [Section 3](#s3).
+
+<a id="s1-5"></a>
+
+### 1.5 Security level
+
+| Use                                     | Primitive                                                                             | Classical security            | Post-quantum                                                                                                                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document and vault content              | XSalsa20-Poly1305 (libsodium `crypto_secretbox`), 256-bit keys, 192-bit random nonces | 256-bit keys                  | Yes (symmetric, 256-bit keys)                                                                                                                                                                                          |
+| Wrapping a key to a user (key exchange) | X-Wing hybrid KEM: X25519 + ML-KEM-768                                                | about 128 bits                | Yes, through ML-KEM-768 (NIST category 3)                                                                                                                                                                              |
+| Identity and all signatures             | Ed25519                                                                               | about 128 bits                | **No.** A signature only has to resist forgery while it is being checked, unlike ciphertext that can be recorded now and broken later. A migration path to a post-quantum signature is reserved ([Section 5.4](#s5-4)) |
+| Recovery phrase                         | 24 BIP-39 words (256 bits of entropy), stretched with Argon2id (3 passes, 64 MiB)     | 256 bits                      | Yes                                                                                                                                                                                                                    |
+| Cached key on each device               | AES-256-GCM, WebCrypto non-extractable key                                            | 256 bits                      | Yes                                                                                                                                                                                                                    |
+| Fingerprints compared between people    | SHA-256 truncated to 128 bits, shown as 40 decimal digits                             | 128 bits against substitution | n/a                                                                                                                                                                                                                    |
+
+In short, **confidentiality is designed to resist quantum computers, authenticity is not yet**: every path to a document key goes either through ML-KEM-768 or through 256-bit symmetric keys, so content recorded today stays protected against a future quantum computer as long as ML-KEM-768 holds. It is a recent standard that could still fall to new cryptanalysis; the hybrid construction is the safety net, since the content would then remain as protected as with X25519 alone, which is secure against classical attackers only. Signatures (identity, directory, vault integrity) are classical Ed25519.
+
+---
+
+<a id="s2"></a>
+
+## 2. Components and trust boundaries
 
 ```mermaid
-%%{init: {'theme':'base'}}%%
-flowchart TB
-  subgraph PROD["Product (product domain, e.g. docs.example.fr)"]
-    PF["Product app<br/>(UI + client SDK)"]
-    PB["Product backend<br/>encrypted documents<br/>+ sharing table (wrapped keys)<br/><b>DURABLE</b>"]
+%%{init: {'theme':'base','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart LR
+  subgraph BROWSER["User's browser"]
+    subgraph PAGE["Product page (product domain, e.g. docs.example.fr)"]
+      PF["Product app<br/>+ client SDK"]
+      VI["Vault iframe (data.encryption.*)<br/>invisible, holds the private keys,<br/>performs all cryptography"]
+      UI["Interface iframe (encryption.*)<br/>onboarding, settings, recovery,<br/>contact verification"]
+    end
   end
-  subgraph ENC["Encryption service (isolated domains)"]
-    VF1["Vault iframe, device 1<br/>unlocked VaultState (in memory)"]
-    VF2["Vault iframe, device 2<br/>unlocked VaultState (in memory)"]
-    REG["Server: public-key registry (public)"]
-    COF["Server: encrypted vault<br/>keys + identity + TOFU (opaque, per item)"]
+  subgraph PSRV["Product servers"]
+    PB["Product backend<br/>encrypted documents<br/>access list + wrapped document keys"]
   end
-  PF -->|"postMessage (encrypt / decrypt)"| VF1
-  PF -->|"HTTP: documents + wrapped keys"| PB
-  VF1 -->|"read registry"| REG
-  VF1 <-->|"sync vault"| COF
-  VF2 <-->|"sync vault"| COF
-  classDef durable fill:#e2f0d9,stroke:#3c763d,color:#000;
-  classDef perm fill:#ffe2e2,stroke:#d33,color:#000;
-  class PB perm;
-  class COF durable;
+  subgraph ESRV["Encryption server"]
+    REG["Public-key directory<br/>(public data)"]
+    EV["Encrypted vaults<br/>(ciphertext only)"]
+  end
+  PF -->|"postMessage: encrypt, decrypt, share"| VI
+  PF -->|"opens on demand"| UI
+  UI -->|"postMessage: privileged operations"| VI
+  PF -->|"HTTPS: documents, wrapped keys"| PB
+  VI -->|"HTTPS: read keys"| REG
+  VI <-->|"HTTPS: sync"| EV
+  UI -->|"HTTPS: logged-in operations"| EV
+  classDef enc fill:#e7ecff,stroke:#3b5bdb,color:#000;
+  classDef prod fill:#f1f1f1,stroke:#777,color:#000;
+  class VI,UI,REG,EV enc;
+  class PF,PB prod;
 ```
 
-|                                                                                     | Stored where                                                 | Confidential?                     |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------- |
-| Public-key registry (encryption + identity public keys, binding signature, version) | Encryption server, **public**                                | No, integrity only                |
-| Encrypted vault (key pairs + TOFU)                                                  | Encryption server, **opaque per-item ciphertext**            | Yes, server cannot read it        |
-| Encrypted documents + sharing table (wrapped document keys)                         | Product backend, **durable**                                 | Documents and keys are ciphertext |
-| Unlocked VaultState                                                                 | Vault iframe, **in memory** while unlocked                   | n/a                               |
-| Wrapped VRK cache                                                                   | Vault iframe, **at rest** under a non-extractable device key | Yes                               |
+The two iframes are drawn inside the product page because that is where they **run**: in the user's browser, embedded by the product. They belong to the encryption service because their code is **served from its domains**, so the browser's same-origin policy separates them from the product: the product's scripts cannot read the vault's memory or storage, and can only exchange messages with it. That is what lets private keys sit inside a page the product controls without the product being able to read them. Products load a small client SDK (`client.js`) from the vault domain, which creates and talks to both iframes.
 
-The encryption server is a **blind store**: it reads routing metadata (who, which item, how recent) but never any content. This is the same posture as Bitwarden's server, plus one addition: we **sign** what we store so integrity does not depend on trusting the server (Section 7).
+| Data                                                                                 | Stored where                                                         | Confidential?                     |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | --------------------------------- |
+| Public-key directory (encryption + identity public keys, binding signature, version) | Encryption server, **public**                                        | No, integrity only                |
+| Encrypted vault (key pairs + TOFU registry)                                          | Encryption server, **one ciphertext per item**                       | Yes, server cannot read it        |
+| Encrypted documents + access list with wrapped document keys                         | Product backend                                                      | Documents and keys are ciphertext |
+| Unlocked vault state                                                                 | Vault iframe, **in memory** while the page is open                   | n/a                               |
+| Cached vault root key                                                                | Vault iframe, **IndexedDB**, wrapped by a non-extractable device key | Yes                               |
 
-### 2.1 Internal user id: identity outlives the OIDC provider
+The encryption server is a **blind store**: it reads routing metadata (which user, which item, how recent) but never any content. This is the same posture as Bitwarden's server, plus one addition: what it stores is **signed**, so integrity does not depend on trusting it ([Section 6.3](#s6-3)).
+
+**"Vault" means two things in this document.** The **vault iframe** is the code above, running on each device, with its local storage. The **(synchronized) vault** is the per-user encrypted container kept on the server, which the vault iframes download and update. Neither is an off-the-shelf product: both are this service's own code, built on libsodium and the browser's IndexedDB and WebCrypto. The design of the synchronized vault borrows from password managers ([Section 10](#s10)).
+
+**Perimeter.** This document covers the code of this repository: the vault iframe, the interface iframe, the client SDK products load, and the encryption server with its database schema. Everything else is environment, relied on as stated in [1.3](#s1-3) and [1.4](#s1-4): the browser and operating system, the OIDC identity provider, the products (their frontends, backends and access control), PostgreSQL, the mail server, and the hosting of the deployment.
+
+**Roles.**
+
+- **User**: activates encryption, holds their keys, shares documents, verifies contacts, manages their devices and recovery.
+- **Contact**: another user someone shares with; their trust status is recorded per user ([5.4](#s5-4)).
+- **Grantor and trusted contact**: a user who designates someone to help recover their vault, and that person ([Section 9](#s9)).
+- **Operator**: runs a deployment (configuration, database, backups, mail). The operator can read and change everything the server stores, deny service, or relink a login to an account ([Appendix A](#appendix-a)); the design is built so that this still gives no access to keys or content. There is no administrator role inside the service itself: no user can act on another user's keys.
+
+<a id="s2-1"></a>
+
+### 2.1 How users are authenticated
+
+- **Login** uses the deployment's OIDC identity provider, the same one the products use. The interface iframe runs the standard authorization-code flow and keeps the tokens in its own `sessionStorage`; the server verifies each token's signature against the provider's published keys. Logging in identifies the user; it never unlocks anything.
+- **Requests to the encryption server** are authenticated differently depending on what the device holds ([Section 6.4](#s6-4) has the full list):
+
+  | The device...                              | The request is authenticated by                                                                                                     | Used for                                                                                              |
+  | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+  | holds the vault (normal use)               | a per-request signature by the **identity key**, which only an open vault can produce, plus the OIDC token for sensitive operations | sync, changing the phrase, approving a device, designating or calling on a trusted contact            |
+  | holds nothing, and the user has the phrase | the OIDC token plus a signature by the **auth key**, derived from the recovery phrase, over a fresh server nonce                    | releasing the vault to that device (cold unlock, reactivation), and nothing else                      |
+  | holds nothing, and the user has no phrase  | the OIDC token alone                                                                                                                | only actions that can deny but never disclose: disabling encryption, refusing a recovery, and similar |
+
+- **Between users**, each person's identity is the fingerprint of their identity key, which two people compare out-of-band (QR code or 40 digits read aloud) to rule out a substituted key ([Section 5.4](#s5-4)).
+- **Product backends** keep authenticating their users as they already do.
+
+<a id="s2-2"></a>
+
+### 2.2 Who may decrypt a document
+
+**The product decides; the encryption layer enforces.** Access is granted and reviewed in the product's usual sharing interface, and the product's access list remains the authority. The encryption layer adds a cryptographic condition on top: a user can decrypt only if the product lets them download the document **and** a copy of its key was wrapped for them.
+
+- **Granting.** When a user shares, the product asks their vault to wrap the document key for the chosen people. Before wrapping, the vault checks each recipient's directory record (binding signature) and its own trust decision about them, and refuses a recipient whose key changed or whom the user refused ([Section 5.4](#s5-4)). The product stores the wrapped keys on its access rows.
+- **Reading.** The product returns a wrapped key only to the user it belongs to, and only that user's private key can unwrap it.
+- **Neither server can add a reader.** Wrapping needs the document key in clear, which exists only inside the vault of someone who already has access. A product backend can grant access in its database, but the new member gets nothing they can decrypt; the encryption server holds no document keys at all.
+- **Revoking.** Removing someone from the product's access list removes their wrapped key and their ability to download the document. It cannot make them forget a key or content they already obtained. To protect what is written afterwards, a product can re-encrypt the document under a new key (`encrypt-without-key`) and re-share it to the remaining members; whether it does so on every removal is the product's decision.
+
+<a id="s2-3"></a>
+
+### 2.3 Internal user id: identity outlives the OIDC provider
 
 Products and the login flow speak the OIDC `sub`. That value is not stable over the life of a deployment since an organization can replace its identity provider, and the new provider mints new subs for the same humans. Meanwhile this service embeds a user identifier in places no data migration can ever rewrite: inside Ed25519-signed payloads (key binding, identity continuity, request proofs), inside sealed `tofu:<userId>` vault items pinned by the signed manifest, and as cache keys on every enrolled device.
 
-The canonical identifier is therefore a service-minted, immutable UUID (`users.id`), created at first contact and used everywhere past the auth boundary: signatures, TOFU, foreign keys, caches, the directory. OIDC credentials map to it through the `oidc_accounts` table, one row per unique `(issuer, sub)` pair. A provider migration becomes a plain data operation on that mapping table (a new row pointing at the same user, attached automatically by the verified-email fallback or manually by the operator) while every signature and sealed item stays valid. Directory resolution of a sub is scoped to the currently configured issuer, always: matching retired-issuer rows would be fail-open (on a cross-issuer sub collision the directory could return another human's public key, the one wrong answer a key directory must never give), so after a cutover a not-yet-relinked user simply shows as having no keys until their first post-cutover login. Retired rows are still never deleted; they remain as an audit trail and as raw material for operator merge tooling, and `disabledAt` blocks authentication with a retired provider.
+The canonical identifier is therefore a service-minted, immutable UUID (`users.id`), created at first contact and used everywhere past the auth boundary: signatures, TOFU registry, foreign keys, caches, the directory. OIDC credentials map to it through the `oidc_accounts` table, one row per unique `(issuer, sub)` pair. A provider migration becomes a plain data operation on that mapping table (a new row pointing at the same user, attached automatically by the verified-email fallback or manually by the operator) while every signature and sealed item stays valid. Directory resolution of a sub is scoped to the currently configured issuer, always: matching retired-issuer rows would be fail-open (on a cross-issuer sub collision the directory could return another human's public key, the one wrong answer a key directory must never give), so after a cutover a not-yet-relinked user simply shows as having no keys until their first post-cutover login. Retired rows are still never deleted; they remain as an audit trail and as raw material for operator merge tooling, and `disabledAt` blocks authentication with a retired provider.
 
-Products never see internal ids. The SDK speaks subs end to end, and the vault translates at its boundary: the directory accepts `subs=` lookups, while TOFU and all persistence key on the internal id. The principle: **subs exist only at the two authentication boundaries** (JWT verification on the server, `setAuthContext` in the SDK); everything past those points speaks internal ids.
+Products never see internal ids. The SDK speaks subs end to end, and the vault translates at its boundary: the directory accepts `subs=` lookups, while the TOFU registry and all persistence key on the internal id. The principle: **subs exist only at the two authentication boundaries** (JWT verification on the server, `setAuthContext` in the SDK); everything past those points speaks internal ids.
 
 | Layer                                                              | Identifier           | Notes                                                                                   |
 | ------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
 | Signed payloads (binding, continuity, request proof)               | internal id          | the whole point: signatures survive provider changes                                    |
 | All DB `user_id` columns                                           | internal id (FK)     | referential integrity for free                                                          |
-| Sealed vault items (`tofu:<id>`), TOFU map keys                    | internal id          | trust decisions survive provider changes                                                |
+| Sealed vault items (`tofu:<id>`), trust map keys                   | internal id          | trust decisions survive provider changes                                                |
 | IndexedDB vault-cache row key, Web Locks names                     | internal id          | plus a small local sub-to-id alias store                                                |
 | Directory records returned to clients                              | internal id          | responses echo the queried sub for correlation                                          |
 | JWT `sub`                                                          | resolved at boundary | `(iss, sub)` looked up in `oidc_accounts`; request proofs sign the internal id directly |
 | SDK own-user init (`setAuthContext`)                               | sub                  | resolved once via the fallback chain below                                              |
 | SDK product-facing operations (recipients, fingerprints, profiles) | sub                  | the ONLY id products ever handle; the vault translates at its boundary                  |
 
-**How the vault resolves the caller's own sub**: in-memory map, then the IndexedDB alias store (written alongside the vault cache, so a cached vault always resolves offline), then an unauthenticated registry lookup by sub. The interface uses the same chain through a privileged `resolve-user` operation, so an onboarded user's settings page works even with an expired OIDC session; only a never-onboarded user falls back to the authenticated `GET /api/me` (which mints the user row), after which the interface declares the id in its postMessage envelope and the vault, which adopts a declared internal id from privileged interface-origin callers only, persists the sub-to-id alias for the next visit. Recipient subs are resolved through the same batched directory fetch the operation already makes for keys and trust, so translation adds no round-trip. The alias store is metadata, never a trust input: a wrong alias can only cause a cache miss or a failed sync, never a wrong trust or decryption outcome (trust reads the sealed TOFU store, and every server call is independently authenticated).
+**How the vault resolves the caller's own sub**: in-memory map, then the IndexedDB alias store (written alongside the vault cache, so a cached vault always resolves offline), then an unauthenticated registry lookup by sub. The interface uses the same chain through a privileged `resolve-user` operation, so an onboarded user's settings page works even with an expired OIDC session; only a never-onboarded user falls back to the authenticated `GET /api/me` (which mints the user row), after which the interface declares the id in its postMessage envelope and the vault, which adopts a declared internal id from privileged interface-origin callers only, persists the sub-to-id alias for the next visit. Recipient subs are resolved through the same batched directory fetch the operation already makes for keys and trust, so translation adds no round-trip. The alias store is metadata, never a trust input: a wrong alias can only cause a cache miss or a failed sync, never a wrong trust or decryption outcome (trust reads the sealed TOFU registry, and every server call is independently authenticated).
 
-`users.email` is the one piece of personal data attached to the account, and it is **required at first contact**: minting an account needs an address, because it is the only notification channel (security alerts, emergency access) and the only automatic continuity anchor across a provider migration. The address is read from the access-token claims, and when they carry none (some providers, only serve email from the userinfo endpoint) the server falls back to calling the issuer's userinfo endpoint with the presented access token (signed `application/jwt` responses are verified against the issuer JWKS); only if both yield nothing is the login rejected (`email_claim_required`). A **known** credential authenticates without any email at all — the requirement exists to seed the account, not to gate every request. Only provider-verified addresses qualify unless the deployment sets `OIDC_ACCEPT_UNVERIFIED_EMAIL`. The column is deliberately not unique: one address can legitimately end up on two accounts over time (a recycled corporate address, a homonym hired years later gets the released address while the departed user's account remains). The email fallback accounts for that: it links a new credential only when the address matches exactly one user AND that user was seen within the last year; a dormant match is treated as a probably-recycled address and gets a fresh account instead, leaving any merge to a deliberate operator action.
+---
+
+<a id="s3"></a>
 
 ---
 
