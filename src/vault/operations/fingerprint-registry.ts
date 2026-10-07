@@ -2,10 +2,10 @@
  * TOFU trust registry, backed by the synchronized vault's `tofu` map (so a
  * trust decision made on one device syncs to the others). Handlers keep their
  * original I/O contract; only the backing store changed from a standalone
- * IndexedDB store to VaultState. A refused or first-seen fingerprint is a
- * trusted/refused entry keyed by the remote user's id; `unknown` is never
- * persisted — it is the transient "stored trusted, but a different fingerprint
- * arrived" verdict that needs a user decision.
+ * IndexedDB store to VaultState. Entries are keyed by the remote user's id and
+ * persist one of `unknown` (first seen on a share), `trusted` or `refused`;
+ * `mismatch` is never persisted, it is the transient "a different fingerprint
+ * arrived for a recorded contact" verdict that needs a user decision.
  */
 import { computeKeyFingerprint } from '@encryption/src/crypto';
 import { type TofuStatus, type VaultState, activeIdentity, setTofu } from '@encryption/src/crypto/vault-state';

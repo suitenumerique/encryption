@@ -68,7 +68,7 @@ Because `version` and `createdAt` are inside the signature, a database attacker 
 
 **Proof of possession at registration** proves both private keys: the encryption key resolves a challenge from the server, and the identity key signs the server's challenge id. The server re-verifies the binding signature, enforces strictly-increasing version (for genuinely new keys), reuses the identity when its signature key already belongs to the user, and rejects a signature/encryption key already claimed by another user. Fingerprint verification (out-of-band) + binding verification together form the trust decision.
 
-**Symmetric (documents)**: XChaCha20-Poly1305 via `crypto_secretbox`. Quantum-safe.
+**Symmetric (documents)**: XChaCha20-Poly1305 via `crypto_aead_xchacha20poly1305_ietf`. Quantum-safe.
 
 **Backup passphrase**: Full secret keys serialized as base64url JSON (~400 chars). NOT seed-based — using a shared seed would reduce hybrid security to the seed's entropy, losing the independent-compromise benefit.
 

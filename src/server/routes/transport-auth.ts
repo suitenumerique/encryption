@@ -8,7 +8,7 @@ import { prisma } from '@encryption/src/prisma/client';
 import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import { API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID } from '@encryption/src/shared/error-codes';
 
-// Per-route auth tier (see architecture.md §7.1). Default (no flag) = JWT +
+// Per-route auth tier (see architecture.md §6.4). Default (no flag) = JWT +
 // identity signature (tier 2, interactive + sensitive).
 // - SKIP_SIG: JWT only, no signature — cold prerequisites / PoP flows / the
 //   lost-password disable, i.e. where the caller structurally cannot sign.
@@ -31,7 +31,7 @@ export function assertUserId(request: FastifyRequest): asserts request is Fastif
 
 // Grace window during which a SUPERSEDED (but not revoked) identity key may still
 // authenticate a lagging device after a migration. Set to the same ~1 year as the
-// superseded-vault content retention (§9), so the two windows reinforce each other.
+// superseded-vault content retention (architecture.md §7.8), so the two windows reinforce each other.
 const IDENTITY_AUTH_GRACE_MS = 365 * 24 * 60 * 60 * 1000;
 
 // The user's ACTIVE identity WIRE public key (fast path: the overwhelmingly
@@ -61,7 +61,7 @@ export async function activeIdentityWireKey(userId: string): Promise<Uint8Array 
 //     identity is demoted), and while walking down we already hold that successor
 //     (`node`), so we compare `now - node.createdAt`. This caps cryptographic
 //     exposure: a retired key stops authenticating anything once its window
-//     closes. The window equals the superseded-vault content retention (§9), so
+//     closes. The window equals the superseded-vault content retention (architecture.md §7.8), so
 //     past it the old vault is purged and a lagging device has nothing to sync.
 //
 // A DISABLED predecessor (`disabledAt` set = revoked) is never accepted; an
@@ -69,7 +69,7 @@ export async function activeIdentityWireKey(userId: string): Promise<Uint8Array 
 // trust break and is never reached (the walk needs a valid cross-signature to
 // step). Returns EMPTY today: nothing writes continuity links yet (the migration
 // flow is not wired), so `previousIdentityId` is always null and the loop never
-// runs — but the check is correct and ready the day it does. See architecture.md §7.1.
+// runs — but the check is correct and ready the day it does. See architecture.md §6.4.
 async function continuityPredecessorWireKeys(userId: string, nowMs: number): Promise<Uint8Array[]> {
   let node = await prisma.identity.findFirst({ where: { userId, disabledAt: null }, orderBy: { generation: 'desc' } });
   const keys: Uint8Array[] = [];
@@ -120,7 +120,7 @@ async function verifyIdentityRequest(request: FastifyRequest, userId: string, to
 
 /**
  * Install, on one route plugin, the tiered secure-by-default transport auth
- * used by the vault and emergency-access APIs (§7.1):
+ * used by the vault and emergency-access APIs (architecture.md §6.4):
  *  - SIG_ONLY -> identity signature ONLY, no JWT; userId comes from the signed
  *    sub (verified against that user's key, so a forged sub cannot pass).
  *  - SKIP_SIG -> JWT only.

@@ -4,7 +4,15 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { base64ToUint8, importPublicKeyFromBytes, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
-import { type VaultManifest, parseManifest, verifyManifest } from '@encryption/src/crypto/vault-manifest';
+import {
+  type ManifestItem,
+  type SealedItem,
+  type VaultManifest,
+  hashCiphertext,
+  parseManifest,
+  sealedItemsMatchManifest,
+  verifyManifest,
+} from '@encryption/src/crypto/vault-manifest';
 import { DEFAULT_KDF_PARAMS, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
 import { errorResponses } from '@encryption/src/server/error-response';
@@ -101,7 +109,38 @@ async function verifiedManifest(
   }
 }
 
-// Per-route auth tier (see architecture.md §7.1). Default (no flag) = JWT +
+// The stored items must always be exactly what the signed manifest lists, or every
+// device would refuse the next pull as an integrity failure. The server can enforce
+// it without decrypting anything (it only hashes ciphertexts), so a buggy client
+// cannot publish a vault the other devices would then reject.
+const manifestEntryKey = (i: ManifestItem) => JSON.stringify([i.id, i.type, i.contentHash, i.revisionDate]);
+
+// A single-item write keeps that invariant when the written item matches its entry
+// in the new manifest and every other entry is unchanged from the previous manifest,
+// which the stored items already match. One hash per write, whatever the vault size.
+function itemWriteKeepsManifestCoherent(previous: VaultManifest, next: VaultManifest, item: SealedItem): boolean {
+  const entries = next.items.filter((i) => i.id === item.id);
+  if (entries.length !== 1) return false;
+
+  const [entry] = entries;
+  if (entry.type !== item.type || entry.revisionDate !== item.revisionDate || entry.contentHash !== hashCiphertext(item.ciphertext)) return false;
+
+  const others = (m: VaultManifest) =>
+    m.items
+      .filter((i) => i.id !== item.id)
+      .map(manifestEntryKey)
+      .sort();
+  const before = others(previous);
+  const after = others(next);
+
+  return before.length === after.length && before.every((key, n) => key === after[n]);
+}
+
+function toSealedItem(item: { item_id: string; type: string; ciphertext: string; revision_date_millis: number }): SealedItem {
+  return { id: item.item_id, type: item.type as SealedItem['type'], ciphertext: item.ciphertext, revisionDate: item.revision_date_millis };
+}
+
+// Per-route auth tier (see architecture.md §6.4). Default (no flag) = JWT +
 // identity signature (tier 2, interactive + sensitive).
 // - SKIP_SIG: JWT only, no signature — cold prerequisites / PoP flows / the
 //   lost-password disable, i.e. where the caller structurally cannot sign.
@@ -266,12 +305,25 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       assertUserId(request);
-      const keyring = await activeKeyring(request.userId);
-      const meta = keyring ? await prisma.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
+      const userId = request.userId;
 
-      if (!keyring || !meta) return { revision: 0, manifest: null, manifest_sig: null, items: [] };
+      // One snapshot for the manifest and the items: read separately, a write landing
+      // in between would pair a manifest with items it does not describe, which every
+      // device would rightly refuse as an integrity failure.
+      const snapshot = await prisma.$transaction(
+        async (tx) => {
+          const keyring = await tx.vaultKeyring.findFirst({ where: { userId, disabledAt: null } });
+          const meta = keyring ? await tx.vaultMeta.findUnique({ where: { vaultId: keyring.id } }) : null;
+          if (!keyring || !meta) return null;
 
-      const items = await prisma.vaultItem.findMany({ where: { vaultId: keyring.id } });
+          return { meta, items: await tx.vaultItem.findMany({ where: { vaultId: keyring.id } }) };
+        },
+        { isolationLevel: 'RepeatableRead' }
+      );
+
+      if (!snapshot) return { revision: 0, manifest: null, manifest_sig: null, items: [] };
+
+      const { meta, items } = snapshot;
 
       return reply.send({
         revision: meta.accountRevision,
@@ -534,16 +586,42 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       // index is always authentic (not forgeable by a token-thief or DB tampering).
       // A freshly bootstrapped vault is account revision 1, so the signed manifest
       // must declare that revision.
-      if (!(await verifiedManifest(body.manifest, body.manifest_sig, check.challenge.signaturePublicKey, 1)))
+      const bootstrapManifest = await verifiedManifest(body.manifest, body.manifest_sig, check.challenge.signaturePublicKey, 1);
+      if (!bootstrapManifest || !sealedItemsMatchManifest(body.items.map(toSealedItem), bootstrapManifest))
         return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
 
       // Serializable + retry, matching the standalone registration route: the
       // registration writes run first, then the vault writes, all-or-nothing.
-      let result: CompleteTxResult;
+      let result: CompleteTxResult | { kind: 'already_committed' };
 
       try {
         result = await prisma.$transaction(
-          async (tx): Promise<CompleteTxResult> => {
+          async (tx): Promise<CompleteTxResult | { kind: 'already_committed' }> => {
+            // The response to an earlier, identical bootstrap can be lost after its
+            // commit landed: the client then rolls its own copy back and retries with
+            // the same keys, phrase and signed manifest. That vault is already the
+            // active one, so recognize it instead of demoting it and creating a copy;
+            // only the retry's challenge is consumed. The keyring is compared too,
+            // since the manifest does not cover it: the same vault resent under a
+            // different phrase is not a retry and takes the normal path.
+            const active = await tx.vaultKeyring.findFirst({
+              where: { userId, disabledAt: null },
+              include: { identity: true, meta: true, credentials: { where: { type: 'primary' } } },
+            });
+            const activePrimary = active?.credentials[0];
+            if (
+              active?.meta &&
+              activePrimary &&
+              Buffer.from(active.identity.signaturePublicKey).equals(Buffer.from(check.challenge.signaturePublicKey)) &&
+              Buffer.from(active.meta.manifestSig).equals(Buffer.from(base64ToUint8(body.manifest_sig))) &&
+              Buffer.from(activePrimary.authPublicKey).equals(Buffer.from(base64ToUint8(body.keyring.auth_public_key)))
+            ) {
+              const consumed = await tx.keyPossessionChallenge.deleteMany({ where: { id: check.challenge.id } });
+              if (consumed.count === 0) return { kind: 'consumed' };
+
+              return { kind: 'already_committed' };
+            }
+
             // Bootstrap is the SOLE identity minter: create (or re-enable) the
             // identity first, then register the encryption key under it and create
             // the vault keyring below, all atomically. completeRegistrationInTx
@@ -599,6 +677,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         throw err;
       }
 
+      if (result.kind === 'already_committed') return { revision: 1 };
+
       if (result.kind !== 'success') {
         const mapped = completeResultToHttpError(result)!;
 
@@ -645,8 +725,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       const identity = await prisma.identity.findUnique({ where: { id: keyring.identityId } });
       if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-      if (!(await verifiedManifest(body.manifest, body.manifest_sig, identity.signaturePublicKey, body.revision)))
-        return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
+      const nextManifest = await verifiedManifest(body.manifest, body.manifest_sig, identity.signaturePublicKey, body.revision);
+      if (!nextManifest) return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
 
       const result = await prisma.$transaction(async (tx) => {
         const current = await tx.vaultItem.findUnique({ where: { vaultId_itemId: { vaultId, itemId: body.item.item_id } } });
@@ -675,6 +755,16 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         // both observe revision-1, both pass, and the second silently clobber the
         // first. updateMany filters on the expected revision inside the write, so the
         // loser matches 0 rows and the manifest never diverges from the item set.
+        // The new manifest must describe the stored items once this write lands
+        // (see itemWriteKeepsManifestCoherent). It is compared with the manifest at
+        // the revision this write builds on; any other revision is a conflict anyway.
+        const previousMeta = await tx.vaultMeta.findFirst({ where: { vaultId, accountRevision: body.revision - 1 } });
+        if (!previousMeta) return { conflict: true as const };
+        const previousManifest = parseManifest(previousMeta.manifest);
+        if (!previousManifest || !itemWriteKeepsManifestCoherent(previousManifest, nextManifest, toSealedItem(body.item))) {
+          return { conflict: false as const, incoherent: true as const };
+        }
+
         const advanced = await tx.vaultMeta.updateMany({
           where: { vaultId, accountRevision: body.revision - 1 },
           data: { accountRevision: body.revision, manifest: body.manifest, manifestSig: Buffer.from(base64ToUint8(body.manifest_sig)) },
@@ -696,10 +786,11 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           update: { type: body.item.type, ciphertext: body.item.ciphertext, revisionDate: new Date(body.item.revision_date_millis) },
         });
 
-        return { conflict: false as const, revision: body.revision };
+        return { conflict: false as const, incoherent: false as const, revision: body.revision };
       });
 
       if (result.conflict) return reply.status(409).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
+      if (result.incoherent) return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
 
       // Wake this user's other devices so they pull the change (write-through +
       // server-push together give near-instant cross-device convergence).

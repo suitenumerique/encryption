@@ -8,7 +8,7 @@ import '@encryption/src/shared/zod-jitless';
 // mirror the bounds used in schemas/vault.ts.
 
 const MAX_KEY_B64 = 1024; // Ed25519 key / signature blob
-const MAX_CAPSULE_B64 = 4096; // wrapped emergency-phrase entropy (KEM ct + secretbox)
+const MAX_CAPSULE_B64 = 4096; // wrapped emergency-phrase entropy (KEM ct + AEAD)
 
 export const EmergencyAccessStatusSchema = z.enum(['invited', 'confirmed', 'recoveryRequested', 'recoveryApproved']);
 

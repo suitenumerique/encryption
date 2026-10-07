@@ -8,7 +8,7 @@ import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/e
 import { encodeIdentityContinuityPayload, encodePopChallengeMessage } from '@encryption/src/crypto/key-registration';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
-import { buildManifest, signManifest } from '@encryption/src/crypto/vault-manifest';
+import { type SealedItem, buildManifest, signManifest } from '@encryption/src/crypto/vault-manifest';
 import { deriveKek, deriveVaultAuthKeyPair, signAuthPublicKeyBinding, signVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
@@ -61,8 +61,8 @@ function wireKey(pair: SigKeyPair): Uint8Array {
 // A manifest signed by `identity`, plus the identity public-key bytes the server
 // verifies it against (versioned wire bytes, as stored). The server now checks
 // manifestSig on every keyring/item write.
-async function signedManifest(identity: SigKeyPair, revision = 4) {
-  const m = buildManifest(revision, 1, []);
+async function signedManifest(identity: SigKeyPair, revision = 4, items: SealedItem[] = []) {
+  const m = buildManifest(revision, 1, items);
 
   return {
     manifest: JSON.stringify(m),
@@ -498,12 +498,14 @@ describe('POST /api/vault/reactivate (bring a dormant vault back)', () => {
 });
 
 describe('PUT /api/vault/items/:itemId (optimistic concurrency)', () => {
+  // The item every write in this suite sends; the signed manifest must describe it.
+  const WRITTEN_ITEM: SealedItem = { id: 'tofu:bob', type: 'tofu', ciphertext: 'CT', revisionDate: 9000 };
   let sm: Awaited<ReturnType<typeof signedManifest>>;
 
   beforeAll(async () => {
     // The vault's identity IS the user's identity, so the same key signs the
     // manifest and the request proof.
-    sm = await signedManifest(requestIdentity);
+    sm = await signedManifest(requestIdentity, 4, [WRITTEN_ITEM]);
   });
 
   const body = (lastKnown: number | null) => ({
@@ -521,6 +523,9 @@ describe('PUT /api/vault/items/:itemId (optimistic concurrency)', () => {
     const active = await seedVault({
       identityId: identity.id,
       revision: options.revision ?? 3,
+      // The stored manifest a write builds on: the server checks the new manifest
+      // only changes the written item's entry compared with this one.
+      manifest: (await signedManifest(requestIdentity, options.revision ?? 3)).manifest,
       items:
         options.itemRevisionDateMillis === undefined
           ? []
@@ -610,6 +615,36 @@ describe('PUT /api/vault/items/:itemId (optimistic concurrency)', () => {
     expect(res.json().code).toBe(API_ERROR_VAULT_MANIFEST_INVALID);
     const item = await testPrisma.vaultItem.findUniqueOrThrow({ where: { vaultId_itemId: { vaultId: active.id, itemId: 'tofu:bob' } } });
     expect(item.ciphertext).toBe('OLDCT');
+    expect((await testPrisma.vaultMeta.findUniqueOrThrow({ where: { vaultId: active.id } })).accountRevision).toBe(3);
+  });
+
+  it('rejects (400) a write whose signed manifest also changes ANOTHER item it does not send', async () => {
+    const { active } = await activeVault({ revision: 3, itemRevisionDateMillis: 1000 });
+
+    // Validly signed, but it lists an extra item the server does not hold: once
+    // stored, every device would refuse this vault as an integrity failure.
+    const incoherent = await signedManifest(requestIdentity, 4, [
+      WRITTEN_ITEM,
+      { id: 'tofu:carol', type: 'tofu', ciphertext: 'Q0FST0w=', revisionDate: 1 },
+    ]);
+    const res = await putItem({ ...body(1000), manifest: incoherent.manifest, manifest_sig: incoherent.manifest_sig });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe(API_ERROR_VAULT_MANIFEST_INVALID);
+    expect((await testPrisma.vaultItem.findUniqueOrThrow({ where: { vaultId_itemId: { vaultId: active.id, itemId: 'tofu:bob' } } })).ciphertext).toBe(
+      'OLDCT'
+    );
+    expect((await testPrisma.vaultMeta.findUniqueOrThrow({ where: { vaultId: active.id } })).accountRevision).toBe(3);
+  });
+
+  it('rejects (400) a write whose item does not match its entry in the signed manifest', async () => {
+    const { active } = await activeVault({ revision: 3, itemRevisionDateMillis: 1000 });
+
+    // The manifest describes WRITTEN_ITEM, but the body carries other bytes.
+    const res = await putItem({ ...body(1000), item: { ...body(1000).item, ciphertext: 'T1RIRVI=' } });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe(API_ERROR_VAULT_MANIFEST_INVALID);
     expect((await testPrisma.vaultMeta.findUniqueOrThrow({ where: { vaultId: active.id } })).accountRevision).toBe(3);
   });
 
@@ -900,8 +935,8 @@ describe('POST /api/vault (atomic onboarding)', () => {
   // A valid dual-key proof, backed by a real pending challenge row, so the
   // onboarding transaction runs to success. The HMAC check is a plain memcmp, so
   // any matching bytes pass; a real signature key signs the challenge id.
-  async function successfulOnboardingBody(version = 1) {
-    const signature = await generateSignatureKeyPair();
+  async function successfulOnboardingBody(version = 1, signature?: SigKeyPair) {
+    signature ??= await generateSignatureKeyPair();
     const hmac = new Uint8Array(32).fill(7);
 
     const challenge = await testPrisma.keyPossessionChallenge.create({
@@ -925,7 +960,7 @@ describe('POST /api/vault (atomic onboarding)', () => {
     const authKeyPair = await generateSignatureKeyPair();
     const authPubSig = await signAuthPublicKeyBinding(authKeyPair.publicKey, signature.secretKey);
     // The manifest must be signed by the same identity (server now verifies it).
-    const sm = await signedManifest(signature, 1);
+    const sm = await signedManifest(signature, 1, [{ id: 'active', type: 'active', ciphertext: 'CT', revisionDate: 1 }]);
 
     return {
       ...bootstrapBody,
@@ -1006,6 +1041,84 @@ describe('POST /api/vault (atomic onboarding)', () => {
     expect(await testPrisma.identity.count({ where: { userId: USER_ID, disabledAt: null } })).toBe(1);
     expect(fresh.identityId).toBe((await testPrisma.identity.findFirstOrThrow({ where: { userId: USER_ID, disabledAt: null } })).id);
     expect(await testPrisma.encryptionKey.count({ where: { userId: USER_ID, disabledAt: null } })).toBe(1);
+  });
+
+  it('rejects (400, no vault writes) when the items do not match the signed manifest', async () => {
+    const body = await successfulOnboardingBody();
+    // Same signed manifest, but one more item than it lists.
+    const res = await buildApp().inject({
+      method: 'POST',
+      url: '/api/vault',
+      payload: { ...body, items: [...body.items, { item_id: 'tofu:extra', type: 'tofu', ciphertext: 'RVhUUkE=', revision_date_millis: 1 }] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe(API_ERROR_VAULT_MANIFEST_INVALID);
+    expect(await testPrisma.vaultKeyring.count()).toBe(0);
+    expect(await testPrisma.identity.count()).toBe(0);
+  });
+
+  it('treats an identical retry (lost response) as success without creating a second vault', async () => {
+    const signature = await generateSignatureKeyPair();
+    const first = await successfulOnboardingBody(1, signature);
+    expect((await buildApp().inject({ method: 'POST', url: '/api/vault', payload: first })).statusCode).toBe(200);
+    const created = await testPrisma.vaultKeyring.findFirstOrThrow({ where: { userId: USER_ID, disabledAt: null } });
+
+    // Same keys and same signed manifest, sent again under a fresh challenge, as a
+    // client does after its first response was lost.
+    const retry = { ...first, registration: (await successfulOnboardingBody(1, signature)).registration };
+    const res = await buildApp().inject({ method: 'POST', url: '/api/vault', payload: retry });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ revision: 1 });
+    // Still exactly one vault, the original one, active; no dormant copy.
+    expect(await testPrisma.vaultKeyring.count({ where: { userId: USER_ID } })).toBe(1);
+    expect((await testPrisma.vaultKeyring.findUniqueOrThrow({ where: { id: created.id } })).disabledAt).toBeNull();
+    // The retry's challenge is consumed, so it cannot be replayed.
+    expect(await testPrisma.keyPossessionChallenge.count({ where: { id: retry.registration.challenge_id } })).toBe(0);
+  });
+
+  it('does not treat the same vault resent under a DIFFERENT phrase as a retry', async () => {
+    const signature = await generateSignatureKeyPair();
+    const first = await successfulOnboardingBody(1, signature);
+    expect((await buildApp().inject({ method: 'POST', url: '/api/vault', payload: first })).statusCode).toBe(200);
+
+    // Same identity and same signed manifest, but another keyring (a new auth key,
+    // as a different phrase would derive): the shortcut must not hide it.
+    const otherKeyring = (await successfulOnboardingBody(1, signature)).keyring;
+    expect(otherKeyring.auth_public_key).not.toBe(first.keyring.auth_public_key);
+    const resent = { ...first, keyring: otherKeyring, registration: (await successfulOnboardingBody(1, signature)).registration };
+
+    const res = await buildApp().inject({ method: 'POST', url: '/api/vault', payload: resent });
+
+    expect(res.statusCode).toBe(200);
+    // Normal path: the first vault is demoted and the new keyring becomes active.
+    expect(await testPrisma.vaultKeyring.count({ where: { userId: USER_ID } })).toBe(2);
+    const active = await testPrisma.vaultKeyring.findFirstOrThrow({ where: { userId: USER_ID, disabledAt: null } });
+    const primary = await testPrisma.vaultCredential.findFirstOrThrow({ where: { vaultId: active.id, type: 'primary' } });
+    expect(uint8ToBase64(new Uint8Array(primary.authPublicKey))).toBe(otherKeyring.auth_public_key);
+  });
+
+  it('still supersedes the active vault when the same identity submits a DIFFERENT vault', async () => {
+    const signature = await generateSignatureKeyPair();
+    const first = await successfulOnboardingBody(1, signature);
+    expect((await buildApp().inject({ method: 'POST', url: '/api/vault', payload: first })).statusCode).toBe(200);
+
+    // A manifest at a different identity generation: same identity key, different
+    // signed content, so it is not a retry of the first bootstrap.
+    const otherManifest = buildManifest(1, 2, [{ id: 'active', type: 'active', ciphertext: 'CT', revisionDate: 1 }]);
+    const different = {
+      ...(await successfulOnboardingBody(1, signature)),
+      manifest: JSON.stringify(otherManifest),
+      manifest_sig: await signManifest(otherManifest, signature.secretKey),
+    };
+    expect(different.manifest_sig).not.toBe(first.manifest_sig);
+
+    const res = await buildApp().inject({ method: 'POST', url: '/api/vault', payload: different });
+
+    expect(res.statusCode).toBe(200);
+    expect(await testPrisma.vaultKeyring.count({ where: { userId: USER_ID } })).toBe(2);
+    expect(await testPrisma.vaultKeyring.count({ where: { userId: USER_ID, disabledAt: null } })).toBe(1);
   });
 
   it('rejects (400, no vault writes) when authPubSig is not signed by the identity', async () => {

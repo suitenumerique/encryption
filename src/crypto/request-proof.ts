@@ -23,7 +23,7 @@
  * on a different endpoint or with different data, and the short validity window
  * bounds reuse in time. We keep no server-side seen-token cache: the reads this
  * gates are idempotent and the writes carry their own monotonic-revision replay
- * protection, so a bounded time window is sufficient (see architecture.md §7.1).
+ * protection, so a bounded time window is sufficient (see architecture.md §6.4).
  */
 import sodium from 'libsodium-wrappers-sumo';
 
