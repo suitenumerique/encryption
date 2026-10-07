@@ -8,7 +8,7 @@ import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/e
 import { encodeIdentityContinuityPayload, encodePopChallengeMessage } from '@encryption/src/crypto/key-registration';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
-import { type SealedItem, buildManifest, signManifest } from '@encryption/src/crypto/vault-manifest';
+import { type SealedItem, buildManifest, hashCiphertext, signManifest } from '@encryption/src/crypto/vault-manifest';
 import { deriveKek, deriveVaultAuthKeyPair, signAuthPublicKeyBinding, signVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
@@ -18,6 +18,7 @@ import {
   API_ERROR_EMERGENCY_ESCROW_INVALID,
   API_ERROR_EMERGENCY_REARM_REQUIRED,
   API_ERROR_VAULT_AUTH_BINDING_INVALID,
+  API_ERROR_VAULT_ITEM_IMMUTABLE,
   API_ERROR_VAULT_ITEM_OUT_OF_DATE,
   API_ERROR_VAULT_KDF_PARAMS_INVALID,
   API_ERROR_VAULT_MANIFEST_INVALID,
@@ -38,6 +39,14 @@ vi.mock('@encryption/src/server/vault-notify', () => ({
   notifyVaultChanged: vi.fn(),
 }));
 
+// The server's per-write hash is counted (does a write hash only its own item?);
+// the function itself is the real one.
+vi.mock('@encryption/src/crypto/vault-manifest', async () => {
+  const actual = await vi.importActual<typeof import('@encryption/src/crypto/vault-manifest')>('@encryption/src/crypto/vault-manifest');
+
+  return { ...actual, hashCiphertext: vi.fn(actual.hashCiphertext) };
+});
+
 vi.mock('@encryption/src/prisma/client', async () => ({
   prisma: (await vi.importActual<typeof import('@encryption/src/prisma/testing')>('@encryption/src/prisma/testing')).testPrisma,
 }));
@@ -52,7 +61,7 @@ const PHRASE = 'legal winner thank year wave sausage worth useful legal winner t
 const KDF = { ops: 3, mem: 64 * 1024 * 1024 }; // the server-pinned standard
 
 type SigKeyPair = Awaited<ReturnType<typeof generateSignatureKeyPair>>;
-type SeededItem = { itemId: string; type: 'tofu' | 'active'; ciphertext: string; revisionDateMillis: number };
+type SeededItem = { itemId: string; type: 'tofu' | 'active' | 'identity' | 'encryptionKey'; ciphertext: string; revisionDateMillis: number };
 
 function wireKey(pair: SigKeyPair): Uint8Array {
   return base64ToUint8(exportPublicKeyAsBase64(pair.publicKey));
@@ -646,6 +655,105 @@ describe('PUT /api/vault/items/:itemId (optimistic concurrency)', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe(API_ERROR_VAULT_MANIFEST_INVALID);
     expect((await testPrisma.vaultMeta.findUniqueOrThrow({ where: { vaultId: active.id } })).accountRevision).toBe(3);
+  });
+
+  it('hashes only the written item, even in a large vault (two writes over 1000 items)', async () => {
+    const identity = await seedRequestIdentity();
+    const items: SealedItem[] = Array.from({ length: 1000 }, (_, n) => ({ id: `tofu:u${n}`, type: 'tofu', ciphertext: 'Q1Q=', revisionDate: 1000 }));
+    const stored = await signedManifest(requestIdentity, 3, items);
+    await seedVault({
+      identityId: identity.id,
+      revision: 3,
+      manifest: stored.manifest,
+      items: items.map((i) => ({ itemId: i.id, type: 'tofu', ciphertext: i.ciphertext, revisionDateMillis: i.revisionDate })),
+    });
+
+    const write = async (changed: SealedItem, current: SealedItem[], revision: number) => {
+      const next = current.map((i) => (i.id === changed.id ? changed : i));
+      const manifest = await signedManifest(requestIdentity, revision, next);
+      const payload = {
+        item: { item_id: changed.id, type: changed.type, ciphertext: changed.ciphertext, revision_date_millis: changed.revisionDate },
+        last_known_revision_date_millis: 1000,
+        manifest: manifest.manifest,
+        manifest_sig: manifest.manifest_sig,
+        revision,
+      };
+      const url = `/api/vault/items/${changed.id}`;
+      const res = await buildApp().inject({ method: 'PUT', url, payload, headers: await sigHeaders('PUT', url, JSON.stringify(payload)) });
+
+      return { res, next };
+    };
+
+    vi.mocked(hashCiphertext).mockClear();
+    const first = await write({ id: 'tofu:u1', type: 'tofu', ciphertext: 'TkVX', revisionDate: 2000 }, items, 4);
+    expect(first.res.statusCode).toBe(200);
+    const second = await write({ id: 'tofu:u2', type: 'tofu', ciphertext: 'TkVXMg==', revisionDate: 2000 }, first.next, 5);
+    expect(second.res.statusCode).toBe(200);
+
+    // One hash per write (the written item), not one per item of the vault.
+    expect(vi.mocked(hashCiphertext)).toHaveBeenCalledTimes(2);
+  });
+
+  describe('key items are append-only', () => {
+    async function vaultWithKeyItems() {
+      const identity = await seedRequestIdentity();
+      const items: SealedItem[] = [
+        { id: 'identity:1', type: 'identity', ciphertext: 'SUQx', revisionDate: 1000 },
+        { id: 'enc:1', type: 'encryptionKey', ciphertext: 'RU5DMQ==', revisionDate: 1000 },
+      ];
+      const stored = await signedManifest(requestIdentity, 3, items);
+      const vault = await seedVault({
+        identityId: identity.id,
+        revision: 3,
+        manifest: stored.manifest,
+        items: items.map((i) => ({ itemId: i.id, type: i.type as SeededItem['type'], ciphertext: i.ciphertext, revisionDateMillis: i.revisionDate })),
+      });
+
+      return { vault, items };
+    }
+
+    async function writeItem(item: SealedItem, current: SealedItem[], lastKnown: number | null) {
+      const next = [...current.filter((i) => i.id !== item.id), item];
+      const manifest = await signedManifest(requestIdentity, 4, next);
+      const payload = {
+        item: { item_id: item.id, type: item.type, ciphertext: item.ciphertext, revision_date_millis: item.revisionDate },
+        last_known_revision_date_millis: lastKnown,
+        manifest: manifest.manifest,
+        manifest_sig: manifest.manifest_sig,
+        revision: 4,
+      };
+      const url = `/api/vault/items/${item.id}`;
+
+      return buildApp().inject({ method: 'PUT', url, payload, headers: await sigHeaders('PUT', url, JSON.stringify(payload)) });
+    }
+
+    it('refuses to rewrite an existing identity or encryption key item (409)', async () => {
+      const { vault, items } = await vaultWithKeyItems();
+
+      for (const replaced of [
+        { ...items[0], ciphertext: 'RVZJTA==', revisionDate: 2000 },
+        { ...items[1], ciphertext: 'RVZJTDI=', revisionDate: 2000 },
+      ]) {
+        const res = await writeItem(replaced, items, 1000);
+
+        expect(res.statusCode).toBe(409);
+        expect(res.json().code).toBe(API_ERROR_VAULT_ITEM_IMMUTABLE);
+      }
+
+      expect((await testPrisma.vaultItem.findUniqueOrThrow({ where: { vaultId_itemId: { vaultId: vault.id, itemId: 'enc:1' } } })).ciphertext).toBe(
+        'RU5DMQ=='
+      );
+      expect((await testPrisma.vaultMeta.findUniqueOrThrow({ where: { vaultId: vault.id } })).accountRevision).toBe(3);
+    });
+
+    it('still accepts a NEW key version (rotation appends)', async () => {
+      const { vault, items } = await vaultWithKeyItems();
+
+      const res = await writeItem({ id: 'enc:2', type: 'encryptionKey', ciphertext: 'RU5DMg==', revisionDate: 2000 }, items, null);
+
+      expect(res.statusCode).toBe(200);
+      expect(await testPrisma.vaultItem.count({ where: { vaultId: vault.id } })).toBe(3);
+    });
   });
 
   it('rejects a create the client thought was new but already exists', async () => {

@@ -19,6 +19,7 @@ import {
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { SyncIntegrityAlert } from '@encryption/src/ui/components/SyncIntegrityAlert';
 import { UntrustedRearmError, grantedRearmRows } from '@encryption/src/ui/components/emergency-access-logic';
 import { Chip, CopyFingerprintButton, FingerprintBoxes, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
@@ -55,7 +56,8 @@ export function EncryptionSettings({
   currentAccessToken = null,
 }: EncryptionSettingsProps) {
   const { t, i18n } = useTranslation('common');
-  const { isReady, hasKeys, getPublicKey, request, changeRecoveryPhrase, signKeyRegistration, respondToKeyChallenge } = useEncryptionContext();
+  const { isReady, hasKeys, getPublicKey, request, changeRecoveryPhrase, signKeyRegistration, respondToKeyChallenge, syncVault } =
+    useEncryptionContext();
 
   // Stepped, deferred-commit change-recovery-phrase flow:
   //   idle -> warning (existing backups will be invalidated) -> backup (full
@@ -355,6 +357,43 @@ export function EncryptionSettings({
       cancelled = true;
     };
   }, [fingerprint, userId, getToken]);
+
+  // Once the identity matches the directory, check that the vault stored on the
+  // server still verifies. The vault already retries once and tells a divergence
+  // apart; a lasting 'integrity-error' means syncing is paused on this device.
+  const [syncIntegrityFailed, setSyncIntegrityFailed] = useState(false);
+  const [isRecheckingSync, setIsRecheckingSync] = useState(false);
+
+  useEffect(() => {
+    if (remoteStatus !== 'in-sync' || !keysExist) return;
+
+    let cancelled = false;
+
+    syncVault(null)
+      .then((result) => {
+        if (!cancelled) setSyncIntegrityFailed(result.status === 'integrity-error');
+      })
+      .catch(() => {
+        // Offline or not enrolled: nothing to report about integrity.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteStatus, keysExist, syncVault]);
+
+  const handleRecheckSync = useCallback(async () => {
+    setIsRecheckingSync(true);
+
+    try {
+      const result = await syncVault(null);
+      setSyncIntegrityFailed(result.status === 'integrity-error');
+    } catch {
+      // Offline: keep the current state, the user can try again.
+    } finally {
+      setIsRecheckingSync(false);
+    }
+  }, [syncVault]);
 
   const fingerprintMatch = !!fingerprint && confirmFingerprint.replace(/\s/g, '') === fingerprint;
   const canDelete = confirmDataLoss && fingerprintMatch;
@@ -786,6 +825,8 @@ export function EncryptionSettings({
             <p className={styles.hint}>{t('settings.safety_fingerprint_hint')}</p>
           </div>
         )}
+
+        {syncIntegrityFailed && <SyncIntegrityAlert onRetry={handleRecheckSync} isRetrying={isRecheckingSync} />}
 
         {liveEmergencyPhrases.length > 0 && changePhraseStep === 'idle' && (
           <Alert type={VariantType.WARNING}>

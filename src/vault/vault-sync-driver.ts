@@ -16,7 +16,7 @@
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
 import { activeIdentity } from '@encryption/src/crypto/vault-state';
-import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
+import { syncWithIntegrityRetry } from '@encryption/src/vault/operations/vault-sync-checked';
 import { loadVault } from '@encryption/src/vault/vault-keys';
 
 const EVENTS_PATH = '/api/vault/events';
@@ -146,10 +146,12 @@ async function drive(userId: string, signal: AbortSignal, settle: (ok: boolean) 
 }
 
 // A pull that never rejects: not-enrolled or offline just means "try again on the
-// next wake".
+// next wake". An integrity failure is retried once and reported if it lasts
+// (syncWithIntegrityRetry); the local state is kept either way, and the next
+// wake tries again, so sync resumes on its own once the server copy verifies.
 async function safeSync(userId: string): Promise<void> {
   try {
-    await handleSync(userId);
+    await syncWithIntegrityRetry(userId);
   } catch {
     /* not enrolled yet / offline */
   }

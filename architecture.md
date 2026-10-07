@@ -75,6 +75,8 @@ Terms are defined at first use and in the glossary just below. A passage marked 
 
 ---
 
+<a id="glossary"></a>
+
 ## Glossary
 
 - **Alice and Bob**: in diagrams, Alice shares a document, Bob receives access.
@@ -806,7 +808,7 @@ VaultState {
 }
 ```
 
-- **Every key version is kept**, not only the current one: a device must _decrypt_ content wrapped under an old key while _encrypting_ under the active one. Old versions never change, and cost a few KB.
+- **Every key version is kept**, not only the current one: a device must _decrypt_ content wrapped under an old key while _encrypting_ under the active one. Old versions never change, and cost a few KB. The server enforces it: an existing identity or encryption-key item can never be rewritten (`vault_item_immutable`); only new versions can be added.
 - **No cached public keys.** A trust entry is just `{ fingerprint, status }` for a contact id; public keys are fetched from the directory and verified each time they are used.
 - **The TOFU registry is the only data that changes**; everything else is append-only, which keeps conflict handling simple ([Section 10](#s10)).
 
@@ -842,7 +844,7 @@ manifest = {
 manifestSig = Ed25519_sign(identitySecretKey, canonical(manifest))
 ```
 
-The server checks the manifest signature against the vault's identity on every write. A consuming device verifies, in order:
+On every write, the server checks the manifest signature against the vault's identity, and that the stored items stay exactly what the manifest lists: at onboarding the whole set is compared, then each item write may only change its own entry (one hash per write). A buggy client therefore cannot publish a vault the other devices would refuse. The server also serves the manifest and the items from a single database snapshot, so a pull never pairs them across a concurrent write. A consuming device verifies, in order:
 
 1. `manifestSig` against the **identity key the device already trusts**, not whatever the server labels. `identityGen` only hints at which key to expect; a server that rewrites it gains nothing, since it cannot sign with a key it does not hold.
 2. Every item's `contentHash` matches the manifest: detects an item spliced in, dropped or swapped.
@@ -850,7 +852,7 @@ The server checks the manifest signature against the vault's identity on every w
 
 **Which identity signs.** The manifest must be signed by the **active identity**. When the identity changes (supported by the core through the continuity columns, not used yet), the manifest is signed again under the new one, as Bitwarden does on key rotation. A manifest signed by another identity is rejected; a grace path through the continuity signature may come later.
 
-**A legitimate user should never hit a bad signature**: a correct client always signs with the active identity it holds, so a failure means tampering, corruption or rollback. The response is therefore to **refuse**, never to repair silently. What happens next depends on where the failure occurs. During onboarding, restore and device approval, the user sees an integrity error. In background sync, the device keeps its last good state and ignores the pulled data, but **does not yet tell the user** (**Status: planned**: a warning with the ways out, which are to retry, to compare with the directory where keys carry their own binding signatures, or to restore from the recovery phrase and rebuild a fresh signed manifest).
+**A legitimate user should never hit a bad signature**: a correct client always signs with the active identity it holds, and the server refuses inconsistent writes, so a failure means tampering, corruption, rollback, or a legitimate change of identity made on another device. The response is therefore to **refuse**, never to repair silently, and the device always keeps its last verified copy. During onboarding, restore and device approval, the user sees an integrity error. In background sync, every pull downloads the whole vault, so the device simply tries once more a few seconds later, which clears a passing failure. If that fails too, it compares its identity with the directory's: a different identity is a change made elsewhere, which the settings screen reconciles ([7.9](#s7-9)); the same identity means the server's copy really does not verify, which is reported through error reporting and shown in the encryption settings as a non-blocking warning, asking the user to contact support if it persists. Syncing is paused meanwhile: the device keeps decrypting and encrypting with its copy, but changes that must reach the server (trusting or refusing a contact's identity, for instance) fail until the server copy verifies again, at which point syncing resumes by itself.
 
 Other systems also treat an integrity break as a hard stop that needs a person: **Signal** blocks on a changed safety number until acknowledged, **git** flags a bad commit signature, **TLS certificate pinning** fails the connection.
 
@@ -860,14 +862,14 @@ Other systems also treat an integrity break as a hard stop that needs a person: 
 
 Two things authorize a request: **transport** authentication (is this one of the account's devices?) and **payload** signatures (what does this write mean?).
 
-**Transport authentication has four tiers** (background, sensitive, restore, nothing to sign with), depending on whether the caller can hold the identity key at that moment and how sensitive the operation is. The vault iframe, which holds the identity key, is loaded whenever a product uses encryption; the interface, which holds the OIDC token, is not. So everything that must run in the background is authenticated by the **identity signature alone**. "Background" still means while a product page is open, since the vault lives in it; the point is to keep the vault in sync without ever interrupting the user with a "session expired, sign in again" prompt. Signing each request with a private key checked against a registered public key, with no bearer token, is the pattern of SSH, WireGuard, mTLS and WebAuthn.
+**Transport authentication has four tiers** (background, sensitive, restore, login only), depending on whether the caller can hold the identity key at that moment and how sensitive the operation is. The vault iframe, which holds the identity key, is loaded whenever a product uses encryption; the interface, which holds the OIDC token, is not. So everything that must run in the background is authenticated by the **identity signature alone**. "Background" still means while a product page is open, since the vault lives in it; the point is to keep the vault in sync without ever interrupting the user with a "session expired, sign in again" prompt. Signing each request with a private key checked against a registered public key, with no bearer token, is the pattern of SSH, WireGuard, mTLS and WebAuthn.
 
-| Tier                                            | Auth required                        | Driven by                      | Why                                                                                                                                                                                                             | Endpoints                                                                                                                                                                                 |
-| ----------------------------------------------- | ------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Background**                                  | **Identity signature only** (no JWT) | the vault (autonomous)         | must run with no interface and no live JWT; the identity signature proves "an enrolled device of this user", and `userId` travels inside the signed claims so the server targets one identity to verify against | `GET /api/vault/items`, `PUT /api/vault/items/:itemId`, `GET /api/vault/revision`, SSE `/api/vault/events`, `GET /api/emergency-access/pending` ([8.7](#s8-7))                            |
-| **Sensitive**                                   | **JWT + identity signature**         | the interface                  | the interface is open (JWT is free) and the op is security-relevant, so keep the OIDC-session assurance on top of the key proof                                                                                 | `PUT /api/vault/keyring` (change phrase), device-approval approve / list, emergency designate / wait-time change / re-arm / initiate / recover ([8.7](#s8-7))                             |
-| **Restore**                                     | **JWT (+ passphrase proof)**         | the interface, or a new device | the caller has no identity key yet (restoring, onboarding, a new device waiting for approval); the passphrase proof is what releases the `wrappedVRK`                                                           | `GET /api/vault/meta`, `POST /api/vault/challenge` `/fetch` `/reactivate` `/vault` (onboarding), `register/*`, `POST /api/vault/approvals/request`, `GET /api/vault/approvals/:requestId` |
-| **Nothing to sign with** (no device, no phrase) | **JWT only**                         | the interface                  | must work exactly when the user can sign nothing                                                                                                                                                                | `DELETE /api/public-keys`, the emergency fail-safe actions (accept, cancel, reject, delete, lists, search: [8.7](#s8-7))                                                                  |
+| Tier                                                                   | Auth required                        | Driven by                      | Why                                                                                                                                                                                                             | Endpoints                                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | ------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Background**                                                         | **Identity signature only** (no JWT) | the vault (autonomous)         | must run with no interface and no live JWT; the identity signature proves "an enrolled device of this user", and `userId` travels inside the signed claims so the server targets one identity to verify against | `GET /api/vault/items`, `PUT /api/vault/items/:itemId`, `GET /api/vault/revision`, SSE `/api/vault/events`, `GET /api/emergency-access/pending` ([8.7](#s8-7))                            |
+| **Sensitive**                                                          | **JWT + identity signature**         | the interface                  | the interface is open (JWT is free) and the op is security-relevant, so keep the OIDC-session assurance on top of the key proof                                                                                 | `PUT /api/vault/keyring` (change phrase), device-approval approve / list, emergency designate / wait-time change / re-arm / initiate / recover ([8.7](#s8-7))                             |
+| **Restore**                                                            | **JWT (+ passphrase proof)**         | the interface, or a new device | the caller has no identity key yet (restoring, onboarding, a new device waiting for approval); the passphrase proof is what releases the `wrappedVRK`                                                           | `GET /api/vault/meta`, `POST /api/vault/challenge` `/fetch` `/reactivate` `/vault` (onboarding), `register/*`, `POST /api/vault/approvals/request`, `GET /api/vault/approvals/:requestId` |
+| **Login only** (no key to sign the request with: no device, no phrase) | **JWT only**                         | the interface                  | must work exactly when the user can sign nothing                                                                                                                                                                | `DELETE /api/public-keys`, the emergency fail-safe actions (accept, cancel, reject, delete, lists, search: [8.7](#s8-7))                                                                  |
 
 **Why the sensitive tier also requires the token.** The signature alone is strong authentication, but these operations are rare and sensitive (changing the phrase, approving a device), the interface is open so the token costs nothing, and it is a second, independent check should signature verification ever have a flaw. The background tier skips it, because requiring the token there is exactly what would force re-authentication prompts.
 
@@ -1138,7 +1140,9 @@ sequenceDiagram
   Note over V: verify manifestSig vs trusted identity<br/>rev >= lastSeenRev
   alt invalid signature or rolled-back revision
     Note over V: do NOT apply<br/>keep last-good cache
-    Note over V: onboarding, restore, approval: integrity error shown<br/>background sync: nothing shown yet<br/>(planned: warn, offer retry or restore)
+    Note over V: onboarding, restore, approval: integrity error shown
+    V->>API: background sync: GET /vault/items again, a few seconds later
+    Note over V: still invalid: compare the identity with the directory<br/>different: reconciliation screen (7.9)<br/>same: report it, warn in the settings, pause syncing
   else valid
     Note over V: apply and update lastSeenRev
   end
@@ -1455,6 +1459,8 @@ For orientation:
 
 ---
 
+<a id="operational-details"></a>
+
 ## Operational details
 
 The sections below describe behaviour that matters for running and maintaining the service but does not change the security model above.
@@ -1465,7 +1471,7 @@ The sections below describe behaviour that matters for running and maintaining t
 
 Conflicts are mostly **prevented by the shape of the data**: most of the vault cannot conflict, and what can is small and resolved deterministically.
 
-- **Keys and identities never change and only grow.** Devices can only _add_ a version, so merging is a union by version: no conflict is possible. If two devices create the same next version, the server's uniqueness constraint rejects the second, which pulls again and takes the next number, like any concurrent write.
+- **Keys and identities never change and only grow** (the server refuses any rewrite of an existing key item, [6.1](#s6-1)). Devices can only _add_ a version, so merging is a union by version: no conflict is possible. If two devices create the same next version, the server's uniqueness constraint rejects the second, which pulls again and takes the next number, like any concurrent write.
 - **Trust entries are the only items that change**, so the only real conflicts (device A trusts a contact, device B refuses them). The rules refine Bitwarden's plain last-write-wins to fail safe:
   1. The entry with the newer **`revisionDate`** wins.
   2. On equal dates, the stronger status wins: **`refused` > `trusted` > `unknown`**, so an explicit decision beats a bare first sighting and a refusal is never lost.

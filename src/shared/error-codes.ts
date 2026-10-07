@@ -35,6 +35,7 @@ export const API_ERROR_VAULT_AUTH_BINDING_INVALID = 'vault_auth_binding_invalid'
 export const API_ERROR_VAULT_KDF_PARAMS_INVALID = 'vault_kdf_params_invalid';
 export const API_ERROR_VAULT_MANIFEST_INVALID = 'vault_manifest_invalid';
 export const API_ERROR_VAULT_ITEM_OUT_OF_DATE = 'vault_item_out_of_date';
+export const API_ERROR_VAULT_ITEM_IMMUTABLE = 'vault_item_immutable';
 export const API_ERROR_VAULT_APPROVAL_NOT_FOUND = 'vault_approval_not_found';
 export const API_ERROR_VAULT_APPROVAL_NOT_READY = 'vault_approval_not_ready';
 export const API_ERROR_RATE_LIMIT_APPROVALS = 'rate_limit_approvals';

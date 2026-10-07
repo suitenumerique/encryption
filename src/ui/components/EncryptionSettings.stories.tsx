@@ -134,6 +134,23 @@ RemoteDivergedAdoptPromptStory.play = async ({ canvasElement }) => {
 
 export const RemoteDivergedAdoptPrompt = prepareStory(RemoteDivergedAdoptPromptStory);
 
+// The vault on the server still fails its integrity check after the vault's own
+// retry: a non-blocking warning, with a way to check again.
+const SyncIntegrityFailedStory = Template.bind({});
+SyncIntegrityFailedStory.args = { ...baseArgs };
+SyncIntegrityFailedStory.parameters = {
+  ...InSyncStory.parameters,
+  encryption: { syncVault: async () => ({ status: 'integrity-error', revision: 4 }) },
+};
+SyncIntegrityFailedStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText(i18n.t('settings.sync_integrity_failed'));
+  await playFindButton(canvasElement, i18n.t('settings.sync_integrity_retry'));
+  // Not blocking: the rest of the settings stays available.
+  await playFindButton(canvasElement, i18n.t('settings.add_device'));
+};
+
+export const SyncIntegrityFailed = prepareStory(SyncIntegrityFailedStory);
+
 // The destructive flow: a scope choice, an acknowledgement and the fingerprint
 // to type before the button unlocks.
 const RemoveEncryptionStory = Template.bind({});

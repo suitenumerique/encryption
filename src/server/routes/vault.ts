@@ -40,6 +40,7 @@ import {
   API_ERROR_VAULT_AUTH_BINDING_INVALID,
   API_ERROR_VAULT_CHALLENGE_EXPIRED,
   API_ERROR_VAULT_CHALLENGE_NOT_FOUND,
+  API_ERROR_VAULT_ITEM_IMMUTABLE,
   API_ERROR_VAULT_ITEM_OUT_OF_DATE,
   API_ERROR_VAULT_KDF_PARAMS_INVALID,
   API_ERROR_VAULT_MANIFEST_INVALID,
@@ -113,6 +114,9 @@ async function verifiedManifest(
 // device would refuse the next pull as an integrity failure. The server can enforce
 // it without decrypting anything (it only hashes ciphertexts), so a buggy client
 // cannot publish a vault the other devices would then reject.
+// Item types that are never rewritten once stored (see the item write route).
+const IMMUTABLE_ITEM_TYPES: ReadonlySet<string> = new Set(['identity', 'encryptionKey']);
+
 const manifestEntryKey = (i: ManifestItem) => JSON.stringify([i.id, i.type, i.contentHash, i.revisionDate]);
 
 // A single-item write keeps that invariant when the written item matches its entry
@@ -732,6 +736,12 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         const current = await tx.vaultItem.findUnique({ where: { vaultId_itemId: { vaultId, itemId: body.item.item_id } } });
 
         if (current) {
+          // Key items are append-only: a key version or an identity, once written, is
+          // never rewritten, so no write (a buggy client, or a stolen identity key
+          // used to sign one) can replace or corrupt a key other devices rely on.
+          // Only new versions are added. Key rotation or expiry may relax this later.
+          if (IMMUTABLE_ITEM_TYPES.has(current.type)) return { conflict: false as const, incoherent: false as const, immutable: true as const };
+
           // Reject a stale write on this item: the client must have last seen the
           // exact revisionDate the server holds. An echo of the server's own value
           // round-trips losslessly, so there is no clock skew to tolerate; anything
@@ -790,6 +800,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       });
 
       if (result.conflict) return reply.status(409).send({ code: API_ERROR_VAULT_ITEM_OUT_OF_DATE });
+      if ('immutable' in result) return reply.status(409).send({ code: API_ERROR_VAULT_ITEM_IMMUTABLE });
       if (result.incoherent) return reply.status(400).send({ code: API_ERROR_VAULT_MANIFEST_INVALID });
 
       // Wake this user's other devices so they pull the change (write-through +
