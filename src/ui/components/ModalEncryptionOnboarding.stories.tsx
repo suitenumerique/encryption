@@ -4,7 +4,13 @@ import { expect, userEvent, waitFor } from 'storybook/test';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
-import { handleGetApiEmergencyAccessTrusted, handleGetApiPublicKeys, handleGetApiPublicKeysNext } from '@encryption/src/ui/api/generated/msw.gen';
+import { API_ERROR_VAULT_NOT_FOUND } from '@encryption/src/shared/error-codes';
+import {
+  handleGetApiEmergencyAccessTrusted,
+  handleGetApiPublicKeys,
+  handleGetApiPublicKeysNext,
+  handleGetApiVaultMeta,
+} from '@encryption/src/ui/api/generated/msw.gen';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
@@ -39,7 +45,11 @@ NewUserStory.args = {
 };
 NewUserStory.parameters = {
   msw: {
-    handlers: [handleGetApiPublicKeys({ body: { keys: [] } }), handleGetApiPublicKeysNext({ body: { next_version: 1, next_generation: 1 } })],
+    handlers: [
+      handleGetApiPublicKeys({ body: { keys: [] } }),
+      handleGetApiPublicKeysNext({ body: { next_version: 1, next_generation: 1 } }),
+      handleGetApiVaultMeta(() => Response.json({ code: API_ERROR_VAULT_NOT_FOUND }, { status: 404 })),
+    ],
   },
 };
 NewUserStory.play = async ({ canvasElement }) => {
@@ -78,7 +88,7 @@ ExistingUserStory.play = async ({ canvasElement }) => {
 
 export const ExistingUser = prepareStory(ExistingUserStory);
 
-// No ACTIVE key, but counters past 1: the account registered before and was reset.
+// No ACTIVE key, but a dormant vault: the account registered before and was reset.
 const PreviousIdentityStory = Template.bind({});
 PreviousIdentityStory.args = {
   ...NewUserStory.args,
@@ -86,6 +96,7 @@ PreviousIdentityStory.args = {
 const previousIdentityHandlers = [
   handleGetApiPublicKeys({ body: { keys: [] } }),
   handleGetApiPublicKeysNext({ body: { next_version: 3, next_generation: 2 } }),
+  handleGetApiVaultMeta({ body: { kdf_variants: [{ kdf_ops: 3, kdf_mem: 67108864 }] } }),
 ];
 PreviousIdentityStory.parameters = { msw: { handlers: previousIdentityHandlers } };
 PreviousIdentityStory.play = async ({ canvasElement }) => {
@@ -95,6 +106,26 @@ PreviousIdentityStory.play = async ({ canvasElement }) => {
 };
 
 export const PreviousIdentity = prepareStory(PreviousIdentityStory);
+
+// Registered before, but every dormant vault was deleted by the retention job: no
+// phrase can restore anything, so the fresh start is offered directly.
+const PurgedHistoryStory = Template.bind({});
+PurgedHistoryStory.args = { ...NewUserStory.args };
+PurgedHistoryStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiPublicKeys({ body: { keys: [] } }),
+      handleGetApiPublicKeysNext({ body: { next_version: 3, next_generation: 2 } }),
+      handleGetApiVaultMeta(() => Response.json({ code: API_ERROR_VAULT_NOT_FOUND }, { status: 404 })),
+    ],
+  },
+};
+PurgedHistoryStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enable'));
+  expect(canvasElement.textContent).not.toContain(i18n.t('onboarding.title_previous_identity'));
+};
+
+export const PurgedHistory = prepareStory(PurgedHistoryStory);
 
 // Same history, but the account had designated trusted contacts before the
 // identity was disabled: the screen names them as a way back in. An invitation

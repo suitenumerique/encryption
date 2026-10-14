@@ -95,6 +95,21 @@
       "body": "The recovery you helped with for <strong>{{grantorEmail}}</strong> is complete.",
       "voided": "The phrase you received is now void: you can discard it.",
       "note": "A fresh escrow was created automatically. There is nothing you need to do."
+    },
+    "vaultPurgeWarning": {
+      "subject": "Your previous encrypted vault will be deleted",
+      "title": "A previous vault will be deleted",
+      "intro": "On <strong>{{disabledAt, long}}</strong>, your encryption vault was replaced by a new one, or you stopped using encryption. That earlier vault can still be restored with its own recovery phrase.",
+      "deadline": "It will be permanently deleted on <strong>{{purgeAt, long}}</strong>, together with the keys it holds. Content encrypted only with those keys will no longer be readable.",
+      "keep": "To keep it, restore it with its recovery phrase before that date. It then becomes your current vault again.",
+      "nothing": "If you no longer need it, there is nothing to do.",
+      "button": "Open encryption"
+    },
+    "vaultPurged": {
+      "subject": "Your previous encrypted vault was deleted",
+      "title": "A previous vault was deleted",
+      "intro": "The encryption vault you stopped using on <strong>{{disabledAt, long}}</strong> was deleted, as announced, together with the keys it held.",
+      "consequence": "Content encrypted only with those keys can no longer be decrypted. Your current vault, if you have one, is not affected."
     }
   },
   "browser_warning": {

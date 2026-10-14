@@ -215,6 +215,8 @@ interface's client. Any other value turns each of the interface's API calls into
 - name: BRAND_FONT
   value: {{ $v.config.brandFont | quote }}
 {{- end }}
+- name: VAULT_PURGE_AFTER_DAYS
+  value: {{ $v.config.retention.vaultPurgeAfterDays | toString | quote }}
 {{- if $v.config.securityContactUrl }}
 - name: SECURITY_CONTACT_URL
   value: {{ $v.config.securityContactUrl | quote }}

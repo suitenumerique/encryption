@@ -80,6 +80,11 @@ config:
   # Where researchers report a problem with THIS instance, published as
   # /.well-known/security.txt. Empty = the path does not exist.
   securityContactUrl: ''
+  retention:
+    # Days a dormant vault (replaced by a start-over, or left by leaving encryption)
+    # stays restorable before its content is deleted, with emails 30 and 7 days
+    # before. 0 = never delete; otherwise at least 180.
+    vaultPurgeAfterDays: 730
 
 database:
   # The runtime role's connection string (rows only, see deploy/postgres/). One of

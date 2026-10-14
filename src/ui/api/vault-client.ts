@@ -1,7 +1,8 @@
-import { apiDefaults, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
+import { ApiError, apiDefaults, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
 import {
   getApiVaultApprovalsByRequestId,
   getApiVaultApprovalsPending,
+  getApiVaultMeta,
   postApiVault,
   postApiVaultApprovalsByRequestIdApprove,
   postApiVaultApprovalsRequest,
@@ -13,6 +14,19 @@ import type {
   PostApiVaultData,
   PutApiVaultKeyringData,
 } from '@encryption/src/ui/api/generated/types.gen';
+
+/** Whether the account still holds a vault its recovery phrase could restore, dormant ones included. */
+export async function hasRestorableVault(token: string): Promise<boolean> {
+  try {
+    await getApiVaultMeta({ ...apiDefaults, headers: authHeaders(token) });
+
+    return true;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return false;
+
+    throw err;
+  }
+}
 
 export async function createVault(token: string, body: PostApiVaultData['body']) {
   const { data } = await postApiVault({ ...apiDefaults, headers: authHeaders(token), body });

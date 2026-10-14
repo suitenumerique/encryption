@@ -89,6 +89,20 @@ export const envSchema = z.object({
       .regex(/^(?:https:\/\/|mailto:)\S+$/)
       .optional()
   ),
+  // Days a dormant vault (superseded by a start-over, or left by leaving encryption)
+  // stays restorable by its own recovery phrase before its content is deleted. The
+  // active vault is never concerned. 0 keeps dormant vaults forever. Below six months
+  // a user returning from a long leave would find the vault they left already gone.
+  // Empty means unset (the default), never 0: coercing '' would silently turn the
+  // purge off.
+  VAULT_PURGE_AFTER_DAYS: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number()
+      .int()
+      .refine((days) => days === 0 || days >= 180, 'expects 0 (never purge) or at least 180 days')
+      .default(730)
+  ),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.

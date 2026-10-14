@@ -3,6 +3,7 @@ import { env } from '@encryption/src/server/env';
 import { captureServerError, flushMonitoring, initMonitoring, isMonitoringEnabled } from '@encryption/src/server/monitoring';
 import { getBuildVersion } from '@encryption/src/server/routes/versions';
 import { createServer } from '@encryption/src/server/server';
+import { startVaultPurgeJobs } from '@encryption/src/server/vault-purge-jobs';
 
 async function main() {
   // Optional: with no SENTRY_DSN this is a no-op and nothing is ever sent.
@@ -53,9 +54,11 @@ async function main() {
       );
     }
 
-    // Notification cron (emergency access reminders/timeouts). Deliberately
-    // outside createServer so test-built servers never start timers.
+    // Scheduled jobs (emergency access reminders/timeouts, dormant vault
+    // retention). Deliberately outside createServer so test-built servers never
+    // start timers.
     const stopEmergencyJobs = startEmergencyJobs();
+    const stopVaultPurgeJobs = startVaultPurgeJobs();
 
     // Graceful shutdown for a real deployment: an orchestrator sends SIGTERM, then
     // SIGKILLs after a grace period, and Fastify does not drain on its own. In dev
@@ -74,7 +77,7 @@ async function main() {
         forced.unref();
 
         try {
-          await stopEmergencyJobs();
+          await Promise.all([stopEmergencyJobs(), stopVaultPurgeJobs()]);
           await app.close();
           await flushMonitoring();
         } catch (closeErr) {

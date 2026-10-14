@@ -14,7 +14,7 @@ import type { UserInfo } from '@encryption/src/ui/App';
 import { ApiError } from '@encryption/src/ui/api/client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { deletePublicKeys, fetchNextKeyVersion, fetchPublicKeys, registerKeyInit } from '@encryption/src/ui/api/public-keys-client';
-import { createVault } from '@encryption/src/ui/api/vault-client';
+import { createVault, hasRestorableVault } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
@@ -257,9 +257,10 @@ export function ModalEncryptionOnboarding({
   // Resolve the checking-history step AUTHORITATIVELY from the server (the
   // `hasExistingBackendKey` prop arrives async and may still be a stale false):
   //   - an ACTIVE identity exists            -> existing-key-choice
-  //   - no active but a DISABLED/dormant one -> previous-identity (restore/reactivate)
-  //     (next_version > 1 means some key ever existed = there is history)
-  //   - nothing at all                       -> explanation (truly new account)
+  //   - no active but a DORMANT vault        -> previous-identity (restore/reactivate)
+  //   - no vault left                        -> explanation (a new account, or one
+  //     whose dormant vaults were all deleted by the retention job: no phrase can
+  //     restore anything, so offering to would lead nowhere)
   // Right after a reset we go straight to enable. On error we fail open to enable
   // so onboarding is never blocked. Runs once.
   const historyChecked = useRef(false);
@@ -286,8 +287,7 @@ export function ModalEncryptionOnboarding({
           return;
         }
 
-        const next = await withFreshToken(getToken, (token) => fetchNextKeyVersion(token));
-        if (next.next_version <= 1) {
+        if (!(await withFreshToken(getToken, (token) => hasRestorableVault(token)))) {
           setStep('explanation');
 
           return;

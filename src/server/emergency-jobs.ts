@@ -13,9 +13,7 @@
  *    like Bitwarden's is not enough for waits that can span holidays);
  *  - purge: never-accepted designations are dropped after 90 days.
  *
- * Multi-instance safety: each run takes a Postgres transaction-scoped advisory
- * lock, so concurrent servers never double-send; the loser skips the run
- * entirely (the next hourly tick catches up).
+ * Multi-instance safety: see startScheduledJob.
  */
 import { prisma } from '@encryption/src/prisma/client';
 import {
@@ -25,10 +23,11 @@ import {
 } from '@encryption/src/server/email/emergency';
 import { env } from '@encryption/src/server/env';
 import { DAY_MS, HOUR_MS, emergencyRecipient } from '@encryption/src/server/routes/emergency-core';
+import { startScheduledJob } from '@encryption/src/server/scheduled-job';
 
 export const EMERGENCY_JOBS_INTERVAL_MS = 60 * 60 * 1000;
 // How long one run may hold the advisory lock. Well under the hourly interval,
-// well over the SMTP latency of a realistic batch (see runWithAdvisoryLock).
+// well over the SMTP latency of a realistic batch (see startScheduledJob).
 export const EMERGENCY_JOBS_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const INVITED_PURGE_AFTER_MS = 90 * DAY_MS;
 const ADVISORY_LOCK_KEY = 'encryption-emergency-jobs';
@@ -131,53 +130,12 @@ export async function runEmergencyJobsOnce(nowMs: number): Promise<void> {
   await runInvitedPurgeJob(nowMs);
 }
 
-async function runWithAdvisoryLock(): Promise<void> {
-  // hashtext gives a stable int4 from the key; the xact-scoped lock releases
-  // itself with the transaction, so a crashed run can never wedge the lock.
-  //
-  // The run's own reads and writes deliberately go through the global client, not
-  // `tx`: each row is processed (and its `lastNotifiedAt` / status bumped)
-  // independently, so a run that dies halfway must KEEP what it already did
-  // rather than roll it back and re-send those emails on the next tick. The
-  // transaction exists only to hold the lock for the duration.
-  //
-  // Which is why the timeout has to be raised: Prisma's default interactive
-  // transaction timeout is 5s, and a run that sends a handful of emails over SMTP
-  // blows through it — the transaction would abort and RELEASE THE LOCK while the
-  // run is still going, which is exactly the concurrent double-send the lock is
-  // there to prevent. An hourly schedule leaves ample room for a 10-minute cap.
-  await prisma.$transaction(
-    async (tx) => {
-      const [{ locked }] = await tx.$queryRaw<[{ locked: boolean }]>`SELECT pg_try_advisory_xact_lock(hashtext(${ADVISORY_LOCK_KEY})) AS locked`;
-      if (!locked) return;
-
-      await runEmergencyJobsOnce(Date.now());
-    },
-    { timeout: EMERGENCY_JOBS_LOCK_TIMEOUT_MS, maxWait: 2_000 }
-  );
-}
-
-/**
- * Called once from main.ts after listen; never from createServer (tests build
- * servers without timers). Returns a stop function for graceful shutdown: it
- * cancels the schedule and awaits any in-flight run so the process does not exit
- * mid-transaction (though the advisory lock is xact-scoped, so an abrupt kill
- * would roll back safely anyway).
- */
 export function startEmergencyJobs(): () => Promise<void> {
-  let inFlight: Promise<void> = Promise.resolve();
-  const tick = () => {
-    inFlight = runWithAdvisoryLock().catch((err) => console.error('emergency jobs run failed', err));
-
-    return inFlight;
-  };
-
-  void tick();
-  const interval = setInterval(tick, EMERGENCY_JOBS_INTERVAL_MS);
-  interval.unref();
-
-  return async () => {
-    clearInterval(interval);
-    await inFlight;
-  };
+  return startScheduledJob({
+    lockKey: ADVISORY_LOCK_KEY,
+    intervalMs: EMERGENCY_JOBS_INTERVAL_MS,
+    lockTimeoutMs: EMERGENCY_JOBS_LOCK_TIMEOUT_MS,
+    run: runEmergencyJobsOnce,
+    label: 'emergency jobs',
+  });
 }

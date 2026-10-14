@@ -234,6 +234,8 @@ spec:
               value: "noreply@example.org"
             - name: EMAIL_PRODUCT_URL
               value: "https://docs.example.org"
+            - name: VAULT_PURGE_AFTER_DAYS
+              value: "365"
             - name: SECURITY_CONTACT_URL
               value: "mailto:security@example.org"
             - name: DATABASE_URL

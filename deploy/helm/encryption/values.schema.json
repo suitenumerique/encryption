@@ -294,6 +294,16 @@
         "securityContactUrl": {
           "type": "string",
           "pattern": "^(?:https://\\S+|mailto:\\S+)?$"
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vaultPurgeAfterDays": {
+              "type": "integer",
+              "anyOf": [{ "const": 0 }, { "minimum": 180 }]
+            }
+          }
         }
       }
     },

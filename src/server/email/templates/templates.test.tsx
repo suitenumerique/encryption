@@ -24,6 +24,8 @@ import {
   EmergencyVaultRecoveredContactEmail,
   subject as vaultRecoveredContactSubject,
 } from '@encryption/src/server/email/templates/EmergencyVaultRecoveredContact';
+import { VaultPurgeWarningEmail, subject as purgeWarningSubject } from '@encryption/src/server/email/templates/VaultPurgeWarning';
+import { VaultPurgedEmail, subject as purgedSubject } from '@encryption/src/server/email/templates/VaultPurged';
 
 const grantorEmail = 'alice.martin@numerique.gouv.fr';
 const granteeEmail = 'jean.dupont@numerique.gouv.fr';
@@ -31,6 +33,7 @@ const productUrl = 'http://localhost:7201';
 
 // Midday UTC so the formatted date is August 15 in every realistic server timezone
 const deadlineMillis = Date.UTC(2026, 7, 15, 12);
+const disabledAtMillis = Date.UTC(2024, 7, 15, 12);
 
 type Locale = 'fr' | 'en';
 
@@ -149,6 +152,24 @@ const cases: Case[] = [
     expected: {
       fr: [grantorEmail, 'contact de confiance'],
       en: [grantorEmail, 'trusted contact'],
+    },
+  },
+  {
+    name: 'VaultPurgeWarning',
+    subject: purgeWarningSubject,
+    make: (locale) => VaultPurgeWarningEmail({ locale, disabledAtMillis, purgeAtMillis: deadlineMillis, productUrl }),
+    expected: {
+      fr: ['<strong>15 août 2024</strong>', '<strong>15 août 2026</strong>', 'phrase de récupération', productUrl],
+      en: ['<strong>August 15, 2024</strong>', '<strong>August 15, 2026</strong>', 'recovery phrase', productUrl],
+    },
+  },
+  {
+    name: 'VaultPurged',
+    subject: purgedSubject,
+    make: (locale) => VaultPurgedEmail({ locale, disabledAtMillis }),
+    expected: {
+      fr: ['<strong>15 août 2024</strong>', 'supprimé'],
+      en: ['<strong>August 15, 2024</strong>', 'deleted'],
     },
   },
 ];

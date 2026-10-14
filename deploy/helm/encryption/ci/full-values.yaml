@@ -31,6 +31,8 @@ config:
     senderAddress: noreply@example.org
   emailProductUrl: https://docs.example.org
   securityContactUrl: mailto:security@example.org
+  retention:
+    vaultPurgeAfterDays: 365
 
 database:
   url: postgresql://encryption_runtime:runtime-password@postgres.example.org:5432/encryption?schema=encryption

@@ -1245,7 +1245,7 @@ A user who lost their recovery phrase and every enrolled device leaves encryptio
 
 **The directory ledger is permanent.** Identities and encryption-key versions, with their dates and `disabledAt`, are never deleted. They are the audit trail and the source of the counters, which therefore never reset: a returning user's next key is the previous maximum plus one.
 
-**Vault content can be purged.** The wrapped VRK and the encrypted items are the only sensitive material, since they hold private keys. A scheduled job deletes them once a vault has been disabled for a year, which also limits how long private keys stay at rest. **Status: planned.** The job does not exist yet, so a disabled vault is kept, and can be reactivated, indefinitely.
+**Vault content is purged.** The wrapped VRK and the encrypted items are the only sensitive material, since they hold private keys. An hourly job (`src/server/vault-purge-jobs.ts`) deletes a vault (its keyring row, and through cascades its credentials, items, manifest and emergency escrows) once it has been dormant for `VAULT_PURGE_AFTER_DAYS`: 730 by default, `0` to keep dormant vaults forever, never less than 180 so that a user back from a long leave still finds the vault they left. The clock starts at `disabledAt`, and only dormant vaults count: the active vault is never deleted, however long its owner stays away. The owner is emailed 30 days and 7 days before, and once it is done. A deletion never happens without a warning sent at least 7 days earlier in the same dormancy, and never before the date that warning announced (stored as `purgeScheduledAt`): enabling the job on old data warns first and deletes a week later, shortening the retention never brings an announced date forward, and a final warning missed while the job was down is sent late rather than skipped. A vault reactivated since a warning is warned anew if it goes dormant again. A failure on one vault is logged, and sent to the error collector when `SENTRY_DSN` is set, without holding back the others.
 
 **Reactivation and reset.** Within that period, the right recovery phrase reactivates the dormant vault: the key derived from it matches that vault's stored auth public key, which identifies the vault and proves ownership at once. After it, or when no disabled vault matches, the user starts a new vault under a new identity, and the old encrypted content is lost.
 
@@ -1262,7 +1262,7 @@ stateDiagram-v2
   [*] --> active: onboarding<br/>(identity + encryption key + vault keyring)
   active --> dormant: de-onboard<br/>(soft-disable identity and keyring, disabledAt set)
   dormant --> active: correct recovery phrase within the retention window<br/>(/vault/reactivate, same encryption key restored)
-  dormant --> purged: retention job (planned), disabledAt older than 1 year<br/>(wrapped VRK + sealed items deleted)
+  dormant --> purged: retention job, disabledAt older than VAULT_PURGE_AFTER_DAYS<br/>(2 years by default, warned 30 and 7 days before;<br/>wrapped VRK + sealed items deleted)
   purged --> active: onboarding a FRESH vault<br/>(new identity generation, old content lost)
   note right of purged
     The directory ledger is never purged: identity
@@ -1284,7 +1284,7 @@ sequenceDiagram
   U->>V: lost access, de-onboard
   V->>API: DELETE /public-keys (login token only)
   Note over API: soft-disable the IDENTITY + keyring (set disabledAt)<br/>encryption key row stays valid for later recovery<br/>directory joins only active identities, so it stops being listed<br/>a stolen access token can only hide data, never destroy it
-  Note over API: ledger is permanent (identities + versions kept forever)<br/>planned: a scheduled purge of the vault content only<br/>(wrappedVRK + sealed items) after disabledAt over 1 year
+  Note over API: ledger is permanent (identities + versions kept forever)<br/>a scheduled purge deletes the vault content only<br/>(wrappedVRK + sealed items) after VAULT_PURGE_AFTER_DAYS dormant
   alt within retention window, user re-enters the recovery phrase
     U->>V: recover with the recovery phrase
     Note over U,API: same frontend logic + endpoints as the §7.2 cold-unlock.<br/>The phrase resolves to the dormant vault, so its<br/>is_active=false path runs (modal, then /vault/reactivate).
@@ -1496,7 +1496,7 @@ The server requires an **exact match**: one re-arm per granted relationship of t
 
 ### 8.6 Lifecycle
 
-- **The grantor starts over ([7.8](#s7-8)): escrows survive.** They stay bound to the now dormant vault and still work against it: recovering through one lands on that vault and follows the reactivation of [7.2](#s7-2). This way a stolen session cannot erase the user's recovery routes by resetting; the worst it achieves is noise, never permanent lockout. The reverse risk, an old contact reviving a vault the user meant to abandon, is accepted, bounded by the wait, the notices and the contact being a verified person, and stated in the user documentation. Escrows disappear only when the vault content is purged (once the job of [7.8](#s7-8) exists), through cascading deletes. A new vault starts with no contacts, and its empty TOFU registry forces new verifications.
+- **The grantor starts over ([7.8](#s7-8)): escrows survive.** They stay bound to the now dormant vault and still work against it: recovering through one lands on that vault and follows the reactivation of [7.2](#s7-2). This way a stolen session cannot erase the user's recovery routes by resetting; the worst it achieves is noise, never permanent lockout. The reverse risk, an old contact reviving a vault the user meant to abandon, is accepted, bounded by the wait, the notices and the contact being a verified person, and stated in the user documentation. Escrows disappear only when the vault content is purged ([7.8](#s7-8)), through cascading deletes. A new vault starts with no contacts, and its empty TOFU registry forces new verifications.
 - **The contact starts over** (lost their own vault): the capsule targets keys that no longer exist. The grantor's audit sees that the pinned identity is no longer the contact's active one and is not linked to it, and flags `stale-identity`; the fix is to revoke and designate again, with a new verification.
 - **The contact's identity changed legitimately** (continuity chain): the audit walks the chain like the trust check ([5.4](#s5-4)) and keeps the escrow; nothing to do.
 - **The contact's encryption key changed**: nothing breaks, since their old key stays in their vault, but the recorded `granteeKeyVersion` is behind, so the audit flags `outdated-key` and the settings offer a **one-click re-arm** (new phrase, credential and capsule, status unchanged).

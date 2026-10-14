@@ -259,12 +259,14 @@ model VaultMeta {
 /// opened by several credentials (the owner's phrase, plus dormant emergency
 /// phrases escrowed to trusted contacts).
 model VaultKeyring {
-  id         String    @id @default(uuid()) @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  identityId String    @map("identity_id") @db.Uuid /// the directory identity this vault belongs to; lets reactivation flip the right identity + encryption key active
-  disabledAt DateTime? @map("disabled_at") /// null = the user's current (active) vault
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  identityId       String    @map("identity_id") @db.Uuid /// the directory identity this vault belongs to; lets reactivation flip the right identity + encryption key active
+  disabledAt       DateTime? @map("disabled_at") /// null = the user's current (active) vault
+  purgeNoticeAt    DateTime? @map("purge_notice_at") /// last purge warning emailed; only counts when later than disabledAt, so a reactivated then dormant-again vault is warned anew
+  purgeScheduledAt DateTime? @map("purge_scheduled_at") /// the deletion date that warning announced; the purge never runs before it, even after the retention was shortened
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
 
   user        User              @relation(fields: [userId], references: [id])
   identity    Identity          @relation(fields: [identityId], references: [id])

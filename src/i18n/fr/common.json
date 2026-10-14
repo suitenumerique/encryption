@@ -95,6 +95,21 @@
       "body": "La récupération à laquelle vous avez contribué pour <strong>{{grantorEmail}}</strong> est terminée.",
       "voided": "La phrase qui vous avait été transmise est désormais caduque : vous pouvez la détruire.",
       "note": "Un nouveau dispositif de secours a été créé automatiquement. Vous n’avez rien à faire."
+    },
+    "vaultPurgeWarning": {
+      "subject": "Votre ancien coffre chiffré va être supprimé",
+      "title": "Un ancien coffre va être supprimé",
+      "intro": "Le <strong>{{disabledAt, long}}</strong>, votre coffre de chiffrement a été remplacé par un nouveau, ou vous avez cessé d’utiliser le chiffrement. Cet ancien coffre peut encore être restauré avec sa propre phrase de récupération.",
+      "deadline": "Il sera définitivement supprimé le <strong>{{purgeAt, long}}</strong>, avec les clés qu’il contient. Les contenus chiffrés uniquement avec ces clés ne pourront plus être lus.",
+      "keep": "Pour le conserver, restaurez-le avec sa phrase de récupération avant cette date. Il redeviendra alors votre coffre actuel.",
+      "nothing": "Si vous n’en avez plus besoin, vous n’avez rien à faire.",
+      "button": "Ouvrir le chiffrement"
+    },
+    "vaultPurged": {
+      "subject": "Votre ancien coffre chiffré a été supprimé",
+      "title": "Un ancien coffre a été supprimé",
+      "intro": "Le coffre de chiffrement que vous n’utilisiez plus depuis le <strong>{{disabledAt, long}}</strong> a été supprimé comme annoncé, avec les clés qu’il contenait.",
+      "consequence": "Les contenus chiffrés uniquement avec ces clés ne peuvent plus être déchiffrés. Votre coffre actuel, si vous en avez un, n’est pas concerné."
     }
   },
   "browser_warning": {
