@@ -103,7 +103,7 @@ describe('buildBrowserErrorReport', () => {
   });
 
   it('classifies a throw that is not a VaultError, and copes with a non-Error throw', () => {
-    expect(buildBrowserErrorReport(new Error('wrong secret key for the given ciphertext'), ORIGIN, NO_TEXT)).toEqual({
+    expect(buildBrowserErrorReport(new Error('ciphertext cannot be decrypted using that key'), ORIGIN, NO_TEXT)).toEqual({
       type: 'browser-error',
       name: 'Error',
       code: 'WRONG_SECRET_KEY',

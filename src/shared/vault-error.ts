@@ -22,7 +22,7 @@ export const VaultErrorCode = {
    * AEAD verification failed. Either the ciphertext is for a different
    * recipient (their wrapped symmetric key was encrypted against another
    * pubkey) or the underlying KEM secret didn't match. Bubbles up from
-   * libsodium's "wrong secret key for the given ciphertext".
+   * libsodium's "ciphertext cannot be decrypted using that key".
    */
   WRONG_SECRET_KEY: 'WRONG_SECRET_KEY',
   /**
@@ -146,7 +146,7 @@ export const isVaultError = (err: unknown): err is VaultError => {
 export const classifyVaultError = (err: unknown): VaultErrorCode => {
   if (err instanceof VaultError) return err.code;
   const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-  if (/wrong secret key/i.test(msg)) return VaultErrorCode.WRONG_SECRET_KEY;
+  if (/cannot be decrypted using that key/i.test(msg)) return VaultErrorCode.WRONG_SECRET_KEY;
   if (/no key pair/i.test(msg)) return VaultErrorCode.MISSING_KEYS;
   if (/invalid backup/i.test(msg)) return VaultErrorCode.INVALID_BACKUP;
   if (/invalid mnemonic|checksum mismatch/i.test(msg)) return VaultErrorCode.INVALID_MNEMONIC;

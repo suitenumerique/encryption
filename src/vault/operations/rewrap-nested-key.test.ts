@@ -18,6 +18,7 @@
 import { type Mock, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
+import { VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleEncryptNestedWithoutKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
@@ -277,7 +278,7 @@ describe('handleRewrapNestedKey', () => {
 
     // File belongs under A, but we lie and tell rewrap that B was the
     // old parent. The unwrap of K_file under K_B should fail with
-    // libsodium's "wrong secret key" → mapped to WRONG_SECRET_KEY.
+    // libsodium's AEAD failure, mapped to WRONG_SECRET_KEY.
     const file = await handleEncryptNestedWithoutKey(USER_ID, {
       data: new ArrayBuffer(0),
       encryptedSymmetricKey: entry,
@@ -291,6 +292,6 @@ describe('handleRewrapNestedKey', () => {
         oldEncryptedKeyChain: [folderB.wrappedKey],
         newEncryptedKeyChain: [folderA.wrappedKey],
       })
-    ).rejects.toThrow(/wrong secret key/i);
+    ).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
   });
 });

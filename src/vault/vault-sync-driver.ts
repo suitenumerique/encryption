@@ -2,7 +2,7 @@
  * Background sync driver, running INSIDE the vault iframe (which is loaded
  * whenever a product uses encryption, and holds the identity key). It keeps the
  * vault synced without the interface or an OIDC token: every request it makes is
- * authenticated by the identity signature alone (§7.1, tier 1).
+ * authenticated by the identity signature alone (architecture.md §6.4, background tier).
  *
  * It is started lazily from the message handler the first time the vault handles
  * an op for a user (idempotent), so sync begins as soon as a product page is
@@ -16,7 +16,7 @@
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { REQUEST_SIG_HEADER, signRequestProof } from '@encryption/src/crypto/request-proof';
 import { activeIdentity } from '@encryption/src/crypto/vault-state';
-import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
+import { syncWithIntegrityRetry } from '@encryption/src/vault/operations/vault-sync-checked';
 import { loadVault } from '@encryption/src/vault/vault-keys';
 
 const EVENTS_PATH = '/api/vault/events';
@@ -146,10 +146,12 @@ async function drive(userId: string, signal: AbortSignal, settle: (ok: boolean) 
 }
 
 // A pull that never rejects: not-enrolled or offline just means "try again on the
-// next wake".
+// next wake". An integrity failure is retried once and reported if it lasts
+// (syncWithIntegrityRetry); the local state is kept either way, and the next
+// wake tries again, so sync resumes on its own once the server copy verifies.
 async function safeSync(userId: string): Promise<void> {
   try {
-    await handleSync(userId);
+    await syncWithIntegrityRetry(userId);
   } catch {
     /* not enrolled yet / offline */
   }
@@ -195,7 +197,7 @@ function backoff(ms: number, signal: AbortSignal): Promise<void> {
 // page becomes visible again — the user switching back to this tab, or turning to
 // this device — pull immediately. This is what catches everything a missed SSE
 // wake would not: a mutation handled by a different server instance, an instance
-// restart, or a connection that was down. See architecture.md §8.
+// restart, or a connection that was down. See architecture.md §11.
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || !current) return;

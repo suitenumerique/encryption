@@ -70,7 +70,7 @@ import { handleShareKeys } from '@encryption/src/vault/operations/share-keys';
 import { handleSignKeyRegistration } from '@encryption/src/vault/operations/sign-key-registration';
 import { handleSignRequest } from '@encryption/src/vault/operations/sign-request';
 import { handleReactivateVault, handleRestoreFromPhrase } from '@encryption/src/vault/operations/vault-restore';
-import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
+import { syncWithIntegrityRetry } from '@encryption/src/vault/operations/vault-sync-checked';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
 import { resolveBoundaryUser, resolveLocalUserId } from '@encryption/src/vault/user-resolution';
@@ -206,7 +206,7 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_REACTIVATE:
       return handleReactivateVault(userId, payload as { recoveryPhrase: string; token: string });
     case MSG_VAULT_SYNC:
-      return handleSync(userId, payload as { token?: string | null });
+      return syncWithIntegrityRetry(userId, payload as { token?: string | null });
     case MSG_VAULT_SIGN_REQUEST:
       return handleSignRequest(userId, payload as { method: string; path: string; body?: string });
     case MSG_VAULT_START_DEVICE_APPROVAL:

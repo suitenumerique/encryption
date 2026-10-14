@@ -7,7 +7,7 @@
  * encapsulation and decapsulation all live inside libsodium's
  * crypto_kem_xwing_* functions; we just call them.
  *
- * Symmetric: XChaCha20-Poly1305 (crypto_secretbox). Quantum-safe.
+ * Symmetric: XChaCha20-Poly1305 (crypto_aead_xchacha20poly1305_ietf). Quantum-safe.
  *   - 256-bit keys, 192-bit random nonces (safe with random generation).
  *
  * Versioning: every serialized binary blob (public key for the wire,
@@ -157,7 +157,7 @@ export async function hybridDecapsulate(secretKey: HybridSecretKey, ciphertext: 
 export async function generateSymmetricKey(): Promise<Uint8Array> {
   await ensureSodium();
 
-  return sodium.crypto_secretbox_keygen();
+  return sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
 }
 
 /**
@@ -167,8 +167,8 @@ export async function generateSymmetricKey(): Promise<Uint8Array> {
 export async function encryptContent(content: Uint8Array, symmetricKey: Uint8Array): Promise<Uint8Array> {
   await ensureSodium();
 
-  const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES); // 24 bytes
-  const ciphertext = sodium.crypto_secretbox_easy(content, nonce, symmetricKey);
+  const nonce = sodium.randombytes_buf(sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES); // 24 bytes
+  const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(content, null, null, nonce, symmetricKey);
 
   const result = new Uint8Array(1 + nonce.length + ciphertext.length);
   result[0] = CRYPTO_VERSION;
@@ -185,7 +185,7 @@ export async function encryptContent(content: Uint8Array, symmetricKey: Uint8Arr
 export async function decryptContent(encryptedContent: Uint8Array, symmetricKey: Uint8Array): Promise<Uint8Array> {
   await ensureSodium();
 
-  const minLen = 1 + sodium.crypto_secretbox_NONCEBYTES + sodium.crypto_secretbox_MACBYTES;
+  const minLen = 1 + sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
 
   if (encryptedContent.length < minLen) {
     throw new VaultError(VaultErrorCode.CIPHERTEXT_TOO_SHORT, 'Encrypted content is too short to be valid');
@@ -197,17 +197,17 @@ export async function decryptContent(encryptedContent: Uint8Array, symmetricKey:
     throw new VaultError(VaultErrorCode.UNSUPPORTED_CRYPTO_VERSION, `Unsupported crypto version ${version}`);
   }
 
-  const nonce = encryptedContent.slice(1, 1 + sodium.crypto_secretbox_NONCEBYTES);
-  const ciphertext = encryptedContent.slice(1 + sodium.crypto_secretbox_NONCEBYTES);
+  const nonce = encryptedContent.slice(1, 1 + sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+  const ciphertext = encryptedContent.slice(1 + sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
 
-  // libsodium throws "wrong secret key for the given ciphertext" on AEAD
+  // libsodium throws "ciphertext cannot be decrypted using that key" on AEAD
   // verification failure — surface that as our stable code so consumers
   // never have to regex on the message. Re-throw anything else verbatim.
   try {
-    return sodium.crypto_secretbox_open_easy(ciphertext, nonce, symmetricKey);
+    return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, null, nonce, symmetricKey);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/wrong secret key/i.test(msg)) {
+    if (/cannot be decrypted using that key/i.test(msg)) {
       throw new VaultError(VaultErrorCode.WRONG_SECRET_KEY, msg);
     }
     throw err;
@@ -275,7 +275,7 @@ export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, enc
     throw new VaultError(VaultErrorCode.MALFORMED_CIPHERTEXT, `Unexpected KEM ciphertext length ${kemLen}`);
   }
 
-  const innerMinLen = 1 + sodium.crypto_secretbox_NONCEBYTES + sodium.crypto_secretbox_MACBYTES;
+  const innerMinLen = 1 + sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
 
   if (encryptedKey.length < 3 + kemLen + innerMinLen) {
     throw new VaultError(VaultErrorCode.CIPHERTEXT_TOO_SHORT, 'Encrypted key is too short to be valid');
