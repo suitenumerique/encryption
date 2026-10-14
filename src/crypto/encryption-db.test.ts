@@ -4,7 +4,7 @@ import { type IDBPDatabase, openDB } from 'idb';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MIGRATIONS } from '@encryption/src/crypto/encryption-db';
-import { DB_NAME, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { DB_NAME, STORE_DEVICE_ACTIVITY, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 
 // Each test starts from an empty IndexedDB and a fresh module, so
 // getEncryptionDB's cached connection promise never leaks a handle (or a stale
@@ -49,6 +49,7 @@ describe('encryption IndexedDB schema', () => {
     expect(db.version).toBe(DB_VERSION);
     expect(db.objectStoreNames.contains(STORE_VAULT_CACHE)).toBe(true);
     expect(db.objectStoreNames.contains(STORE_USER_ALIAS)).toBe(true);
+    expect(db.objectStoreNames.contains(STORE_DEVICE_ACTIVITY)).toBe(true);
 
     db.close();
   });

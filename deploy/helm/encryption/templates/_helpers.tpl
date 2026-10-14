@@ -217,6 +217,8 @@ interface's client. Any other value turns each of the interface's API calls into
 {{- end }}
 - name: VAULT_PURGE_AFTER_DAYS
   value: {{ $v.config.retention.vaultPurgeAfterDays | toString | quote }}
+- name: VAULT_DEVICE_INACTIVITY_DAYS
+  value: {{ $v.config.retention.deviceInactivityDays | toString | quote }}
 {{- if $v.config.securityContactUrl }}
 - name: SECURITY_CONTACT_URL
   value: {{ $v.config.securityContactUrl | quote }}

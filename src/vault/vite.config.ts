@@ -2,6 +2,7 @@ import { resolve } from 'path';
 import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
+import { parseDeviceInactivityDays } from '../shared/device-inactivity.ts';
 import { buildRuntimeConfigBlock } from '../shared/runtime-config.ts';
 
 const configDir = import.meta.dirname;
@@ -21,6 +22,7 @@ function injectRuntimeConfig(): Plugin {
           .map((s) => s.trim())
           .filter(Boolean),
         interfaceOrigin: process.env.UI_URL ?? '',
+        deviceInactivityDays: parseDeviceInactivityDays(process.env.VAULT_DEVICE_INACTIVITY_DAYS),
       };
       const block = buildRuntimeConfigBlock(config);
 

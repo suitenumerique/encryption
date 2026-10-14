@@ -33,6 +33,7 @@ config:
   securityContactUrl: mailto:security@example.org
   retention:
     vaultPurgeAfterDays: 365
+    deviceInactivityDays: 0
 
 database:
   url: postgresql://encryption_runtime:runtime-password@postgres.example.org:5432/encryption?schema=encryption

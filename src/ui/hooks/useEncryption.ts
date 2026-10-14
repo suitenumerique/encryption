@@ -25,6 +25,7 @@ import {
   MSG_VAULT_UNCOMMIT_STAGED,
   MSG_VAULT_VERIFY_ESCROWS,
 } from '@encryption/src/shared/constants';
+import type { HasKeysResult } from '@encryption/src/shared/has-keys';
 import type { EmergencyDesignateBody, EmergencyRearmEntry, EmergencyTrustedEntry } from '@encryption/src/shared/schemas/emergency-access';
 import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import type { VaultItemWire, VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
@@ -78,7 +79,7 @@ interface UseEncryptionReturn {
     keyBindingSignature: string;
   }>;
   respondToKeyChallenge: (challengeId: string, ciphertext: string) => Promise<{ response: string; challengeSignature: string }>;
-  hasKeys: () => Promise<{ hasKeys: boolean }>;
+  hasKeys: () => Promise<HasKeysResult>;
   getPublicKey: () => Promise<{ publicKey: string; signaturePublicKey?: string }>;
   /** Build the atomic-bootstrap body (recovery phrase, keyring, sealed items, manifest). */
   prepareOnboarding: (opts?: { lang?: MnemonicLanguage; version?: number; generation?: number; reusePhrase?: string }) => Promise<OnboardingBundle>;
@@ -314,7 +315,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
     [request]
   );
 
-  const hasKeys = useCallback(() => request(MSG_VAULT_HAS_KEYS) as Promise<{ hasKeys: boolean }>, [request]);
+  const hasKeys = useCallback(() => request(MSG_VAULT_HAS_KEYS) as Promise<HasKeysResult>, [request]);
 
   const getPublicKey = useCallback(() => request(MSG_VAULT_GET_PUBLIC_KEY) as Promise<{ publicKey: string; signaturePublicKey?: string }>, [request]);
 

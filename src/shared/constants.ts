@@ -41,6 +41,12 @@ export const STORE_VAULT_CACHE = 'vaultCache';
 // call is independently authenticated.
 export const STORE_USER_ALIAS = 'userAlias';
 
+// When this browser last used each user's vault, kept apart from the vault cache
+// so recording a use never rewrites (and never races) the cache row. Read before
+// any unlock, to forget a vault left unused too long; after that it remembers
+// when and why, so the interface can tell the user. Plain metadata, no secret.
+export const STORE_DEVICE_ACTIVITY = 'deviceActivity';
+
 // ============================================================================
 // Trusted Types policy names
 // ============================================================================

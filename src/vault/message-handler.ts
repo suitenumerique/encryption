@@ -38,6 +38,7 @@ import {
 } from '@encryption/src/shared/constants';
 import { PRIVILEGED_OPERATIONS, type VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode, classifyVaultError } from '@encryption/src/shared/vault-error';
+import { recordDeviceUse } from '@encryption/src/vault/device-activity';
 import { checkEmergencyPending } from '@encryption/src/vault/emergency-pending';
 import { reportVaultError, shouldReportVaultError } from '@encryption/src/vault/monitoring';
 import { handleCommitStagedVault, handleUncommitStagedVault } from '@encryption/src/vault/operations/commit-staged';
@@ -305,6 +306,11 @@ export function setupMessageHandler(): void {
 
         throw new VaultError(VaultErrorCode.UNRESOLVED_USER, 'No encryption account is known for this user yet.');
       }
+
+      // Every operation is a use of this browser's vault, warm decrypts included,
+      // and the inactivity delay is checked first: a vault left unused too long is
+      // forgotten before this operation, or the sync driver, can open it.
+      await recordDeviceUse(userId);
 
       // Ensure the background sync driver is running for this user (idempotent):
       // the vault keeps itself synced (identity-signed, no interface/JWT) as long

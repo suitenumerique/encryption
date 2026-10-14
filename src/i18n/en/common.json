@@ -234,7 +234,9 @@
     "cancel_setup_title": "Cancel encryption setup",
     "cancel_setup_text": "You have not saved your recovery phrase yet. If you close now, encryption will not be enabled.",
     "btn_go_back": "Go back",
-    "btn_close_anyway": "Close anyway"
+    "btn_close_anyway": "Close anyway",
+    "de_enrolled_notice_one": "This browser had not used encryption for more than {{count}} day, so it forgot your keys for safety. Connect it again with another of your devices or your recovery phrase.",
+    "de_enrolled_notice_other": "This browser had not used encryption for more than {{count}} days, so it forgot your keys for safety. Connect it again with another of your devices or your recovery phrase."
   },
   "demo": {
     "title": "Fake Product (Encryption Demo)",

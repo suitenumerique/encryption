@@ -198,7 +198,26 @@ export function ModalEncryptionOnboarding({
     reactivateVault,
     syncVault,
     changeRecoveryPhrase,
+    hasKeys,
   } = useEncryptionContext();
+
+  // Set when this browser held the vault but forgot it after a long inactivity,
+  // so asking to enroll again is explained rather than looking like a bug.
+  const [deEnrolledAfterDays, setDeEnrolledAfterDays] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    hasKeys()
+      .then(({ deEnrolled }) => {
+        if (!cancelled && deEnrolled) setDeEnrolledAfterDays(deEnrolled.inactivityDays);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasKeys]);
 
   // With an active server key -> existing-key-choice. Otherwise DON'T show the
   // fresh "Enable" screen yet: first check (checking-history) whether the account
@@ -712,6 +731,10 @@ export function ModalEncryptionOnboarding({
     </>
   );
 
+  const deEnrolledNotice = deEnrolledAfterDays !== null && (
+    <Alert type={VariantType.INFO}>{t('onboarding.de_enrolled_notice', { count: deEnrolledAfterDays })}</Alert>
+  );
+
   const anotherDeviceButton = onUseAnotherDevice && (
     <Button variant="tertiary" onClick={onUseAnotherDevice} icon={<Icon aria-hidden name="laptop" />}>
       {t('onboarding.btn_use_another_device')}
@@ -799,7 +822,12 @@ export function ModalEncryptionOnboarding({
           illustration="shield-check"
           title={t('onboarding.title_existing')}
           description={t('onboarding.existing_recovery_hint')}
-          banner={banner}
+          banner={
+            <>
+              {banner}
+              {deEnrolledNotice}
+            </>
+          }
           actions={
             <>
               {onUseAnotherDevice && (
@@ -832,7 +860,12 @@ export function ModalEncryptionOnboarding({
               <p>{t('onboarding.previous_identity_hint')}</p>
             </>
           }
-          banner={banner}
+          banner={
+            <>
+              {banner}
+              {deEnrolledNotice}
+            </>
+          }
           actions={
             <>
               <Button variant="secondary" onClick={() => setStep('restore')} icon={<Icon aria-hidden name="key" />}>

@@ -42,3 +42,24 @@ describe('VAULT_PURGE_AFTER_DAYS', () => {
     }
   });
 });
+
+describe('VAULT_DEVICE_INACTIVITY_DAYS', () => {
+  const parse = (value: string | undefined) => envSchema.shape.VAULT_DEVICE_INACTIVITY_DAYS.safeParse(value);
+
+  it('defaults to one year, also when set but empty', () => {
+    expect(parse(undefined).data).toBe(365);
+    expect(parse('').data).toBe(365);
+  });
+
+  it('accepts 0 (never de-enroll) and a month or more', () => {
+    for (const value of ['0', '30', '180']) {
+      expect(parse(value).success, value).toBe(true);
+    }
+  });
+
+  it('refuses a delay a holiday would exceed', () => {
+    for (const value of ['1', '29', '-5', '30.5', 'abc']) {
+      expect(parse(value).success, value).toBe(false);
+    }
+  });
+});

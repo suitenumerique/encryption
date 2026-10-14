@@ -85,6 +85,9 @@ config:
     # stays restorable before its content is deleted, with emails 30 and 7 days
     # before. 0 = never delete; otherwise at least 180.
     vaultPurgeAfterDays: 730
+    # Days without use after which a browser forgets its copy of the vault and must
+    # be enrolled again. 0 = never; otherwise at least 30.
+    deviceInactivityDays: 365
 
 database:
   # The runtime role's connection string (rows only, see deploy/postgres/). One of

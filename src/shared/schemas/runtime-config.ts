@@ -36,6 +36,8 @@ export const uiRuntimeConfigSchema = z.object({
 export const vaultRuntimeConfigSchema = z.object({
   allowedOrigins: z.array(z.string().min(1)),
   interfaceOrigin: z.string().url(),
+  // VAULT_DEVICE_INACTIVITY_DAYS; 0 = never de-enroll.
+  deviceInactivityDays: z.number().int().min(0),
 });
 
 export type UiRuntimeConfig = z.infer<typeof uiRuntimeConfigSchema>;

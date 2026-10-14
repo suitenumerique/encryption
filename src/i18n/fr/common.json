@@ -234,7 +234,9 @@
     "cancel_setup_title": "Annuler l'activation du chiffrement",
     "cancel_setup_text": "Vous n'avez pas encore enregistré votre phrase de récupération. Si vous fermez maintenant, le chiffrement ne sera pas activé.",
     "btn_go_back": "Revenir",
-    "btn_close_anyway": "Fermer quand même"
+    "btn_close_anyway": "Fermer quand même",
+    "de_enrolled_notice_one": "Ce navigateur n’avait pas utilisé le chiffrement depuis plus de {{count}} jour : il a oublié vos clés par sécurité. Reconnectez-le avec un autre de vos appareils ou votre phrase de récupération.",
+    "de_enrolled_notice_other": "Ce navigateur n’avait pas utilisé le chiffrement depuis plus de {{count}} jours : il a oublié vos clés par sécurité. Reconnectez-le avec un autre de vos appareils ou votre phrase de récupération."
   },
   "demo": {
     "title": "Produit fictif (Démo chiffrement)",

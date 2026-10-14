@@ -14,6 +14,7 @@ function buildVaultConfigBlock(): string {
   const config = {
     allowedOrigins: parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS),
     interfaceOrigin: env.UI_URL,
+    deviceInactivityDays: env.VAULT_DEVICE_INACTIVITY_DAYS,
   };
 
   return buildRuntimeConfigBlock(config);

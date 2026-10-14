@@ -1,5 +1,7 @@
 import { type UserKeyBundle, exportPublicKeyAsBase64 } from '@encryption/src/crypto';
+import type { HasKeysResult } from '@encryption/src/shared/has-keys';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
+import { getDeEnrollment } from '@encryption/src/vault/device-activity';
 import { type StoredKeyPair, deriveStoredKeyPair, hasVaultKeys, loadVault } from '@encryption/src/vault/vault-keys';
 
 let operationQueue: Promise<unknown> = Promise.resolve();
@@ -62,8 +64,16 @@ export async function getStoredKeyBundle(userId: string): Promise<UserKeyBundle>
   };
 }
 
-export async function handleHasKeys(userId: string): Promise<{ hasKeys: boolean }> {
-  return { hasKeys: await hasVaultKeys(userId) };
+/**
+ * `deEnrolled` tells the interface why a browser that held the vault no longer
+ * does, so re-enrolling does not look like a bug.
+ */
+export async function handleHasKeys(userId: string): Promise<HasKeysResult> {
+  if (await hasVaultKeys(userId)) return { hasKeys: true };
+
+  const deEnrolled = await getDeEnrollment(userId);
+
+  return deEnrolled ? { hasKeys: false, deEnrolled } : { hasKeys: false };
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {

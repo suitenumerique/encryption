@@ -24,6 +24,7 @@ import {
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import type { HasKeysResult } from '@encryption/src/shared/has-keys';
 import { type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
@@ -321,9 +322,12 @@ export class VaultClient {
   // Data operations (via data.encryption hidden iframe)
   // =========================================================================
 
-  /** Check if the user has encryption keys on this device. */
-  async hasKeys(): Promise<{ hasKeys: boolean }> {
-    return (await this.vaultRequest(MSG_VAULT_HAS_KEYS)) as { hasKeys: boolean };
+  /**
+   * Check if the user has encryption keys on this device. `deEnrolled` is set when
+   * this browser forgot them after a long inactivity: the onboarding explains it.
+   */
+  async hasKeys(): Promise<HasKeysResult> {
+    return (await this.vaultRequest(MSG_VAULT_HAS_KEYS)) as HasKeysResult;
   }
 
   /** Get the user's public key as ArrayBuffer. */

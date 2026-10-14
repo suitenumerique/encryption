@@ -88,6 +88,24 @@ ExistingUserStory.play = async ({ canvasElement }) => {
 
 export const ExistingUser = prepareStory(ExistingUserStory);
 
+// This browser held the vault but forgot it after a year without use: the same
+// choice, explained.
+const ExistingUserDeEnrolledStory = Template.bind({});
+ExistingUserDeEnrolledStory.args = { ...ExistingUserStory.args };
+ExistingUserDeEnrolledStory.parameters = {
+  ...ExistingUserStory.parameters,
+  encryption: {
+    ...ExistingUserStory.parameters?.encryption,
+    hasKeys: async () => ({ hasKeys: false, deEnrolled: { deEnrolledAt: 1_750_000_000_000, inactivityDays: 365 } }),
+  },
+};
+ExistingUserDeEnrolledStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  await waitFor(() => expect(canvasElement.textContent).toContain(i18n.t('onboarding.de_enrolled_notice', { count: 365 })));
+};
+
+export const ExistingUserDeEnrolled = prepareStory(ExistingUserDeEnrolledStory);
+
 // No ACTIVE key, but a dormant vault: the account registered before and was reset.
 const PreviousIdentityStory = Template.bind({});
 PreviousIdentityStory.args = {
@@ -106,6 +124,24 @@ PreviousIdentityStory.play = async ({ canvasElement }) => {
 };
 
 export const PreviousIdentity = prepareStory(PreviousIdentityStory);
+
+// The same history, seen from a browser that also forgot its vault after a year
+// without use (the identity was reset from another device meanwhile): explained too.
+const PreviousIdentityDeEnrolledStory = Template.bind({});
+PreviousIdentityDeEnrolledStory.args = { ...PreviousIdentityStory.args };
+PreviousIdentityDeEnrolledStory.parameters = {
+  ...PreviousIdentityStory.parameters,
+  encryption: {
+    ...PreviousIdentityStory.parameters?.encryption,
+    hasKeys: async () => ({ hasKeys: false, deEnrolled: { deEnrolledAt: 1_750_000_000_000, inactivityDays: 365 } }),
+  },
+};
+PreviousIdentityDeEnrolledStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_previous_identity'));
+  await waitFor(() => expect(canvasElement.textContent).toContain(i18n.t('onboarding.de_enrolled_notice', { count: 365 })));
+};
+
+export const PreviousIdentityDeEnrolled = prepareStory(PreviousIdentityDeEnrolledStory);
 
 // Registered before, but every dormant vault was deleted by the retention job: no
 // phrase can restore anything, so the fresh start is offered directly.

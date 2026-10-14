@@ -7,7 +7,8 @@
  */
 import { getEncryptionDB } from '@encryption/src/crypto/encryption-db';
 import type { SealedItem } from '@encryption/src/crypto/vault-manifest';
-import { STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { STORE_DEVICE_ACTIVITY, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { type DeviceActivity, expireIfInactive, forgetRecordedUse, isPastInactivityDelay, usedAt } from '@encryption/src/vault/device-activity';
 
 export interface VaultCacheEntry {
   deviceKey: CryptoKey; // non-extractable AES-GCM key, structured-cloned into IDB
@@ -38,12 +39,38 @@ export function stageVaultCache(userId: string, entry: VaultCacheEntry): void {
 /**
  * Read the persisted (IndexedDB) entry only, ignoring any staged vault. `has-keys`
  * uses this so an in-progress, not-yet-registered onboarding never reports ready.
+ * Every read of the disk copy goes through here, so a vault left unused past the
+ * inactivity delay is forgotten before anything can unlock it.
  */
 export async function getPersistedVaultCache(userId: string): Promise<VaultCacheEntry | null> {
   const db = await getEncryptionDB();
-  const entry = (await db.get(STORE_VAULT_CACHE, userId)) as VaultCacheEntry | undefined;
+  const tx = db.transaction([STORE_VAULT_CACHE, STORE_DEVICE_ACTIVITY], 'readonly');
+  const [entry, activity] = (await Promise.all([
+    tx.objectStore(STORE_VAULT_CACHE).get(userId),
+    tx.objectStore(STORE_DEVICE_ACTIVITY).get(userId),
+    tx.done,
+  ])) as [VaultCacheEntry | undefined, DeviceActivity | undefined, void];
+
+  // The expiry re-checks in its own write transaction, so a use recorded by
+  // another tab in between keeps the vault.
+  if (entry && isPastInactivityDelay(activity) && (await expireIfInactive(userId))) return null;
 
   return entry ?? null;
+}
+
+// Writing the vault to disk (enrollment, restore, pairing, any mutation) is a use,
+// in the same transaction so the cache row never lands without its date.
+async function putPersistedVaultCache(userId: string, entry: VaultCacheEntry): Promise<void> {
+  const db = await getEncryptionDB();
+  const tx = db.transaction([STORE_VAULT_CACHE, STORE_DEVICE_ACTIVITY], 'readwrite');
+  await Promise.all([tx.objectStore(STORE_VAULT_CACHE).put(entry, userId), tx.objectStore(STORE_DEVICE_ACTIVITY).put(usedAt(), userId), tx.done]);
+}
+
+async function deletePersistedVaultCache(userId: string): Promise<void> {
+  const db = await getEncryptionDB();
+  const tx = db.transaction([STORE_VAULT_CACHE, STORE_DEVICE_ACTIVITY], 'readwrite');
+  await Promise.all([tx.objectStore(STORE_VAULT_CACHE).delete(userId), tx.objectStore(STORE_DEVICE_ACTIVITY).delete(userId), tx.done]);
+  forgetRecordedUse(userId);
 }
 
 export async function getVaultCache(userId: string): Promise<VaultCacheEntry | null> {
@@ -60,8 +87,7 @@ export async function saveVaultCache(userId: string, entry: VaultCacheEntry): Pr
     return;
   }
 
-  const db = await getEncryptionDB();
-  await db.put(STORE_VAULT_CACHE, entry, userId);
+  await putPersistedVaultCache(userId, entry);
 }
 
 /**
@@ -75,8 +101,7 @@ export async function commitStagedVault(userId: string): Promise<void> {
 
   if (!staged) return;
 
-  const db = await getEncryptionDB();
-  await db.put(STORE_VAULT_CACHE, staged, userId);
+  await putPersistedVaultCache(userId, staged);
   stagedVaults.delete(userId);
 }
 
@@ -94,14 +119,12 @@ export async function uncommitStagedVault(userId: string): Promise<void> {
   if (!entry) return;
 
   stagedVaults.set(userId, entry);
-  await db.delete(STORE_VAULT_CACHE, userId);
+  await deletePersistedVaultCache(userId);
 }
 
 export async function clearVaultCache(userId: string): Promise<void> {
   stagedVaults.delete(userId);
-
-  const db = await getEncryptionDB();
-  await db.delete(STORE_VAULT_CACHE, userId);
+  await deletePersistedVaultCache(userId);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { parseDeviceInactivityDays } from '@encryption/src/shared/device-inactivity';
 import { isValidOriginEntry, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 
 export const envSchema = z.object({
@@ -103,6 +104,22 @@ export const envSchema = z.object({
       .refine((days) => days === 0 || days >= 180, 'expects 0 (never purge) or at least 180 days')
       .default(730)
   ),
+  // Days without any use of encryption after which a browser forgets its copy of the
+  // vault (device key, wrapped VRK, sealed items) and has to be enrolled again with
+  // another device or the recovery phrase. 0 keeps it until the user leaves
+  // encryption or clears the site data.
+  VAULT_DEVICE_INACTIVITY_DAYS: z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      try {
+        return parseDeviceInactivityDays(raw);
+      } catch (error) {
+        ctx.addIssue({ code: 'custom', message: (error as Error).message });
+
+        return z.NEVER;
+      }
+    }),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.

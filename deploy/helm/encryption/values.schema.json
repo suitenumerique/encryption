@@ -302,6 +302,10 @@
             "vaultPurgeAfterDays": {
               "type": "integer",
               "anyOf": [{ "const": 0 }, { "minimum": 180 }]
+            },
+            "deviceInactivityDays": {
+              "type": "integer",
+              "anyOf": [{ "const": 0 }, { "minimum": 30 }]
             }
           }
         }

@@ -298,14 +298,14 @@ encryption.destroy();`}
 
 ### Product operations (through the vault)
 
-| Method                                                 | Description                                         | Returns                               |
-| ------------------------------------------------------ | --------------------------------------------------- | ------------------------------------- |
-| `hasKeys()`                                            | Whether keys exist on this device                   | `{ hasKeys: boolean }`                |
-| `getPublicKey()`                                       | Fetch the public key                                | `{ publicKey: ArrayBuffer }`          |
-| `encryptWithoutKey(data, userPublicKeys)`              | Encrypt content (generates a new symmetric key)     | `{ encryptedContent, encryptedKeys }` |
-| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-encrypt with an existing key (collab, auto-save) | `{ encryptedData: ArrayBuffer }`      |
-| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Decrypt with a provided symmetric key               | `{ data: ArrayBuffer }`               |
-| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Share the key with other users                      | `{ encryptedKeys: Record }`           |
+| Method                                                 | Description                                                                                  | Returns                                      |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `hasKeys()`                                            | Whether keys exist on this device (`deEnrolled` when it forgot them after a long inactivity) | `HasKeysResult` (`{ hasKeys, deEnrolled? }`) |
+| `getPublicKey()`                                       | Fetch the public key                                                                         | `{ publicKey: ArrayBuffer }`                 |
+| `encryptWithoutKey(data, userPublicKeys)`              | Encrypt content (generates a new symmetric key)                                              | `{ encryptedContent, encryptedKeys }`        |
+| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-encrypt with an existing key (collab, auto-save)                                          | `{ encryptedData: ArrayBuffer }`             |
+| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Decrypt with a provided symmetric key                                                        | `{ data: ArrayBuffer }`                      |
+| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Share the key with other users                                                               | `{ encryptedKeys: Record }`                  |
 
 ### Configuration
 

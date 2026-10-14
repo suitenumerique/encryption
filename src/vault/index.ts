@@ -6,6 +6,7 @@ import {
   VAULT_TRUSTED_TYPES_POLICY,
 } from '@encryption/src/shared/constants';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
+import { expireInactiveVaults } from '@encryption/src/vault/device-activity';
 import { setupMessageHandler } from '@encryption/src/vault/message-handler';
 import { installVaultErrorReporting } from '@encryption/src/vault/monitoring';
 import { initOriginGuard, validateIframeContext } from '@encryption/src/vault/origin-guard';
@@ -31,6 +32,11 @@ try {
 
 initOriginGuard(ALLOWED_ORIGINS, INTERFACE_ORIGIN);
 setupMessageHandler();
+
+// Forget every user's vault this browser left unused too long, not only the one
+// the embedding page is about. Each read checks its own user anyway, so nothing
+// waits for this sweep.
+void expireInactiveVaults().catch((err) => console.warn('vault inactivity sweep failed', err));
 
 // Notify the parent frame that the vault is ready.
 // The ready message is non-sensitive (just a signal), so we use '*'

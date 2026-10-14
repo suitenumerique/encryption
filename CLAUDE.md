@@ -99,6 +99,7 @@ The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` 
 - `/.well-known/security.txt` (RFC 9116) on both hosts, only when the operator set `SECURITY_CONTACT_URL` (the contact is theirs, not the code's); generated at request time so `Expires` never goes stale. `SECURITY.md` is the channel for the code itself
 - Rate limiting: 10 key creations per 30 days, 10 device transfers per hour
 - Device transfer sessions auto-deleted after 1 hour
+- A browser forgets a user's vault after `VAULT_DEVICE_INACTIVITY_DAYS` without use (365 by default, `0` off, otherwise at least 30): `src/vault/device-activity.ts`, checked by the message handler before every operation and on every read of the persisted cache; `has-keys` then carries `deEnrolled` so the onboarding explains it
 - Reporting API endpoint at `/api/browser-reports` (`BROWSER_REPORT_PATH`), declared
   under the reserved `default` name so it receives every report type, not only CSP.
   Security types (`csp-violation`, `coop`, `coep`, `integrity-violation`, `crash`)
