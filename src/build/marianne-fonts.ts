@@ -35,6 +35,8 @@ export function vendorMarianneFonts(): Plugin {
 
         if (MARIANNE_WOFF.includes(file)) {
           res.setHeader('Content-Type', 'font/woff');
+          // Same as production (static-ui), so an email preview behaves alike.
+          res.setHeader('Access-Control-Allow-Origin', '*');
           res.end(read(file));
 
           return;

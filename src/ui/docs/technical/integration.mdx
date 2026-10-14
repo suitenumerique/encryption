@@ -157,6 +157,8 @@ The SDK is served from `data.encryption` (the same domain as the vault). It is h
 
 </CodeBlock>
 
+The ES module form, and a classic script carrying an `integrity` attribute (which then also needs `crossorigin="anonymous"`), are cross-origin (CORS) requests. The server answers them only for the product origins listed in its `ALLOWED_FRAME_ANCESTORS`, the same list that allows embedding the iframes: from any other origin, the browser refuses to run the SDK.
+
 ### 2. TypeScript autocompletion (optional)
 
 The SDK is loaded by URL, so TypeScript does not know its types by default. To get autocompletion and type checking in your IDE, download the declaration file:

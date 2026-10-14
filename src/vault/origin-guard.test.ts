@@ -29,8 +29,14 @@ describe('origin-guard', () => {
       expect(isOriginAllowed('http://localhost:9999')).toBe(false);
     });
 
-    it('should reject deep subdomains with single wildcard', () => {
-      expect(isOriginAllowed('https://a.b.numerique.gouv.fr')).toBe(false);
+    it('should allow deeper subdomains too, as the CSP frame-ancestors does', () => {
+      expect(isOriginAllowed('https://a.b.numerique.gouv.fr')).toBe(true);
+    });
+
+    it('should reject a wildcard anywhere but the leftmost label', () => {
+      initOriginGuard(['https://docs.*.gouv.fr'], null);
+
+      expect(isOriginAllowed('https://docs.numerique.gouv.fr')).toBe(false);
     });
 
     it('should reject empty origin', () => {
@@ -72,7 +78,7 @@ describe('isOriginAllowed wildcard matching (property)', () => {
     )
     .map(([scheme, labels, t, port]) => `${scheme}://${[...labels, t].join('.')}${port === undefined ? '' : `:${port}`}`);
 
-  it('accepts exactly the hosts one label below the wildcard base', () => {
+  it('accepts exactly the hosts below the wildcard base, at any depth', () => {
     fc.assert(
       fc.property(base, label, fc.constantFrom('one-level', 'deep', 'base-itself', 'dot-replaced', 'suffixed', 'other-port'), (b, l, shape) => {
         initOriginGuard([`https://*.${b}`], null);
@@ -90,20 +96,20 @@ describe('isOriginAllowed wildcard matching (property)', () => {
                     ? `${l}.${b}.${l}`
                     : `${l}.${b}:8443`;
 
-        expect(isOriginAllowed(`https://${host}`)).toBe(shape === 'one-level');
+        expect(isOriginAllowed(`https://${host}`)).toBe(shape === 'one-level' || shape === 'deep');
       })
     );
   });
 
-  it('never accepts a random origin whose host is not one label below the base', () => {
+  it('never accepts a random origin whose host is not below the base', () => {
     fc.assert(
       fc.property(base, origin, (b, o) => {
         initOriginGuard([`https://*.${b}`], null);
 
         const { host } = new URL(o);
-        const oneLabelBelow = o.startsWith('https://') && host.endsWith(`.${b}`) && !host.slice(0, -(b.length + 1)).includes('.');
+        const below = o.startsWith('https://') && host.endsWith(`.${b}`);
 
-        expect(isOriginAllowed(o)).toBe(oneLabelBelow);
+        expect(isOriginAllowed(o)).toBe(below);
       })
     );
   });

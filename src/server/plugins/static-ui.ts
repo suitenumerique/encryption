@@ -37,6 +37,17 @@ export function isServableAsset(pathName: string): boolean {
   return !pathName.endsWith('.map');
 }
 
+/**
+ * The brand fonts are the only interface assets meant for other origins: an email
+ * read in a webmail declares them in `@font-face`, and a font is always fetched in
+ * CORS mode, so without this header the browser drops it and the email falls back
+ * to its generic stack. They are public files, read without credentials, so `*`
+ * exposes nothing. The scripts and styles next to them stay same-origin.
+ */
+function isFontFile(filePath: string): boolean {
+  return /[\\/]fonts[\\/][^\\/]+\.woff2?$/.test(filePath);
+}
+
 // Wrapped with fastify-plugin to break encapsulation: the hook below answers paths that are
 // no route at all (`/`, `/login`...), and a hook private to a plugin only ever runs for the
 // routes declared inside that plugin. Unwrapped, every page is a 404.
@@ -69,6 +80,11 @@ export const staticUiPlugin = fp(async (app: FastifyInstance): Promise<void> => 
     constraints: { host: env.UI_HOST },
     decorateReply: false,
     allowedPath: isServableAsset,
+    setHeaders: (reply, filePath) => {
+      if (isFontFile(filePath)) {
+        reply.header('Access-Control-Allow-Origin', '*');
+      }
+    },
   });
 
   // Serve interface.html for all HTML routes (SPA fallback)

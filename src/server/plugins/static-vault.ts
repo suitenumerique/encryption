@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { env } from '@encryption/src/server/env';
+import { isOriginInAllowlist, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
 
 /**
@@ -11,12 +12,20 @@ import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
  */
 function buildVaultConfigBlock(): string {
   const config = {
-    allowedOrigins: env.ALLOWED_FRAME_ANCESTORS.split(',').map((s) => s.trim()),
+    allowedOrigins: parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS),
     interfaceOrigin: env.UI_URL,
   };
 
   return buildRuntimeConfigBlock(config);
 }
+
+// The SDK files a product page loads in CORS mode: an ES module import, or a classic
+// script carrying an `integrity` attribute (SRI needs `crossorigin` cross-origin).
+// Only the products allowed to embed the vault get their origin echoed back; any
+// other page is refused by its browser, and no wildcard is ever sent. The other
+// files are only loaded by the vault itself, same-origin, and need no CORS header.
+// `client.d.ts` is downloaded by a developer's tooling, which CORS does not concern.
+const CORS_SDK_PATHS = new Set(['/client.js', '/client.mjs']);
 
 // Wrapped with fastify-plugin to break encapsulation: the hook below serves files that are
 // no route (`/vault.js`, `/client.js`...), and a hook private to a plugin only ever runs
@@ -58,6 +67,8 @@ export const staticVaultPlugin = fp(async (app: FastifyInstance): Promise<void> 
     }
   }
 
+  const productOrigins = parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS);
+
   app.addHook('onRequest', async (request, reply) => {
     // `request.host` keeps the port, matching env.VAULT_HOST (derived from new URL(...).host).
     // The port-stripped `request.hostname` would never match on a deployment with an explicit port.
@@ -69,7 +80,18 @@ export const staticVaultPlugin = fp(async (app: FastifyInstance): Promise<void> 
     const file = files.get(path);
 
     if (file) {
-      reply.type(file.type).header('Access-Control-Allow-Origin', '*').send(file.content);
+      if (CORS_SDK_PATHS.has(path)) {
+        // The answer depends on the caller, so a shared cache must key on it.
+        reply.header('Vary', 'Origin');
+
+        const origin = request.headers.origin;
+
+        if (origin && isOriginInAllowlist(origin, productOrigins)) {
+          reply.header('Access-Control-Allow-Origin', origin);
+        }
+      }
+
+      reply.type(file.type).send(file.content);
     }
   });
 });

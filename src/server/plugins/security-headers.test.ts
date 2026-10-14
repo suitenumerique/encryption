@@ -169,6 +169,15 @@ describe('securityHeadersPlugin', () => {
       expect((await headersFor('/client.js', UI_HOST))['cross-origin-resource-policy']).toBe('same-site');
     });
 
+    it('lets a webmail load the brand fonts, and only them, from the interface host', async () => {
+      const app = await buildApp();
+      const headersFor = async (url: string, host = UI_HOST) => (await app.inject({ method: 'GET', url, headers: { host } })).headers;
+
+      expect((await headersFor('/assets/fonts/Marianne-Regular.woff'))['cross-origin-resource-policy']).toBe('cross-origin');
+      expect((await headersFor('/assets/interface-abc123.js'))['cross-origin-resource-policy']).toBe('same-site');
+      expect((await headersFor('/assets/fonts/Marianne-Regular.woff', VAULT_HOST))['cross-origin-resource-policy']).toBe('same-origin');
+    });
+
     it('keeps COOP on the vault, which opens no popup', async () => {
       expect((await headersFor(VAULT_HOST))['cross-origin-opener-policy']).toBe('same-origin');
     });

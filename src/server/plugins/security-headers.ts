@@ -3,6 +3,7 @@ import fp from 'fastify-plugin';
 
 import { env } from '@encryption/src/server/env';
 import { BROWSER_REPORT_PATH, UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLICY } from '@encryption/src/shared/constants';
+import { parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 
 // Wrapped with fastify-plugin to break encapsulation — otherwise the hook stays scoped
 // to this plugin and never runs for routes registered on the same app instance (API,
@@ -20,12 +21,12 @@ import { BROWSER_REPORT_PATH, UI_TRUSTED_TYPES_POLICY, VAULT_TRUSTED_TYPES_POLIC
 // since Fastify runs onRequest hooks in registration order.
 /** The client SDK as products load it, served by the vault host. */
 const SDK_PATHS = new Set(['/client.js', '/client.mjs', '/client.d.ts']);
+/** The brand fonts the emails reference, served by the interface host. */
+export const FONTS_PATH_PREFIX = '/assets/fonts/';
 
 export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   const isDev = process.env.NODE_ENV === 'development';
-  const productFrameAncestors = env.ALLOWED_FRAME_ANCESTORS.split(',')
-    .map((s) => s.trim())
-    .join(' '); // The products allowed to embed either iframe.
+  const productFrameAncestors = parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS).join(' '); // The products allowed to embed either iframe.
   const vaultFrameAncestors = `${productFrameAncestors} ${env.UI_URL}`; // The vault has one embedder the interface does not: the interface itself.
   // Only the interface talks to the OIDC provider: oidc-client-ts fetches its discovery
   // document and JWKS, and the lazy token refresh POSTs to its token endpoint. The
@@ -41,8 +42,13 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     // product loads with a plain <script src> from its own origin, a no-cors
     // request that `same-origin` would make the browser refuse. The SDK is inert
     // without the iframes, and who may embed those stays governed by
-    // frame-ancestors. Everything else below stays same-site / same-origin.
-    if (request.url.startsWith('/public-assets/') || (request.host === env.VAULT_HOST && SDK_PATHS.has(path))) {
+    // frame-ancestors. The brand fonts join them, for the emails read in a
+    // webmail. Everything else below stays same-site / same-origin.
+    if (
+      request.url.startsWith('/public-assets/') ||
+      (request.host === env.VAULT_HOST && SDK_PATHS.has(path)) ||
+      (request.host === env.UI_HOST && path.startsWith(FONTS_PATH_PREFIX))
+    ) {
       reply.raw.setHeader('X-Content-Type-Options', 'nosniff');
       reply.raw.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 

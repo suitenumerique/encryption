@@ -27,11 +27,7 @@ export async function publicAssetsPlugin(app: FastifyInstance): Promise<void> {
       return reply.code(404).type('text/plain; charset=utf-8').send('client.d.ts not built yet - run "npm run build:client"');
     }
 
-    return reply
-      .type('text/plain; charset=utf-8')
-      .header('Access-Control-Allow-Origin', '*')
-      .header('Cache-Control', 'no-cache')
-      .send(readFileSync(clientTypesPath, 'utf-8'));
+    return reply.type('text/plain; charset=utf-8').header('Cache-Control', 'no-cache').send(readFileSync(clientTypesPath, 'utf-8'));
   });
 
   if (!existsSync(root)) {

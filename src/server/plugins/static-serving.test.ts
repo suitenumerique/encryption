@@ -10,7 +10,7 @@ vi.mock('@encryption/src/server/env', () => ({
     VAULT_HOST: 'data.encryption.example.org',
     UI_URL: 'https://encryption.example.org',
     VAULT_URL: 'https://data.encryption.example.org',
-    ALLOWED_FRAME_ANCESTORS: 'https://docs.example.org',
+    ALLOWED_FRAME_ANCESTORS: 'https://docs.example.org, https://*.drive.example.org',
     OIDC_ISSUER: 'https://auth.example.org',
     OIDC_CLIENT_ID: 'encryption',
     OIDC_REDIRECT_URI: 'https://encryption.example.org/auth/callback',
@@ -28,13 +28,16 @@ describe('production static serving', () => {
   beforeEach(async () => {
     const root = mkdtempSync(join(tmpdir(), 'dist-'));
 
-    mkdirSync(join(root, 'dist/ui/assets'), { recursive: true });
+    mkdirSync(join(root, 'dist/ui/assets/fonts'), { recursive: true });
     mkdirSync(join(root, 'dist/vault'), { recursive: true });
     mkdirSync(join(root, 'dist/client'), { recursive: true });
     writeFileSync(join(root, 'dist/ui/interface.html'), '<html><head></head><body>interface</body></html>');
+    writeFileSync(join(root, 'dist/ui/assets/interface-abc123.js'), 'interface bundle');
+    writeFileSync(join(root, 'dist/ui/assets/fonts/Marianne-Regular.woff'), 'font');
     writeFileSync(join(root, 'dist/vault/bridge.html'), '<html><head></head><body>bridge</body></html>');
     writeFileSync(join(root, 'dist/vault/vault.js'), 'vault');
     writeFileSync(join(root, 'dist/client/client.js'), 'client');
+    writeFileSync(join(root, 'dist/client/client.mjs'), 'client module');
     vi.spyOn(process, 'cwd').mockReturnValue(root);
 
     const { staticUiPlugin } = await import('@encryption/src/server/plugins/static-ui');
@@ -52,8 +55,8 @@ describe('production static serving', () => {
     vi.restoreAllMocks();
   });
 
-  function get(host: string, url: string) {
-    return app.inject({ method: 'GET', url, headers: { host } });
+  function get(host: string, url: string, origin?: string) {
+    return app.inject({ method: 'GET', url, headers: { host, ...(origin ? { origin } : {}) } });
   }
 
   it('serves the interface page for any page path of the interface host', async () => {
@@ -86,5 +89,49 @@ describe('production static serving', () => {
   it('serves nothing to a host it does not know', async () => {
     expect((await get('another.example.org', '/')).statusCode).toBe(404);
     expect((await get('data.encryption.example.org', '/')).statusCode).toBe(404);
+  });
+
+  describe('cross-origin access to the SDK', () => {
+    it('echoes back the origin of an allowed product, never a wildcard', async () => {
+      for (const origin of ['https://docs.example.org', 'https://team.drive.example.org']) {
+        for (const url of ['/client.js', '/client.mjs']) {
+          const response = await get('data.encryption.example.org', url, origin);
+
+          expect(response.headers['access-control-allow-origin'], `${url} ${origin}`).toBe(origin);
+          expect(response.headers.vary, url).toBe('Origin');
+        }
+      }
+    });
+
+    it('gives no access to any other page', async () => {
+      for (const origin of ['https://evil.example', 'https://drive.example.org', 'https://docs.example.org.evil.example', 'null']) {
+        const response = await get('data.encryption.example.org', '/client.mjs', origin);
+
+        expect(response.body).toBe('client module');
+        expect(response.headers['access-control-allow-origin'], origin).toBeUndefined();
+        expect(response.headers.vary).toBe('Origin');
+      }
+    });
+
+    it('never opens the vault files to another origin', async () => {
+      for (const url of ['/vault.js', '/bridge.html']) {
+        const response = await get('data.encryption.example.org', url, 'https://docs.example.org');
+
+        expect(response.statusCode, url).toBe(200);
+        expect(response.headers['access-control-allow-origin'], url).toBeUndefined();
+      }
+    });
+  });
+
+  it('lets any origin use the brand fonts, and nothing else of the interface', async () => {
+    const font = await get('encryption.example.org', '/assets/fonts/Marianne-Regular.woff', 'https://webmail.example.net');
+
+    expect(font.statusCode).toBe(200);
+    expect(font.headers['access-control-allow-origin']).toBe('*');
+
+    const bundle = await get('encryption.example.org', '/assets/interface-abc123.js', 'https://webmail.example.net');
+
+    expect(bundle.statusCode).toBe(200);
+    expect(bundle.headers['access-control-allow-origin']).toBeUndefined();
   });
 });

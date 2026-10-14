@@ -19,10 +19,11 @@ import { API_ERROR_FORBIDDEN } from '@encryption/src/shared/error-codes';
  *
  * Who may EMBED and DRIVE the service (the parent-domain whitelist) is a SEPARATE
  * control, enforced by `frame-ancestors` and the vault's postMessage origin
- * allowlist, both fed from `ALLOWED_FRAME_ANCESTORS`. It cannot live here: a
- * `<script src>` load (client.js) is not CORS-gated by the browser at all, so no
- * server header can restrict who loads the SDK. The SDK is inert without the
- * iframes it is not allowed to embed.
+ * allowlist, both fed from `ALLOWED_FRAME_ANCESTORS`. It cannot live here: a plain
+ * `<script src>` load of client.js is a no-cors request, so no server header can
+ * restrict who loads the SDK that way (the module and SRI forms are CORS requests,
+ * answered for the allowed products only by the static vault plugin). The SDK is
+ * inert without the iframes it is not allowed to embed.
  */
 export const corsPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   app.addHook('onRequest', async (request, reply) => {
@@ -31,8 +32,8 @@ export const corsPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // No Origin: same-origin navigation or a non-browser caller. Nothing to gate.
     if (!origin) return;
 
-    // Static assets (iframe HTML, client.js) are not CORS-gated by the browser;
-    // only the API surface is considered here.
+    // Static assets (iframe HTML, client.js) have their own rules in the static
+    // plugins; only the API surface is considered here.
     if (!request.url.startsWith('/api')) return;
 
     let originHost: string;

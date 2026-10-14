@@ -44,6 +44,15 @@ async function main() {
     app.log.info(`Vault: ${env.VAULT_URL}`);
     app.log.info(`UI: ${env.UI_URL}`);
 
+    // A wildcard lets every matching subdomain embed the vault and drive it for the
+    // signed-in user, decryption included: any compromised page under it becomes a
+    // compromised product. Allowed, but worth saying where it matters.
+    if (process.env.NODE_ENV !== 'development' && env.ALLOWED_FRAME_ANCESTORS.includes('*')) {
+      app.log.warn(
+        'ALLOWED_FRAME_ANCESTORS contains a wildcard: every matching subdomain can embed the vault and ask it to decrypt for the signed-in user. Prefer an explicit list of product origins.'
+      );
+    }
+
     // Notification cron (emergency access reminders/timeouts). Deliberately
     // outside createServer so test-built servers never start timers.
     const stopEmergencyJobs = startEmergencyJobs();

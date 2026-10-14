@@ -1,3 +1,4 @@
+import { isOriginInAllowlist } from '@encryption/src/shared/origin-allowlist';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 let allowedOrigins: string[] = [];
@@ -21,42 +22,12 @@ export function validateIframeContext(): void {
   }
 }
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
- * Check if a message origin is in the allowed list.
- * Supports exact matches and wildcard subdomains (e.g., "https://*.example.com").
+ * Check if a message origin is in the allowed list, with the CSP `frame-ancestors`
+ * matching rules the server applies to the same list.
  */
 export function isOriginAllowed(origin: string): boolean {
-  return allowedOrigins.some((allowed) => {
-    if (!allowed.includes('*')) {
-      return origin === allowed;
-    }
-
-    // Parse both as URLs to compare protocol + domain parts
-    try {
-      const originUrl = new URL(origin);
-      const allowedParts = allowed.match(/^(https?):\/\/(.+)$/);
-
-      if (!allowedParts) return false;
-
-      const [, allowedProtocol, allowedHost] = allowedParts;
-
-      if (originUrl.protocol !== `${allowedProtocol}:`) return false;
-
-      // Convert wildcard pattern to match: *.example.com matches sub.example.com
-      // but NOT sub.sub.example.com (single level only). Everything around the
-      // wildcard is literal, so the dots must be escaped: an unescaped "." would
-      // match any character and let "sub.exampleXcom" through.
-      const hostPattern = allowedHost.split('*').map(escapeRegExp).join('[^.]+');
-
-      return new RegExp(`^${hostPattern}$`).test(originUrl.host);
-    } catch {
-      return false;
-    }
-  });
+  return isOriginInAllowlist(origin, allowedOrigins);
 }
 
 /**

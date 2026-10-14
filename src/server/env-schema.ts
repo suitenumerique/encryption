@@ -1,12 +1,31 @@
 import { z } from 'zod';
 
+import { isValidOriginEntry, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
+
 export const envSchema = z.object({
   PORT: z.coerce.number().default(7200),
   HOST: z.string().default('0.0.0.0'),
   DATABASE_URL: z.string(),
   VAULT_URL: z.string().url(),
   UI_URL: z.string().url(),
-  ALLOWED_FRAME_ANCESTORS: z.string(),
+  // Feeds both the CSP `frame-ancestors` and the vault's origin checks, so an entry
+  // the two would read differently (a lone `*`, a bare host) stops the start.
+  ALLOWED_FRAME_ANCESTORS: z.string().superRefine((value, ctx) => {
+    const entries = parseOriginAllowlist(value);
+
+    if (entries.length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'needs at least one product origin' });
+    }
+
+    const invalid = entries.filter((entry) => !isValidOriginEntry(entry));
+
+    if (invalid.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `expects origins like https://docs.example.org or https://*.example.org, got: ${invalid.join(', ')}`,
+      });
+    }
+  }),
   OIDC_JWKS_URL: z.string(),
   OIDC_SERVER_CLIENT_ID: z.string(),
   // OIDC configuration for the encryption interface (injected into the HTML at runtime)
