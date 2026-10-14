@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseAllDocuments, parse as parseYaml } from 'yaml';
 
+import { assertHelmInstalled, schemaPatternRejection } from '@encryption/deploy/helm/helm-tooling';
+
 /**
  * The stack chart is four subcharts and a bootstrap Job, so what can go wrong is not one
  * chart's shape but the seams between them: a product told to reach a database the
@@ -150,9 +152,7 @@ const defaults = parseYaml(readFileSync(resolve(CHART, 'values.yaml'), 'utf8')) 
   bootstrap: { keycloak: { clients: { clientId: string; public?: boolean; secret?: string; redirectUris: string[]; webOrigins: string[] }[] } };
 };
 
-if (!isInstalled('helm', ['version', '--short'])) {
-  throw new Error('The chart tests need the helm binary on the PATH (brew install helm, or https://helm.sh/docs/intro/install/)');
-}
+assertHelmInstalled();
 
 buildDependencies();
 
@@ -584,9 +584,9 @@ describe('the stack chart', () => {
   });
 
   it('rejects a password or a name the scripts could not quote', () => {
-    expect(renderError(["bootstrap.keycloak.users[0].password=a'b"])).toMatch(/does not match pattern/);
-    expect(renderError(['bootstrap.encryption.runtimePassword=a b'])).toMatch(/does not match pattern/);
-    expect(renderError(['bootstrap.postgres.databases[0]=Docs'])).toMatch(/does not match pattern/);
+    expect(renderError(["bootstrap.keycloak.users[0].password=a'b"])).toMatch(schemaPatternRejection('bootstrap.keycloak.users[0].password'));
+    expect(renderError(['bootstrap.encryption.runtimePassword=a b'])).toMatch(schemaPatternRejection('bootstrap.encryption.runtimePassword'));
+    expect(renderError(['bootstrap.postgres.databases[0]=Docs'])).toMatch(schemaPatternRejection('bootstrap.postgres.databases[0]'));
   });
 
   it('renders nothing for a product that is off, and no migration without the service', () => {

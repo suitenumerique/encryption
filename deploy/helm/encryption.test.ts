@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseAllDocuments } from 'yaml';
 
+import { assertHelmInstalled } from '@encryption/deploy/helm/helm-tooling';
 import { envSchema } from '@encryption/src/server/env-schema';
 
 /**
@@ -90,9 +91,7 @@ const KNOWN_VARIABLES = new Set([...Object.keys(envSchema.shape), 'NODE_ENV']);
 const SECRET_VARIABLE = /^(?:DATABASE_URL|SENTRY_DSN|MAILER_.*_(?:USER|PASSWORD))$/;
 
 // Renders happen while the suites are collected, so the guard has to run at import time.
-if (!isInstalled('helm', ['version', '--short'])) {
-  throw new Error('The chart tests need the helm binary on the PATH (brew install helm, or https://helm.sh/docs/intro/install/)');
-}
+assertHelmInstalled();
 
 describe('the chart', () => {
   const full = render(FULL_VALUES);
