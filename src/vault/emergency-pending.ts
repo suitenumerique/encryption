@@ -2,7 +2,7 @@
  * One-shot check for actionable emergency-access state, pushed to the product
  * page so the SDK can surface it (a pending designation to accept, a running
  * recovery request to refuse). Rides the identity-signed data plane: the
- * SDK/products never hold a JWT, but a device with a vault holds the identity
+ * SDK/products never hold an ID token, but a device with a vault holds the identity
  * key, which is exactly the population that can act from a product page.
  *
  * At most one check per (user, page load): this is a courtesy surface, the
@@ -49,7 +49,7 @@ export async function checkEmergencyPending(userId: string, post: (message: unkn
     if (state.invitations === 0 && state.recovery_requests === 0) return;
 
     // Only a routing signal crosses to the product: which prompt to lead with,
-    // never who or when (the interface fetches that itself over its JWT).
+    // never who or when (the interface fetches that itself with its ID token).
     post({ type: MSG_VAULT_EMERGENCY_PENDING, payload: { recovery: state.recovery_requests > 0, invitation: state.invitations > 0 } });
   } catch {
     // Courtesy only: never let this surface as an error to the product.

@@ -57,8 +57,8 @@ interface VaultFetchWire extends VaultContentWire {
 // The phrase's LANGUAGE is irrelevant: deriveKek hashes the normalized phrase
 // STRING, so the user types their words (any wordlist) and the server self-selects
 // the keyring built from that same string. A wrong phrase matches no variant.
-async function unlockVault(userId: string, recoveryPhrase: string, token: string, endpoint: string): Promise<{ kek: Uint8Array; body: unknown }> {
-  const auth = { Authorization: `Bearer ${token}` };
+async function unlockVault(userId: string, recoveryPhrase: string, idToken: string, endpoint: string): Promise<{ kek: Uint8Array; body: unknown }> {
+  const auth = { Authorization: `Bearer ${idToken}` };
 
   const metaRes = await fetch(`${API_BASE}/api/vault/meta`, { headers: auth });
   if (metaRes.status === 404) throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'No vault to restore for this account.');
@@ -161,9 +161,9 @@ async function openAndCacheVault(
 
 export async function handleRestoreFromPhrase(
   userId: string,
-  payload: { recoveryPhrase: string; token: string }
+  payload: { recoveryPhrase: string; idToken: string }
 ): Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }> {
-  const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.token, '/api/vault/fetch');
+  const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/fetch');
   const vault = body as VaultFetchWire;
 
   // A DORMANT vault is NOT persisted here. Bringing it back demotes the current
@@ -210,7 +210,7 @@ export async function handleRestoreFromPhrase(
  */
 export async function handleReactivateVault(
   userId: string,
-  payload: { recoveryPhrase: string; token: string }
+  payload: { recoveryPhrase: string; idToken: string }
 ): Promise<{
   reactivated: boolean;
   publicKey: string;
@@ -219,7 +219,7 @@ export async function handleReactivateVault(
   disabledVaultCreatedAtMillis: number | null;
   emergencyUnlock: boolean;
 }> {
-  const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.token, '/api/vault/reactivate');
+  const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/reactivate');
   const data = body as VaultContentWire & {
     reactivated: boolean;
     disabled_vault_id: string | null;

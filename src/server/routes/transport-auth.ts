@@ -8,12 +8,12 @@ import { prisma } from '@encryption/src/prisma/client';
 import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import { API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID } from '@encryption/src/shared/error-codes';
 
-// Per-route auth tier (see architecture.md §6.4). Default (no flag) = JWT +
+// Per-route auth tier (see architecture.md §6.4). Default (no flag) = ID token +
 // identity signature (tier 2, interactive + sensitive).
-// - SKIP_SIG: JWT only, no signature — cold prerequisites / PoP flows / the
+// - SKIP_SIG: ID token only, no signature — cold prerequisites / PoP flows / the
 //   lost-password disable, i.e. where the caller structurally cannot sign.
-// - SIG_ONLY: identity signature only, NO JWT — the silent data-plane that must
-//   run in the background (the vault holds the key, the interface/JWT may be
+// - SIG_ONLY: identity signature only, NO ID token — the silent data-plane that must
+//   run in the background (the vault holds the key, the interface/ID token may be
 //   absent). `userId` comes from the signed `sub`.
 export const SKIP_SIG = { config: { skipRequestSignature: true } };
 export const SIG_ONLY = { config: { signatureOnly: true } };
@@ -99,7 +99,7 @@ async function continuityPredecessorWireKeys(userId: string, nowMs: number): Pro
 
 // Verify the identity X-Signature on a request against `userId`: the active key
 // first (the common case), then a bounded walk of continuity-linked
-// predecessors. Shared by the signature-only and JWT+signature tiers.
+// predecessors. Shared by the signature-only and ID token+signature tiers.
 async function verifyIdentityRequest(request: FastifyRequest, userId: string, token: string, nowMs: number): Promise<boolean> {
   const proof = {
     token,
@@ -121,11 +121,11 @@ async function verifyIdentityRequest(request: FastifyRequest, userId: string, to
 /**
  * Install, on one route plugin, the tiered secure-by-default transport auth
  * used by the vault and emergency-access APIs (architecture.md §6.4):
- *  - SIG_ONLY -> identity signature ONLY, no JWT; userId comes from the signed
+ *  - SIG_ONLY -> identity signature ONLY, no ID token; userId comes from the signed
  *    sub (verified against that user's key, so a forged sub cannot pass).
- *  - SKIP_SIG -> JWT only.
- *  - default  -> JWT + identity signature, the signature's sub bound to the JWT.
- * A new route falls under the strictest default (JWT+sig) unless it opts out, so
+ *  - SKIP_SIG -> ID token only.
+ *  - default  -> ID token + identity signature, the signature's sub bound to the ID token's user.
+ * A new route falls under the strictest default (ID token+sig) unless it opts out, so
  * forgetting fails loud (rejects a legitimate call), never silently open.
  *
  * Also keeps the RAW JSON body (still parsing it as usual) so the signature
@@ -158,7 +158,7 @@ export function registerTransportAuth(app: FastifyInstance): void {
     const reject = () => reply.status(401).send({ code: API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID });
 
     if (cfg?.signatureOnly) {
-      // Tier 1: no JWT. Read the claimed subject, verify the signature against
+      // Tier 1: no ID token. Read the claimed subject, verify the signature against
       // THAT user's identity, and only then adopt it as the authenticated user.
       if (typeof token !== 'string') return reject();
 
@@ -170,17 +170,17 @@ export function registerTransportAuth(app: FastifyInstance): void {
       return;
     }
 
-    await app.verifyJWT(request);
-    assertUserId(request); // verifyJWT set it or already rejected.
+    await app.verifyIdToken(request);
+    assertUserId(request); // verifyIdToken set it or already rejected.
 
-    if (cfg?.skipRequestSignature) return; // Tier 3/4: JWT only.
+    if (cfg?.skipRequestSignature) return; // Tier 3/4: ID token only.
 
-    // Tier 2: JWT + identity signature, which MUST name the same user — a valid
-    // JWT for one account cannot be paired with another account's signature. Bound
-    // two ways, both against `request.userId` (the JWT subject):
-    //  1. the explicit check below: the signature's `sub` must equal the JWT user;
+    // Tier 2: ID token + identity signature, which MUST name the same user — a valid
+    // ID token for one account cannot be paired with another account's signature. Bound
+    // two ways, both against `request.userId` (the ID token's user):
+    //  1. the explicit check below: the signature's `sub` must equal the ID token's user;
     //  2. `verifyIdentityRequest` resolves the key via `activeIdentityWireKey(
-    //     request.userId)` and verifies the signature against the JWT user's OWN
+    //     request.userId)` and verifies the signature against the ID token user's OWN
     //     registered key, so a signature made with a different key cannot verify.
     if (typeof token !== 'string') return reject();
     if ((await readProofSubject(token)) !== request.userId) return reject();

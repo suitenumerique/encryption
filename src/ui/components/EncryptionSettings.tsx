@@ -16,7 +16,7 @@ import {
   registerKeyComplete,
   registerKeyInit,
 } from '@encryption/src/ui/api/public-keys-client';
-import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
+import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { SyncIntegrityAlert } from '@encryption/src/ui/components/SyncIntegrityAlert';
@@ -33,27 +33,27 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
 interface EncryptionSettingsProps {
   userInfo?: UserInfo | null;
   userId?: string | null;
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   onClose: () => void;
   onKeysDestroyed: () => void;
   onOpenDeviceApproval?: () => void;
   onOpenEmergencyAccess?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
-  currentAccessToken?: string | null;
+  currentIdToken?: string | null;
 }
 
 export function EncryptionSettings({
   userInfo = null,
   userId = null,
-  getToken,
+  getIdToken,
   onClose,
   onKeysDestroyed,
   onOpenDeviceApproval,
   onOpenEmergencyAccess,
   onReconnect,
   isAuthenticating = false,
-  currentAccessToken = null,
+  currentIdToken = null,
 }: EncryptionSettingsProps) {
   const { t, i18n } = useTranslation('common');
   const { isReady, hasKeys, getPublicKey, request, changeRecoveryPhrase, signKeyRegistration, respondToKeyChallenge, syncVault } =
@@ -71,9 +71,9 @@ export function EncryptionSettings({
   const [changeError, setChangeError] = useState<string | null>(null);
   // Session-expired banner state (mirrors the onboarding modal). The commit step
   // can now run minutes after generating (the user is saving their phrase), so the
-  // OIDC token may have lapsed by then; show the reconnect banner instead of a raw
+  // ID token may have lapsed by then; show the reconnect banner instead of a raw
   // error and let the user retry once reconnected (the pending keyring is kept).
-  const { sessionExpired, markSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
 
   // Generate the new phrase + re-wrap the keyring LOCALLY (no server call yet).
   const handleGeneratePhrase = useCallback(async () => {
@@ -98,7 +98,7 @@ export function EncryptionSettings({
   // Goes through the shared keyring-commit flow: while a recovery is granted the
   // server rejects the rewrite unless the granted escrows are burned + re-armed,
   // so a routine phrase change carries the mandatory re-arms too.
-  const { commitKeyring, revokeContacts } = useKeyringCommit(getToken);
+  const { commitKeyring, revokeContacts } = useKeyringCommit(getIdToken);
   const [rearmBlocked, setRearmBlocked] = useState<Array<{ id: string; email: string }> | null>(null);
 
   const handleConfirmPhraseBackup = useCallback(async () => {
@@ -188,10 +188,10 @@ export function EncryptionSettings({
     setReconcileError(null);
 
     try {
-      await withFreshToken(getToken, async (token) => {
-        const next = await fetchNextKeyVersion(token);
+      await withFreshIdToken(getIdToken, async (idToken) => {
+        const next = await fetchNextKeyVersion(idToken);
         const reg = await signKeyRegistration(next.next_version, Date.now());
-        const init = await registerKeyInit(token, {
+        const init = await registerKeyInit(idToken, {
           user_id: userId,
           encryption_public_key: reg.encryptionPublicKey,
           signature_public_key: reg.signaturePublicKey,
@@ -201,7 +201,7 @@ export function EncryptionSettings({
         });
         const { response, challengeSignature } = await respondToKeyChallenge(init.challenge_id, init.ciphertext);
 
-        await registerKeyComplete(token, { challenge_id: init.challenge_id, response, challenge_signature: challengeSignature });
+        await registerKeyComplete(idToken, { challenge_id: init.challenge_id, response, challenge_signature: challengeSignature });
       });
       setRemoteStatus('in-sync');
     } catch (err) {
@@ -210,7 +210,7 @@ export function EncryptionSettings({
     } finally {
       setReconciling(false);
     }
-  }, [userId, getToken, signKeyRegistration, respondToKeyChallenge, markSessionExpired]);
+  }, [userId, getIdToken, signKeyRegistration, respondToKeyChallenge, markSessionExpired]);
 
   // Reconciliation choice B — adopt the SERVER's identity instead. This device's
   // local keys are the wrong identity, so discard them and re-acquire the active
@@ -256,7 +256,7 @@ export function EncryptionSettings({
 
     let cancelled = false;
 
-    withFreshToken(getToken, (token) => fetchTrustedContacts(token))
+    withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken))
       .then(({ contacts }) => {
         if (!cancelled) setLiveEmergencyPhrases(grantedRearmRows(contacts, Date.now()).map((row) => row.granteeEmail));
       })
@@ -267,7 +267,7 @@ export function EncryptionSettings({
     return () => {
       cancelled = true;
     };
-  }, [keysExist, getToken, changePhraseStep]);
+  }, [keysExist, getIdToken, changePhraseStep]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -328,7 +328,7 @@ export function EncryptionSettings({
           // re-register.
           let everRegistered = true;
           try {
-            const next = await withFreshToken(getToken, (token) => fetchNextKeyVersion(token));
+            const next = await withFreshIdToken(getIdToken, (idToken) => fetchNextKeyVersion(idToken));
             everRegistered = next.next_generation > 1;
           } catch {
             // Keep the conservative default (offer re-enable, backed by the server guard).
@@ -356,7 +356,7 @@ export function EncryptionSettings({
     return () => {
       cancelled = true;
     };
-  }, [fingerprint, userId, getToken]);
+  }, [fingerprint, userId, getIdToken]);
 
   // Once the identity matches the directory, check that the vault stored on the
   // server still verifies. The vault already retries once and tells a divergence
@@ -407,15 +407,15 @@ export function EncryptionSettings({
     try {
       // Disable the public key in the directory FIRST (if requested), so others
       // stop using a key this user can no longer decrypt with. This is a soft,
-      // reversible disable — NOT a destructive vault wipe (a stolen JWT must never
+      // reversible disable — NOT a destructive vault wipe (a stolen ID token must never
       // be able to destroy the vault; only reading unreadable ciphertext is
-      // acceptable). withFreshToken (never a raw getToken) guarantees a valid
+      // acceptable). withFreshIdToken (never a raw getIdToken) guarantees a valid
       // token or throws SessionExpiredError: a lapsed session must surface the
       // reconnect banner and ABORT here, never silently skip the disable and then
       // wipe local keys, which would leave this device empty while the server key
       // stays active (and the next screen wrongly reads "existing configuration").
       if (alsoDisableServer) {
-        await withFreshToken(getToken, (token) => deletePublicKeys(token));
+        await withFreshIdToken(getIdToken, (idToken) => deletePublicKeys(idToken));
       }
 
       // Only now remove this device's local keys + vault cache. The server vault
@@ -431,7 +431,7 @@ export function EncryptionSettings({
     } finally {
       setIsPending(false);
     }
-  }, [canDelete, alsoDisableServer, getToken, request, onKeysDestroyed, markSessionExpired]);
+  }, [canDelete, alsoDisableServer, getIdToken, request, onKeysDestroyed, markSessionExpired]);
 
   const resetDangerZone = useCallback(() => {
     setShowDangerZone(false);

@@ -112,6 +112,12 @@ stringData:
     }
     {{- range $b.keycloak.clients }}
     {{- $definition := dict "clientId" .clientId "protocol" "openid-connect" "enabled" true "publicClient" (default false .public) "standardFlowEnabled" true "directAccessGrantsEnabled" false "redirectUris" .redirectUris "webOrigins" .webOrigins "attributes" (dict "post.logout.redirect.uris" "+") }}
+    {{- if .pkce }}
+    {{- $_ := set $definition.attributes "pkce.code.challenge.method" "S256" }}
+    {{- end }}
+    {{- if .idTokenLifespanSeconds }}
+    {{- $_ := set $definition.attributes "access.token.lifespan" (toString .idTokenLifespanSeconds) }}
+    {{- end }}
     {{- if not .public }}
     {{- $_ := set $definition "secret" (required (printf "bootstrap.keycloak.clients[%s].secret is required for a confidential client" .clientId) .secret) }}
     {{- end }}

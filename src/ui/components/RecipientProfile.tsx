@@ -26,7 +26,7 @@ interface RecipientProfileProps {
   label: RecipientLabel;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
-  currentAccessToken?: string | null;
+  currentIdToken?: string | null;
 }
 
 /** The persisted TOFU decision for a recipient (never 'mismatch': that is transient). */
@@ -41,7 +41,7 @@ type Standing = Decision | 'changed';
  * from the registry for out-of-band comparison, and Trust / Don't trust
  * controls. The recorded decision, if any, is the chip on the card.
  */
-export function RecipientProfile({ userId, label, onReconnect, isAuthenticating = false, currentAccessToken = null }: RecipientProfileProps) {
+export function RecipientProfile({ userId, label, onReconnect, isAuthenticating = false, currentIdToken = null }: RecipientProfileProps) {
   const { t } = useTranslation('common');
   const { isReady, request } = useEncryptionContext();
 
@@ -50,7 +50,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
   const [decision, setDecision] = useState<Standing>('unknown');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { sessionExpired, markSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
 
   const onError = useCallback(
     (err: unknown) => {

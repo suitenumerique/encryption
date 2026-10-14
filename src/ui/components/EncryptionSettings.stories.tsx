@@ -27,7 +27,7 @@ const Template: StoryFn<ComponentType> = (args) => <EncryptionSettings {...args}
 const DEMO_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 const baseArgs = {
-  getToken: async () => 'mock-jwt-token',
+  getIdToken: async () => 'mock-jwt-token',
   userId: DEMO_USER_ID,
   userInfo: { name: 'Alice Martin', email: 'alice.martin@numerique.gouv.fr' },
   onClose: () => console.log('onClose'),

@@ -149,7 +149,19 @@ function mainContainer(manifest: Manifest, name?: string): Container {
 }
 
 const defaults = parseYaml(readFileSync(resolve(CHART, 'values.yaml'), 'utf8')) as {
-  bootstrap: { keycloak: { clients: { clientId: string; public?: boolean; secret?: string; redirectUris: string[]; webOrigins: string[] }[] } };
+  bootstrap: {
+    keycloak: {
+      clients: {
+        clientId: string;
+        public?: boolean;
+        secret?: string;
+        pkce?: boolean;
+        idTokenLifespanSeconds?: number;
+        redirectUris: string[];
+        webOrigins: string[];
+      }[];
+    };
+  };
 };
 
 assertHelmInstalled();
@@ -252,6 +264,7 @@ describe('the stack chart', () => {
     expect(docs.get('REDIS_URL')?.value).not.toBe(drive.get('REDIS_URL')?.value);
     expect(encryption.get('MAILER_SMTP_HOST')?.value).toBe('mailpit');
     expect(encryption.get('OIDC_ISSUER')?.value).toBe('https://auth.suite.example.org/realms/suite');
+    expect(encryption.get('OIDC_CLIENT_SECRET')?.valueFrom?.secretKeyRef?.key).toBe('OIDC_CLIENT_SECRET');
 
     const secret = find(full.docs, 'Secret', encryption.get('DATABASE_URL')?.valueFrom?.secretKeyRef?.name ?? '');
 
@@ -281,6 +294,19 @@ describe('the stack chart', () => {
     for (const client of ['docs', 'drive', 'encryption']) {
       expect(scripts['keycloak.sh']).toContain(`ensure_client '${client}' `);
     }
+
+    // The encryption interface's client is confidential, PKCE-bound, and has no web origin:
+    // its server signs users in, the browser never calls Keycloak.
+    const encryptionClient = JSON.parse(/ensure_client 'encryption' '(.*)'$/m.exec(scripts['keycloak.sh'])?.[1] ?? '{}');
+
+    expect(encryptionClient).toMatchObject({
+      publicClient: false,
+      secret: 'ThisIsAnExampleKeyForDevPurposeOnly',
+      webOrigins: [],
+      // Keycloak gives ID tokens the access token's lifespan, 5 minutes in the realm:
+      // the interface's session would end every few minutes.
+      attributes: { 'pkce.code.challenge.method': 'S256', 'access.token.lifespan': '3600' },
+    });
 
     expect(scripts['keycloak.sh']).toContain(`ensure_user 'alice.martin' `);
 
@@ -376,8 +402,11 @@ describe('the stack chart', () => {
       ['driveRelay.driveApiUrl=http://drive-backend', /driveRelay\.driveApiUrl must be "https:\/\/drive\.suite\.example\.org"/],
       ['encryption.database.url=postgresql://other', /encryption\.database\.url must be the runtime role's URL/],
       ['encryption.config.oidc.issuer=https://other/realms/suite', /issuer must be the shared Keycloak's realm/],
-      ['encryption.config.oidc.jwksUrl=https://other/certs', /jwksUrl must be/],
       ['encryption.config.oidc.clientId=other', /clientId "other" has no entry in bootstrap\.keycloak\.clients/],
+      [
+        'encryption.config.oidc.clientSecret=other',
+        /encryption\.config\.oidc\.clientSecret differs from bootstrap\.keycloak\.clients\[encryption\]\.secret/,
+      ],
       ['encryption.config.mailer.smtpHost=smtp.example.org', /smtpHost must be "mailpit"/],
       ['bootstrap.encryption.database=other', /bootstrap\.encryption\.database "other" must be listed/],
       ['shared.postgres.serviceNameOverride=', /shared\.postgres\.serviceNameOverride is required/],
@@ -388,6 +417,17 @@ describe('the stack chart', () => {
     for (const [set, message] of cases) {
       expect(renderError([set]), set).toMatch(message);
     }
+  });
+
+  it('leaves the encryption secret to the operator when it comes from an existing Secret', () => {
+    const { docs } = render([], ['encryption.config.oidc.clientSecret=', 'encryption.config.oidc.existingSecret.name=encryption-oidc']);
+    const container = docs.find((document) => document.kind === 'Deployment' && document.metadata.name.includes('encryption'))?.spec?.template?.spec
+      .containers[0];
+
+    expect(container?.env?.find((entry) => entry.name === 'OIDC_CLIENT_SECRET')?.valueFrom?.secretKeyRef).toEqual({
+      name: 'encryption-oidc',
+      key: 'OIDC_CLIENT_SECRET',
+    });
   });
 
   it('refuses a client of the wrong kind, or one missing the redirect URI a product needs', () => {
@@ -409,13 +449,23 @@ describe('the stack chart', () => {
         [
           clients((client) => {
             if (client.clientId === 'encryption') {
-              client.public = false;
-              client.secret = 'x';
+              client.public = true;
+              delete client.secret;
             }
           }),
         ]
       )
-    ).toMatch(/clients\[encryption\] must be public/);
+    ).toMatch(/clients\[encryption\] must be confidential/);
+    expect(
+      renderError(
+        [],
+        [
+          clients((client) => {
+            if (client.clientId === 'encryption') delete client.idTokenLifespanSeconds;
+          }),
+        ]
+      )
+    ).toMatch(/clients\[encryption\]\.idTokenLifespanSeconds is required/);
     expect(
       renderError(
         [],

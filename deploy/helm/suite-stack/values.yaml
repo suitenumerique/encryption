@@ -131,8 +131,12 @@ bootstrap:
       - drive-media-storage
     versioning: true
   keycloak:
-    # Created or updated in the realm above, by clientId. `public: true` makes a client
-    # without secret, for a browser application (the encryption interface). Passwords and
+    # Created or updated in the realm above, by clientId. Every client here is confidential
+    # (signs in with its `secret`); `public: true` would make one without secret, for an
+    # application signing in from the browser, which none of these does. `pkce: true`
+    # makes the realm require a PKCE S256 challenge on the client's sign-ins.
+    # `idTokenLifespanSeconds` overrides the realm's token lifespan (5 minutes) for the
+    # client: Keycloak gives ID tokens the access token's lifespan. Passwords and
     # secrets must not contain quotes.
     clients:
       - clientId: docs
@@ -147,12 +151,16 @@ bootstrap:
           - https://drive.suite.example.org/*
         webOrigins:
           - https://drive.suite.example.org
+      # The encryption server exchanges its interface's sign-in codes with this
+      # secret: the browser never calls Keycloak, so no web origin. The interface's
+      # session lasts as long as the ID token, with no refresh.
       - clientId: encryption
-        public: true
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        pkce: true
+        idTokenLifespanSeconds: 3600
         redirectUris:
           - https://encryption.suite.example.org/auth/callback
-        webOrigins:
-          - https://encryption.suite.example.org
+        webOrigins: []
     # The testers. Created if missing, the password is (re)set every run, the email is
     # marked verified so every product accepts the account as is.
     users:
@@ -279,11 +287,17 @@ encryption:
       - https://drive.suite.example.org
     oidc:
       issuer: https://auth.suite.example.org/realms/suite
-      jwksUrl: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
       clientId: encryption
+      # Must equal the secret of bootstrap.keycloak.clients[encryption].
+      clientSecret: ThisIsAnExampleKeyForDevPurposeOnly
       # Accounts added by hand in the Keycloak console rarely have their email marked
       # verified; the bootstrap accounts always do.
       acceptUnverifiedEmail: true
+      # The testers' Keycloak accounts have no second factor: a step-up only asks
+      # them to sign in again.
+      stepUp:
+        acrValues: []
+        amrValues: []
     mailer:
       smtpHost: mailpit
       smtpPort: 1025

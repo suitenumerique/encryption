@@ -140,7 +140,7 @@ type Listener<K extends keyof EncryptionClientEventMap> = (data: EncryptionClien
  */
 // The vault's emergency-pending push is a bare routing signal: which prompt the
 // interface should lead with, nothing identifying. The product forwards it
-// verbatim; the interface renders the actual list from its own JWT fetch.
+// verbatim; the interface renders the actual list from its own ID-token-authenticated fetch.
 interface EmergencyPendingContext {
   recovery: boolean;
   invitation: boolean;

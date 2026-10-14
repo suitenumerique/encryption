@@ -29,6 +29,9 @@ import {
 
 // The keyring rewrite fires recovery notifications after a burn + re-arm; the
 // shared manual mock (src/server/email/__mocks__/emergency.ts) makes them inert.
+vi.mock('@encryption/src/server/env', () => ({
+  env: { OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'], OIDC_STEP_UP_AMR_VALUES: ['mfa'], OIDC_STEP_UP_MAX_AGE_SECONDS: 300 },
+}));
 vi.mock('@encryption/src/server/email/emergency');
 
 // The server-push notifier is exercised as a spy here (does a successful write
@@ -233,10 +236,16 @@ async function seedChallenge(nonce: Uint8Array, expiresAt = new Date(Date.now() 
   return testPrisma.vaultChallenge.create({ data: { userId: USER_ID, nonce: new Uint8Array(nonce), expiresAt } });
 }
 
-function buildApp() {
+// The claims of the ID token the request presents: a plain password login by
+// default, a fresh second-factor one for the step-up tests.
+const PASSWORD_LOGIN = { sub: 'user-sub', exp: 0, acr: 'eidas1' };
+const freshSecondFactorLogin = () => ({ sub: 'user-sub', exp: 0, acr: 'eidas1-mfa', auth_time: Math.floor(Date.now() / 1000) });
+
+function buildApp(idTokenClaims: Record<string, unknown> = PASSWORD_LOGIN) {
   const app = Fastify();
-  app.decorate('verifyJWT', async (request: { userId?: string }) => {
+  app.decorate('verifyIdToken', async (request: { userId?: string; idTokenClaims?: unknown }) => {
     request.userId = USER_ID;
+    request.idTokenClaims = idTokenClaims;
   });
   app.register(vaultRoute);
 
@@ -864,7 +873,7 @@ describe('identity request-signature middleware', () => {
   it('rejects a tier-2 request whose signature subject differs from the JWT user (401)', async () => {
     await seedRequestIdentity();
 
-    // JWT authenticates USER_ID (verifyJWT mock), but the signature is minted for a
+    // JWT authenticates USER_ID (verifyIdToken mock), but the signature is minted for a
     // DIFFERENT user: a valid token for one account paired with another's signature.
     const token = await signRequestProof({
       method: 'GET',
@@ -1119,7 +1128,8 @@ describe('POST /api/vault (atomic onboarding)', () => {
 
     const body = await successfulOnboardingBody(2); // next monotonic key version
 
-    const res = await buildApp().inject({ method: 'POST', url: '/api/vault', payload: body });
+    // Replacing the identity needs a fresh second-factor login (step-up).
+    const res = await buildApp(freshSecondFactorLogin()).inject({ method: 'POST', url: '/api/vault', payload: body });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ revision: 1 });
@@ -1149,6 +1159,31 @@ describe('POST /api/vault (atomic onboarding)', () => {
     expect(await testPrisma.identity.count({ where: { userId: USER_ID, disabledAt: null } })).toBe(1);
     expect(fresh.identityId).toBe((await testPrisma.identity.findFirstOrThrow({ where: { userId: USER_ID, disabledAt: null } })).id);
     expect(await testPrisma.encryptionKey.count({ where: { userId: USER_ID, disabledAt: null } })).toBe(1);
+  });
+
+  it('refuses to replace an identity without a fresh second-factor login (RFC 9470 step-up), writing nothing', async () => {
+    const previousIdentity = await seedRequestIdentity();
+    await seedEncryptionKey({ identityId: previousIdentity.id, version: 1 });
+    const previousVault = await seedVault({ identityId: previousIdentity.id, revision: 7, items: [] });
+    const body = await successfulOnboardingBody(2);
+    const staleSecondFactor = { ...freshSecondFactorLogin(), auth_time: Math.floor(Date.now() / 1000) - 3600 };
+
+    for (const claims of [PASSWORD_LOGIN, staleSecondFactor]) {
+      const res = await buildApp(claims).inject({ method: 'POST', url: '/api/vault', payload: body });
+
+      expect(res.statusCode).toBe(401);
+      expect(res.json().code).toBe('insufficient_user_authentication');
+      expect(res.headers['www-authenticate']).toContain('error="insufficient_user_authentication"');
+    }
+
+    expect((await testPrisma.vaultKeyring.findUniqueOrThrow({ where: { id: previousVault.id } })).disabledAt).toBeNull();
+    expect(await testPrisma.identity.count({ where: { userId: USER_ID } })).toBe(1);
+  });
+
+  it('asks no step-up for a first identity', async () => {
+    const res = await buildApp(PASSWORD_LOGIN).inject({ method: 'POST', url: '/api/vault', payload: await successfulOnboardingBody() });
+
+    expect(res.statusCode).toBe(200);
   });
 
   it('rejects (400, no vault writes) when the items do not match the signed manifest', async () => {

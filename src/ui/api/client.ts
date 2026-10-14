@@ -57,17 +57,17 @@ apiClient.interceptors.error.use((error, response) => {
  */
 export const apiDefaults = { client: apiClient, throwOnError: true } as const;
 
-/** Bearer auth for the routes that take an OIDC token. */
-export function authHeaders(token: string): { Authorization: string } {
-  return { Authorization: `Bearer ${token}` };
+/** Bearer auth with the provider's ID token, for the routes that take one. */
+export function authHeaders(idToken: string): { Authorization: string } {
+  return { Authorization: `Bearer ${idToken}` };
 }
 
 /**
  * Covered vault routes additionally require a per-request identity signature,
  * produced by the vault (the interface holds the token, not the identity key).
  */
-export function signedHeaders(token: string, xSignature: string): { Authorization: string; 'X-Signature': string } {
-  return { Authorization: `Bearer ${token}`, 'X-Signature': xSignature };
+export function signedHeaders(idToken: string, xSignature: string): { Authorization: string; 'X-Signature': string } {
+  return { Authorization: `Bearer ${idToken}`, 'X-Signature': xSignature };
 }
 
 /**

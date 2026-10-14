@@ -88,7 +88,7 @@ const REQUIRED_VARIABLES = Object.entries(envSchema.shape)
   .filter(([, schema]) => !schema.safeParse(undefined).success)
   .map(([name]) => name);
 const KNOWN_VARIABLES = new Set([...Object.keys(envSchema.shape), 'NODE_ENV']);
-const SECRET_VARIABLE = /^(?:DATABASE_URL|SENTRY_DSN|MAILER_.*_(?:USER|PASSWORD))$/;
+const SECRET_VARIABLE = /^(?:DATABASE_URL|OIDC_CLIENT_SECRET|SENTRY_DSN|MAILER_.*_(?:USER|PASSWORD))$/;
 
 // Renders happen while the suites are collected, so the guard has to run at import time.
 assertHelmInstalled();
@@ -193,12 +193,17 @@ describe('the chart', () => {
     }
   });
 
-  it('requires on tokens the client the interface signs in with', () => {
-    for (const env of [serverEnv(full.docs), serverEnv(minimal.docs)]) {
-      // The server checks `azp` against OIDC_SERVER_CLIENT_ID, and the interface's tokens
-      // are issued to OIDC_CLIENT_ID: any difference rejects every call it makes.
-      expect(env.get('OIDC_SERVER_CLIENT_ID')?.value).toBe(env.get('OIDC_CLIENT_ID')?.value);
-    }
+  // The interface's client is confidential: the server exchanges the code with its
+  // secret, which must reach the pod from a Secret, inline or existing.
+  it('reads the OIDC client secret from the Secret it was given', () => {
+    expect(serverEnv(full.docs).get('OIDC_CLIENT_SECRET')?.valueFrom?.secretKeyRef).toEqual({ name: 'enc-encryption', key: 'OIDC_CLIENT_SECRET' });
+    expect(full.docs.find((document) => document.kind === 'Secret' && document.metadata.name === 'enc-encryption')).toMatchObject({
+      stringData: { OIDC_CLIENT_SECRET: 'oidc-client-secret' },
+    });
+    expect(serverEnv(minimal.docs).get('OIDC_CLIENT_SECRET')?.valueFrom?.secretKeyRef).toEqual({
+      name: 'encryption-oidc',
+      key: 'OIDC_CLIENT_SECRET',
+    });
   });
 
   it('fails early, naming the value, instead of rendering a pod that cannot boot', () => {
@@ -208,6 +213,12 @@ describe('the chart', () => {
     expect(renderError(FULL_VALUES, ['config.mailer.senderAddress='])).toContain('config.mailer.senderAddress is required');
     expect(renderError(FULL_VALUES, ['config.mailer.senderAddress=example.org'])).toMatch(/senderAddress/);
     expect(renderError(FULL_VALUES, ['database.url='])).toContain('database.url or database.existingSecret.name is required');
+    expect(renderError(FULL_VALUES, ['config.oidc.clientSecret='])).toContain(
+      'config.oidc.clientSecret or config.oidc.existingSecret.name is required'
+    );
+    expect(renderError(FULL_VALUES, ['config.oidc.claims.lastName=null', 'config.oidc.claims.fullName=null'])).toContain(
+      'config.oidc.claims.lastName or config.oidc.claims.fullName must name at least one claim'
+    );
     expect(renderError(EXISTING_SECRETS_VALUES, ['image.digest='])).toContain('image.tag or image.digest is required');
   });
 

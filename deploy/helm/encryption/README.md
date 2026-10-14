@@ -64,6 +64,11 @@ The shape to know:
 - `image.tag` and `image.digest`: which application to run, see above.
 - `hosts.vault` and `hosts.interface`: the two public hostnames. TLS in front of them is mandatory.
 - `config.*`: the non-secret variables, named after `.env.model`.
+- `config.oidc.clientSecret` or `config.oidc.existingSecret`: the secret of the interface's OIDC client, which is **confidential**. The server exchanges the authorization code (with PKCE) with this secret and hands the provider's ID token to the interface, which presents it to the API; the browser never calls the provider, so the client needs no web origin. Register it with an asymmetric ID token signature (RS256 or ES256), since the server verifies ID tokens against the provider's keys (the `jwks_uri` of its discovery document).
+- `config.oidc.tokenEndpointAuthMethod`: how the secret reaches the token endpoint, `client_secret_post` (the default) or `client_secret_basic`, as the provider registered the client.
+- `config.oidc.scopes`: `openid` by default, the email and names then being asked for in userinfo through the `claims` parameter. For a provider that ignores that parameter, grant the scopes instead (e.g. `openid email profile`).
+- `config.oidc.claims`: the claims holding the first, last and full names, each an ordered list of candidates.
+- `config.oidc.stepUp`: the second-factor policy for replacing an identity (RFC 9470 step-up), the eIDAS second-factor levels by default. Both lists empty require only a fresh sign-in.
 - `database.url` or `database.existingSecret`: the **runtime** role. `database.migration.*`: the **migrator** role, used by the hook Job only, with its own ServiceAccount (`database.migration.serviceAccount`, never the server's). The two roles are described in [`deploy/postgres/`](../../postgres).
 - `sentry.enabled` with a DSN: error reporting, off by default.
 - `extraEnv` and `extraEnvFrom`: raw Kubernetes `env` and `envFrom` entries for what the chart has no key for. They are appended, and Kubernetes keeps the first occurrence of a name, so they cannot override a chart-managed variable.

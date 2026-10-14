@@ -15,10 +15,12 @@ import { ApiError } from '@encryption/src/ui/api/client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { deletePublicKeys, fetchNextKeyVersion, fetchPublicKeys, registerKeyInit } from '@encryption/src/ui/api/public-keys-client';
 import { createVault, hasRestorableVault } from '@encryption/src/ui/api/vault-client';
-import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
+import type { IdTokenSet } from '@encryption/src/ui/auth/login';
+import { SessionExpiredError, StepUpRequiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
+import { StepUpScreen } from '@encryption/src/ui/components/StepUpScreen';
 import { UntrustedRearmError } from '@encryption/src/ui/components/emergency-access-logic';
 import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
@@ -26,6 +28,7 @@ import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
+import { useStepUp } from '@encryption/src/ui/hooks/useStepUp';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 import type { OnboardingBundle } from '@encryption/src/vault/operations/onboarding';
@@ -120,7 +123,7 @@ function LastResortStep({
 }
 
 interface ModalEncryptionOnboardingProps {
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   userId: string | null;
   parentOrigin?: string | null;
   hasExistingBackendKey?: boolean;
@@ -141,15 +144,25 @@ interface ModalEncryptionOnboardingProps {
   /** True while the re-auth tab is open and we're awaiting its result. */
   isAuthenticating?: boolean;
   /**
-   * Current access token value. Used purely as a change detector: when
+   * Current ID token value. Used purely as a change detector: when
    * the token becomes a new string after the user has clicked Reconnect
    * we auto-clear the "session expired" banner. We can't rely on
-   * `isAuthenticated` because `getValidToken` leaves `tokenSet` intact
-   * on refresh failure (so the hook still reports authenticated even
-   * when the token is already dead) — the identity of the access token
-   * is the only reliable "actually refreshed" signal from the outside.
+   * `isAuthenticated` because an ID token the server rejected stays in
+   * place until the new one arrives (so the hook still reports
+   * authenticated) — the identity of the token is the only reliable
+   * "actually signed in again" signal from the outside.
    */
-  currentAccessToken?: string | null;
+  currentIdToken?: string | null;
+  /**
+   * The current ID token with what the provider reported about the sign-in:
+   * after a step-up, whether it carried a second factor.
+   */
+  currentIdTokenSet?: IdTokenSet | null;
+  /**
+   * Triggered when the user confirms their identity after the server asked for
+   * a step-up (replacing an identity). Wire to `oidcAuth.requestStepUp`.
+   */
+  onStepUp: () => void;
 }
 
 /**
@@ -171,7 +184,7 @@ function unlockErrorKey(
 }
 
 export function ModalEncryptionOnboarding({
-  getToken,
+  getIdToken,
   userId,
   hasExistingBackendKey = false,
   parentOrigin = null,
@@ -182,7 +195,9 @@ export function ModalEncryptionOnboarding({
   onOpenEmergencyAccess,
   onReconnect,
   isAuthenticating = false,
-  currentAccessToken = null,
+  currentIdToken = null,
+  currentIdTokenSet = null,
+  onStepUp,
 }: ModalEncryptionOnboardingProps) {
   const { t, i18n } = useTranslation('common');
   const {
@@ -226,6 +241,9 @@ export function ModalEncryptionOnboarding({
   const [step, setStep] = useState<OnboardingStep>(hasExistingBackendKey ? 'existing-key-choice' : 'checking-history');
   const [isPending, setIsPending] = useState(false);
   const [backupPassphrase, setBackupPassphrase] = useState<string | null>(null);
+  // The phrase the user last confirmed as saved: if the backup screen comes back
+  // (after a step-up, or a failed commit), it need not be saved again.
+  const [confirmedPassphrase, setConfirmedPassphrase] = useState<string | null>(null);
   // The locally-prepared onboarding bundle, held between the backup step and the
   // moment the user confirms the backup. NOTHING is sent to the server until then,
   // so abandoning the backup step leaves no server-side registration or vault.
@@ -241,7 +259,12 @@ export function ModalEncryptionOnboarding({
   const [error, setError] = useState<string | null>(null);
   // The "cancel the setup?" prompt raised by the product's close control on the backup step.
   const [cancelPrompt, setCancelPrompt] = useState(false);
-  const { sessionExpired, markSessionExpired, clearSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  const { sessionExpired, markSessionExpired, clearSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
+  // Replacing an existing identity needs a fresh second-factor sign-in (step-up).
+  // Once confirmed, the interrupted commit runs again (see the ref below).
+  const retryAfterStepUpRef = useRef<() => void>(() => {});
+  const retryAfterStepUp = useCallback(() => retryAfterStepUpRef.current(), []);
+  const { stepUpState, markStepUpRequired, clearStepUp } = useStepUp(currentIdTokenSet, isAuthenticating, retryAfterStepUp);
   // MANDATORY phrase rotation after an emergency unlock: the phrase just used
   // was an escrowed one the trusted contact has seen, so it is burned by
   // design. The vault is already unlocked/adopted at this point; the new
@@ -251,7 +274,7 @@ export function ModalEncryptionOnboarding({
   const [rotationBusy, setRotationBusy] = useState(false);
   const [rotationError, setRotationError] = useState<string | null>(null);
   const [rotationBlocked, setRotationBlocked] = useState<Array<{ id: string; email: string }> | null>(null);
-  const { commitKeyring, revokeContacts } = useKeyringCommit(getToken);
+  const { commitKeyring, revokeContacts } = useKeyringCommit(getIdToken);
 
   // True when the user has just performed the "delete old key" flow.
   // Used to (a) skip the existing-key-choice auto-redirect below since
@@ -306,7 +329,7 @@ export function ModalEncryptionOnboarding({
           return;
         }
 
-        if (!(await withFreshToken(getToken, (token) => hasRestorableVault(token)))) {
+        if (!(await withFreshIdToken(getIdToken, (idToken) => hasRestorableVault(idToken)))) {
           setStep('explanation');
 
           return;
@@ -314,7 +337,7 @@ export function ModalEncryptionOnboarding({
 
         setStep('previous-identity');
         try {
-          const { contacts } = await withFreshToken(getToken, (token) => fetchTrustedContacts(token));
+          const { contacts } = await withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken));
           setHelpfulContacts(contacts.filter((contact) => contact.status !== 'invited').map((contact) => contact.grantee_email));
         } catch {
           // The hint is a courtesy: without the list the screen still offers every way in.
@@ -323,7 +346,7 @@ export function ModalEncryptionOnboarding({
         setStep('explanation');
       }
     })();
-  }, [hasExistingBackendKey, hasJustReset, step, getToken, userId]);
+  }, [hasExistingBackendKey, hasJustReset, step, getIdToken, userId]);
 
   // Build the onboarding bundle LOCALLY (recovery phrase + keyring + sealed items
   // + signed manifest) without touching the server. The only server call here is
@@ -335,14 +358,14 @@ export function ModalEncryptionOnboarding({
 
     const lang = mnemonicLanguageForLocale(i18n.language);
 
-    return withFreshToken(getToken, async (token) => {
+    return withFreshIdToken(getIdToken, async (idToken) => {
       // Count disabled rows too, so a re-onboard after a reset seals `max + 1`.
-      const data = await fetchNextKeyVersion(token);
+      const data = await fetchNextKeyVersion(idToken);
       const bundle = await prepareOnboarding({ lang, version: data.next_version, generation: data.next_generation });
 
       return { bundle, version: data.next_version };
     });
-  }, [userId, getToken, i18n.language, prepareOnboarding, t]);
+  }, [userId, getIdToken, i18n.language, prepareOnboarding, t]);
 
   // Commit the prepared onboarding to the server: prove possession of both keys
   // and create the synchronized vault in ONE atomic transaction (POST /api/vault).
@@ -354,6 +377,7 @@ export function ModalEncryptionOnboarding({
     setIsCommitting(true);
     setCommitError(null);
     clearSessionExpired();
+    clearStepUp();
 
     // A registration for this user can land between prepare and this commit (e.g.
     // onboarding in another tab), making the version we signed stale. The server
@@ -374,10 +398,10 @@ export function ModalEncryptionOnboarding({
 
       for (let attempt = 0; ; attempt++) {
         try {
-          await withFreshToken(getToken, async (token) => {
+          await withFreshIdToken(getIdToken, async (idToken) => {
             const reg = await signKeyRegistration(current.version, Date.now());
 
-            const init = await registerKeyInit(token, {
+            const init = await registerKeyInit(idToken, {
               user_id: userId,
               encryption_public_key: reg.encryptionPublicKey,
               signature_public_key: reg.signaturePublicKey,
@@ -388,7 +412,7 @@ export function ModalEncryptionOnboarding({
             const challengeId = init.challenge_id;
             const { response, challengeSignature } = await respondToKeyChallenge(challengeId, init.ciphertext);
 
-            await createVault(token, {
+            await createVault(idToken, {
               registration: { challenge_id: challengeId, response, challenge_signature: challengeSignature },
               keyring: current.bundle.keyring,
               items: current.bundle.items,
@@ -400,7 +424,7 @@ export function ModalEncryptionOnboarding({
             // server. A transport error is best-effort (the next sync reconciles), but
             // an integrity-error means the server already served back tampered/incoherent
             // data for a vault we just wrote — surface it loudly rather than swallow it.
-            const sync = await syncVault(token).catch(() => null);
+            const sync = await syncVault(idToken).catch(() => null);
             if (sync?.status === 'integrity-error')
               throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'Vault failed its integrity check right after creation.');
           });
@@ -411,8 +435,8 @@ export function ModalEncryptionOnboarding({
 
           // Re-seal at the now-current version, keeping the same phrase/keyring.
           const lang = mnemonicLanguageForLocale(i18n.language);
-          const refreshed = await withFreshToken(getToken, async (token) => {
-            const data = await fetchNextKeyVersion(token);
+          const refreshed = await withFreshIdToken(getIdToken, async (idToken) => {
+            const data = await fetchNextKeyVersion(idToken);
             const bundle = await prepareOnboarding({
               lang,
               version: data.next_version,
@@ -444,6 +468,11 @@ export function ModalEncryptionOnboarding({
 
       if (err instanceof SessionExpiredError) {
         markSessionExpired();
+      } else if (err instanceof StepUpRequiredError) {
+        // The account already has an identity: the server wants a fresh
+        // second-factor sign-in before replacing it. The staged vault stays in
+        // memory, so the commit is simply run again once it is confirmed.
+        markStepUpRequired();
       } else if (isVaultError(err) && err.code === VaultErrorCode.VAULT_INTEGRITY_FAILED) {
         setCommitError(t('errors.vault.integrity_failed'));
       } else {
@@ -459,7 +488,7 @@ export function ModalEncryptionOnboarding({
   }, [
     onboardingBundle,
     userId,
-    getToken,
+    getIdToken,
     signKeyRegistration,
     respondToKeyChallenge,
     syncVault,
@@ -471,8 +500,15 @@ export function ModalEncryptionOnboarding({
     onSuccess,
     markSessionExpired,
     clearSessionExpired,
+    markStepUpRequired,
+    clearStepUp,
     t,
   ]);
+
+  // The step-up came back with a second factor: finish what it interrupted.
+  useEffect(() => {
+    retryAfterStepUpRef.current = () => void handleCommitOnboarding();
+  }, [handleCommitOnboarding]);
 
   // Back out of the backup step before committing: nothing is on the server yet,
   // but the local keys were minted, so destroy them to return to a clean state.
@@ -549,10 +585,10 @@ export function ModalEncryptionOnboarding({
       // user straight into the fresh-onboarding flow inside the same
       // modal. Previously we closed on success, which left the user
       // stranded with no confirmation and required them to re-open the
-      // encryption modal to create new keys. `withFreshToken` turns a
-      // failed OIDC refresh into a recoverable `SessionExpiredError`
+      // encryption modal to create new keys. `withFreshIdToken` turns a
+      // missing or expired ID token into a recoverable `SessionExpiredError`
       // surfaced via the Reconnect UI.
-      await withFreshToken(getToken, (token) => deletePublicKeys(token));
+      await withFreshIdToken(getIdToken, (idToken) => deletePublicKeys(idToken));
       setHasJustReset(true);
       setStep('explanation');
       return;
@@ -565,7 +601,7 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [getToken, markSessionExpired, clearSessionExpired]);
+  }, [getIdToken, markSessionExpired, clearSessionExpired]);
 
   // Enter the mandatory post-emergency-unlock rotation: derive a fresh phrase +
   // keyring locally (nothing sent yet) and take over the whole view. The user
@@ -596,8 +632,8 @@ export function ModalEncryptionOnboarding({
       // Cold-unlock the server vault with the recovery phrase: the phrase both
       // proves possession (PoP gate) and unwraps the VRK. No re-registration —
       // the keys were registered at the original onboarding.
-      const { publicKey, isActiveVault, vaultCreatedAtMillis, emergencyUnlock } = await withFreshToken(getToken, (token) =>
-        restoreFromPhrase(phrase, token)
+      const { publicKey, isActiveVault, vaultCreatedAtMillis, emergencyUnlock } = await withFreshIdToken(getIdToken, (idToken) =>
+        restoreFromPhrase(phrase, idToken)
       );
 
       // If the phrase resolved to a DORMANT (superseded) vault, nothing has been
@@ -632,7 +668,7 @@ export function ModalEncryptionOnboarding({
     restoreComplete,
     restoreFromPhrase,
     startForcedRotation,
-    getToken,
+    getIdToken,
     onSuccess,
     onClose,
     t,
@@ -647,7 +683,7 @@ export function ModalEncryptionOnboarding({
     setError(null);
 
     try {
-      const reactivated = await withFreshToken(getToken, (token) => reactivateVault(restoreInput.trim(), token));
+      const reactivated = await withFreshIdToken(getIdToken, (idToken) => reactivateVault(restoreInput.trim(), idToken));
       setReactivatePrompt(null);
 
       // Dormant-vault emergency unlock: reactivation first (just confirmed),
@@ -666,7 +702,7 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [getToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, onClose, markSessionExpired, t]);
+  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, onClose, markSessionExpired, t]);
 
   // Commit the rotated keyring: the moment the escrowed phrase (and the old
   // primary one) dies. The shared flow burns + re-arms every granted
@@ -918,11 +954,21 @@ export function ModalEncryptionOnboarding({
         </Screen>
       )}
 
-      {step === 'backup' && backupPassphrase && (
+      {/* Replacing an identity: the commit waits on a step-up, and nothing else on
+          the backup screen matters until it is done. */}
+      {step === 'backup' && backupPassphrase && stepUpState !== 'idle' && (
+        <StepUpScreen state={stepUpState} onStepUp={onStepUp} isAuthenticating={isAuthenticating} note={t('onboarding.step_up_phrase_kept')} />
+      )}
+
+      {step === 'backup' && backupPassphrase && stepUpState === 'idle' && (
         <RecoveryKitBackup
           passphrase={backupPassphrase}
+          alreadySaved={confirmedPassphrase === backupPassphrase}
           parentOrigin={parentOrigin}
-          onConfirm={handleCommitOnboarding}
+          onConfirm={() => {
+            setConfirmedPassphrase(backupPassphrase);
+            void handleCommitOnboarding();
+          }}
           confirmLabel={t('onboarding.btn_backup_done')}
           busyLabel={t('onboarding.finalizing')}
           isBusy={isCommitting}

@@ -4,7 +4,7 @@
  * items + signed manifest; `putItem()` writes one item with optimistic
  * concurrency, mapping the server's 409 to the engine's `conflict` outcome.
  *
- * Both a JWT (owned by the interface, passed in per sync) AND a per-request
+ * Both an ID token (owned by the interface, passed in per sync) AND a per-request
  * identity `X-Signature` are required: these are covered vault routes, so a bare
  * token cannot pull the sealed items. `signRequest` produces the signature for a
  * given method+path (see src/crypto/request-proof.ts); the caller wires it from
@@ -51,16 +51,16 @@ function toSealed(w: ItemWire): SealedItem {
 }
 
 export interface HttpSyncTransportOptions {
-  token?: string | null;
+  idToken?: string | null;
   fetchImpl?: FetchLike;
   /** Produce the identity `X-Signature` proof for a request. Required for covered routes. */
   signRequest?: (method: string, path: string, body?: string) => Promise<string>;
 }
 
-export function createHttpSyncTransport({ token, fetchImpl = fetch, signRequest }: HttpSyncTransportOptions = {}): SyncTransport {
-  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+export function createHttpSyncTransport({ idToken, fetchImpl = fetch, signRequest }: HttpSyncTransportOptions = {}): SyncTransport {
+  const authHeaders: Record<string, string> = idToken ? { Authorization: `Bearer ${idToken}` } : {};
 
-  // JWT + (when a signer is provided) the per-request identity signature bound to
+  // ID token + (when a signer is provided) the per-request identity signature bound to
   // this exact method + path + body digest.
   async function headersFor(method: string, path: string, body: string, extra: Record<string, string> = {}): Promise<Record<string, string>> {
     const headers: Record<string, string> = { ...authHeaders, ...extra };

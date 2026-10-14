@@ -9,6 +9,7 @@ import { createKeyPossessionChallenge } from '@encryption/src/crypto/key-possess
 import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
 import { assertValidSignaturePublicKey } from '@encryption/src/crypto/signature';
 import { prisma } from '@encryption/src/prisma/client';
+import { requireStepUp } from '@encryption/src/server/auth/step-up';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import {
@@ -17,6 +18,7 @@ import {
   completeResultToHttpError,
   isRetryableRegistrationError,
   loadAndVerifyPossession,
+  wouldReplaceIdentity,
 } from '@encryption/src/server/routes/registration-core';
 import { assertUserId } from '@encryption/src/server/routes/transport-auth';
 import {
@@ -325,11 +327,11 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
   // Intentionally NOT signature-gated: this is the recovery path used
   // precisely when the user has LOST their keys (and therefore cannot sign),
   // so requiring a signature here would lock out the people who need it most.
-  // The JWT already proves it is the account owner acting.
+  // The ID token already proves it is the account owner acting.
   app.withTypeProvider<ZodTypeProvider>().delete('/api/public-keys', {
     schema: { response: { 200: z.object({ disabled: z.boolean() }), ...errorResponses(404) } },
     preHandler: async (request) => {
-      await app.verifyJWT(request);
+      await app.verifyIdToken(request);
     },
     handler: async (request, reply) => {
       assertUserId(request);
@@ -372,7 +374,7 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       },
     },
     preHandler: async (request) => {
-      await app.verifyJWT(request);
+      await app.verifyIdToken(request);
     },
     handler: async (request) => {
       assertUserId(request);
@@ -406,9 +408,9 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
   // bootstrap can run the identical registration inside its own transaction.
 
   app.withTypeProvider<ZodTypeProvider>().post('/api/public-keys/register/init', {
-    schema: { body: InitKeyPossessionBodySchema, response: { 200: InitKeyPossessionResponseSchema, ...errorResponses(400, 403, 429) } },
+    schema: { body: InitKeyPossessionBodySchema, response: { 200: InitKeyPossessionResponseSchema, ...errorResponses(400, 401, 403, 429) } },
     preHandler: async (request) => {
-      await app.verifyJWT(request);
+      await app.verifyIdToken(request);
     },
     handler: async (request, reply) => {
       const body = request.body;
@@ -470,6 +472,16 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
         return reply.status(400).send({ code: API_ERROR_INVALID_KEY_BINDING });
       }
 
+      // Replacing an existing identity (a new signature key when the user already
+      // has one) needs a fresh second-factor authentication: without one,
+      // requireStepUp answers 401 insufficient_user_authentication itself and no
+      // challenge is issued. A first identity, a reactivation or a rotation of the
+      // encryption key pass as before. The bootstrap (POST /api/vault) checks again,
+      // for an identity created by another tab in between.
+      if ((await wouldReplaceIdentity(userId, base64ToUint8(body.signature_public_key))) && !requireStepUp(request, reply)) {
+        return reply;
+      }
+
       // Generate the challenge id up front and bind the HMAC to it before the
       // row is written. The PoP challenge targets the ENCRYPTION key.
       const challengeId = randomUUID();
@@ -506,7 +518,7 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       response: { 200: CompleteKeyPossessionResponseSchema, ...errorResponses(400, 403, 404, 409, 410, 429) },
     },
     preHandler: async (request) => {
-      await app.verifyJWT(request);
+      await app.verifyIdToken(request);
     },
     handler: async (request, reply) => {
       const body = request.body;

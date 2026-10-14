@@ -4,7 +4,7 @@
  * the server, then reseal and persist the converged state. Only a status and
  * the agreed revision cross the postMessage boundary — never key material.
  *
- * The interface triggers this (it owns the OIDC token, passed in `payload`);
+ * The interface triggers this (it owns the ID token, passed in `payload`);
  * a server-push "revision changed" wake or a cross-tab broadcast is what makes
  * the interface call it.
  */
@@ -21,9 +21,9 @@ import { createHttpSyncTransport } from '@encryption/src/vault/operations/vault-
 import { getVaultCache, saveVaultCache, withVaultCacheLock } from '@encryption/src/vault/vault-cache';
 
 interface SyncPayload {
-  /** OIDC token: no longer required for the sync data-plane (it authenticates by
+  /** ID token: no longer required for the sync data-plane (it authenticates by
    *  identity signature), kept optional for callers that still have one. */
-  token?: string | null;
+  idToken?: string | null;
   /** Optional WRITE-THROUGH mutation: applied to the opened state BEFORE the push,
    *  so the change is only persisted locally if the push succeeds. */
   mutate?: (state: VaultState) => VaultState;
@@ -68,7 +68,7 @@ async function runSync(userId: string, payload: SyncPayload): Promise<{ status: 
   const localState = payload.mutate ? payload.mutate(opened) : opened;
 
   const transport = createHttpSyncTransport({
-    token: payload?.token ?? null,
+    idToken: payload?.idToken ?? null,
     signRequest: createRequestSigner(crypto.identitySecretKey, userId),
   });
   const result = await sync(localState, cache.revision, transport, crypto);

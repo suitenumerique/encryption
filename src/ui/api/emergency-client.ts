@@ -14,68 +14,68 @@ import {
   postApiEmergencyAccessByIdReject,
 } from '@encryption/src/ui/api/generated/sdk.gen';
 
-export async function searchEmergencyContact(token: string, email: string) {
-  const { data } = await getApiEmergencyAccessSearch({ ...apiDefaults, headers: authHeaders(token), query: { email } });
+export async function searchEmergencyContact(idToken: string, email: string) {
+  const { data } = await getApiEmergencyAccessSearch({ ...apiDefaults, headers: authHeaders(idToken), query: { email } });
 
   return data;
 }
 
-export async function fetchTrustedContacts(token: string) {
-  const { data } = await getApiEmergencyAccessTrusted({ ...apiDefaults, headers: authHeaders(token) });
+export async function fetchTrustedContacts(idToken: string) {
+  const { data } = await getApiEmergencyAccessTrusted({ ...apiDefaults, headers: authHeaders(idToken) });
 
   return data;
 }
 
-export async function fetchGrantedVaults(token: string) {
-  const { data } = await getApiEmergencyAccessGranted({ ...apiDefaults, headers: authHeaders(token) });
+export async function fetchGrantedVaults(idToken: string) {
+  const { data } = await getApiEmergencyAccessGranted({ ...apiDefaults, headers: authHeaders(idToken) });
 
   return data;
 }
 
-export async function designateEmergencyContact(token: string, body: EmergencyDesignateBody, xSignature: string) {
-  const { data } = await postApiEmergencyAccess({ ...apiDefaults, headers: signedHeaders(token, xSignature), body });
+export async function designateEmergencyContact(idToken: string, body: EmergencyDesignateBody, xSignature: string) {
+  const { data } = await postApiEmergencyAccess({ ...apiDefaults, headers: signedHeaders(idToken, xSignature), body });
 
   return data;
 }
 
-export async function acceptEmergencyDesignation(token: string, id: string) {
-  const { data } = await postApiEmergencyAccessByIdAccept({ ...apiDefaults, headers: authHeaders(token), path: { id } });
+export async function acceptEmergencyDesignation(idToken: string, id: string) {
+  const { data } = await postApiEmergencyAccessByIdAccept({ ...apiDefaults, headers: authHeaders(idToken), path: { id } });
 
   return data;
 }
 
-export async function rearmEmergencyEscrow(token: string, id: string, body: EmergencyRearmBody, xSignature: string) {
-  const { data } = await postApiEmergencyAccessByIdRearm({ ...apiDefaults, headers: signedHeaders(token, xSignature), path: { id }, body });
+export async function rearmEmergencyEscrow(idToken: string, id: string, body: EmergencyRearmBody, xSignature: string) {
+  const { data } = await postApiEmergencyAccessByIdRearm({ ...apiDefaults, headers: signedHeaders(idToken, xSignature), path: { id }, body });
 
   return data;
 }
 
-export async function deleteEmergencyAccess(token: string, id: string) {
-  const { data } = await deleteApiEmergencyAccessById({ ...apiDefaults, headers: authHeaders(token), path: { id } });
+export async function deleteEmergencyAccess(idToken: string, id: string) {
+  const { data } = await deleteApiEmergencyAccessById({ ...apiDefaults, headers: authHeaders(idToken), path: { id } });
 
   return data;
 }
 
-export async function initiateEmergencyRecovery(token: string, id: string, xSignature: string) {
-  const { data } = await postApiEmergencyAccessByIdInitiate({ ...apiDefaults, headers: signedHeaders(token, xSignature), path: { id } });
+export async function initiateEmergencyRecovery(idToken: string, id: string, xSignature: string) {
+  const { data } = await postApiEmergencyAccessByIdInitiate({ ...apiDefaults, headers: signedHeaders(idToken, xSignature), path: { id } });
 
   return data;
 }
 
-export async function cancelEmergencyRecovery(token: string, id: string) {
-  const { data } = await postApiEmergencyAccessByIdCancel({ ...apiDefaults, headers: authHeaders(token), path: { id } });
+export async function cancelEmergencyRecovery(idToken: string, id: string) {
+  const { data } = await postApiEmergencyAccessByIdCancel({ ...apiDefaults, headers: authHeaders(idToken), path: { id } });
 
   return data;
 }
 
-export async function rejectEmergencyRecovery(token: string, id: string) {
-  const { data } = await postApiEmergencyAccessByIdReject({ ...apiDefaults, headers: authHeaders(token), path: { id } });
+export async function rejectEmergencyRecovery(idToken: string, id: string) {
+  const { data } = await postApiEmergencyAccessByIdReject({ ...apiDefaults, headers: authHeaders(idToken), path: { id } });
 
   return data;
 }
 
-export async function recoverEmergencyCapsule(token: string, id: string, xSignature: string) {
-  const { data } = await postApiEmergencyAccessByIdRecover({ ...apiDefaults, headers: signedHeaders(token, xSignature), path: { id } });
+export async function recoverEmergencyCapsule(idToken: string, id: string, xSignature: string) {
+  const { data } = await postApiEmergencyAccessByIdRecover({ ...apiDefaults, headers: signedHeaders(idToken, xSignature), path: { id } });
 
   return data;
 }

@@ -4,12 +4,12 @@ import { ZodError } from 'zod';
 import { attachApiErrorMessages } from '@encryption/src/server/error-response';
 import { captureServerError } from '@encryption/src/server/monitoring';
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
-import { jwtAuthPlugin } from '@encryption/src/server/plugins/jwt-auth';
+import { idTokenAuthPlugin } from '@encryption/src/server/plugins/id-token-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
+import { authRoute } from '@encryption/src/server/routes/auth';
 import { browserReportsRoute } from '@encryption/src/server/routes/browser-reports';
 import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-access';
 import { SELF_CHECK_REMOTE_ADDRESS, healthRoute } from '@encryption/src/server/routes/health';
-import { meRoute } from '@encryption/src/server/routes/me';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
 import { securityTxtRoute } from '@encryption/src/server/routes/security-txt';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
@@ -93,7 +93,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   // front-end modules. A prefix check is not enough: the UI's own source lives in
   // `src/ui/api`, so Vite serves it at `/api/client.ts`, `/api/generated/sdk.gen.ts`,
   // … — under `/api/` too. The reliable distinction is the file extension: a real
-  // API route never carries one (`/api/me`, `/api/vault/events`), a served module
+  // API route never carries one (`/api/public-keys/next`, `/api/vault/events`), a served module
   // always does. `/@…` covers Vite internals (`/@vite/client`) that have none.
   app.addHook('onResponse', async (request, reply) => {
     // The readiness check asks the server for its own pages: not traffic.
@@ -129,7 +129,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   // Register plugins
   app.register(securityHeadersPlugin);
   app.register(corsPlugin);
-  app.register(jwtAuthPlugin);
+  app.register(idTokenAuthPlugin);
 
   // Cross-origin-fetchable assets (email logo, SDK type declaration), served on every host.
   const { publicAssetsPlugin } = await import('@encryption/src/server/plugins/public-assets');
@@ -156,7 +156,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   app.register(browserReportsRoute);
   app.register(securityTxtRoute);
   app.register(versionRoute);
-  app.register(meRoute);
+  app.register(authRoute);
   app.register(publicKeysRoute);
   app.register(vaultRoute);
   app.register(emergencyAccessRoute);

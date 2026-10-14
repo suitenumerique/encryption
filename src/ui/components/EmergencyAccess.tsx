@@ -28,7 +28,7 @@ import {
   rejectEmergencyRecovery,
   searchEmergencyContact,
 } from '@encryption/src/ui/api/emergency-client';
-import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
+import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { TrustRefuseButtons } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
@@ -52,12 +52,12 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
 type EscrowAuditStatus = 'ok' | 'tampered' | 'stale-identity' | 'outdated-key';
 
 interface EmergencyAccessProps {
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   onBack?: () => void;
   onClose: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
-  currentAccessToken?: string | null;
+  currentIdToken?: string | null;
   /** Set when the SDK auto-opened the interface on actionable state: leads with a prompt modal. */
   emergencyPending?: InterfaceContext['emergencyPending'] | null;
 }
@@ -90,7 +90,7 @@ function StatusChip({ phase, t }: { phase: 'invited' | 'confirmed' | 'requested'
 // ---------------------------------------------------------------------------
 
 interface DesignateFlowProps {
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   /** Pre-filled contact email (renewal after a stale identity): the search runs immediately. */
   prefillEmail?: string | null;
   onBack: () => void;
@@ -99,7 +99,7 @@ interface DesignateFlowProps {
   banner?: ReactNode;
 }
 
-function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, markSessionExpired, banner }: DesignateFlowProps) {
+function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, markSessionExpired, banner }: DesignateFlowProps) {
   const { t, i18n } = useTranslation('common');
   const { request, createEmergencyEscrow } = useEncryptionContext();
 
@@ -124,7 +124,7 @@ function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, ma
       setSearchOutcome(null);
 
       try {
-        const result = await withFreshToken(getToken, (token) => searchEmergencyContact(token, query));
+        const result = await withFreshIdToken(getIdToken, (idToken) => searchEmergencyContact(idToken, query));
 
         if (!result.user || !result.onboarded) {
           setSearchOutcome(result.user ? 'not-onboarded' : 'not-found');
@@ -163,7 +163,7 @@ function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, ma
         setBusy(false);
       }
     },
-    [email, getToken, request, markSessionExpired]
+    [email, getIdToken, request, markSessionExpired]
   );
 
   // Renewal path: the contact email is known, run the search on arrival.
@@ -228,7 +228,7 @@ function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, ma
         signature: string;
       };
 
-      await withFreshToken(getToken, (token) => designateEmergencyContact(token, body, signature));
+      await withFreshIdToken(getIdToken, (idToken) => designateEmergencyContact(idToken, body, signature));
       setStep('success');
     } catch (err) {
       if (err instanceof SessionExpiredError) {
@@ -244,7 +244,7 @@ function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, ma
     } finally {
       setBusy(false);
     }
-  }, [contact, effectiveWaitDays, createEmergencyEscrow, request, getToken, i18n.language, markSessionExpired, t]);
+  }, [contact, effectiveWaitDays, createEmergencyEscrow, request, getIdToken, i18n.language, markSessionExpired, t]);
 
   const errorAlert = error && <Alert type={VariantType.ERROR}>{error}</Alert>;
 
@@ -410,13 +410,13 @@ function DesignateFlow({ getToken, prefillEmail = null, onBack, onDesignated, ma
 
 interface RevealViewProps {
   entry: EmergencyGrantedEntry;
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   onDone: () => void;
   markSessionExpired: () => void;
   banner?: ReactNode;
 }
 
-function RevealView({ entry, getToken, onDone, markSessionExpired, banner }: RevealViewProps) {
+function RevealView({ entry, getIdToken, onDone, markSessionExpired, banner }: RevealViewProps) {
   const { t } = useTranslation('common');
   const { isReady, request, revealEmergencyPhrase } = useEncryptionContext();
 
@@ -436,7 +436,7 @@ function RevealView({ entry, getToken, onDone, markSessionExpired, banner }: Rev
       try {
         const path = `/api/emergency-access/${encodeURIComponent(entry.id)}/recover`;
         const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'POST', path })) as { signature: string };
-        const released = await withFreshToken(getToken, (token) => recoverEmergencyCapsule(token, entry.id, signature));
+        const released = await withFreshIdToken(getIdToken, (idToken) => recoverEmergencyCapsule(idToken, entry.id, signature));
         const { recoveryPhrase } = await revealEmergencyPhrase({
           grantorUserId: released.grantor_user_id,
           lang: released.lang,
@@ -466,7 +466,7 @@ function RevealView({ entry, getToken, onDone, markSessionExpired, banner }: Rev
     return () => {
       cancelled = true;
     };
-  }, [attempt, isReady, entry.id, entry.grantor_user_id, request, getToken, revealEmergencyPhrase, markSessionExpired]);
+  }, [attempt, isReady, entry.id, entry.grantor_user_id, request, getIdToken, revealEmergencyPhrase, markSessionExpired]);
 
   // The contact confirms the owner's identity out-of-band, then the reveal re-runs.
   const handleApproveGrantor = useCallback(async () => {
@@ -561,17 +561,17 @@ function RevealView({ entry, getToken, onDone, markSessionExpired, banner }: Rev
 // ---------------------------------------------------------------------------
 
 export function EmergencyAccess({
-  getToken,
+  getIdToken,
   onBack,
   onClose,
   onReconnect,
   isAuthenticating = false,
-  currentAccessToken = null,
+  currentIdToken = null,
   emergencyPending = null,
 }: EmergencyAccessProps) {
   const { t, i18n } = useTranslation('common');
   const { isReady, request, createEmergencyEscrow, verifyEscrows } = useEncryptionContext();
-  const { sessionExpired, markSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
 
   const [view, setView] = useState<'list' | 'designate' | 'reveal'>('list');
   const [designatePrefill, setDesignatePrefill] = useState<string | null>(null);
@@ -600,8 +600,8 @@ export function EmergencyAccess({
 
   const fetchLists = useCallback(async () => {
     try {
-      const [trustedRes, grantedRes] = await withFreshToken(getToken, (token) =>
-        Promise.all([fetchTrustedContacts(token), fetchGrantedVaults(token)])
+      const [trustedRes, grantedRes] = await withFreshIdToken(getIdToken, (idToken) =>
+        Promise.all([fetchTrustedContacts(idToken), fetchGrantedVaults(idToken)])
       );
 
       setTrusted(trustedRes.contacts);
@@ -615,7 +615,7 @@ export function EmergencyAccess({
         setLoadError((err as Error).message);
       }
     }
-  }, [getToken, markSessionExpired]);
+  }, [getIdToken, markSessionExpired]);
 
   const loadLists = useCallback(async () => {
     setLoadError(null);
@@ -694,34 +694,34 @@ export function EmergencyAccess({
   const handleReject = useCallback(
     (entry: EmergencyTrustedEntry) =>
       runRowAction(entry.id, async () => {
-        await withFreshToken(getToken, (token) => rejectEmergencyRecovery(token, entry.id));
+        await withFreshIdToken(getIdToken, (idToken) => rejectEmergencyRecovery(idToken, entry.id));
         setNotice(t('emergency.reject_done', { email: entry.grantee_email }));
       }),
-    [runRowAction, getToken, t]
+    [runRowAction, getIdToken, t]
   );
 
   const handleRevoke = useCallback(
     (entry: EmergencyTrustedEntry | EmergencyGrantedEntry) =>
       runRowAction(entry.id, async () => {
-        await withFreshToken(getToken, (token) => deleteEmergencyAccess(token, entry.id));
+        await withFreshIdToken(getIdToken, (idToken) => deleteEmergencyAccess(idToken, entry.id));
       }),
-    [runRowAction, getToken]
+    [runRowAction, getIdToken]
   );
 
   const handleAccept = useCallback(
     (entry: EmergencyGrantedEntry) =>
       runRowAction(entry.id, async () => {
-        await withFreshToken(getToken, (token) => acceptEmergencyDesignation(token, entry.id));
+        await withFreshIdToken(getIdToken, (idToken) => acceptEmergencyDesignation(idToken, entry.id));
       }),
-    [runRowAction, getToken]
+    [runRowAction, getIdToken]
   );
 
   const handleCancelRequest = useCallback(
     (entry: EmergencyGrantedEntry) =>
       runRowAction(entry.id, async () => {
-        await withFreshToken(getToken, (token) => cancelEmergencyRecovery(token, entry.id));
+        await withFreshIdToken(getIdToken, (idToken) => cancelEmergencyRecovery(idToken, entry.id));
       }),
-    [runRowAction, getToken]
+    [runRowAction, getIdToken]
   );
 
   // Contact side: start a recovery. Identity-signed (empty body), so a stolen
@@ -732,9 +732,9 @@ export function EmergencyAccess({
         const path = `/api/emergency-access/${encodeURIComponent(entry.id)}/initiate`;
         const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'POST', path })) as { signature: string };
 
-        await withFreshToken(getToken, (token) => initiateEmergencyRecovery(token, entry.id, signature));
+        await withFreshIdToken(getIdToken, (idToken) => initiateEmergencyRecovery(idToken, entry.id, signature));
       }),
-    [runRowAction, request, getToken]
+    [runRowAction, request, getIdToken]
   );
 
   // One-click re-arm after the contact rotated their encryption key: fresh
@@ -750,7 +750,7 @@ export function EmergencyAccess({
           const json = JSON.stringify(rearmBody);
           const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'POST', path, body: json })) as { signature: string };
 
-          await withFreshToken(getToken, (token) => rearmEmergencyEscrow(token, entry.id, rearmBody, signature));
+          await withFreshIdToken(getIdToken, (idToken) => rearmEmergencyEscrow(idToken, entry.id, rearmBody, signature));
         } catch (err) {
           if (isVaultError(err) && err.code === VaultErrorCode.UNTRUSTED_RECIPIENT) {
             throw new Error(t('emergency.designate_untrusted'), { cause: err });
@@ -758,7 +758,7 @@ export function EmergencyAccess({
           throw err;
         }
       }),
-    [runRowAction, createEmergencyEscrow, request, getToken, i18n.language, t]
+    [runRowAction, createEmergencyEscrow, request, getIdToken, i18n.language, t]
   );
 
   // Stale identity: the pinned contact identity no longer matches the
@@ -767,11 +767,11 @@ export function EmergencyAccess({
   const handleRenew = useCallback(
     (entry: EmergencyTrustedEntry) =>
       runRowAction(entry.id, async () => {
-        await withFreshToken(getToken, (token) => deleteEmergencyAccess(token, entry.id));
+        await withFreshIdToken(getIdToken, (idToken) => deleteEmergencyAccess(idToken, entry.id));
         setDesignatePrefill(entry.grantee_email);
         setView('designate');
       }),
-    [runRowAction, getToken]
+    [runRowAction, getIdToken]
   );
 
   const handlePromptRefuseAll = useCallback(async () => {
@@ -781,9 +781,9 @@ export function EmergencyAccess({
     setActionError(null);
 
     try {
-      await withFreshToken(getToken, async (token) => {
+      await withFreshIdToken(getIdToken, async (idToken) => {
         for (const req of requests) {
-          await rejectEmergencyRecovery(token, req.id);
+          await rejectEmergencyRecovery(idToken, req.id);
         }
       });
       setNotice(t('emergency.reject_done', { email: requests.map((r) => r.grantee_email).join(', ') }));
@@ -800,7 +800,7 @@ export function EmergencyAccess({
     } finally {
       setBusyId(null);
     }
-  }, [trusted, getToken, loadLists, markSessionExpired, t]);
+  }, [trusted, getIdToken, loadLists, markSessionExpired, t]);
 
   const dateFormatter = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'long' });
   const timeFormatter = new Intl.DateTimeFormat(i18n.language, { timeStyle: 'short' });
@@ -827,7 +827,7 @@ export function EmergencyAccess({
   if (view === 'designate') {
     return frame(
       <DesignateFlow
-        getToken={getToken}
+        getIdToken={getIdToken}
         prefillEmail={designatePrefill}
         banner={sessionBanner}
         onBack={() => {
@@ -848,7 +848,7 @@ export function EmergencyAccess({
     return frame(
       <RevealView
         entry={revealEntry}
-        getToken={getToken}
+        getIdToken={getIdToken}
         banner={sessionBanner}
         onDone={() => {
           setRevealEntry(null);

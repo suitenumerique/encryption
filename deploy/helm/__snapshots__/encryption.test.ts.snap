@@ -92,6 +92,7 @@ metadata:
 type: Opaque
 stringData:
   DATABASE_URL: "postgresql://encryption_runtime:runtime-password@postgres.example.org:5432/encryption?schema=encryption"
+  OIDC_CLIENT_SECRET: "oidc-client-secret"
   SENTRY_DSN: "https://11111111111111111111111111111111@glitchtip.example.org/1"
   MAILER_SMTP_USER: "relay-user"
   MAILER_SMTP_PASSWORD: "relay-password"
@@ -150,7 +151,7 @@ spec:
         app.kubernetes.io/instance: enc
       annotations:
         # A changed inline secret rolls the pods, since env from a Secret is read at start.
-        checksum/secret: 2bde9da0a89779539ca534197e8a2e9867ae0ef5d865b5c89b30c67212c215ac
+        checksum/secret: bf38a8350b18458487d62aa04ee83ec23728ddccb16234890ee4839853c96cb7
     spec:
       serviceAccountName: enc-encryption
       # The server never talks to the Kubernetes API.
@@ -190,18 +191,35 @@ spec:
               value: "https://docs.example.org,https://drive.example.org"
             - name: OIDC_ISSUER
               value: "https://auth.example.org/realms/suite"
-            - name: OIDC_JWKS_URL
-              value: "https://auth.example.org/realms/suite/protocol/openid-connect/certs"
             - name: OIDC_CLIENT_ID
               value: "encryption"
-            - name: OIDC_SERVER_CLIENT_ID
-              value: "encryption"
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "enc-encryption"
+                  key: "OIDC_CLIENT_SECRET"
             - name: OIDC_REDIRECT_URI
               value: "https://encryption.example.org/auth/callback"
             - name: OIDC_ACCEPT_UNVERIFIED_EMAIL
               value: "false"
             - name: OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION
               value: "false"
+            - name: OIDC_TOKEN_ENDPOINT_AUTH_METHOD
+              value: "client_secret_post"
+            - name: OIDC_SCOPES
+              value: "openid"
+            - name: OIDC_CLAIMS_FIRST_NAME
+              value: "given_name"
+            - name: OIDC_CLAIMS_LAST_NAME
+              value: "usual_name,family_name"
+            - name: OIDC_CLAIMS_FULL_NAME
+              value: "name"
+            - name: OIDC_STEP_UP_ACR_VALUES
+              value: "eidas0-mfa,eidas1-mfa,eidas2,eidas3"
+            - name: OIDC_STEP_UP_AMR_VALUES
+              value: "mfa,otp,totp,hwk,sc,pop"
+            - name: OIDC_STEP_UP_MAX_AGE_SECONDS
+              value: "300"
             - name: DOCS_ENABLED
               value: "true"
             - name: MAILER_SMTP_HOST

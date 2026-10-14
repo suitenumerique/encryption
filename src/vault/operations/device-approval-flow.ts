@@ -45,7 +45,7 @@ export async function handleStartDeviceApproval(): Promise<{ devicePublicKey: st
  */
 export async function handleCompleteDeviceApproval(
   userId: string,
-  payload: { wrappedDeviceBootstrap: string; token?: string | null }
+  payload: { wrappedDeviceBootstrap: string; idToken?: string | null }
 ): Promise<{ adopted: boolean }> {
   if (!pendingEphemeral) {
     throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'No pending device approval on this device.');
@@ -72,7 +72,7 @@ export async function handleCompleteDeviceApproval(
   // new device does not yet hold the vault it is about to fetch, so it could not
   // otherwise produce the required identity signature.
   const pulled = await createHttpSyncTransport({
-    token: payload.token ?? null,
+    idToken: payload.idToken ?? null,
     signRequest: createRequestSigner(identitySecretKey, userId),
   }).fetch();
 

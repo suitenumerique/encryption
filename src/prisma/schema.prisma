@@ -82,7 +82,7 @@ model OidcAccount {
   issuer     String    @map("issuer") /// the token's `iss` claim, verbatim
   subject    String    @map("subject") /// the token's `sub` claim, verbatim
   createdAt  DateTime  @default(now()) @map("created_at")
-  lastSeenAt DateTime  @default(now()) @map("last_seen_at") /// bumped at login (daily throttle); identifies dead credentials after a migration
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") /// bumped at each login; identifies dead credentials after a migration
   disabledAt DateTime? @map("disabled_at") /// set when an operator retires a provider's credentials; blocks auth, not resolution
 
   user User @relation(fields: [userId], references: [id])

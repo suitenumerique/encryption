@@ -17,8 +17,6 @@ import type {
   GetApiEmergencyAccessSearchResponses,
   GetApiEmergencyAccessTrustedData,
   GetApiEmergencyAccessTrustedResponses,
-  GetApiMeData,
-  GetApiMeResponses,
   GetApiPublicKeysByUserIdContinuityData,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdData,
@@ -42,6 +40,9 @@ import type {
   GetApiVaultRevisionResponses,
   GetApiVersionData,
   GetApiVersionResponses,
+  PostApiAuthTokenData,
+  PostApiAuthTokenErrors,
+  PostApiAuthTokenResponses,
   PostApiEmergencyAccessByIdAcceptData,
   PostApiEmergencyAccessByIdAcceptErrors,
   PostApiEmergencyAccessByIdAcceptResponses,
@@ -120,10 +121,17 @@ export const getApiVersion = <ThrowOnError extends boolean = false>(
 ): RequestResult<GetApiVersionResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetApiVersionResponses, unknown, ThrowOnError>({ url: '/api/version', ...options });
 
-export const getApiMe = <ThrowOnError extends boolean = false>(
-  options?: Options<GetApiMeData, ThrowOnError>
-): RequestResult<GetApiMeResponses, unknown, ThrowOnError> =>
-  (options?.client ?? client).get<GetApiMeResponses, unknown, ThrowOnError>({ url: '/api/me', ...options });
+export const postApiAuthToken = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiAuthTokenData, ThrowOnError>
+): RequestResult<PostApiAuthTokenResponses, PostApiAuthTokenErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiAuthTokenResponses, PostApiAuthTokenErrors, ThrowOnError>({
+    url: '/api/auth/token',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
 
 export const deleteApiPublicKeys = <ThrowOnError extends boolean = false>(
   options?: Options<DeleteApiPublicKeysData, ThrowOnError>

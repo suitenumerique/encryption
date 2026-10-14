@@ -3,7 +3,20 @@ import { z } from 'zod';
 import { parseDeviceInactivityDays } from '@encryption/src/shared/device-inactivity';
 import { isValidOriginEntry, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 
-export const envSchema = z.object({
+// A comma-separated variable as a list, blanks dropped: an empty value is an empty list.
+function commaSeparatedList(defaultValue: string) {
+  return z
+    .string()
+    .default(defaultValue)
+    .transform((value) =>
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+    );
+}
+
+const envFields = z.object({
   PORT: z.coerce.number().default(7200),
   HOST: z.string().default('0.0.0.0'),
   DATABASE_URL: z.string(),
@@ -27,12 +40,36 @@ export const envSchema = z.object({
       });
     }
   }),
-  OIDC_JWKS_URL: z.string(),
-  OIDC_SERVER_CLIENT_ID: z.string(),
-  // OIDC configuration for the encryption interface (injected into the HTML at runtime)
+  // The OIDC provider the interface's users sign in with. The SERVER runs the
+  // login (code exchange, ID token check, userinfo) as a confidential client,
+  // then hands the ID token to the interface as its Bearer credential.
   OIDC_ISSUER: z.string().url(),
   OIDC_CLIENT_ID: z.string(),
+  OIDC_CLIENT_SECRET: z.string().min(1),
+  // How the secret reaches the token endpoint (OIDC Core 9): in the form body
+  // (`client_secret_post`), or as HTTP Basic credentials (`client_secret_basic`).
+  OIDC_TOKEN_ENDPOINT_AUTH_METHOD: z.enum(['client_secret_post', 'client_secret_basic']).default('client_secret_post'),
   OIDC_REDIRECT_URI: z.string(),
+  // `openid` alone by default: the email and names are then asked for in the
+  // userinfo answer only, through the `claims` parameter, so they never ride in
+  // the ID token sent with every API call. The fallback for a provider that
+  // ignores that parameter is to grant the scopes here (e.g. `openid email
+  // profile`, or one scope per claim where the provider works that way).
+  OIDC_SCOPES: z.string().default('openid'),
+  // Which claims carry the user's names, each an ordered list of candidates.
+  // The first name is required, plus a last name or a full name: without a last
+  // name, it is the full name minus the first name (see identity-claims.ts).
+  OIDC_CLAIMS_FIRST_NAME: commaSeparatedList('given_name'),
+  OIDC_CLAIMS_LAST_NAME: commaSeparatedList('usual_name,family_name'),
+  OIDC_CLAIMS_FULL_NAME: commaSeparatedList('name'),
+  // Step-up (RFC 9470) for the sensitive actions: the ID token must show a
+  // second factor, through an `acr` among these values OR an `amr` among those,
+  // and an authentication (`auth_time`) younger than the max age. The defaults
+  // are the eIDAS second-factor levels and RFC 8176 methods.
+  // Both lists empty = only the fresh authentication is required.
+  OIDC_STEP_UP_ACR_VALUES: commaSeparatedList('eidas0-mfa,eidas1-mfa,eidas2,eidas3'),
+  OIDC_STEP_UP_AMR_VALUES: commaSeparatedList('mfa,otp,totp,hwk,sc,pop'),
+  OIDC_STEP_UP_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
   OIDC_ACCEPT_UNVERIFIED_EMAIL: z.stringbool().default(false),
   OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION: z.stringbool().default(false),
   // `stringbool`, not `coerce.boolean`: the latter turns the string "false" into true.
@@ -124,4 +161,15 @@ export const envSchema = z.object({
   // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.
   BRAND_FONT: z.string().optional(),
+});
+
+export const envSchema = envFields.superRefine((env, ctx) => {
+  // A sign-in needs a last name, read from its own claim or derived from the full name.
+  if (env.OIDC_CLAIMS_LAST_NAME.length === 0 && env.OIDC_CLAIMS_FULL_NAME.length === 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['OIDC_CLAIMS_LAST_NAME'],
+      message: 'OIDC_CLAIMS_LAST_NAME or OIDC_CLAIMS_FULL_NAME must name at least one claim: without either, every sign-in is refused',
+    });
+  }
 });

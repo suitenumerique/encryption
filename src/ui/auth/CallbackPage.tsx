@@ -1,16 +1,17 @@
 /**
- * OIDC callback page — handles the redirect from Keycloak.
- * Opened in a new tab (same tab as LoginPage after Keycloak redirect).
+ * OIDC callback page — handles the redirect from the identity provider.
+ * Opened in a new tab (same tab as LoginPage after the provider's redirect).
  *
- * 1. Exchanges the authorization code for tokens
- * 2. Posts the tokens to `window.opener`, which is the interface iframe
+ * 1. Hands the authorization code to the server, which exchanges it and
+ *    answers with the provider's ID token
+ * 2. Posts the ID token to `window.opener`, which is the interface iframe
  * 3. Closes the tab
  */
 import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { WrongUserError, handleCallback, notifyAuthComplete, startLogin } from '@encryption/src/ui/auth/oidc-client';
+import { WrongUserError, handleCallback, notifyAuthComplete, startLogin } from '@encryption/src/ui/auth/login';
 
 export function CallbackPage() {
   const { t } = useTranslation('common');
@@ -26,15 +27,15 @@ export function CallbackPage() {
 
     (async () => {
       try {
-        const tokenSet = await handleCallback();
+        const idTokenSet = await handleCallback();
 
         setSuccess(true);
 
         // Closing only on an acknowledgement, never on a timer. See notifyAuthComplete:
         // a tab that closes on success alone tells whoever opened it that the signed-in
         // user matched the `expectedSub` they put in the URL, and it also hides the case
-        // where the token reached nobody.
-        if (await notifyAuthComplete(tokenSet)) {
+        // where the ID token reached nobody.
+        if (await notifyAuthComplete(idTokenSet)) {
           window.close();
         } else {
           setUnacknowledged(true);
@@ -55,7 +56,9 @@ export function CallbackPage() {
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
         <Alert type={VariantType.WARNING}>{t('auth.wrong_user')}</Alert>
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <Button onClick={() => void startLogin(wrongUserExpectedSub ?? undefined, true)}>{t('auth.sign_in_another_account')}</Button>
+          <Button onClick={() => void startLogin(wrongUserExpectedSub ?? undefined, { forceLogin: true })}>
+            {t('auth.sign_in_another_account')}
+          </Button>
           <Button color="neutral" onClick={() => window.close()}>
             {t('settings.close')}
           </Button>

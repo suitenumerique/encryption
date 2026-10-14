@@ -18,26 +18,26 @@ export async function fetchPublicKeys(query: GetApiPublicKeysData['query']) {
   return data;
 }
 
-export async function fetchNextKeyVersion(token: string) {
-  const { data } = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(token) });
+export async function fetchNextKeyVersion(idToken: string) {
+  const { data } = await getApiPublicKeysNext({ ...apiDefaults, headers: authHeaders(idToken) });
 
   return data;
 }
 
-export async function registerKeyInit(token: string, body: PostApiPublicKeysRegisterInitData['body']) {
-  const { data } = await postApiPublicKeysRegisterInit({ ...apiDefaults, headers: authHeaders(token), body });
+export async function registerKeyInit(idToken: string, body: PostApiPublicKeysRegisterInitData['body']) {
+  const { data } = await postApiPublicKeysRegisterInit({ ...apiDefaults, headers: authHeaders(idToken), body });
 
   return data;
 }
 
-export async function registerKeyComplete(token: string, body: PostApiPublicKeysRegisterCompleteData['body']) {
-  const { data } = await postApiPublicKeysRegisterComplete({ ...apiDefaults, headers: authHeaders(token), body });
+export async function registerKeyComplete(idToken: string, body: PostApiPublicKeysRegisterCompleteData['body']) {
+  const { data } = await postApiPublicKeysRegisterComplete({ ...apiDefaults, headers: authHeaders(idToken), body });
 
   return data;
 }
 
-export async function deletePublicKeys(token: string) {
-  const { data } = await deleteApiPublicKeys({ ...apiDefaults, headers: authHeaders(token) });
+export async function deletePublicKeys(idToken: string) {
+  const { data } = await deleteApiPublicKeys({ ...apiDefaults, headers: authHeaders(idToken) });
 
   return data;
 }

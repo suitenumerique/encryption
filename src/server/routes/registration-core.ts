@@ -141,10 +141,25 @@ export async function loadAndVerifyPossession(
   return { ok: true, challenge };
 }
 
-// The write half of registration. MUST run inside a Serializable transaction
-// (so concurrent completes can't both mint a fresh active key) and the caller
-// MUST retry on isRetryableRegistrationError. Re-reads and deletes the
-// challenge inside the tx so the row doubles as a single-use mutex.
+/**
+ * Whether registering this signature key would REPLACE the user's identity: the
+ * user already has one (active or not) and this key is none of theirs. That is
+ * what a stolen password alone must not achieve (contacts would then encrypt to
+ * keys the thief holds), so it requires a step-up authentication
+ * (src/server/auth/step-up.ts). A first identity, a rotation of the encryption
+ * key under the same identity and the reactivation of an earlier identity of
+ * the user's do not.
+ */
+export async function wouldReplaceIdentity(
+  userId: string,
+  signaturePublicKey: Uint8Array,
+  db: Prisma.TransactionClient | typeof prisma = prisma
+): Promise<boolean> {
+  const identities = await db.identity.findMany({ where: { userId }, select: { signaturePublicKey: true } });
+
+  return identities.length > 0 && !identities.some((identity) => Buffer.from(identity.signaturePublicKey).equals(Buffer.from(signaturePublicKey)));
+}
+
 /**
  * Resolve or create the identity for a signature key so a following
  * completeRegistrationInTx can register the encryption key under it. This is the
@@ -184,6 +199,10 @@ export async function mintIdentityInTx(
   return { kind: 'ok' };
 }
 
+// The write half of registration. MUST run inside a Serializable transaction
+// (so concurrent completes can't both mint a fresh active key) and the caller
+// MUST retry on isRetryableRegistrationError. Re-reads and deletes the
+// challenge inside the tx so the row doubles as a single-use mutex.
 export async function completeRegistrationInTx(tx: Prisma.TransactionClient, userId: string, challenge: ChallengeRow): Promise<CompleteTxResult> {
   const fresh = await tx.keyPossessionChallenge.findUnique({ where: { id: challenge.id } });
 

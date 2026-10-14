@@ -1,7 +1,7 @@
 /**
  * Background sync driver, running INSIDE the vault iframe (which is loaded
  * whenever a product uses encryption, and holds the identity key). It keeps the
- * vault synced without the interface or an OIDC token: every request it makes is
+ * vault synced without the interface or an ID token: every request it makes is
  * authenticated by the identity signature alone (architecture.md §6.4, background tier).
  *
  * It is started lazily from the message handler the first time the vault handles

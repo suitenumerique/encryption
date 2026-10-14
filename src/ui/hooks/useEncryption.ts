@@ -49,7 +49,7 @@ interface UseEncryptionReturn {
   isReady: boolean;
   /**
    * Set the auth info for all subsequent vault requests. `internalUserId`
-   * (from /api/me) is what the vault actually operates under — the interface
+   * (from the sign-in answer) is what the vault actually operates under — the interface
    * is authoritative for it, which also covers first onboarding where the sub
    * resolves to nothing yet. Until it is known, requests carry the sub alone
    * and the vault resolves it through its alias/registry chain.
@@ -57,9 +57,9 @@ interface UseEncryptionReturn {
   setAuthInfo: (suiteUserId: string, internalUserId?: string | null) => void;
   /**
    * Resolve the declared sub to the internal user id through the vault's
-   * alias/registry chain: needs NO OIDC session, so an onboarded user gets
-   * their id even with an expired token. Returns null for a never-onboarded
-   * user (fall back to /api/me). When the envelope already carries the
+   * alias/registry chain: needs NO session, so an onboarded user gets
+   * their id even with an expired one. Returns null for a never-onboarded
+   * user (fall back to the user id the sign-in answered). When the envelope already carries the
    * internal id, the call doubles as a seed: the vault adopts it and persists
    * the sub -> id alias, so later visits resolve offline.
    */
@@ -88,12 +88,12 @@ interface UseEncryptionReturn {
   /** Cold-unlock: rebuild the vault from the server copy using the recovery phrase. `emergencyUnlock` = a trusted contact's escrowed phrase matched, forcing an immediate phrase change. */
   restoreFromPhrase: (
     recoveryPhrase: string,
-    token: string
+    idToken: string
   ) => Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }>;
   /** Bring the dormant vault a phrase unlocks back as the current one (after user confirmation). */
   reactivateVault: (
     recoveryPhrase: string,
-    token: string
+    idToken: string
   ) => Promise<{
     reactivated: boolean;
     publicKey: string;
@@ -121,11 +121,11 @@ interface UseEncryptionReturn {
     escrow: EmergencyTrustedEntry['escrow'];
   }) => Promise<{ recoveryPhrase: string }>;
   /** Run one pull-merge-push sync pass, authenticating with the given token. */
-  syncVault: (token: string | null) => Promise<{ status: string; revision: number }>;
+  syncVault: (idToken: string | null) => Promise<{ status: string; revision: number }>;
   /** New device: mint an ephemeral key, returning its public key + short fingerprint. */
   startDeviceApproval: () => Promise<{ devicePublicKey: string; decimalFingerprint: string }>;
   /** New device: unwrap the forwarded VRK and adopt the vault locally. */
-  completeDeviceApproval: (wrappedDeviceBootstrap: string, token: string | null) => Promise<{ adopted: boolean }>;
+  completeDeviceApproval: (wrappedDeviceBootstrap: string, idToken: string | null) => Promise<{ adopted: boolean }>;
   /** Enrolled device: verify the fingerprint and wrap the VRK for the new device. */
   approveDevice: (devicePublicKey: string, expectedDecimal: string) => Promise<{ wrappedDeviceBootstrap: string }>;
 }
@@ -332,8 +332,8 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   );
 
   const restoreFromPhrase = useCallback(
-    (recoveryPhrase: string, token: string) =>
-      request(MSG_VAULT_RESTORE_FROM_PHRASE, { recoveryPhrase, token }) as Promise<{
+    (recoveryPhrase: string, idToken: string) =>
+      request(MSG_VAULT_RESTORE_FROM_PHRASE, { recoveryPhrase, idToken }) as Promise<{
         publicKey: string;
         signaturePublicKey: string;
         isActiveVault: boolean;
@@ -344,8 +344,8 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   );
 
   const reactivateVault = useCallback(
-    (recoveryPhrase: string, token: string) =>
-      request(MSG_VAULT_REACTIVATE, { recoveryPhrase, token }) as Promise<{
+    (recoveryPhrase: string, idToken: string) =>
+      request(MSG_VAULT_REACTIVATE, { recoveryPhrase, idToken }) as Promise<{
         reactivated: boolean;
         publicKey: string;
         signaturePublicKey: string;
@@ -383,7 +383,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   );
 
   const syncVault = useCallback(
-    (token: string | null) => request(MSG_VAULT_SYNC, { token }) as Promise<{ status: string; revision: number }>,
+    (idToken: string | null) => request(MSG_VAULT_SYNC, { idToken }) as Promise<{ status: string; revision: number }>,
     [request]
   );
 
@@ -393,8 +393,8 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
   );
 
   const completeDeviceApproval = useCallback(
-    (wrappedDeviceBootstrap: string, token: string | null) =>
-      request(MSG_VAULT_COMPLETE_DEVICE_APPROVAL, { wrappedDeviceBootstrap, token }) as Promise<{ adopted: boolean }>,
+    (wrappedDeviceBootstrap: string, idToken: string | null) =>
+      request(MSG_VAULT_COMPLETE_DEVICE_APPROVAL, { wrappedDeviceBootstrap, idToken }) as Promise<{ adopted: boolean }>,
     [request]
   );
 

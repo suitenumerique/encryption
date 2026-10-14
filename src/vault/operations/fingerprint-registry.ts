@@ -16,7 +16,7 @@ import { handleSync } from '@encryption/src/vault/operations/vault-sync-run';
 import { loadVault, mutateVault } from '@encryption/src/vault/vault-keys';
 
 // Write-through for a TOFU decision: apply it AS PART OF a sync, so the change is
-// pushed to the server (the identity-signed data-plane needs no OIDC token) and
+// pushed to the server (the identity-signed data-plane needs no ID token) and
 // persisted locally ONLY if that push succeeds. A failed push throws, so the trust
 // is never silently kept local (which is what left it missing after a restore /
 // device transfer before this was wired). `mutateVault` remains for local-only

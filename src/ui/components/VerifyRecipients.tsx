@@ -37,7 +37,7 @@ interface VerifyRecipientsProps {
   onComplete: (outcome: 'resolved' | 'cancelled') => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
-  currentAccessToken?: string | null;
+  currentIdToken?: string | null;
 }
 
 /**
@@ -58,7 +58,7 @@ export function VerifyRecipients({
   onComplete,
   onReconnect,
   isAuthenticating = false,
-  currentAccessToken = null,
+  currentIdToken = null,
 }: VerifyRecipientsProps) {
   const { t } = useTranslation('common');
   const { isReady, request } = useEncryptionContext();
@@ -68,7 +68,7 @@ export function VerifyRecipients({
   const [recipients, setRecipients] = useState<SurfacedRecipient[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { sessionExpired, markSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
 
   const onError = useCallback(
     (err: unknown) => {

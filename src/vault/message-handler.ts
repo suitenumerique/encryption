@@ -203,17 +203,17 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_CHANGE_RECOVERY_PHRASE:
       return handleChangeRecoveryPhrase(userId, payload as { lang?: MnemonicLanguage });
     case MSG_VAULT_RESTORE_FROM_PHRASE:
-      return handleRestoreFromPhrase(userId, payload as { recoveryPhrase: string; token: string });
+      return handleRestoreFromPhrase(userId, payload as { recoveryPhrase: string; idToken: string });
     case MSG_VAULT_REACTIVATE:
-      return handleReactivateVault(userId, payload as { recoveryPhrase: string; token: string });
+      return handleReactivateVault(userId, payload as { recoveryPhrase: string; idToken: string });
     case MSG_VAULT_SYNC:
-      return syncWithIntegrityRetry(userId, payload as { token?: string | null });
+      return syncWithIntegrityRetry(userId, payload as { idToken?: string | null });
     case MSG_VAULT_SIGN_REQUEST:
       return handleSignRequest(userId, payload as { method: string; path: string; body?: string });
     case MSG_VAULT_START_DEVICE_APPROVAL:
       return handleStartDeviceApproval();
     case MSG_VAULT_COMPLETE_DEVICE_APPROVAL:
-      return handleCompleteDeviceApproval(userId, payload as { wrappedDeviceBootstrap: string; token?: string | null });
+      return handleCompleteDeviceApproval(userId, payload as { wrappedDeviceBootstrap: string; idToken?: string | null });
     case MSG_VAULT_APPROVE_DEVICE:
       return handleApproveDevice(userId, payload as { devicePublicKey: string; expectedDecimal: string });
     case MSG_VAULT_CREATE_EMERGENCY_ESCROW:
@@ -268,7 +268,7 @@ export function setupMessageHandler(): void {
 
     try {
       // Products declare the OIDC sub (`suiteUserId`); the interface, which
-      // learned the internal id from /api/me, declares `internalUserId` too.
+      // learned the internal id from its session, declares `internalUserId` too.
       // The sub stops HERE: everything past this boundary (cache keys, TOFU,
       // signed payloads, request proofs) speaks the internal id only. The
       // adopt-vs-resolve decision lives in resolveBoundaryUser.
@@ -313,7 +313,7 @@ export function setupMessageHandler(): void {
       await recordDeviceUse(userId);
 
       // Ensure the background sync driver is running for this user (idempotent):
-      // the vault keeps itself synced (identity-signed, no interface/JWT) as long
+      // the vault keeps itself synced (identity-signed, no interface/ID token) as long
       // as any product page is open.
       ensureVaultSyncDriver(userId);
 

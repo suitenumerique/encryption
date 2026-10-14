@@ -32,7 +32,7 @@ export default {
 const Template: StoryFn<ComponentType> = (args) => <DeviceApproval {...args} />;
 
 const baseArgs = {
-  getToken: async () => 'mock-jwt-token',
+  getIdToken: async () => 'mock-jwt-token',
   onBack: () => console.log('onBack'),
   onClose: () => console.log('onClose'),
 };

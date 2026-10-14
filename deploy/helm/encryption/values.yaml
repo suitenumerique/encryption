@@ -41,11 +41,39 @@ config:
   allowedFrameAncestors: []
   oidc:
     issuer: '' # required, https://...
-    jwksUrl: '' # required
-    clientId: '' # required, the interface's public client (also the `azp` the server requires on tokens)
+    clientId: '' # required, the interface's confidential client
+    # The client's secret: the server exchanges the authorization code with it
+    # (see `tokenEndpointAuthMethod`). One of `clientSecret` (inline, written into a
+    # Secret the chart owns) or `existingSecret.name`. Required.
+    clientSecret: ''
+    existingSecret:
+      name: ''
+      key: OIDC_CLIENT_SECRET
+    # How the secret reaches the token endpoint, as the provider registered the client:
+    # `client_secret_post` (in the form body) or `client_secret_basic` (HTTP Basic).
+    tokenEndpointAuthMethod: client_secret_post
     redirectUri: '' # default: https://<hosts.interface>/auth/callback
     acceptUnverifiedEmail: false
     fallbackToEmailForIdentification: false
+    # `openid` alone: the email and names are asked for in userinfo through the `claims`
+    # parameter. For a provider that ignores it, grant the scopes
+    # here, e.g. `openid email profile`.
+    scopes: openid
+    # The claims carrying the names, each an ordered list of candidates. The first name
+    # is required, plus a last name or a full name (the last name is then the full name
+    # minus the first name).
+    claims:
+      firstName: [given_name]
+      lastName: [usual_name, family_name]
+      fullName: [name]
+    # Step-up (RFC 9470) for sensitive actions (replacing an identity): the ID token
+    # must show a second factor, an `acr` among `acrValues` or an `amr` among
+    # `amrValues`, from a sign-in younger than `maxAgeSeconds`. The defaults are
+    # the eIDAS second-factor levels; both lists empty = a fresh sign-in is enough.
+    stepUp:
+      acrValues: [eidas0-mfa, eidas1-mfa, eidas2, eidas3]
+      amrValues: [mfa, otp, totp, hwk, sc, pop]
+      maxAgeSeconds: 300
   mailer:
     smtpHost: '' # required: the emergency-access notifications are a security control
     smtpPort: 25

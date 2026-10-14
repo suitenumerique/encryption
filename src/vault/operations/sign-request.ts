@@ -1,7 +1,7 @@
 /**
  * Sign one outgoing covered request with the vault's identity key, so the
- * interface (which owns the OIDC token but NOT the identity key) can attach an
- * `X-Signature` to its own JWT-authenticated calls (change-phrase, device
+ * interface (which owns the ID token but NOT the identity key) can attach an
+ * `X-Signature` to its own ID-token-authenticated calls (change-phrase, device
  * approval). Privileged: only the interface origin may ask for a signature.
  *
  * The interface must sign the EXACT method + path it is about to call, and use

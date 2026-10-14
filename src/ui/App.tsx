@@ -10,13 +10,11 @@ import {
   MSG_INTERFACE_SHOWN,
   MSG_INTERFACE_VERIFY_COMPLETE,
 } from '@encryption/src/shared/constants';
-import { ApiError } from '@encryption/src/ui/api/client';
-import { fetchMe } from '@encryption/src/ui/api/me-client';
 import { fetchPublicKeys } from '@encryption/src/ui/api/public-keys-client';
 import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
 import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
-import { InvalidGrantError, type TokenSet, decodeJwtClaims, refreshTokenWithLock, tokenNeedsRefresh } from '@encryption/src/ui/auth/oidc-client';
-import { clearToken, readToken, storeToken } from '@encryption/src/ui/auth/token-storage';
+import { clearIdTokenSet, readIdTokenSet, storeIdTokenSet, subscribeToIdTokenSet } from '@encryption/src/ui/auth/id-token-storage';
+import { isIdTokenExpired } from '@encryption/src/ui/auth/login';
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
@@ -64,16 +62,6 @@ function notifyParent(parentOrigin: string | null, type: string, data?: Record<s
 export interface UserInfo {
   name: string | null;
   email: string | null;
-}
-
-/** Decode JWT payload to extract user identity (name, email). */
-function decodeJwtUserInfo(token: string): UserInfo {
-  const claims = decodeJwtClaims(token);
-
-  return {
-    name: claims?.name || claims?.preferred_username || null,
-    email: claims?.email || null,
-  };
 }
 
 /**
@@ -186,13 +174,11 @@ function InterfaceScreens({
   const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
 
   // The INTERNAL encryption user id. Resolved vault-first (alias store /
-  // registry, no OIDC session needed, so settings work with an expired token),
-  // with /api/me as the fallback for a never-onboarded user. It is what the
+  // registry, no ID token needed, so settings work with an expired one), with
+  // the user id the server returned at sign-in as the fallback for a never-onboarded user. It is what the
   // vault operates under and what binding signatures embed; components wait on
   // it (nullable userId props).
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
-
-  const [userResolveError, setUserResolveError] = useState<ApiError | null>(null);
 
   // Set auth info on the encryption context FIRST — the vault needs this before
   // we can make any requests (including token restoration). Re-sent when the
@@ -238,28 +224,42 @@ function InterfaceScreens({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, parentContext.suiteUserId]);
 
-  // OIDC self-authentication: the interface obtains its own token.
+  // OIDC self-authentication: the interface obtains its own ID token.
   const oidcAuth = useOidcAuth(parentContext.suiteUserId);
   // Both are stable across renders (a state setter and a memoized callback), so
   // depending on them directly keeps the effects below honest about what they
   // use without re-running them on every render — which listing the whole
   // `oidcAuth` object would do.
-  const { updateTokenSet, clearTokenSet } = oidcAuth;
+  const { updateIdTokenSet, clearIdTokenSet: dropIdTokenSet } = oidcAuth;
 
-  // Restore token from interface's own localStorage (not the vault).
+  // Restore the ID token from the interface's own localStorage (not the vault).
   // This avoids re-authentication when the iframe is recreated (page refresh, modal close/open).
   const [restoreAttemptedFor, setRestoreAttemptedFor] = useState<string | null>(null);
   const tokenRestoreAttempted = restoreAttemptedFor !== null;
 
-  if (parentContext.suiteUserId && !oidcAuth.token && restoreAttemptedFor !== parentContext.suiteUserId) {
+  if (parentContext.suiteUserId && !oidcAuth.idToken && restoreAttemptedFor !== parentContext.suiteUserId) {
     setRestoreAttemptedFor(parentContext.suiteUserId);
 
-    const stored = readToken(parentContext.suiteUserId);
+    const stored = readIdTokenSet(parentContext.suiteUserId);
 
-    if (stored && stored.sub === parentContext.suiteUserId) {
-      updateTokenSet(stored);
+    if (stored && stored.sub === parentContext.suiteUserId && !isIdTokenExpired(stored)) {
+      updateIdTokenSet(stored);
     }
   }
+
+  // Adopt the ID token another page signed in with (another product tab, or a
+  // step-up there), so its sign-in screen does not wait for a click of its own.
+  useEffect(() => {
+    if (!parentContext.suiteUserId) return;
+
+    const suiteUserId = parentContext.suiteUserId;
+
+    return subscribeToIdTokenSet(suiteUserId, (stored) => {
+      if (stored.sub === suiteUserId && !isIdTokenExpired(stored)) {
+        updateIdTokenSet(stored);
+      }
+    });
+  }, [parentContext.suiteUserId, updateIdTokenSet]);
 
   // If the parent never completes the auth-context handshake (suiteUserId never
   // arrives), the token-restore effect above never runs, so tokenRestoreAttempted
@@ -270,89 +270,58 @@ function InterfaceScreens({
   const [handshakeTimedOut, setHandshakeTimedOut] = useState(false);
 
   useEffect(() => {
-    if (parentContext.suiteUserId || oidcAuth.token) return;
+    if (parentContext.suiteUserId || oidcAuth.idToken) return;
 
     const timer = setTimeout(() => setHandshakeTimedOut(true), 10000);
 
     return () => clearTimeout(timer);
-  }, [parentContext.suiteUserId, oidcAuth.token]);
+  }, [parentContext.suiteUserId, oidcAuth.idToken]);
 
-  // Persist token set in localStorage after auth or refresh
+  // Persist the ID token in localStorage once signed in.
   useEffect(() => {
-    if (!oidcAuth.tokenSet || !parentContext.suiteUserId) return;
+    if (!oidcAuth.idTokenSet || !parentContext.suiteUserId) return;
 
-    storeToken(parentContext.suiteUserId, oidcAuth.tokenSet);
-  }, [oidcAuth.tokenSet, parentContext.suiteUserId]);
+    storeIdTokenSet(parentContext.suiteUserId, oidcAuth.idTokenSet);
+  }, [oidcAuth.idTokenSet, parentContext.suiteUserId]);
 
-  // Lazy token refresh: returns a valid token, refreshing if needed.
-  // Uses Web Locks to prevent concurrent refreshes across tabs.
-  const getValidToken = useCallback(async (): Promise<string | null> => {
-    const currentTokenSet = oidcAuth.tokenSet;
+  // A usable ID token, or null once it expired. There is no refresh: past its
+  // expiry it is dropped from memory AND localStorage, so `needsAuth` flips back
+  // on and the user is offered to sign in again (a tab that closes by itself
+  // while the provider's own session is alive).
+  const getValidIdToken = useCallback(async (): Promise<string | null> => {
+    const idTokenSet = oidcAuth.idTokenSet;
 
-    if (!currentTokenSet) return null;
+    if (!idTokenSet) return null;
 
-    if (!tokenNeedsRefresh(currentTokenSet)) {
-      return currentTokenSet.accessToken;
-    }
-
-    if (!currentTokenSet.refreshToken) return null;
-
-    try {
-      const readStoredToken = async (): Promise<TokenSet | null> => {
-        return parentContext.suiteUserId ? readToken(parentContext.suiteUserId) : null;
-      };
-
-      const persistToken = (tokenSet: TokenSet) => {
-        if (parentContext.suiteUserId) {
-          storeToken(parentContext.suiteUserId, tokenSet);
-        }
-      };
-
-      const refreshed = await refreshTokenWithLock(currentTokenSet, readStoredToken, persistToken);
-      updateTokenSet(refreshed);
-
-      return refreshed.accessToken;
-    } catch (err) {
-      // A definitively rejected refresh token (idle timeout, revoked session,
-      // a reset Keycloak realm) must be evicted from memory AND localStorage.
-      // Keeping it wedges the interface for good: the stale access token still
-      // reads as "authenticated", so `needsAuth` stays false, no sign-in is
-      // offered, and the restore-from-localStorage effect resurrects the same
-      // dead token on every reload. Transient failures (offline, 5xx) fall
-      // through untouched so a network hiccup never logs the user out.
-      if (err instanceof InvalidGrantError) {
-        if (parentContext.suiteUserId) {
-          clearToken(parentContext.suiteUserId);
-        }
-
-        clearTokenSet();
+    if (isIdTokenExpired(idTokenSet)) {
+      if (parentContext.suiteUserId) {
+        clearIdTokenSet(parentContext.suiteUserId);
       }
+
+      dropIdTokenSet();
 
       return null;
     }
-  }, [oidcAuth.tokenSet, parentContext.suiteUserId, updateTokenSet, clearTokenSet]);
 
-  // OIDC token for server API calls. Components use oidcToken for display/checks,
-  // but must call getValidToken() before actual API calls to ensure the token
-  // is fresh (lazy refresh with Web Locks mutex if it expires within 1 minute).
-  const oidcToken = oidcAuth.token;
+    return idTokenSet.idToken;
+  }, [oidcAuth.idTokenSet, parentContext.suiteUserId, dropIdTokenSet]);
+
+  // Components get the ID token for display/checks, but must call
+  // getValidIdToken() before actual API calls, which drops an expired one.
+  const signedInUserId = oidcAuth.idTokenSet?.userId ?? null;
 
   // Resolve the internal user id, vault first: the alias/registry chain needs
-  // no OIDC session, so an onboarded user gets their id (and a working
-  // settings page) even with an expired token. /api/me is the fallback for a
-  // never-onboarded user only: it mints the server-side user row, which must
-  // exist before onboarding can sign a key registration (the internal id is
-  // inside the binding signature), and onboarding needs a live session anyway.
+  // no ID token, so an onboarded user gets their id (and a working settings
+  // page) even with an expired one. The sign-in answer is the fallback for a
+  // never-onboarded user: the server minted the user row when it signed them in
+  // (the row must exist before onboarding can sign a key registration, since the
+  // internal id is inside the binding signature) and answered with its id.
   useEffect(() => {
     if (!isReady || internalUserId) return;
 
     let cancelled = false;
 
     (async () => {
-      // Each fresh attempt starts from a clean slate, so a later success (e.g.
-      // after the user reconnects) clears a previously shown error.
-      setUserResolveError(null);
-
       try {
         const resolved = await resolveInternalUser();
 
@@ -363,45 +332,18 @@ function InterfaceScreens({
           return;
         }
       } catch {
-        // Vault unavailable: fall through to /api/me below.
+        // Vault unavailable: fall through to the sign-in answer below.
       }
 
-      // No token at all: NOT a stuck state — the render falls to the token-wait
-      // branch, which shows a reconnect action rather than a spinner.
-      if (!oidcToken) return;
-
-      try {
-        const token = await getValidToken();
-        const me = token ? await fetchMe(token) : null;
-
-        if (cancelled) return;
-
-        if (me) {
-          setInternalUserId(me.user_id);
-        } else {
-          // A live session that still produced no id (e.g. token refresh yielded
-          // nothing): terminal for this render, so surface it instead of leaving
-          // the flow on an endless spinner.
-          setUserResolveError(new ApiError(0, 'unknown'));
-        }
-      } catch (err) {
-        if (cancelled) return;
-
-        // ANY failure to resolve the internal id is terminal for this render:
-        // the flow must never sit on an infinite spinner. A server ApiError
-        // carries an already-translated message (falling back to the server's
-        // English default); anything else (network, unexpected) gets the generic
-        // "unexpected error" message via the 'unknown' code. The reconnect action
-        // on the error screen still lets an expired session recover.
-        setUserResolveError(err instanceof ApiError ? err : new ApiError(0, 'unknown'));
-        console.warn('[encryption-ui] Failed to resolve internal user id:', err);
-      }
+      // No ID token at all: NOT a stuck state — the render falls to the
+      // sign-in branch, which shows a reconnect action rather than a spinner.
+      if (!cancelled && signedInUserId) setInternalUserId(signedInUserId);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [isReady, oidcToken, internalUserId, getValidToken, resolveInternalUser]);
+  }, [isReady, signedInUserId, internalUserId, resolveInternalUser]);
 
   // Seed the vault's persistent alias store once the id is known: the request
   // envelope carries the internal id (setAuthInfo above re-ran), the vault
@@ -425,21 +367,24 @@ function InterfaceScreens({
   // real navigation, then return to where it was.
   const activeRoute = routeOverride ?? route;
 
-  const userInfo = useMemo<UserInfo | null>(() => {
-    if (!oidcToken) return null;
-
-    return decodeJwtUserInfo(oidcToken);
-  }, [oidcToken]);
+  // Who the ID token is for, as the provider described them at sign-in.
+  const userInfo = useMemo<UserInfo | null>(
+    () =>
+      oidcAuth.idTokenSet
+        ? { name: [oidcAuth.idTokenSet.firstName, oidcAuth.idTokenSet.lastName].filter(Boolean).join(' '), email: oidcAuth.idTokenSet.email }
+        : null,
+    [oidcAuth.idTokenSet]
+  );
 
   // Check for existing backend keys, to route the user to restore instead of
   // fresh onboarding. Queried by sub because that is the only id the parent
   // context guarantees, through the unauthenticated directory form, so it
-  // works with no (or an expired) OIDC session, like resolution above.
+  // works with no (or an expired) ID token, like resolution above.
   useEffect(() => {
     if (!parentContext.suiteUserId) return;
 
     // Directory lookup by OIDC sub (unauthenticated, like every directory read):
-    // used before /api/me has resolved the internal id.
+    // used before the internal id is resolved.
     fetchPublicKeys({ subs: [parentContext.suiteUserId] })
       .then(async (data) => {
         const keys = data.keys;
@@ -469,19 +414,14 @@ function InterfaceScreens({
   }, [parentContext.parentOrigin]);
 
   // All hooks declared above — conditional returns are safe below this point.
-  // OIDC must be configured for the interface to work.
-  if (!oidcAuth.isConfigured) {
-    return frameGate(<Screen banner={<Alert type={VariantType.ERROR}>{t('auth.oidc_not_configured')}</Alert>} />);
-  }
-
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
-  if (!oidcAuth.token && !tokenRestoreAttempted && !handshakeTimedOut) {
+  if (!oidcAuth.idToken && !tokenRestoreAttempted && !handshakeTimedOut) {
     return frameGate(<LoadingScreen />);
   }
 
   // Wait for OIDC authentication.
-  if (!oidcAuth.token) {
+  if (!oidcAuth.idToken) {
     // Waiting for the login tab to complete
     if (oidcAuth.isAuthenticating) {
       return frameGate(<LoadingScreen label={t('auth.authenticating')} />);
@@ -527,26 +467,11 @@ function InterfaceScreens({
     return frameGate(<LoadingScreen />);
   }
 
-  // Any unrecoverable failure to resolve the internal id (a 403 with no usable
-  // email, a 5xx, a network drop, an unexpected error) would otherwise strand
-  // onboarding on its checking-history spinner. Surface the reason (ApiError
-  // carries an already-translated message, generic "unexpected error" as a last
-  // resort) with a reconnect action, so the user always knows what happened and
-  // has a way out instead of an endless loader.
-  if (userResolveError && !internalUserId) {
-    return frameGate(
-      <Screen
-        banner={<Alert type={VariantType.ERROR}>{userResolveError.message}</Alert>}
-        actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
-      />
-    );
-  }
-
   switch (activeRoute) {
     case 'onboarding':
       return (
         <ModalEncryptionOnboarding
-          getToken={getValidToken}
+          getIdToken={getValidIdToken}
           userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={hasExistingBackendKey}
@@ -558,14 +483,16 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
         />
       );
 
     case 'backup':
       return (
         <ModalEncryptionOnboarding
-          getToken={getValidToken}
+          getIdToken={getValidIdToken}
           userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={true}
@@ -577,14 +504,16 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
         />
       );
 
     case 'restore':
       return (
         <ModalEncryptionOnboarding
-          getToken={getValidToken}
+          getIdToken={getValidIdToken}
           userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={true}
@@ -596,7 +525,9 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
         />
       );
 
@@ -605,26 +536,26 @@ function InterfaceScreens({
         <EncryptionSettings
           userInfo={userInfo}
           userId={internalUserId}
-          getToken={getValidToken}
+          getIdToken={getValidIdToken}
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
         />
       );
 
     case 'emergency-access':
       return (
         <EmergencyAccess
-          getToken={getValidToken}
+          getIdToken={getValidIdToken}
           onBack={routeOverride ? () => setRouteOverride(null) : undefined}
           onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
           emergencyPending={parentContext.emergencyPending}
         />
       );
@@ -632,10 +563,10 @@ function InterfaceScreens({
     case 'device-approval':
       return (
         <DeviceApproval
-          getToken={getValidToken}
+          getIdToken={getValidIdToken}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
           onAdopted={() => {
             notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
 
@@ -656,7 +587,7 @@ function InterfaceScreens({
           onComplete={(outcome) => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_VERIFY_COMPLETE, { outcome })}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
         />
       );
 
@@ -667,7 +598,7 @@ function InterfaceScreens({
           label={parentContext.recipientProfile?.label ?? { email: '' }}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
-          currentAccessToken={oidcAuth.token}
+          currentIdToken={oidcAuth.idToken}
         />
       );
 

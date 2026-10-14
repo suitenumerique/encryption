@@ -132,8 +132,8 @@ export async function clearVaultCache(userId: string): Promise<void> {
  * vault context (each product tab embeds its own vault iframe, all sharing this
  * IndexedDB). Without this, two writers that both read the row before either
  * saves silently lose one write, e.g. a TOFU decision clobbered by a concurrent
- * sync. Web Locks is the same cross-tab mutex the UI already uses for token
- * refresh; it degrades to a plain call where the API is unavailable (tests).
+ * sync. Web Locks is the browser's cross-tab mutex; it degrades to a plain call
+ * where the API is unavailable (tests).
  */
 export async function withVaultCacheLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
   if (typeof navigator !== 'undefined' && navigator.locks) {

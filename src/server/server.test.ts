@@ -14,9 +14,8 @@ vi.mock('@encryption/src/server/env', () => ({
     UI_HOST: 'encryption.localhost',
     VAULT_URL: 'https://data.encryption.localhost',
     ALLOWED_FRAME_ANCESTORS: 'https://a.example',
-    OIDC_JWKS_URL: 'https://issuer.example/jwks',
     OIDC_ISSUER: 'https://issuer.example',
-    OIDC_SERVER_CLIENT_ID: 'encryption',
+    OIDC_CLIENT_SECRET: 'secret',
   },
 }));
 

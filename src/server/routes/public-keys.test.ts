@@ -32,6 +32,9 @@ import {
 vi.mock('@encryption/src/server/env', () => ({
   env: {
     OIDC_ISSUER: 'https://issuer.example',
+    OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'],
+    OIDC_STEP_UP_AMR_VALUES: ['mfa'],
+    OIDC_STEP_UP_MAX_AGE_SECONDS: 300,
   },
 }));
 
@@ -48,7 +51,7 @@ const mockVerifyJWT = vi.fn();
 function buildApp() {
   const app = Fastify();
 
-  app.decorate('verifyJWT', mockVerifyJWT);
+  app.decorate('verifyIdToken', mockVerifyJWT);
   app.register(publicKeysRoute);
 
   return app;
@@ -207,7 +210,7 @@ describe('public-keys routes', () => {
       const app = buildApp();
       // Even if JWT verification would reject, this public listing is not gated by
       // it: the vault fetches it during a product-initiated share with no token.
-      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401 }));
+      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401, code: 'unauthorized' }));
 
       const response = await app.inject({ method: 'GET', url: `/api/public-keys?user_ids=${USER_ID}` });
 
@@ -516,7 +519,7 @@ describe('public-keys routes', () => {
   describe('DELETE /api/public-keys', () => {
     it('rejects requests without JWT', async () => {
       const app = buildApp();
-      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401 }));
+      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401, code: 'unauthorized' }));
 
       const response = await app.inject({ method: 'DELETE', url: '/api/public-keys' });
 
@@ -563,7 +566,7 @@ describe('public-keys routes', () => {
   describe('POST /api/public-keys/register/init', () => {
     it('rejects requests without JWT', async () => {
       const app = buildApp();
-      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401 }));
+      mockVerifyJWT.mockRejectedValue(Object.assign(new Error('Unauthorized'), { statusCode: 401, code: 'unauthorized' }));
       const reg = await buildRegistration();
 
       const response = await app.inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
@@ -676,6 +679,56 @@ describe('public-keys routes', () => {
       const ss = await hybridDecapsulate(reg.encryption.secretKey, ciphertext);
       const expectedResponse = await computeChallengeResponse(ss, body.challenge_id);
       expect(Buffer.from(stored!.expectedHmac).equals(Buffer.from(expectedResponse))).toBe(true);
+    });
+
+    describe('replacing an identity (step-up, RFC 9470)', () => {
+      const authenticateAs = (claims: Record<string, unknown>) =>
+        mockVerifyJWT.mockImplementation(async (request) => {
+          request.userId = USER_ID;
+          request.idTokenClaims = { sub: 'user-sub', exp: 0, ...claims };
+        });
+      const now = () => Math.floor(Date.now() / 1000);
+
+      it('issues no challenge for a new signature key without a fresh second-factor login', async () => {
+        const reg = await buildRegistration(2);
+
+        await seedUser();
+        await seedIdentity();
+        authenticateAs({ acr: 'eidas1', auth_time: now() });
+
+        const response = await buildApp().inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
+
+        expect(response.statusCode).toBe(401);
+        expect(JSON.parse(response.body)).toMatchObject({ code: 'insufficient_user_authentication', params: { max_age: 300 } });
+        expect(response.headers['www-authenticate']).toMatch(
+          /^Bearer error="insufficient_user_authentication", .*acr_values="eidas1-mfa", max_age="300"$/
+        );
+        expect(await testPrisma.keyPossessionChallenge.count()).toBe(0);
+      });
+
+      it('issues it after one', async () => {
+        const reg = await buildRegistration(2);
+
+        await seedUser();
+        await seedIdentity();
+        authenticateAs({ acr: 'eidas1-mfa', auth_time: now() });
+
+        const response = await buildApp().inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
+
+        expect(response.statusCode).toBe(200);
+      });
+
+      it('asks nothing for a key under the identity the user already has (a rotation)', async () => {
+        const reg = await buildRegistration(2);
+
+        await seedUser();
+        await seedIdentity({ signaturePublicKey: base64ToUint8(reg.signaturePublicKey) });
+        authenticateAs({ acr: 'eidas1' });
+
+        const response = await buildApp().inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
+
+        expect(response.statusCode).toBe(200);
+      });
     });
   });
 

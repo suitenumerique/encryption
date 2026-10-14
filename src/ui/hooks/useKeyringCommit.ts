@@ -7,7 +7,7 @@ import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import { deleteEmergencyAccess, fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { updateVaultKeyring } from '@encryption/src/ui/api/vault-client';
-import { withFreshToken } from '@encryption/src/ui/auth/session-expired';
+import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { UntrustedRearmError, grantedRearmRows } from '@encryption/src/ui/components/emergency-access-logic';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
@@ -19,12 +19,12 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
  * the settings change-phrase flow and the forced rotation after an emergency
  * unlock, so both go through the exact same rewrite.
  */
-export function useKeyringCommit(getToken: () => Promise<string | null>) {
+export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
   const { request, buildEmergencyRearms } = useEncryptionContext();
 
   const commitKeyring = useCallback(
     async (keyring: VaultKeyringWire, lang: MnemonicLanguage): Promise<void> => {
-      const { contacts } = await withFreshToken(getToken, (token) => fetchTrustedContacts(token));
+      const { contacts } = await withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken));
       const rows = grantedRearmRows(contacts, Date.now());
 
       // Build per relationship (not batched) so ONE untrusted contact does not
@@ -60,21 +60,21 @@ export function useKeyringCommit(getToken: () => Promise<string | null>) {
         signature: string;
       };
 
-      await withFreshToken(getToken, (token) => updateVaultKeyring(token, body, signature));
+      await withFreshIdToken(getIdToken, (idToken) => updateVaultKeyring(idToken, body, signature));
     },
-    [getToken, request, buildEmergencyRearms]
+    [getIdToken, request, buildEmergencyRearms]
   );
 
   /** Revoke the given relationships (used on the blocking contacts before a retry). */
   const revokeContacts = useCallback(
     async (ids: string[]): Promise<void> => {
-      await withFreshToken(getToken, async (token) => {
+      await withFreshIdToken(getIdToken, async (idToken) => {
         for (const id of ids) {
-          await deleteEmergencyAccess(token, id);
+          await deleteEmergencyAccess(idToken, id);
         }
       });
     },
-    [getToken]
+    [getIdToken]
   );
 
   return { commitKeyring, revokeContacts };

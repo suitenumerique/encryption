@@ -15,6 +15,7 @@ import {
 } from '@encryption/src/crypto/vault-manifest';
 import { DEFAULT_KDF_PARAMS, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
+import { satisfiesStepUp, sendStepUpChallenge } from '@encryption/src/server/auth/step-up';
 import { errorResponses } from '@encryption/src/server/error-response';
 import { emergencyApprovalHolds, notifyVaultRecovered, verifyEscrowSubmission } from '@encryption/src/server/routes/emergency-core';
 import {
@@ -25,6 +26,7 @@ import {
   isRetryableRegistrationError,
   loadAndVerifyPossession,
   mintIdentityInTx,
+  wouldReplaceIdentity,
 } from '@encryption/src/server/routes/registration-core';
 import { SIG_ONLY, SKIP_SIG, assertUserId, registerTransportAuth } from '@encryption/src/server/routes/transport-auth';
 import { CompleteKeyPossessionBodySchema } from '@encryption/src/server/schemas/key-possession';
@@ -144,12 +146,12 @@ function toSealedItem(item: { item_id: string; type: string; ciphertext: string;
   return { id: item.item_id, type: item.type as SealedItem['type'], ciphertext: item.ciphertext, revisionDate: item.revision_date_millis };
 }
 
-// Per-route auth tier (see architecture.md §6.4). Default (no flag) = JWT +
+// Per-route auth tier (see architecture.md §6.4). Default (no flag) = ID token +
 // identity signature (tier 2, interactive + sensitive).
-// - SKIP_SIG: JWT only, no signature — cold prerequisites / PoP flows / the
+// - SKIP_SIG: ID token only, no signature — cold prerequisites / PoP flows / the
 //   lost-password disable, i.e. where the caller structurally cannot sign.
-// - SIG_ONLY: identity signature only, NO JWT — the silent data-plane that must
-//   run in the background (the vault holds the key, the interface/JWT may be
+// - SIG_ONLY: identity signature only, NO ID token — the silent data-plane that must
+//   run in the background (the vault holds the key, the interface/ID token may be
 //   absent). `userId` comes from the signed `sub`.
 
 // ----- Request body schemas --------------------------------------------------
@@ -258,7 +260,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // Server-push channel (SSE): a content-free "your vault changed" wake so a
   // user's OTHER devices pull near-instantly. SIG_ONLY: the stream is opened by
   // the vault iframe over the silent data plane, which holds an identity key but
-  // no JWT, and it carries no vault data. See src/server/vault-notify.ts.
+  // no ID token, and it carries no vault data. See src/server/vault-notify.ts.
   app.get('/api/vault/events', { ...SIG_ONLY, schema: { hide: true } }, (request, reply) => {
     assertUserId(request);
     const userId = request.userId;
@@ -564,7 +566,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           manifest: z.string().min(1).max(MAX_MANIFEST),
           manifest_sig: z.string().min(1).max(MAX_KEY_B64),
         }),
-      response: { 200: VaultRevisionOnlyResponseSchema, ...errorResponses(400, 403, 404, 409, 410, 429) },
+      response: { 200: VaultRevisionOnlyResponseSchema, ...errorResponses(400, 401, 403, 404, 409, 410, 429) },
     },
     handler: async (request, reply) => {
       const body = request.body;
@@ -596,11 +598,11 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
 
       // Serializable + retry, matching the standalone registration route: the
       // registration writes run first, then the vault writes, all-or-nothing.
-      let result: CompleteTxResult | { kind: 'already_committed' };
+      let result: CompleteTxResult | { kind: 'already_committed' } | { kind: 'step_up_required' };
 
       try {
         result = await prisma.$transaction(
-          async (tx): Promise<CompleteTxResult | { kind: 'already_committed' }> => {
+          async (tx): Promise<CompleteTxResult | { kind: 'already_committed' } | { kind: 'step_up_required' }> => {
             // The response to an earlier, identical bootstrap can be lost after its
             // commit landed: the client then rolls its own copy back and retries with
             // the same keys, phrase and signed manifest. That vault is already the
@@ -624,6 +626,14 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
               if (consumed.count === 0) return { kind: 'consumed' };
 
               return { kind: 'already_committed' };
+            }
+
+            // Replacing the identity needs a fresh second-factor authentication,
+            // already asked when the challenge was issued. Checked again HERE, inside
+            // the Serializable transaction, so an identity minted by a concurrent
+            // bootstrap cannot slip between this read and the mint below.
+            if ((await wouldReplaceIdentity(userId, check.challenge.signaturePublicKey, tx)) && !satisfiesStepUp(request.idTokenClaims ?? {})) {
+              return { kind: 'step_up_required' };
             }
 
             // Bootstrap is the SOLE identity minter: create (or re-enable) the
@@ -682,6 +692,12 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       }
 
       if (result.kind === 'already_committed') return { revision: 1 };
+
+      if (result.kind === 'step_up_required') {
+        request.log.info({ userId }, 'sensitive action refused: step-up authentication required');
+
+        return sendStepUpChallenge(reply);
+      }
 
       if (result.kind !== 'success') {
         const mapped = completeResultToHttpError(result)!;

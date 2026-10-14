@@ -14,8 +14,8 @@ config:
     - https://drive.example.org
   oidc:
     issuer: https://auth.example.org/realms/suite
-    jwksUrl: https://auth.example.org/realms/suite/protocol/openid-connect/certs
     clientId: encryption
+    clientSecret: oidc-client-secret
     acceptUnverifiedEmail: false
     fallbackToEmailForIdentification: false
   mailer:

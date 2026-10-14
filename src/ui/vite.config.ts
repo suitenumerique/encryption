@@ -22,9 +22,6 @@ function injectRuntimeConfig(): Plugin {
     apply: 'serve', // Without it it would bake one in at build time and would leave the document with two (reading the first one)
     transformIndexHtml(html) {
       const config = {
-        oidcIssuer: process.env.OIDC_ISSUER,
-        oidcClientId: process.env.OIDC_CLIENT_ID,
-        oidcRedirectUri: process.env.OIDC_REDIRECT_URI,
         vaultUrl: process.env.VAULT_URL,
         apiBaseUrl: '',
         docsEnabled: process.env.DOCS_ENABLED !== 'false',

@@ -22,24 +22,70 @@ export type GetApiVersionResponses = {
 
 export type GetApiVersionResponse = GetApiVersionResponses[keyof GetApiVersionResponses];
 
-export type GetApiMeData = {
-  body?: never;
+export type PostApiAuthTokenData = {
+  body: {
+    code: string;
+    code_verifier: string;
+    nonce: string;
+    expected_sub?: string;
+  };
   path?: never;
   query?: never;
-  url: '/api/me';
+  url: '/api/auth/token';
 };
 
-export type GetApiMeResponses = {
+export type PostApiAuthTokenErrors = {
+  /**
+   * Default Response
+   */
+  401: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  403: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiAuthTokenError = PostApiAuthTokenErrors[keyof PostApiAuthTokenErrors];
+
+export type PostApiAuthTokenResponses = {
   /**
    * Default Response
    */
   200: {
+    id_token: string;
+    expires_at: string;
+    sub: string;
     user_id: string;
     email: string | null;
+    first_name: string;
+    last_name: string;
+    second_factor: boolean;
   };
 };
 
-export type GetApiMeResponse = GetApiMeResponses[keyof GetApiMeResponses];
+export type PostApiAuthTokenResponse = PostApiAuthTokenResponses[keyof PostApiAuthTokenResponses];
 
 export type DeleteApiPublicKeysData = {
   body?: never;
@@ -209,6 +255,16 @@ export type PostApiPublicKeysRegisterInitErrors = {
    * Default Response
    */
   400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  401: {
     code: string;
     params?: {
       [key: string]: unknown;
@@ -646,6 +702,16 @@ export type PostApiVaultErrors = {
    * Default Response
    */
   400: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  401: {
     code: string;
     params?: {
       [key: string]: unknown;

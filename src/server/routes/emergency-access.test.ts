@@ -46,7 +46,7 @@ const wireBytes = (pair: SigKeyPair) => base64ToUint8(exportPublicKeyAsBase64(pa
 
 function buildApp(userId: string) {
   const app = Fastify();
-  app.decorate('verifyJWT', async (request: { userId?: string }) => {
+  app.decorate('verifyIdToken', async (request: { userId?: string }) => {
     request.userId = userId;
   });
   app.register(emergencyAccessRoute);

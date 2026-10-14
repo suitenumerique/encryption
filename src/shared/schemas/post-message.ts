@@ -251,7 +251,7 @@ export const VaultRestoreFromPhraseRequest = z.object({
   requestId: z.string(),
   payload: z.object({
     recoveryPhrase: z.string(),
-    token: z.string(),
+    idToken: z.string(),
   }),
 });
 
@@ -260,7 +260,7 @@ export const VaultReactivateRequest = z.object({
   requestId: z.string(),
   payload: z.object({
     recoveryPhrase: z.string(),
-    token: z.string(),
+    idToken: z.string(),
   }),
 });
 
@@ -269,7 +269,7 @@ export const VaultSyncRequest = z.object({
   requestId: z.string(),
   payload: z
     .object({
-      token: z.string().nullable().optional(), // OIDC token to authenticate the pull/push
+      idToken: z.string().nullable().optional(), // the provider ID token, to authenticate the pull/push
     })
     .optional(),
 });
@@ -284,7 +284,7 @@ export const VaultCompleteDeviceApprovalRequest = z.object({
   requestId: z.string(),
   payload: z.object({
     wrappedDeviceBootstrap: z.string(),
-    token: z.string().nullable().optional(),
+    idToken: z.string().nullable().optional(),
   }),
 });
 

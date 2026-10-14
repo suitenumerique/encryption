@@ -1,11 +1,11 @@
 /**
  * Login page — opened in a new tab by the iframe.
- * Immediately redirects to Keycloak for OIDC authentication.
+ * Immediately redirects to the identity provider, through the server.
  */
 import { Loader } from '@gouvfr-lasuite/cunningham-react';
 import { useEffect, useRef, useState } from 'react';
 
-import { startLogin } from '@encryption/src/ui/auth/oidc-client';
+import { startLogin } from '@encryption/src/ui/auth/login';
 
 export function LoginPage() {
   const started = useRef(false);
@@ -18,8 +18,9 @@ export function LoginPage() {
     const searchParams = new URLSearchParams(window.location.search);
     const expectedSub = searchParams.get('expectedSub') ?? undefined;
     const forceLogin = searchParams.get('forceLogin') === '1';
+    const stepUp = searchParams.get('stepUp') === '1';
 
-    startLogin(expectedSub, forceLogin).catch((err) => {
+    startLogin(expectedSub, { forceLogin, stepUp }).catch((err) => {
       console.error('[encryption] Failed to start OIDC login:', err);
       setError(err instanceof Error ? err.message : String(err));
     });

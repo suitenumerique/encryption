@@ -162,7 +162,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
   );
 
   // Actionable pending state, fetched by the VAULT over the identity-signed
-  // data plane (SIG_ONLY: the SDK/products never hold a JWT), so a product page
+  // data plane (SIG_ONLY: the SDK/products never hold an ID token), so a product page
   // can surface "someone requested recovery of your data" / "you were
   // designated as a contact" the moment the user is there. A grantor with no
   // vault left cannot sign this and is covered by the emails instead.
@@ -173,7 +173,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
       schema: {
         response: {
           // Counts only. The interface renders the actual list from its own
-          // JWT-authenticated fetch, so this signal (which reaches the product
+          // ID-token-authenticated fetch, so this signal (which reaches the product
           // page) carries nothing an attacker could spoof into a prompt.
           200: z.object({
             invitations: z.number().int().nonnegative(),
@@ -641,7 +641,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
     }
   );
 
-  // The contact withdraws their own request. Fail-safe, so JWT-only.
+  // The contact withdraws their own request. Fail-safe, so ID-token-only.
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/emergency-access/:id/cancel',
     {
@@ -674,8 +674,8 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
 
   // The grantor's veto: allowed while a request runs AND after auto-approval
   // (re-dormanting the credential, which kills a revealed-but-unused phrase).
-  // Deliberately JWT-only: the grantor by definition may have no vault left,
-  // and the worst a stolen session can do here is deny a recovery.
+  // Deliberately ID-token-only: the grantor by definition may have no vault left,
+  // and the worst a stolen ID token can do here is deny a recovery.
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/emergency-access/:id/reject',
     {

@@ -28,10 +28,6 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
   const isDev = process.env.NODE_ENV === 'development';
   const productFrameAncestors = parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS).join(' '); // The products allowed to embed either iframe.
   const vaultFrameAncestors = `${productFrameAncestors} ${env.UI_URL}`; // The vault has one embedder the interface does not: the interface itself.
-  // Only the interface talks to the OIDC provider: oidc-client-ts fetches its discovery
-  // document and JWKS, and the lazy token refresh POSTs to its token endpoint. The
-  // vault never does, so it must not get this.
-  const oidcOrigin = new URL(env.OIDC_ISSUER).origin;
 
   app.addHook('onRequest', async (request, reply) => {
     const path = request.url.split('?')[0];
@@ -55,9 +51,10 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       return;
     }
 
-    // The interface opens these two as a popup and talks back to itself through
-    // `window.opener`; see the COOP exception below.
-    const isAuthDocument = path === '/login' || path === '/auth/callback';
+    // The login popup's three top-level stops (the page, the redirect to the
+    // provider, the page it comes back to): the interface opens it and talks back
+    // to itself through `window.opener`; see the COOP exception below.
+    const isAuthDocument = path === '/login' || path === '/api/auth/authorize' || path === '/auth/callback';
 
     // `request.host` keeps the port; env.VAULT_HOST/UI_HOST are derived from
     // new URL(...).host, which also keeps it. Comparing against the port-stripped
@@ -113,10 +110,11 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       reply.raw.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
       reply.raw.setHeader(
         'Content-Security-Policy',
-        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc} ${oidcOrigin}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}; ${reporting}`
+        `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}; ${reporting}`
       );
 
-      // COOP is deliberately absent on the two auth documents. They are the only
+      // COOP is deliberately absent on the login popup's documents and on the redirect
+      // between them, since the browser applies it at every hop. They are the only
       // top-level documents this host serves (every other route refuses to run outside
       // an iframe, and COOP is ignored inside one), and the interface iframe opens them
       // as a popup and reads the result back through `window.opener`. Measured in

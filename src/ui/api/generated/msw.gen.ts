@@ -9,7 +9,6 @@ import type {
   GetApiEmergencyAccessPendingResponses,
   GetApiEmergencyAccessSearchResponses,
   GetApiEmergencyAccessTrustedResponses,
-  GetApiMeResponses,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdResponses,
   GetApiPublicKeysNextResponses,
@@ -20,6 +19,8 @@ import type {
   GetApiVaultMetaResponses,
   GetApiVaultRevisionResponses,
   GetApiVersionResponses,
+  PostApiAuthTokenData,
+  PostApiAuthTokenResponses,
   PostApiEmergencyAccessByIdAcceptResponses,
   PostApiEmergencyAccessByIdCancelResponses,
   PostApiEmergencyAccessByIdInitiateResponses,
@@ -91,17 +92,20 @@ export function handleGetApiVersion(
   );
 }
 
-export type HandleGetApiMeResponse = {
-  body: GetApiMeResponses[200];
+export type HandlePostApiAuthTokenResponse = {
+  body: PostApiAuthTokenResponses[200];
   status?: 200;
 };
 
 /**
- * Handler for the `GET /api/me` operation.
+ * Handler for the `POST /api/auth/token` operation.
  */
-export function handleGetApiMe(response?: HandleGetApiMeResponse | HttpResponseResolver<never, never>, options?: RequestHandlerOptions): HttpHandler {
-  return http.get<never, never>(
-    `${options?.baseUrl ?? '*'}/api/me`,
+export function handlePostApiAuthToken(
+  response?: HandlePostApiAuthTokenResponse | HttpResponseResolver<never, PostApiAuthTokenData['body']>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<never, PostApiAuthTokenData['body']>(
+    `${options?.baseUrl ?? '*'}/api/auth/token`,
     (info) => {
       if (typeof response === 'function') {
         return response(info);
@@ -1406,9 +1410,9 @@ export type MswHandlerFactories = {
    */
   getApiVersion: typeof handleGetApiVersion;
   /**
-   * Handler for the `GET /api/me` operation.
+   * Handler for the `POST /api/auth/token` operation.
    */
-  getApiMe: typeof handleGetApiMe;
+  postApiAuthToken: typeof handlePostApiAuthToken;
   /**
    * Handler for the `DELETE /api/public-keys` operation.
    */
@@ -1559,7 +1563,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
   }
   const pick: CreateMswHandlersResult['pick'] = {
     getApiVersion: wrap(handleGetApiVersion),
-    getApiMe: wrap(handleGetApiMe),
+    postApiAuthToken: wrap(handlePostApiAuthToken),
     deleteApiPublicKeys: wrap(handleDeleteApiPublicKeys),
     getApiPublicKeys: wrap(handleGetApiPublicKeys),
     getApiPublicKeysByUserId: wrap(handleGetApiPublicKeysByUserId),
@@ -1615,6 +1619,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdCancel, overrides.postApiEmergencyAccessByIdCancel),
       invoke(pick.postApiEmergencyAccessByIdReject, overrides.postApiEmergencyAccessByIdReject),
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
+      invoke(pick.postApiAuthToken, overrides.postApiAuthToken),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),
       invoke(pick.getApiVaultMeta, overrides.getApiVaultMeta),
       invoke(pick.getApiVaultRevision, overrides.getApiVaultRevision),
@@ -1631,7 +1636,6 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.deleteApiEmergencyAccessById, overrides.deleteApiEmergencyAccessById),
       invoke(pick.putApiEmergencyAccessById, overrides.putApiEmergencyAccessById),
       invoke(pick.getApiVersion, overrides.getApiVersion),
-      invoke(pick.getApiMe, overrides.getApiMe),
       invoke(pick.deleteApiPublicKeys, overrides.deleteApiPublicKeys),
       invoke(pick.getApiPublicKeys, overrides.getApiPublicKeys),
       invoke(pick.postApiVault, overrides.postApiVault),

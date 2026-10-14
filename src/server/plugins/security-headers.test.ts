@@ -142,12 +142,13 @@ describe('securityHeadersPlugin', () => {
       expect(vaultCsp).not.toContain('interface-markup');
     });
 
-    it('omits COOP on the auth documents so the login popup keeps its opener', async () => {
+    it('omits COOP along the login popup (page, redirect to the provider, callback) so it keeps its opener', async () => {
       const app = await buildApp();
       const headersFor = async (url: string) => (await app.inject({ method: 'GET', url, headers: { host: UI_HOST } })).headers;
 
       expect((await headersFor('/login?expectedSub=abc'))['cross-origin-opener-policy']).toBeUndefined();
       expect((await headersFor('/auth/callback?code=xyz'))['cross-origin-opener-policy']).toBeUndefined();
+      expect((await headersFor('/api/auth/authorize?state=abc'))['cross-origin-opener-policy']).toBeUndefined();
 
       expect((await headersFor('/settings'))['cross-origin-opener-policy']).toBe('same-origin');
       expect((await headersFor('/loginaaa'))['cross-origin-opener-policy']).toBe('same-origin');
@@ -190,14 +191,14 @@ describe('securityHeadersPlugin', () => {
       expect(csp).toContain('frame-ancestors https://product-a.example https://product-b.example https://encryption.localhost:7200');
     });
 
-    it('lets the interface reach the OIDC provider, by origin and not by issuer path', async () => {
+    it('keeps the OIDC provider out of connect-src: the server runs the login, the browser only navigates to it', async () => {
       const uiCsp = (await headersFor(UI_HOST))['content-security-policy'] as string;
       const vaultCsp = (await headersFor(VAULT_HOST))['content-security-policy'] as string;
 
-      // The origin, so discovery/JWKS/token all resolve; the issuer's /realms path
-      // would only authorize that one path prefix.
-      expect(uiCsp).toContain("connect-src 'self' https://keycloak.example:8443;");
-      // The vault never talks to the provider, so it keeps the narrow set.
+      // A script of the interface has no business reading from the provider: the code
+      // exchange, ID token check and userinfo all happen server-side.
+      expect(uiCsp).toContain("connect-src 'self';");
+      expect(uiCsp).not.toContain('keycloak.example');
       expect(vaultCsp).toContain("connect-src 'self';");
       expect(vaultCsp).not.toContain('keycloak.example');
     });

@@ -49,11 +49,12 @@ bootstrap:
         webOrigins:
           - https://{{ $drive }}
       - clientId: encryption
-        public: true
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        pkce: true
+        idTokenLifespanSeconds: 3600
         redirectUris:
           - https://{{ $interface }}/auth/callback
-        webOrigins:
-          - https://{{ $interface }}
+        webOrigins: []
 
 mailpit:
   host: {{ $f }}-mail.{{ $d }}
@@ -91,7 +92,6 @@ encryption:
       - https://{{ $drive }}
     oidc:
       issuer: {{ $issuer }}
-      jwksUrl: {{ $issuer }}/protocol/openid-connect/certs
     mailer:
       senderAddress: noreply@{{ $d }}
     emailProductUrl: https://{{ $docs }}

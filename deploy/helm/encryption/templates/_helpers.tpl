@@ -142,6 +142,7 @@ inline rather than through an existing Secret.
 {{- $v := .Values -}}
 {{- if or
   (and $v.database.url (not $v.database.existingSecret.name))
+  (and $v.config.oidc.clientSecret (not $v.config.oidc.existingSecret.name))
   (and $v.sentry.enabled $v.sentry.dsn (not $v.sentry.existingSecret.name))
   (and (or $v.config.mailer.user $v.config.mailer.password) (not $v.config.mailer.existingSecret.name))
   (and (or $v.config.mailer.fallback.user $v.config.mailer.fallback.password) (not $v.config.mailer.fallback.existingSecret.name))
@@ -168,23 +169,37 @@ must or may set. Plain values are inline; secrets come from a Secret, never as `
   value: {{ include "encryption.required" (list (join "," $v.config.allowedFrameAncestors) "config.allowedFrameAncestors") | quote }}
 - name: OIDC_ISSUER
   value: {{ include "encryption.required" (list $v.config.oidc.issuer "config.oidc.issuer") | quote }}
-- name: OIDC_JWKS_URL
-  value: {{ include "encryption.required" (list $v.config.oidc.jwksUrl "config.oidc.jwksUrl") | quote }}
 - name: OIDC_CLIENT_ID
   value: {{ include "encryption.required" (list $v.config.oidc.clientId "config.oidc.clientId") | quote }}
-{{- /*
-Not a value of its own: the server accepts a token only when its `azp` (the client it was
-issued to) equals this variable, and every token the interface sends was issued to the
-interface's client. Any other value turns each of the interface's API calls into a 403.
-*/}}
-- name: OIDC_SERVER_CLIENT_ID
-  value: {{ $v.config.oidc.clientId | quote }}
+{{- if not (or $v.config.oidc.clientSecret $v.config.oidc.existingSecret.name) }}
+{{- fail "config.oidc.clientSecret or config.oidc.existingSecret.name is required: the server exchanges the authorization code as a confidential client" }}
+{{- end }}
+{{- include "encryption.secretEnv" (dict "root" $ "env" "OIDC_CLIENT_SECRET" "value" $v.config.oidc.clientSecret "existing" $v.config.oidc.existingSecret "key" "OIDC_CLIENT_SECRET") }}
 - name: OIDC_REDIRECT_URI
   value: {{ $v.config.oidc.redirectUri | default (printf "https://%s/auth/callback" $interfaceHost) | quote }}
 - name: OIDC_ACCEPT_UNVERIFIED_EMAIL
   value: {{ $v.config.oidc.acceptUnverifiedEmail | toString | quote }}
 - name: OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION
   value: {{ $v.config.oidc.fallbackToEmailForIdentification | toString | quote }}
+- name: OIDC_TOKEN_ENDPOINT_AUTH_METHOD
+  value: {{ $v.config.oidc.tokenEndpointAuthMethod | quote }}
+- name: OIDC_SCOPES
+  value: {{ $v.config.oidc.scopes | quote }}
+{{- if not (or $v.config.oidc.claims.lastName $v.config.oidc.claims.fullName) }}
+{{- fail "config.oidc.claims.lastName or config.oidc.claims.fullName must name at least one claim: without either, every sign-in is refused" }}
+{{- end }}
+- name: OIDC_CLAIMS_FIRST_NAME
+  value: {{ join "," $v.config.oidc.claims.firstName | quote }}
+- name: OIDC_CLAIMS_LAST_NAME
+  value: {{ join "," $v.config.oidc.claims.lastName | quote }}
+- name: OIDC_CLAIMS_FULL_NAME
+  value: {{ join "," $v.config.oidc.claims.fullName | quote }}
+- name: OIDC_STEP_UP_ACR_VALUES
+  value: {{ join "," $v.config.oidc.stepUp.acrValues | quote }}
+- name: OIDC_STEP_UP_AMR_VALUES
+  value: {{ join "," $v.config.oidc.stepUp.amrValues | quote }}
+- name: OIDC_STEP_UP_MAX_AGE_SECONDS
+  value: {{ $v.config.oidc.stepUp.maxAgeSeconds | toString | quote }}
 - name: DOCS_ENABLED
   value: {{ $v.config.docsEnabled | toString | quote }}
 - name: MAILER_SMTP_HOST

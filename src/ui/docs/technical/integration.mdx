@@ -111,13 +111,13 @@ A product can **never** generate, export or delete keys. Those sensitive actions
 
 The split between the two domains creates an intentional **privilege separation** for calls to the central server:
 
-| Domain                    | Network calls                                                               | Authentication                     | Access             |
-| ------------------------- | --------------------------------------------------------------------------- | ---------------------------------- | ------------------ |
-| `data.encryption` (vault) | `GET /api/public-keys` only                                                 | **None** (public endpoint)         | Public key reads   |
-| `encryption` (interface)  | `POST /api/public-keys/register/{init,complete}`, `DELETE /api/public-keys` | **OIDC JWT** (client `encryption`) | Writes / deletions |
+| Domain                    | Network calls                                                               | Authentication                                                 | Access             |
+| ------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------ |
+| `data.encryption` (vault) | `GET /api/public-keys` only                                                 | **None** (public endpoint)                                     | Public key reads   |
+| `encryption` (interface)  | `POST /api/public-keys/register/{init,complete}`, `DELETE /api/public-keys` | Provider's **ID token** issued to the OIDC client `encryption` | Writes / deletions |
 
 <Alert severity="info" title="Why this separation?">
-  The vault (`data.encryption`) stores the **private keys** in its IndexedDB and holds **no authenticated token**. The interface (`encryption`) holds an OIDC token but has **no access to the private keys** (different domain, IndexedDB isolated by the browser).
+  The vault (`data.encryption`) stores the **private keys** in its IndexedDB and holds **no authenticated token**. The interface (`encryption`) holds the provider's ID token but has **no access to the private keys** (different domain, IndexedDB isolated by the browser).
 
 **If the vault is compromised**: the attacker reaches the local private keys and could decrypt content, but cannot alter the central server (no token). They can neither register forged public keys, nor delete existing ones, nor start key transfers to another device.
 
@@ -205,23 +205,24 @@ await encryption.init();`}
 
 ### 4. Authentication
 
-Before using the service, pass the authentication context. The `token` is used by the vault (`data.encryption`) for server operations. The `suiteUserId` is the `sub` claim from the OIDC identity provider, the identifier shared by every Suite product.
+Before using the service, pass the authentication context: the `suiteUserId`, which is the `sub` claim from the OIDC identity provider, the identifier shared by every Suite product. No token of yours is ever passed: the encryption service signs the user in on its own.
 
 <Alert severity="warning" title="suiteUserId ≠ internal ID">
-  The `suiteUserId` must be the `sub` of the OIDC JWT, **not** your product's internal identifier. It is what lets the encryption service find a
-  user's keys whichever product is calling.
+  The `suiteUserId` must be the OIDC `sub`, **not** your product's internal identifier. It is what lets the encryption service find a user's keys
+  whichever product is calling.
 </Alert>
 
 <CodeBlock language="javascript">
   {`encryption.setAuthContext({
-  token: jwtToken,       // The user's OIDC JWT (for vault operations)
-  suiteUserId: userId,   // "sub" claim of the OIDC JWT — cross-product identifier
+  suiteUserId: userId,   // OIDC "sub" claim — cross-product identifier
 });`}
 </CodeBlock>
 
 <Alert severity="info" title="The interface authenticates on its own">
-  The encryption interface (`encryption`) obtains its own token through a separate OIDC flow (Keycloak client `encryption`). The product does not need
-  to pass any token to the interface, only the `suiteUserId`, so the interface can attach the keys to the right user.
+  The encryption interface (`encryption`) signs the user in through its own OIDC client (`encryption`, confidential: the encryption server exchanges
+  the code and keeps the access token), then presents the provider's **ID token** on every call, which the server verifies locally (its audience must
+  be `encryption`, so an ID token issued to your product is refused). If the provider signs in someone other than the `suiteUserId`, the sign-in is
+  refused. The product never passes a token, only the `suiteUserId`, so the interface can attach the keys to the right user.
 </Alert>
 
 ### 5. Check for keys and trigger onboarding
@@ -312,7 +313,7 @@ encryption.destroy();`}
 | Method                    | Description                                                                                           |
 | ------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `setTheme(theme)`         | Change the interface's Cunningham theme ("default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark") |
-| `setAuthContext(context)` | Pass the JWT (for the vault) and the `suiteUserId` (OIDC `sub` claim)                                 |
+| `setAuthContext(context)` | Pass the `suiteUserId` (OIDC `sub` claim)                                                             |
 
 ### Interface operations (onboarding, backup)
 
@@ -348,11 +349,11 @@ To integrate the encryption service, each Suite product must:
 3. **Index by `suiteUserId`** — use the `suiteUserId` as the key in every encryption-related map (`fetchPublicKeys`, `encryptWithoutKey`, etc.)
 4. **Do not pass a token to the interface** — the interface (`encryption`) authenticates on its own through its dedicated OIDC client
 
-### Recommendation: second authentication factor (2FA)
+### Second authentication factor (2FA) and step-up
 
-The `encryption` OIDC client should ideally require a **second authentication factor** (2FA). The encryption service protects the user's private keys, so unauthorized access to it is particularly critical.
+Everyday use does **not** require 2FA: the private keys live in the user's device vault, so a stolen password alone decrypts nothing. The one action that does is **replacing the user's identity** (registering a new signature key when the user already has one, typically after losing every device), since it changes what their contacts see. It follows RFC 9470 (_OAuth 2.0 Step-Up Authentication Challenge_): the ID token must show a second factor (an `acr` among `OIDC_STEP_UP_ACR_VALUES` or an `amr` among `OIDC_STEP_UP_AMR_VALUES`) and an `auth_time` younger than `OIDC_STEP_UP_MAX_AGE_SECONDS` (300 by default). Otherwise the server answers `401` with `{"code": "insufficient_user_authentication", "params": {"max_age": 300}}` and a `WWW-Authenticate: Bearer error="insufficient_user_authentication", error_description="…", acr_values="…", max_age="300"` header. The interface then asks the user to confirm their identity: a new sign-in (`prompt=login`, `max_age=0`, `acr` required through the `claims` parameter) whose ID token replaces the current one. Products have nothing to do: the whole exchange stays inside the interface.
 
-Depending on its configuration, the OIDC identity provider may or may not enforce 2FA globally. If it does not, configuring it on the `encryption` OIDC client is recommended.
+The interface's settings screen recommends enabling 2FA with the identity provider when the sign-in reported none, since replacing the identity will require it.
 
 <Alert severity="warning" title="2FA across every Suite product">
   Even when the encryption service requires 2FA, an attacker who compromises access to a Suite product without 2FA (Docs, for instance) can reach the
@@ -383,13 +384,15 @@ In local development a **maildev** container is provided in `docker-compose.yaml
 
 ## Server endpoints
 
-| Method   | URL                                  | Auth | Description                                                           |
-| -------- | ------------------------------------ | ---- | --------------------------------------------------------------------- |
-| `GET`    | `/api/version`                       | No   | Unique build identifier (hash of every bundle)                        |
-| `GET`    | `/api/public-keys?user_ids=...`      | No   | Fetch public keys by `suiteUserId`                                    |
-| `DELETE` | `/api/public-keys`                   | JWT  | Disable your active public key ("start over")                         |
-| `POST`   | `/api/public-keys/register/init`     | JWT  | Registration phase 1: receive an X-Wing challenge to decapsulate      |
-| `POST`   | `/api/public-keys/register/complete` | JWT  | Registration phase 2: prove possession of the private key and persist |
+| Method   | URL                                  | Auth     | Description                                                                                                                                                                                                                                                        |
+| -------- | ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`    | `/api/version`                       | No       | Unique build identifier (hash of every bundle)                                                                                                                                                                                                                     |
+| `GET`    | `/api/public-keys?user_ids=...`      | No       | Fetch public keys by `suiteUserId`                                                                                                                                                                                                                                 |
+| `GET`    | `/api/auth/authorize`                | No       | Redirect to the identity provider (sign-in tab of the interface; `step_up=1` asks for a second factor)                                                                                                                                                             |
+| `POST`   | `/api/auth/token`                    | No       | Exchange the authorization code (`code`, `code_verifier`, `nonce`, optional `expected_sub`); answers the ID token, its expiry, `sub`, `user_id`, `email`, `name` and `second_factor`. `409 wrong_user` if the provider signed in someone other than `expected_sub` |
+| `DELETE` | `/api/public-keys`                   | ID token | Disable your active public key ("start over")                                                                                                                                                                                                                      |
+| `POST`   | `/api/public-keys/register/init`     | ID token | Registration phase 1: receive an X-Wing challenge to decapsulate. Replacing an existing identity requires step-up (`401 insufficient_user_authentication`)                                                                                                         |
+| `POST`   | `/api/public-keys/register/complete` | ID token | Registration phase 2: prove possession of the private key and persist                                                                                                                                                                                              |
 
 <Alert severity="info" title="Error handling">
   Endpoints return error codes (not messages). Your application translates those codes client-side. Example error response: `{"code": "rate_limit_keys", "params": {"max": 10, "days": 30}}`.

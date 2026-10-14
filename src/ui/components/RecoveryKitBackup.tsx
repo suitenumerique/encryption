@@ -9,6 +9,7 @@ import { RecoveryKitPrint } from '@encryption/src/ui/documents/RecoveryKitSheet'
 
 interface RecoveryKitBackupProps {
   passphrase: string;
+  alreadySaved?: boolean;
   parentOrigin: string | null;
   onConfirm: () => void;
   confirmLabel: string;
@@ -59,6 +60,7 @@ function WordGrid({ passphrase }: { passphrase: string }) {
  */
 export function RecoveryKitBackup({
   passphrase,
+  alreadySaved = false,
   parentOrigin,
   onConfirm,
   confirmLabel,
@@ -77,7 +79,7 @@ export function RecoveryKitBackup({
   const [isCopied, setIsCopied] = useState(false);
   // The phrase left the screen through at least one channel (copied, saved,
   // printed, or read on screen): only then may the user claim it is saved.
-  const [saved, setSaved] = useState(mode === 'handover');
+  const [saved, setSaved] = useState(mode === 'handover' || alreadySaved);
 
   const handleCopyPassphrase = useCallback(async () => {
     try {

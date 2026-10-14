@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent, waitFor } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
@@ -10,6 +10,7 @@ import {
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
   handleGetApiVaultMeta,
+  handlePostApiPublicKeysRegisterInit,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
@@ -35,22 +36,22 @@ const Template: StoryFn<ComponentType> = (args) => {
 
 const NewUserStory = Template.bind({});
 NewUserStory.args = {
-  getToken: async () => 'mock-jwt-token',
+  getIdToken: async () => 'mock-jwt-token',
   userId: '00000000-0000-0000-0000-000000000000',
   onClose: () => console.log('onClose'),
   onSuccess: (pk) => console.log('onSuccess', pk),
   onUseAnotherDevice: () => console.log('onUseAnotherDevice'),
   onOpenEmergencyAccess: () => console.log('onOpenEmergencyAccess'),
+  onStepUp: () => console.log('onStepUp'),
   hasExistingBackendKey: false,
 };
+const newUserHandlers = [
+  handleGetApiPublicKeys({ body: { keys: [] } }),
+  handleGetApiPublicKeysNext({ body: { next_version: 1, next_generation: 1 } }),
+  handleGetApiVaultMeta(() => Response.json({ code: API_ERROR_VAULT_NOT_FOUND }, { status: 404 })),
+];
 NewUserStory.parameters = {
-  msw: {
-    handlers: [
-      handleGetApiPublicKeys({ body: { keys: [] } }),
-      handleGetApiPublicKeysNext({ body: { next_version: 1, next_generation: 1 } }),
-      handleGetApiVaultMeta(() => Response.json({ code: API_ERROR_VAULT_NOT_FOUND }, { status: 404 })),
-    ],
-  },
+  msw: { handlers: newUserHandlers },
 };
 NewUserStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_enable'));
@@ -60,12 +61,13 @@ export const NewUser = prepareStory(NewUserStory);
 
 const ExistingUserStory = Template.bind({});
 ExistingUserStory.args = {
-  getToken: async () => 'mock-jwt-token',
+  getIdToken: async () => 'mock-jwt-token',
   userId: '00000000-0000-0000-0000-000000000000',
   onClose: () => console.log('onClose'),
   onSuccess: (pk) => console.log('onSuccess', pk),
   onUseAnotherDevice: () => console.log('onUseAnotherDevice'),
   onOpenEmergencyAccess: () => console.log('onOpenEmergencyAccess'),
+  onStepUp: () => console.log('onStepUp'),
   hasExistingBackendKey: true,
   existingKeyFingerprint: '1031712345678901234567890123456789012345',
   userInfo: { name: 'Alice Martin', email: 'alice.martin@numerique.gouv.fr' },
@@ -263,3 +265,45 @@ BackupCancelPromptStory.play = async ({ canvasElement }) => {
 };
 
 export const BackupCancelPrompt = prepareStory(BackupCancelPromptStory);
+
+// Replacing an identity the account already has (here a disabled one, so the
+// user starts over): the server asks for a fresh second-factor sign-in (RFC 9470
+// step-up) before issuing the registration challenge. It is checked at the
+// commit, after the phrase is saved, because the fresh sign-in only counts for a
+// few minutes. It then takes the place of the backup screen; the phrase stays
+// valid, and the commit runs again once it is confirmed.
+const StepUpRequiredStory = Template.bind({});
+StepUpRequiredStory.args = { ...PreviousIdentityStory.args, onStepUp: fn() };
+StepUpRequiredStory.parameters = {
+  msw: {
+    handlers: [
+      ...previousIdentityHandlers,
+      handlePostApiPublicKeysRegisterInit(
+        () =>
+          new Response(JSON.stringify({ code: 'insufficient_user_authentication', params: { max_age: 300 } }), {
+            status: 401,
+            headers: {
+              'content-type': 'application/json',
+              'www-authenticate': 'Bearer error="insufficient_user_authentication", max_age="300"',
+            },
+          })
+      ),
+    ],
+  },
+};
+StepUpRequiredStory.play = async ({ canvasElement, args }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_start_new_identity')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_backup'));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_reveal')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done')));
+
+  // The step-up replaces the backup screen: nothing else to do until it is confirmed.
+  await playFindHeading(canvasElement, i18n.t('auth.step_up_title'));
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('onboarding.btn_copy_clipboard') })).toBeNull();
+
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('auth.step_up_confirm')));
+  expect(args.onStepUp).toHaveBeenCalled();
+};
+
+export const StepUpRequired = prepareStory(StepUpRequiredStory);

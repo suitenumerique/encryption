@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
 import { ApiError, approveDevicePath } from '@encryption/src/ui/api/client';
 import { approveDeviceRequest, fetchDeviceApproval, fetchPendingDeviceApprovals, requestDeviceApproval } from '@encryption/src/ui/api/vault-client';
-import { SessionExpiredError, withFreshToken } from '@encryption/src/ui/auth/session-expired';
+import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
@@ -20,13 +20,13 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
 import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
 
 interface DeviceApprovalProps {
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   onBack?: () => void;
   onClose: () => void;
   onAdopted?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
-  currentAccessToken?: string | null;
+  currentIdToken?: string | null;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -107,20 +107,20 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
 }
 
 export function DeviceApproval({
-  getToken,
+  getIdToken,
   onBack,
   onClose,
   onAdopted,
   onReconnect,
   isAuthenticating = false,
-  currentAccessToken = null,
+  currentIdToken = null,
 }: DeviceApprovalProps) {
   const { t } = useTranslation('common');
   const { hasKeys, startDeviceApproval, completeDeviceApproval, approveDevice, request } = useEncryptionContext();
 
   const [role, setRole] = useState<'loading' | 'new' | 'enrolled'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const { sessionExpired, markSessionExpired } = useSessionExpired(currentAccessToken, isAuthenticating);
+  const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
 
   // Decide the role: a device with no keys is the NEW device to enroll; a device
   // that already has keys can APPROVE another.
@@ -142,7 +142,7 @@ export function DeviceApproval({
   );
 
   // Ask the vault (which holds the identity key) to sign a covered request; the
-  // interface only holds the OIDC token.
+  // interface only holds the ID token.
   const signRequest = useCallback(
     async (method: string, path: string, body?: string): Promise<string> => {
       const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method, path, body })) as { signature: string };
@@ -165,7 +165,7 @@ export function DeviceApproval({
 
   return role === 'new' ? (
     <NewDeviceSide
-      getToken={getToken}
+      getIdToken={getIdToken}
       onError={onError}
       onBack={onBack}
       onClose={onClose}
@@ -177,7 +177,7 @@ export function DeviceApproval({
     />
   ) : (
     <EnrolledDeviceSide
-      getToken={getToken}
+      getIdToken={getIdToken}
       onError={onError}
       onBack={onBack}
       onClose={onClose}
@@ -191,7 +191,7 @@ export function DeviceApproval({
 
 // --- New device: show a pairing code, wait for the enrolled device to forward the VRK ---
 function NewDeviceSide({
-  getToken,
+  getIdToken,
   onError,
   onBack,
   onClose,
@@ -201,13 +201,13 @@ function NewDeviceSide({
   banner,
   t,
 }: {
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   onError: (err: unknown) => void;
   onBack?: () => void;
   onClose: () => void;
   onAdopted?: () => void;
   startDeviceApproval: () => Promise<{ devicePublicKey: string; decimalFingerprint: string }>;
-  completeDeviceApproval: (wrapped: string, token: string | null) => Promise<{ adopted: boolean }>;
+  completeDeviceApproval: (wrapped: string, idToken: string | null) => Promise<{ adopted: boolean }>;
   banner: ReactNode;
   t: TFunction;
 }) {
@@ -228,8 +228,8 @@ function NewDeviceSide({
   const start = useCallback(async () => {
     try {
       const { devicePublicKey, decimalFingerprint: dfp } = await startDeviceApproval();
-      const requestId = await withFreshToken(getToken, async (token) => {
-        const data = await requestDeviceApproval(token, { device_public_key: devicePublicKey });
+      const requestId = await withFreshIdToken(getIdToken, async (idToken) => {
+        const data = await requestDeviceApproval(idToken, { device_public_key: devicePublicKey });
 
         return data.request_id;
       });
@@ -247,7 +247,7 @@ function NewDeviceSide({
     } catch (err) {
       onError(err);
     }
-  }, [getToken, startDeviceApproval, onError]);
+  }, [getIdToken, startDeviceApproval, onError]);
 
   // Poll for the forwarded VRK once the request is registered. Polling consumes
   // the one-shot server row, so a completion failure must NOT drop the payload:
@@ -265,9 +265,9 @@ function NewDeviceSide({
       try {
         if (wrappedVrkRef.current === null) {
           // 425 means "still pending", which is a normal poll outcome, not a failure.
-          const forwarded = await withFreshToken(getToken, async (token) => {
+          const forwarded = await withFreshIdToken(getIdToken, async (idToken) => {
             try {
-              const data = await fetchDeviceApproval(token, requestIdRef.current!);
+              const data = await fetchDeviceApproval(idToken, requestIdRef.current!);
 
               return data ?? null;
             } catch (err) {
@@ -281,7 +281,7 @@ function NewDeviceSide({
           if (cancelled || !forwarded) return;
         }
 
-        await withFreshToken(getToken, (token) => completeDeviceApproval(wrappedVrkRef.current!, token));
+        await withFreshIdToken(getIdToken, (idToken) => completeDeviceApproval(wrappedVrkRef.current!, idToken));
 
         if (cancelled) return;
 
@@ -320,7 +320,7 @@ function NewDeviceSide({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [started, done, getToken, completeDeviceApproval, onAdopted, onError]);
+  }, [started, done, getIdToken, completeDeviceApproval, onAdopted, onError]);
 
   if (done) {
     return (
@@ -399,7 +399,7 @@ function NewDeviceSide({
 
 // --- Enrolled device: scan (or type) the new device's code and forward the VRK ---
 function EnrolledDeviceSide({
-  getToken,
+  getIdToken,
   onError,
   onBack,
   onClose,
@@ -408,7 +408,7 @@ function EnrolledDeviceSide({
   banner,
   t,
 }: {
-  getToken: () => Promise<string | null>;
+  getIdToken: () => Promise<string | null>;
   onError: (err: unknown) => void;
   onBack?: () => void;
   onClose: () => void;
@@ -449,7 +449,7 @@ function EnrolledDeviceSide({
 
       try {
         const pendingSig = await signRequest('GET', '/api/vault/approvals/pending');
-        const { approvals } = await withFreshToken(getToken, (token) => fetchPendingDeviceApprovals(token, pendingSig));
+        const { approvals } = await withFreshIdToken(getIdToken, (idToken) => fetchPendingDeviceApprovals(idToken, pendingSig));
 
         let matched: { requestId: string; wrappedDeviceBootstrap: string } | null = null;
         for (const a of approvals) {
@@ -474,8 +474,8 @@ function EnrolledDeviceSide({
         // Sign the exact body the request helper will send (same serialization).
         const approveBody = JSON.stringify({ wrapped_device_bootstrap: matched.wrappedDeviceBootstrap });
         const approveSig = await signRequest('POST', approveDevicePath(matched.requestId), approveBody);
-        await withFreshToken(getToken, (token) =>
-          approveDeviceRequest(token, matched!.requestId, { wrapped_device_bootstrap: matched!.wrappedDeviceBootstrap }, approveSig)
+        await withFreshIdToken(getIdToken, (idToken) =>
+          approveDeviceRequest(idToken, matched!.requestId, { wrapped_device_bootstrap: matched!.wrappedDeviceBootstrap }, approveSig)
         );
 
         setDone(true);
@@ -486,7 +486,7 @@ function EnrolledDeviceSide({
         setIsPending(false);
       }
     },
-    [isPending, getToken, approveDevice, signRequest, onError, mode, enterManualEntry]
+    [isPending, getIdToken, approveDevice, signRequest, onError, mode, enterManualEntry]
   );
 
   if (done) {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { envSchema } from '@encryption/src/server/env-schema';
@@ -61,5 +63,19 @@ describe('VAULT_DEVICE_INACTIVITY_DAYS', () => {
     for (const value of ['1', '29', '-5', '30.5', 'abc']) {
       expect(parse(value).success, value).toBe(false);
     }
+  });
+});
+
+describe('OIDC name claims', () => {
+  const baseEnv = parseEnv(readFileSync('.env.test', 'utf8'));
+  const issuesFor = (overrides: Record<string, string>) =>
+    envSchema.safeParse({ ...baseEnv, ...overrides }).error?.issues.map((issue) => issue.path.join('.')) ?? [];
+
+  it('accepts a last name taken from the full name alone', () => {
+    expect(issuesFor({ OIDC_CLAIMS_LAST_NAME: '', OIDC_CLAIMS_FULL_NAME: 'name' })).toEqual([]);
+  });
+
+  it('refuses a configuration that leaves no way to a last name', () => {
+    expect(issuesFor({ OIDC_CLAIMS_LAST_NAME: '', OIDC_CLAIMS_FULL_NAME: '' })).toEqual(['OIDC_CLAIMS_LAST_NAME']);
   });
 });

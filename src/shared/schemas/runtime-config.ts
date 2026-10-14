@@ -22,9 +22,6 @@ const _brandFontMatchesSchema: _BrandFontMatchesSchema = true;
 void _brandFontMatchesSchema;
 
 export const uiRuntimeConfigSchema = z.object({
-  oidcIssuer: z.string().min(1),
-  oidcClientId: z.string().min(1),
-  oidcRedirectUri: z.string().min(1),
   vaultUrl: z.string().url(),
   // Empty on purpose in production: the API is same-origin with the interface.
   apiBaseUrl: z.string(),

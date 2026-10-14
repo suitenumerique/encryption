@@ -24,7 +24,7 @@ describe('http sync transport', () => {
       });
     }) as unknown as typeof fetch;
 
-    const transport = createHttpSyncTransport({ token: 'tok', fetchImpl });
+    const transport = createHttpSyncTransport({ idToken: 'tok', fetchImpl });
     const pulled = await transport.fetch();
 
     expect(pulled).toEqual({ sealed: [SEALED], manifest: 'M', manifestSig: 'S', revision: 7 });
@@ -49,7 +49,7 @@ describe('http sync transport', () => {
     }) as unknown as typeof fetch;
 
     const input: PutItemInput = { item: SEALED, lastKnownRevisionDate: 41, manifest: 'M2', manifestSig: 'S2', revision: 8 };
-    const outcome = await createHttpSyncTransport({ token: 'tok', fetchImpl }).putItem(input);
+    const outcome = await createHttpSyncTransport({ idToken: 'tok', fetchImpl }).putItem(input);
 
     expect(outcome).toEqual({ ok: true, revision: 8 });
     expect(putUrl).toContain('/api/vault/items/tofu%3Abob');

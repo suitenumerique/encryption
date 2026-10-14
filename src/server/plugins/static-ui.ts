@@ -14,9 +14,6 @@ import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
  */
 function buildConfigBlock(): string {
   const config = {
-    oidcIssuer: env.OIDC_ISSUER,
-    oidcClientId: env.OIDC_CLIENT_ID,
-    oidcRedirectUri: env.OIDC_REDIRECT_URI,
     vaultUrl: env.VAULT_URL,
     apiBaseUrl: '', // Same origin as the UI in production
     docsEnabled: env.DOCS_ENABLED,

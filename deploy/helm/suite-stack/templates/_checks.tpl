@@ -33,17 +33,20 @@ render error naming the two values that disagree. Included once, from the bootst
 {{- if ne $e.config.oidc.issuer $issuer }}
 {{- fail (printf "encryption.config.oidc.issuer must be the shared Keycloak's realm: %q (got %q)" $issuer $e.config.oidc.issuer) }}
 {{- end }}
-{{- $jwks := printf "%s/protocol/openid-connect/certs" $issuer }}
-{{- if ne $e.config.oidc.jwksUrl $jwks }}
-{{- fail (printf "encryption.config.oidc.jwksUrl must be %q (got %q)" $jwks $e.config.oidc.jwksUrl) }}
-{{- end }}
 {{- $callback := printf "https://%s/auth/callback" $e.hosts.interface }}
 {{- $found := false }}
 {{- range $clients }}
 {{- if eq .clientId $e.config.oidc.clientId }}
 {{- $found = true }}
-{{- if not .public }}
-{{- fail (printf "bootstrap.keycloak.clients[%s] must be public: the encryption interface signs in from the browser" .clientId) }}
+{{- if .public }}
+{{- fail (printf "bootstrap.keycloak.clients[%s] must be confidential: the encryption server signs its interface's users in with a secret" .clientId) }}
+{{- end }}
+{{- /* A secret kept in an existing Secret cannot be read at render time: it is the operator's to match. */}}
+{{- if and (not $e.config.oidc.existingSecret.name) (ne (toString .secret) (toString $e.config.oidc.clientSecret)) }}
+{{- fail (printf "encryption.config.oidc.clientSecret differs from bootstrap.keycloak.clients[%s].secret" .clientId) }}
+{{- end }}
+{{- if not .idTokenLifespanSeconds }}
+{{- fail (printf "bootstrap.keycloak.clients[%s].idTokenLifespanSeconds is required: the interface's session lasts as long as the ID token, and the realm's default is 5 minutes" .clientId) }}
 {{- end }}
 {{- if not (has $callback .redirectUris) }}
 {{- fail (printf "bootstrap.keycloak.clients[%s].redirectUris must contain %q, the interface's callback" .clientId $callback) }}
