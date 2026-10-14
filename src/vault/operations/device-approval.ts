@@ -16,29 +16,16 @@ import sodium from 'libsodium-wrappers-sumo';
 
 import { type HybridSecretKey, decryptSymmetricKeyForUser, encryptSymmetricKeyForUsers } from '@encryption/src/crypto';
 import { base64ToUint8, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
-import { normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import { DOMAIN_DEVICE_PAIRING_FINGERPRINT, DOMAIN_KEM_DEVICE_BOOTSTRAP } from '@encryption/src/shared/crypto-domains';
+import { computeDecimalFingerprint, normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
 const DEVICE_ID = 'device';
-// 128 bits of the SHA-256 of the public key, rendered as decimal digits. Long
-// enough that a malicious server cannot grind a substitute key with a colliding
-// fingerprint (2^128), while staying all-digits for easy manual entry.
-const DECIMAL_FINGERPRINT_BYTES = 16;
-// Rendered as a fixed 40 digits so it groups evenly into 8 blocks of 5. A 128-bit
-// value is at most 39 digits, so the leading digit is always 0 (cosmetic only).
-const DECIMAL_FINGERPRINT_DIGITS = 40;
 
-// A 128-bit decimal fingerprint of the public key, zero-padded to a fixed width
-// so both sides always produce the exact same string for the same key.
+// 128 bits, so a malicious server cannot grind a substitute key with a colliding
+// fingerprint (2^128), while staying all-digits for easy manual entry. Its own
+// domain: a pairing code can never equal an identity fingerprint.
 export async function deviceKeyDecimalFingerprint(devicePublicKeyB64: string): Promise<string> {
-  await sodium.ready;
-
-  const raw = base64ToUint8(devicePublicKeyB64);
-  const hash = sodium.crypto_hash_sha256(raw).slice(0, DECIMAL_FINGERPRINT_BYTES);
-
-  let n = 0n;
-  for (const b of hash) n = (n << 8n) | BigInt(b);
-
-  return n.toString().padStart(DECIMAL_FINGERPRINT_DIGITS, '0');
+  return computeDecimalFingerprint(DOMAIN_DEVICE_PAIRING_FINGERPRINT, base64ToUint8(devicePublicKeyB64));
 }
 
 // The bootstrap material forwarded to a new device: the VRK and the identity
@@ -87,13 +74,14 @@ export async function wrapBootstrapForNewDevice(
   const normalized = normalizeDecimalFingerprint(expectedDecimal);
   if (normalized.length === 0) return null;
 
-  const actual = await deviceKeyDecimalFingerprint(devicePublicKeyB64);
-  // Compare numerically so a dropped or extra leading zero never causes a false
-  // mismatch (the value is padded to a fixed width, so its first digit is 0).
-  if (BigInt(actual) !== BigInt(normalized)) return null;
+  if ((await deviceKeyDecimalFingerprint(devicePublicKeyB64)) !== normalized) return null;
 
   const publicKey = importPublicKeyFromBase64(devicePublicKeyB64);
-  const wrapped = await encryptSymmetricKeyForUsers(encodeBootstrap({ vrk, identitySecretKey }), { [DEVICE_ID]: publicKey });
+  const wrapped = await encryptSymmetricKeyForUsers(
+    encodeBootstrap({ vrk, identitySecretKey }),
+    { [DEVICE_ID]: publicKey },
+    DOMAIN_KEM_DEVICE_BOOTSTRAP
+  );
 
   return wrapped[DEVICE_ID];
 }
@@ -102,5 +90,5 @@ export async function wrapBootstrapForNewDevice(
 export async function unwrapBootstrapOnNewDevice(wrapped: Uint8Array, ephemeralSecretKey: HybridSecretKey): Promise<DeviceBootstrap> {
   await sodium.ready;
 
-  return decodeBootstrap(await decryptSymmetricKeyForUser(ephemeralSecretKey, wrapped));
+  return decodeBootstrap(await decryptSymmetricKeyForUser(ephemeralSecretKey, wrapped, DOMAIN_KEM_DEVICE_BOOTSTRAP));
 }

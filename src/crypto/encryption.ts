@@ -18,14 +18,27 @@
 import sodium from 'libsodium-wrappers-sumo';
 
 import { CRYPTO_VERSION } from '@encryption/src/shared/constants';
+import { type AeadDomain, DOMAIN_KEM_WRAP_KEY, type KemWrapDomain, type SubkeyDomain } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 // Encode/decode length fields with explicit little-endian byte order.
 // Using DataView instead of typed arrays avoids platform endianness issues
 // (typed arrays use the platform's native byte order, which could differ
 // between the encrypting and decrypting device).
+//
+// Every writer refuses a value its width cannot hold. DataView would otherwise
+// store it modulo 2^n (and truncate a fraction), so two different values, a
+// version 1 and a version 2^32 + 1, would encode to the same signed bytes.
+
+function assertUnsigned(value: number, max: number, bits: number): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+    throw new VaultError(VaultErrorCode.INVALID_CANONICAL_PAYLOAD, `Cannot encode ${value} as an unsigned ${bits}-bit integer`);
+  }
+}
 
 export function writeUint16LE(value: number): Uint8Array {
+  assertUnsigned(value, 0xffff, 16);
+
   const buf = new ArrayBuffer(2);
   new DataView(buf).setUint16(0, value, true);
   return new Uint8Array(buf);
@@ -36,6 +49,8 @@ export function readUint16LE(bytes: Uint8Array): number {
 }
 
 export function writeUint32LE(value: number): Uint8Array {
+  assertUnsigned(value, 0xffffffff, 32);
+
   const buf = new ArrayBuffer(4);
   new DataView(buf).setUint32(0, value, true);
   return new Uint8Array(buf);
@@ -46,9 +61,8 @@ export function readUint32LE(bytes: Uint8Array): number {
 }
 
 export function writeUint64LE(value: number): Uint8Array {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new VaultError(VaultErrorCode.INVALID_CANONICAL_PAYLOAD, `Cannot encode ${value} as an unsigned 64-bit integer`);
-  }
+  // A JS number is exact only up to 2^53, so that is the real limit here.
+  assertUnsigned(value, Number.MAX_SAFE_INTEGER, 64);
 
   const buf = new ArrayBuffer(8);
   new DataView(buf).setBigUint64(0, BigInt(value), true);
@@ -161,14 +175,45 @@ export async function generateSymmetricKey(): Promise<Uint8Array> {
 }
 
 /**
+ * A subkey of `key` for one purpose: BLAKE2b keyed by `key` over the label.
+ * libsodium has no HKDF; a keyed BLAKE2b is a PRF, so subkeys under distinct
+ * labels are independent and `key` itself never has to key two primitives.
+ */
+export function deriveSubkey(key: Uint8Array, domain: SubkeyDomain, length: number): Uint8Array {
+  return sodium.crypto_generichash(length, sodium.from_string(domain), key);
+}
+
+// The authenticated (never stored) data of a ciphertext: its version byte, its
+// domain label and whatever it is bound to, each length-framed so no two
+// different bindings can produce the same bytes.
+function associatedData(version: number, domain: AeadDomain, context: Uint8Array[]): Uint8Array {
+  return concat([Uint8Array.of(version), ...[sodium.from_string(domain), ...context].flatMap(lengthPrefixed)]);
+}
+
+/**
  * Encrypt content with a symmetric key (XChaCha20-Poly1305).
  * Format: [version:1][nonce:24][ciphertext:n].
+ *
+ * `domain` names what the ciphertext is and `context` what it belongs to (a
+ * vault item's id and type): both are authenticated, not stored, so decrypting
+ * a ciphertext as something it is not fails, even under the right key.
  */
-export async function encryptContent(content: Uint8Array, symmetricKey: Uint8Array): Promise<Uint8Array> {
+export async function encryptContent(
+  content: Uint8Array,
+  symmetricKey: Uint8Array,
+  domain: AeadDomain,
+  context: Uint8Array[] = []
+): Promise<Uint8Array> {
   await ensureSodium();
 
   const nonce = sodium.randombytes_buf(sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES); // 24 bytes
-  const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(content, null, null, nonce, symmetricKey);
+  const ciphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+    content,
+    associatedData(CRYPTO_VERSION, domain, context),
+    null,
+    nonce,
+    symmetricKey
+  );
 
   const result = new Uint8Array(1 + nonce.length + ciphertext.length);
   result[0] = CRYPTO_VERSION;
@@ -182,7 +227,12 @@ export async function encryptContent(content: Uint8Array, symmetricKey: Uint8Arr
  * Decrypt content with a symmetric key (XChaCha20-Poly1305).
  * Expects [version:1][nonce:24][ciphertext:n].
  */
-export async function decryptContent(encryptedContent: Uint8Array, symmetricKey: Uint8Array): Promise<Uint8Array> {
+export async function decryptContent(
+  encryptedContent: Uint8Array,
+  symmetricKey: Uint8Array,
+  domain: AeadDomain,
+  context: Uint8Array[] = []
+): Promise<Uint8Array> {
   await ensureSodium();
 
   const minLen = 1 + sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES;
@@ -204,7 +254,7 @@ export async function decryptContent(encryptedContent: Uint8Array, symmetricKey:
   // verification failure — surface that as our stable code so consumers
   // never have to regex on the message. Re-throw anything else verbatim.
   try {
-    return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, null, nonce, symmetricKey);
+    return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, ciphertext, associatedData(version, domain, context), nonce, symmetricKey);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/cannot be decrypted using that key/i.test(msg)) {
@@ -218,23 +268,32 @@ export async function decryptContent(encryptedContent: Uint8Array, symmetricKey:
 // Multi-user: encrypt a symmetric key for multiple recipients
 // ============================================================================
 
+function kemWrapKey(sharedSecret: Uint8Array): Uint8Array {
+  return deriveSubkey(sharedSecret, DOMAIN_KEM_WRAP_KEY, sodium.crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
+}
+
 /**
  * Encrypt a symmetric key for multiple users using their X-Wing public keys.
  * Returns a map of userId → wrapped key blob.
  *
  * Wrap format: [version:1][kemCtLen:2][kemCt:kemCtLen][encryptedSymKey:n]
  * (the inner encryptedSymKey already carries its own version + nonce.)
+ * The inner key is a subkey of the X-Wing shared secret, never the secret itself.
+ *
+ * `domain` says what is wrapped (a document key, a device bootstrap, an
+ * emergency capsule), so one can never be unwrapped as another.
  */
 export async function encryptSymmetricKeyForUsers(
   symmetricKey: Uint8Array,
-  usersPublicKeys: Record<string, HybridPublicKey>
+  usersPublicKeys: Record<string, HybridPublicKey>,
+  domain: KemWrapDomain
 ): Promise<Record<string, Uint8Array>> {
   const entries = Object.entries(usersPublicKeys);
 
   const results = await Promise.all(
     entries.map(async ([userId, publicKey]) => {
       const { sharedSecret, ciphertext: kemCiphertext } = await hybridEncapsulate(publicKey);
-      const encrypted = await encryptContent(symmetricKey, sharedSecret);
+      const encrypted = await encryptContent(symmetricKey, kemWrapKey(sharedSecret), domain);
 
       const kemLen = writeUint16LE(kemCiphertext.length);
       const combined = new Uint8Array(1 + 2 + kemCiphertext.length + encrypted.length);
@@ -253,7 +312,7 @@ export async function encryptSymmetricKeyForUsers(
 /**
  * Decrypt a symmetric key that was encrypted for the local user.
  */
-export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, encryptedKey: Uint8Array): Promise<Uint8Array> {
+export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, encryptedKey: Uint8Array, domain: KemWrapDomain): Promise<Uint8Array> {
   if (encryptedKey.length < 3) {
     throw new VaultError(VaultErrorCode.CIPHERTEXT_TOO_SHORT, 'Encrypted key is too short to be valid');
   }
@@ -286,5 +345,5 @@ export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, enc
 
   const sharedSecret = await hybridDecapsulate(secretKey, kemCiphertext);
 
-  return decryptContent(encryptedSymKey, sharedSecret);
+  return decryptContent(encryptedSymKey, kemWrapKey(sharedSecret), domain);
 }

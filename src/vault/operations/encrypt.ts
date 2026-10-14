@@ -1,4 +1,5 @@
 import { encryptContent, encryptSymmetricKeyForUsers, generateSymmetricKey, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
+import { DOMAIN_CONTENT, DOMAIN_KEM_DOCUMENT_KEY, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
@@ -12,7 +13,7 @@ import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/oper
 async function mintKeyAndEncrypt(data: ArrayBuffer): Promise<{ newKey: Uint8Array; encryptedContent: ArrayBuffer }> {
   const newKey = await generateSymmetricKey();
   const dataBytes = new Uint8Array(data);
-  const encrypted = await encryptContent(dataBytes, newKey);
+  const encrypted = await encryptContent(dataBytes, newKey, DOMAIN_CONTENT);
   return {
     newKey,
     encryptedContent: encrypted.buffer as ArrayBuffer,
@@ -55,7 +56,7 @@ export async function handleEncryptWithKey(
         )
       : await resolveSymmetricKey(userId, encryptedKey, 'active');
 
-  const encrypted = await encryptContent(dataBytes, symmetricKey);
+  const encrypted = await encryptContent(dataBytes, symmetricKey, DOMAIN_CONTENT);
 
   return { encryptedData: encrypted.buffer as ArrayBuffer };
 }
@@ -87,7 +88,7 @@ export async function handleEncryptWithoutKey(
     usersPublicKeys[uid] = importPublicKeyFromBase64(base64Key);
   }
 
-  const encryptedKeysRaw = await encryptSymmetricKeyForUsers(newKey, usersPublicKeys);
+  const encryptedKeysRaw = await encryptSymmetricKeyForUsers(newKey, usersPublicKeys, DOMAIN_KEM_DOCUMENT_KEY);
   const encryptedKeys: Record<string, ArrayBuffer> = {};
 
   for (const [uid, encKey] of Object.entries(encryptedKeysRaw)) {
@@ -119,7 +120,7 @@ export async function handleEncryptNestedWithoutKey(
   const parentKey = await resolveKeyChain(userId, encryptedKey, chain, 'active');
 
   const { newKey, encryptedContent } = await mintKeyAndEncrypt(payload.data);
-  const wrappedKey = await encryptContent(newKey, parentKey);
+  const wrappedKey = await encryptContent(newKey, parentKey, DOMAIN_WRAPPED_KEY);
 
   return {
     encryptedContent,

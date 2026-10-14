@@ -11,11 +11,22 @@
 import sodium from 'libsodium-wrappers-sumo';
 import { z } from 'zod';
 
-import { ensureSodium } from '@encryption/src/crypto/encryption';
+import { concat, ensureSodium, lengthPrefixed, writeUint32LE, writeUint64LE } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { type SignaturePublicKey, type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
 import { itemTypeSchema } from '@encryption/src/crypto/vault-items';
+import { DOMAIN_VAULT_MANIFEST } from '@encryption/src/shared/crypto-domains';
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import '@encryption/src/shared/zod-jitless';
+
+// Algorithms are named in the manifest rather than implied, so a verifier never
+// has to guess what produced a value: each item hash carries its algorithm as a
+// prefix, and the manifest states which algorithm signs it. Both are inside the
+// signed bytes, so neither can be swapped for a weaker one undetected.
+export const MANIFEST_SIGNATURE_ALGORITHM = 'ed25519';
+const CONTENT_HASH_PREFIX = 'blake2b-256:';
+// The prefix, then 32 bytes in padded standard base64 (what `hashCiphertext` emits).
+const CONTENT_HASH_PATTERN = /^blake2b-256:[A-Za-z0-9+/]{43}=$/;
 
 export const sealedItemSchema = z.object({
   id: z.string(),
@@ -28,15 +39,19 @@ export type SealedItem = z.infer<typeof sealedItemSchema>;
 export const manifestItemSchema = z.object({
   id: z.string(),
   type: itemTypeSchema,
-  contentHash: z.string(), // base64 BLAKE2b of the ciphertext bytes
-  revisionDate: z.number(),
+  contentHash: z.string().regex(CONTENT_HASH_PATTERN), // `blake2b-256:` + base64 BLAKE2b-256 of the ciphertext bytes
+  revisionDate: z.number().int().nonnegative(),
 });
 export type ManifestItem = z.infer<typeof manifestItemSchema>;
 
+// Signed as 32-bit integers (see manifestBytes), so refused beyond that at parse time.
+const counter = z.number().int().nonnegative().max(0xffffffff);
+
 export const vaultManifestSchema = z.object({
-  schema: z.number(),
-  revision: z.number(),
-  identityGen: z.number(),
+  schema: counter,
+  signatureAlgorithm: z.literal(MANIFEST_SIGNATURE_ALGORITHM),
+  revision: counter,
+  identityGen: counter,
   items: z.array(manifestItemSchema),
 });
 export type VaultManifest = z.infer<typeof vaultManifestSchema>;
@@ -71,7 +86,7 @@ export function parseManifest(json: string): VaultManifest | null {
 }
 
 export function hashCiphertext(ciphertextBase64: string): string {
-  return uint8ToBase64(sodium.crypto_generichash(32, base64ToUint8(ciphertextBase64), null));
+  return `${CONTENT_HASH_PREFIX}${uint8ToBase64(sodium.crypto_generichash(32, base64ToUint8(ciphertextBase64), null))}`;
 }
 
 export function buildManifest(revision: number, identityGen: number, items: SealedItem[]): VaultManifest {
@@ -79,16 +94,29 @@ export function buildManifest(revision: number, identityGen: number, items: Seal
     .map((i) => ({ id: i.id, type: i.type, contentHash: hashCiphertext(i.ciphertext), revisionDate: i.revisionDate }))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-  return { schema: MANIFEST_SCHEMA_VERSION, revision, identityGen, items: manifestItems };
+  return { schema: MANIFEST_SCHEMA_VERSION, signatureAlgorithm: MANIFEST_SIGNATURE_ALGORITHM, revision, identityGen, items: manifestItems };
 }
 
-/** Deterministic bytes to sign. Hand-built so key order can never drift. */
+/**
+ * The bytes the identity key signs, framed like the other signed messages: each
+ * text field preceded by its 16-bit length, counters as 32-bit and millisecond
+ * timestamps as 64-bit little-endian integers, the item count before the items.
+ * Nothing depends on how a field is spelled, so no two manifests share these
+ * bytes, and the leading domain label keeps any other message the identity key
+ * signs from reading as a manifest.
+ */
 export function manifestBytes(manifest: VaultManifest): Uint8Array {
-  const items = manifest.items
-    .map((i) => `${JSON.stringify(i.id)}:${JSON.stringify(i.type)}:${JSON.stringify(i.contentHash)}:${i.revisionDate}`)
-    .join(',');
+  const text = (value: string) => lengthPrefixed(sodium.from_string(value));
 
-  return sodium.from_string(`v${manifest.schema}|${manifest.revision}|${manifest.identityGen}|[${items}]`);
+  return concat([
+    ...text(DOMAIN_VAULT_MANIFEST),
+    writeUint32LE(manifest.schema),
+    ...text(manifest.signatureAlgorithm),
+    writeUint32LE(manifest.revision),
+    writeUint32LE(manifest.identityGen),
+    writeUint32LE(manifest.items.length),
+    ...manifest.items.flatMap((item) => [...text(item.id), ...text(item.type), ...text(item.contentHash), writeUint64LE(item.revisionDate)]),
+  ]);
 }
 
 export async function signManifest(manifest: VaultManifest, identitySecretKey: SignatureSecretKey): Promise<string> {
@@ -100,7 +128,20 @@ export async function signManifest(manifest: VaultManifest, identitySecretKey: S
 export async function verifyManifest(manifest: VaultManifest, signatureBase64: string, identityPublicKey: SignaturePublicKey): Promise<boolean> {
   await ensureSodium();
 
-  return verifyDetached(base64ToUint8(signatureBase64), manifestBytes(manifest), identityPublicKey);
+  // A field too long to frame cannot have been signed, and a signature that is
+  // not base64 is not a signature: refuse both like a bad signature.
+  let bytes: Uint8Array;
+  let signature: Uint8Array;
+  try {
+    bytes = manifestBytes(manifest);
+    signature = base64ToUint8(signatureBase64);
+  } catch (err) {
+    if (err instanceof VaultError && (err.code === VaultErrorCode.INVALID_CANONICAL_PAYLOAD || err.code === VaultErrorCode.MALFORMED_BASE64))
+      return false;
+    throw err;
+  }
+
+  return verifyDetached(signature, bytes, identityPublicKey);
 }
 
 /**

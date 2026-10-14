@@ -27,13 +27,7 @@
 import { concat, lengthPrefixed, writeUint32LE, writeUint64LE } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
 import { type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
-
-// Domain-separation tags. Distinct strings keep a registration signature from
-// ever being mistaken for a PoP-challenge (or identity-continuity) signature,
-// even across future format changes.
-const REGISTRATION_DOMAIN = 'lasuite-encryption/key-registration/v1';
-const POP_CHALLENGE_DOMAIN = 'lasuite-encryption/key-pop/v1';
-const IDENTITY_CONTINUITY_DOMAIN = 'lasuite-encryption/identity-continuity/v1';
+import { DOMAIN_IDENTITY_CONTINUITY, DOMAIN_KEY_POP, DOMAIN_KEY_REGISTRATION } from '@encryption/src/shared/crypto-domains';
 
 export interface KeyRegistrationRecord {
   /**
@@ -58,7 +52,7 @@ export interface KeyRegistrationRecord {
  */
 export function encodeKeyRegistrationPayload(record: KeyRegistrationRecord): Uint8Array {
   const userIdBytes = new TextEncoder().encode(record.userId);
-  const domainBytes = new TextEncoder().encode(REGISTRATION_DOMAIN);
+  const domainBytes = new TextEncoder().encode(DOMAIN_KEY_REGISTRATION);
 
   return concat([
     ...lengthPrefixed(domainBytes),
@@ -77,7 +71,9 @@ export function encodeKeyRegistrationPayload(record: KeyRegistrationRecord): Uin
  * against a different challenge.
  */
 export function encodePopChallengeMessage(challengeId: string): Uint8Array {
-  return new TextEncoder().encode(`${POP_CHALLENGE_DOMAIN}:${challengeId}`);
+  const encoder = new TextEncoder();
+
+  return concat([...lengthPrefixed(encoder.encode(DOMAIN_KEY_POP)), ...lengthPrefixed(encoder.encode(challengeId))]);
 }
 
 /**
@@ -132,7 +128,7 @@ export interface IdentityContinuityRecord {
  */
 export function encodeIdentityContinuityPayload(record: IdentityContinuityRecord): Uint8Array {
   const userIdBytes = new TextEncoder().encode(record.userId);
-  const domainBytes = new TextEncoder().encode(IDENTITY_CONTINUITY_DOMAIN);
+  const domainBytes = new TextEncoder().encode(DOMAIN_IDENTITY_CONTINUITY);
   const algoBytes = new TextEncoder().encode(record.algo);
 
   return concat([
@@ -167,15 +163,17 @@ export async function verifyIdentityContinuity(
 ): Promise<boolean> {
   let previousRawKey: Uint8Array;
   let signature: Uint8Array;
+  let message: Uint8Array;
 
+  // A record that cannot be encoded (a field too long, a generation out of range)
+  // cannot have been signed: refuse it like a bad signature.
   try {
     previousRawKey = importPublicKeyFromBase64(previousSignaturePublicKeyB64);
     signature = base64ToUint8(continuitySignatureB64);
+    message = encodeIdentityContinuityPayload(record);
   } catch {
     return false;
   }
-
-  const message = encodeIdentityContinuityPayload(record);
 
   return verifyDetached(signature, message, previousRawKey);
 }

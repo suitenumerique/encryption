@@ -1,6 +1,7 @@
 import sodium from 'libsodium-wrappers-sumo';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { encryptContent } from '@encryption/src/crypto/encryption';
 import { detectMnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
 import {
@@ -16,12 +17,16 @@ import {
   verifyVaultChallenge,
   wrapVrk,
 } from '@encryption/src/crypto/vault-unlock';
+import { DOMAIN_VRK_WRAP } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 // Cheap Argon2id params so the suite stays fast; correctness is independent of cost.
 const FAST: KdfParams = { opsLimit: 1, memLimit: 8 * 1024 * 1024 };
 
 const PHRASE = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
+
+const seq = (length: number, start = 0) => Uint8Array.from({ length }, (_, i) => (start + i) & 0xff);
+const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
 
 beforeAll(async () => {
   await sodium.ready;
@@ -66,6 +71,57 @@ describe('VRK wrap / unwrap', () => {
     const wrapped = await wrapVrk(await generateVrk(), kek);
 
     await expect(unwrapVrk(wrapped, wrong)).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
+  });
+
+  it('never seals under the KEK itself, only under its wrapping subkey', async () => {
+    const kek = await deriveKek(PHRASE, 'user-1', FAST);
+    const directlyUnderKek = await encryptContent(await generateVrk(), kek, DOMAIN_VRK_WRAP);
+
+    await expect(unwrapVrk(directlyUnderKek, kek)).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
+  });
+});
+
+// Known answers: a recovery phrase must keep unlocking the same vault, so the
+// salt label, the KEK subkeys and the wrap's associated data must never drift.
+describe('vault unlock (known answers)', () => {
+  it('derives the known KEK for a phrase and user', async () => {
+    expect(hex(await deriveKek(PHRASE, 'user-1', FAST))).toBe('6625b3d6be5d66cc7fbef3dd1b562f6ba9be56c1388e4524df12f4103cd8bde9');
+  });
+
+  it('opens the known wrapped VRK', async () => {
+    expect(
+      await unwrapVrk(
+        Uint8Array.from(
+          Buffer.from(
+            '01749912e631818075cf3be8024cf327fb9e9526100b69d875e61e89b4c298c4d4ec20d93c116fc6fd6ad7aa6562f033949d3e747986222a419766afd2fa7918cf5c68733ee76514fd',
+            'hex'
+          )
+        ),
+        seq(32)
+      )
+    ).toEqual(seq(32, 200));
+  });
+
+  it('derives the known auth public key', async () => {
+    expect(hex((await deriveVaultAuthKeyPair(seq(32))).publicKey)).toBe('d46163922905bcfd622b8112737187353948e9dc875b8eab0900db37967fdc6a');
+  });
+
+  // Ed25519 is deterministic, so a fixed key over fixed inputs pins the signed
+  // bytes: framed label, framed user id, framed nonce.
+  it('signs the known unlock challenge', async () => {
+    const signer = sodium.crypto_sign_seed_keypair(seq(32));
+
+    expect(hex(await signVaultChallenge(seq(32, 50), 'user-1', signer.privateKey))).toBe(
+      '16c2e923461e8a6294e6ceb5b2a9276910319204065426400cfeb60beb65e9ee18205d4900e39b806156735923ad0df87f42a6be3a3da6dae42c3f2798a35f03'
+    );
+  });
+
+  it('signs the known auth-key binding', async () => {
+    const signer = sodium.crypto_sign_seed_keypair(seq(32));
+
+    expect(hex(await signAuthPublicKeyBinding(seq(32, 100), signer.privateKey))).toBe(
+      '84a6b8a92cd793ce2e900cc812cbc21e1db46d78791911cc70e132f474d3958ccdaa675bc263d906cf99c7a5162caf97d1ce6de95b88d821f0f477c088a2bf02'
+    );
   });
 });
 

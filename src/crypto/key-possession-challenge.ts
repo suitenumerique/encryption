@@ -14,20 +14,25 @@
  *
  *   1. Client → Server : POST /api/keys/init { public_key }
  *   2. Server          : (ct, ss) = crypto_kem_xwing_enc(pk)
- *                        expected = HMAC_SHA256(key=ss, msg=id)
+ *                        expected = HMAC_SHA256(key=subkey(ss), msg=id)
  *                        store (id, expected, pk, expiresAt) ; reply (id, ct)
  *   3. Client (vault)  : ss' = crypto_kem_xwing_dec(ct, sk)
- *                        response = HMAC_SHA256(ss', id)
+ *                        response = HMAC_SHA256(subkey(ss'), id)
  *   4. Client → Server : POST /api/keys/complete { id, response }
  *   5. Server          : constant-time compare(response, expected) ; commit
  *
  * `ss` is single-use, dropped from memory after step 2. The server only
  * keeps `expected` (32 bytes), so a DB dump leaks neither the private key
  * nor the encapsulated secret.
+ *
+ * `subkey` is the challenge's own derivation of the shared secret: a key wrap
+ * seals under a different subkey of an X-Wing secret, so a server that replays a
+ * wrap's KEM ciphertext as a challenge gets a tag under an unrelated key.
  */
 import sodium from 'libsodium-wrappers-sumo';
 
-import { type HybridPublicKey, ensureSodium, hybridEncapsulate } from '@encryption/src/crypto/encryption';
+import { type HybridPublicKey, deriveSubkey, ensureSodium, hybridEncapsulate } from '@encryption/src/crypto/encryption';
+import { DOMAIN_KEY_POSSESSION_KEY } from '@encryption/src/shared/crypto-domains';
 
 /**
  * Server-side: produce the X-Wing ciphertext to send to the client and the
@@ -57,8 +62,10 @@ export async function createKeyPossessionChallenge(
 export async function computeChallengeResponse(sharedSecret: Uint8Array, challengeId: string): Promise<Uint8Array> {
   await ensureSodium();
 
+  const key = deriveSubkey(sharedSecret, DOMAIN_KEY_POSSESSION_KEY, sodium.crypto_auth_hmacsha256_KEYBYTES);
+
   // crypto_auth_hmacsha256 takes (message, key) and returns a 32-byte tag.
-  return sodium.crypto_auth_hmacsha256(sodium.from_string(challengeId), sharedSecret);
+  return sodium.crypto_auth_hmacsha256(sodium.from_string(challengeId), key);
 }
 
 /**

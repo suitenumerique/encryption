@@ -15,7 +15,7 @@
  * wrap a key for it. Keeping both in one object (rather than two parallel maps)
  * removes any chance of the two views disagreeing for a given user.
  */
-import { computeKeyFingerprint, verifyKeyRegistration } from '@encryption/src/crypto';
+import { base64ToUint8, computeKeyFingerprint, verifyKeyRegistration } from '@encryption/src/crypto';
 import type { ContinuityLink } from '@encryption/src/vault/operations/identity-continuity';
 
 // In production, the vault and the API server share the same origin (data.encryption.xx).
@@ -48,14 +48,7 @@ export interface VaultRegisteredUser {
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return bytes.buffer as ArrayBuffer;
+  return base64ToUint8(base64).buffer as ArrayBuffer;
 }
 
 export async function handleFetchPublicKeys(

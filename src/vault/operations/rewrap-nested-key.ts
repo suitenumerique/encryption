@@ -1,4 +1,5 @@
 import { decryptContent, encryptContent } from '@encryption/src/crypto';
+import { DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
 
 /**
@@ -46,10 +47,10 @@ export async function handleRewrapNestedKey(
       : resolveSymmetricKey(userId, entryKey, 'active');
 
   const oldParentKey = await resolveChainOrEntry(payload.oldEncryptedKeyChain);
-  const fileKey = await decryptContent(oldWrappedKey, oldParentKey);
+  const fileKey = await decryptContent(oldWrappedKey, oldParentKey, DOMAIN_WRAPPED_KEY);
 
   const newParentKey = await resolveChainOrEntry(payload.newEncryptedKeyChain);
-  const newWrappedKey = await encryptContent(fileKey, newParentKey);
+  const newWrappedKey = await encryptContent(fileKey, newParentKey, DOMAIN_WRAPPED_KEY);
 
   return { newEncryptedKey: newWrappedKey.buffer as ArrayBuffer };
 }

@@ -127,6 +127,12 @@ describe('key-registration', () => {
     it('binds distinct challenge ids to distinct messages', () => {
       expect(encodePopChallengeMessage('a')).not.toEqual(encodePopChallengeMessage('b'));
     });
+
+    it('frames the label and the challenge id like the other signed messages', () => {
+      expect(Buffer.from(encodePopChallengeMessage('challenge-1')).toString('hex')).toBe(
+        '1d006c6173756974652d656e6372797074696f6e2f6b65792d706f702f76310b006368616c6c656e67652d31'
+      );
+    });
   });
 
   describe('verifyIdentityContinuity', () => {
@@ -177,6 +183,14 @@ describe('key-registration', () => {
       const { record, previousSignaturePublicKeyB64 } = await buildContinuity();
 
       expect(await verifyIdentityContinuity(record, previousSignaturePublicKeyB64, 'not-base64-???')).toBe(false);
+    });
+
+    it('rejects a generation a 32-bit field cannot hold without throwing', async () => {
+      const { record, previousSignaturePublicKeyB64, continuitySignatureB64 } = await buildContinuity({ generation: 2 });
+
+      expect(await verifyIdentityContinuity({ ...record, generation: 2 ** 32 + 2 }, previousSignaturePublicKeyB64, continuitySignatureB64)).toBe(
+        false
+      );
     });
   });
 });
@@ -239,6 +253,21 @@ describe('canonical payload encoding (property)', () => {
           signaturePublicKeyWire: new Uint8Array(1),
         })
       ).toThrow(VaultError);
+    }
+  });
+
+  it('refuses a version a 32-bit field cannot hold instead of wrapping it', () => {
+    // 2^32 + 1 would otherwise encode exactly like version 1.
+    for (const version of [-1, 1.5, 2 ** 32 + 1, NaN]) {
+      expect(() =>
+        encodeKeyRegistrationPayload({
+          userId: 'u',
+          version,
+          createdAtMillis: 0,
+          encryptionPublicKeyWire: new Uint8Array(1),
+          signaturePublicKeyWire: new Uint8Array(1),
+        })
+      ).toThrow(expect.objectContaining({ code: VaultErrorCode.INVALID_CANONICAL_PAYLOAD }));
     }
   });
 

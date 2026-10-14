@@ -4,6 +4,7 @@ import { VaultClient } from '@encryption/src/client/vault-client';
 import { decryptContent, encryptContent, ensureSodium, generateSymmetricKey, readUint32LE, writeUint32LE } from '@encryption/src/crypto';
 import { DEMO_USERS, getToken, loginUser } from '@encryption/src/demo/auth';
 import { MSG_VAULT_COMMIT_STAGED, MSG_VAULT_GENERATE_KEYS, MSG_VAULT_RESULT } from '@encryption/src/shared/constants';
+import { DOMAIN_CONTENT } from '@encryption/src/shared/crypto-domains';
 
 const VAULT_URL = 'http://data.encryption.localhost:7200';
 const INTERFACE_URL = 'http://encryption.localhost:7200';
@@ -35,7 +36,7 @@ const CHUNK_PRESETS = [
  */
 async function encryptChunked(data: Uint8Array, key: Uint8Array, chunkSize: number): Promise<Uint8Array> {
   if (data.length <= chunkSize) {
-    return encryptContent(data, key);
+    return encryptContent(data, key, DOMAIN_CONTENT);
   }
 
   const chunkCount = Math.ceil(data.length / chunkSize);
@@ -46,7 +47,7 @@ async function encryptChunked(data: Uint8Array, key: Uint8Array, chunkSize: numb
     const start = i * chunkSize;
     const end = Math.min(start + chunkSize, data.length);
     const chunk = data.subarray(start, end);
-    const encrypted = await encryptContent(chunk, key);
+    const encrypted = await encryptContent(chunk, key, DOMAIN_CONTENT);
     encryptedChunks.push(encrypted);
     totalLen += 4 + encrypted.length; // 4 bytes length prefix + encrypted data
   }
@@ -75,7 +76,7 @@ async function decryptChunked(data: Uint8Array, key: Uint8Array): Promise<Uint8A
 
   if (possibleChunkCount === 0 || possibleChunkCount > 1000) {
     // Not chunked — decrypt as single block
-    return decryptContent(data, key);
+    return decryptContent(data, key, DOMAIN_CONTENT);
   }
 
   const chunkCount = possibleChunkCount;
@@ -87,7 +88,7 @@ async function decryptChunked(data: Uint8Array, key: Uint8Array): Promise<Uint8A
     const chunkLen = readUint32LE(data.subarray(offset, offset + 4));
     offset += 4;
     const chunk = data.subarray(offset, offset + chunkLen);
-    const decrypted = await decryptContent(chunk, key);
+    const decrypted = await decryptContent(chunk, key, DOMAIN_CONTENT);
     decryptedChunks.push(decrypted);
     totalLen += decrypted.length;
     offset += chunkLen;
@@ -278,8 +279,8 @@ export function BenchmarkApp() {
       // so JIT compilation doesn't skew the benchmark
       const warmupDirect = new Uint8Array(1024);
       crypto.getRandomValues(warmupDirect);
-      const warmupEnc = await encryptContent(warmupDirect, directKey);
-      await decryptContent(warmupEnc, directKey);
+      const warmupEnc = await encryptContent(warmupDirect, directKey, DOMAIN_CONTENT);
+      await decryptContent(warmupEnc, directKey, DOMAIN_CONTENT);
       log('Direct crypto warmed up');
 
       await new Promise((r) => setTimeout(r, 50));
@@ -316,7 +317,9 @@ export function BenchmarkApp() {
       await new Promise((r) => setTimeout(r, 50));
 
       const directDecStart = performance.now();
-      const directDecrypted = useChunking ? await decryptChunked(directEncrypted, directKey) : await decryptContent(directEncrypted, directKey);
+      const directDecrypted = useChunking
+        ? await decryptChunked(directEncrypted, directKey)
+        : await decryptContent(directEncrypted, directKey, DOMAIN_CONTENT);
       const directDecEnd = performance.now();
       const directDecMs = directDecEnd - directDecStart;
       log(`Direct decrypt: ${formatMs(directDecMs)} (${formatSize(directDecrypted.length)} plaintext)`);

@@ -29,8 +29,7 @@ import {
   writeUint64LE,
 } from '@encryption/src/crypto/encryption';
 import { type SignaturePublicKey, type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
-
-const ESCROW_DOMAIN = 'lasuite-encryption/emergency-escrow/v1';
+import { DOMAIN_EMERGENCY_ESCROW, DOMAIN_KEM_EMERGENCY_CAPSULE } from '@encryption/src/shared/crypto-domains';
 
 export interface EmergencyEscrowRecord {
   /** INTERNAL user ids (users.id), never OIDC subs (same rationale as key-registration.ts). */
@@ -63,7 +62,7 @@ export function encodeEmergencyEscrowPayload(record: EmergencyEscrowRecord): Uin
   const encoder = new TextEncoder();
 
   return concat([
-    ...lengthPrefixed(encoder.encode(ESCROW_DOMAIN)),
+    ...lengthPrefixed(encoder.encode(DOMAIN_EMERGENCY_ESCROW)),
     ...lengthPrefixed(encoder.encode(record.grantorUserId)),
     ...lengthPrefixed(encoder.encode(record.granteeUserId)),
     ...lengthPrefixed(record.granteeIdentityPublicKeyWire),
@@ -98,7 +97,7 @@ export async function verifyEmergencyEscrow(
  * opens it with the standard unwrap path.
  */
 export async function wrapPhraseEntropyForGrantee(phraseEntropy: Uint8Array, granteePublicKey: HybridPublicKey): Promise<Uint8Array> {
-  const wrapped = await encryptSymmetricKeyForUsers(phraseEntropy, { grantee: granteePublicKey });
+  const wrapped = await encryptSymmetricKeyForUsers(phraseEntropy, { grantee: granteePublicKey }, DOMAIN_KEM_EMERGENCY_CAPSULE);
 
   return wrapped.grantee;
 }
@@ -114,7 +113,7 @@ export async function unwrapPhraseEntropy(capsule: Uint8Array, granteeSecretKeys
 
   for (const secretKey of granteeSecretKeys) {
     try {
-      return await decryptSymmetricKeyForUser(secretKey, capsule);
+      return await decryptSymmetricKeyForUser(secretKey, capsule, DOMAIN_KEM_EMERGENCY_CAPSULE);
     } catch (err) {
       lastError = err;
     }

@@ -23,7 +23,8 @@ import {
   MSG_VAULT_SHARE_KEYS,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
-import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import { DOMAIN_IDENTITY_FINGERPRINT } from '@encryption/src/shared/crypto-domains';
+import { computeDecimalFingerprint, formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 import type { HasKeysResult } from '@encryption/src/shared/has-keys';
 import { type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
@@ -683,20 +684,14 @@ export class VaultClient {
   // =========================================================================
 
   /**
-   * Compute a 128-bit DECIMAL fingerprint of a public key: the first 16 bytes of
-   * its SHA-256, read big-endian as a fixed-width 40-digit decimal. Matches the
-   * device-pairing fingerprint so every surface shows the same value.
-   * This is a pure client-side operation — no vault iframe needed.
+   * Compute the 40-digit identity fingerprint of a user, the value people compare
+   * out of band: the same computation as the vault and the interface, so every
+   * surface shows the same value. Pure client-side, no vault iframe needed.
    *
-   * @param publicKey - The public key as ArrayBuffer (from fetchPublicKeys or getPublicKey)
+   * @param signaturePublicKey - The identity (signature) public key wire blob, as returned by fetchPublicKeys or getPublicKey
    */
-  async computeKeyFingerprint(publicKey: ArrayBuffer): Promise<string> {
-    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', publicKey)).slice(0, 16);
-
-    let n = 0n;
-    for (const b of hash) n = (n << 8n) | BigInt(b);
-
-    return n.toString().padStart(40, '0');
+  async computeKeyFingerprint(signaturePublicKey: ArrayBuffer): Promise<string> {
+    return computeDecimalFingerprint(DOMAIN_IDENTITY_FINGERPRINT, new Uint8Array(signaturePublicKey));
   }
 
   /**

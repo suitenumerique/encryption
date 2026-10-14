@@ -1,4 +1,5 @@
 import { encryptContent } from '@encryption/src/crypto';
+import { DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
 
 /**
@@ -53,7 +54,7 @@ export async function handleWrapNestedKey(
       : await resolveSymmetricKey(userId, newEntryKey, 'active');
 
   // (3) Wrap K_item under K_newParent.
-  const newEncryptedKey = await encryptContent(fileKey, newParentKey);
+  const newEncryptedKey = await encryptContent(fileKey, newParentKey, DOMAIN_WRAPPED_KEY);
 
   return { newEncryptedKey: newEncryptedKey.buffer as ArrayBuffer };
 }

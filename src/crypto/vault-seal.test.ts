@@ -3,8 +3,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import type { PlainItem } from '@encryption/src/crypto/vault-items';
-import { buildSignedManifest, openState, sealItem, sealState, verifyPulledVault } from '@encryption/src/crypto/vault-seal';
+import { buildSignedManifest, openItem, openState, sealItem, sealState, verifyPulledVault } from '@encryption/src/crypto/vault-seal';
 import { addEncryptionKey, addIdentity, emptyVaultState, mergeVaultState, setTofu } from '@encryption/src/crypto/vault-state';
+import { VaultError } from '@encryption/src/shared/vault-error';
 
 function sampleState() {
   let s = emptyVaultState();
@@ -35,6 +36,14 @@ describe('seal / open round trip', () => {
     const bad = await sealItem({ id: 'identity:1', type: 'identity', revisionDate: 10, payload: { generation: 1 } } as unknown as PlainItem, vrk);
 
     await expect(openState([bad], vrk)).rejects.toThrow();
+  });
+
+  it('refuses an item served under another id or type', async () => {
+    const vrk = sodium.randombytes_buf(32);
+    const [first, second] = await sealState(sampleState(), vrk);
+
+    await expect(openItem({ ...second, ciphertext: first.ciphertext }, vrk)).rejects.toBeInstanceOf(VaultError);
+    await expect(openItem({ ...first, id: `${first.id}-copy` }, vrk)).rejects.toBeInstanceOf(VaultError);
   });
 });
 

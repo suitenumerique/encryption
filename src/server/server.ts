@@ -15,16 +15,14 @@ import { securityTxtRoute } from '@encryption/src/server/routes/security-txt';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { versionRoute } from '@encryption/src/server/routes/versions';
 import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/shared/error-codes';
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 const isDev = process.env.NODE_ENV === 'development';
 
-// atob() (used by base64ToUint8) throws a DOMException named InvalidCharacterError
-// on malformed base64. Recognizing it lets a bad base64 body field be a 400
-// rather than an opaque 500.
+// base64ToUint8 throws MALFORMED_BASE64 on malformed input. Recognizing it lets a
+// bad base64 body field be a 400 rather than an opaque 500.
 function isBase64DecodeError(error: unknown): boolean {
-  // Structural check (not instanceof): atob throws a DOMException, which does not
-  // reliably satisfy `instanceof Error` across VM realms (e.g. under the test runner).
-  return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'InvalidCharacterError';
+  return error instanceof VaultError && error.code === VaultErrorCode.MALFORMED_BASE64;
 }
 
 // Central error handler. Handlers themselves return their stable error codes via

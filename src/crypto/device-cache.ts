@@ -12,7 +12,10 @@
  * therefore stays usable (raw bytes) in memory for the session; the device key
  * is what guards the persisted copy.
  */
+import { DOMAIN_DEVICE_VRK } from '@encryption/src/shared/crypto-domains';
+
 const ALGORITHM = 'AES-GCM';
+const ADDITIONAL_DATA = new TextEncoder().encode(DOMAIN_DEVICE_VRK);
 const IV_BYTES = 12;
 
 const subtle = crypto.subtle;
@@ -29,7 +32,7 @@ export async function generateDeviceKey(): Promise<CryptoKey> {
 
 export async function wrapVrkForDevice(vrk: Uint8Array, deviceKey: CryptoKey): Promise<Uint8Array> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const ciphertext = new Uint8Array(await subtle.encrypt({ name: ALGORITHM, iv }, deviceKey, view(vrk)));
+  const ciphertext = new Uint8Array(await subtle.encrypt({ name: ALGORITHM, iv, additionalData: ADDITIONAL_DATA }, deviceKey, view(vrk)));
 
   const blob = new Uint8Array(iv.length + ciphertext.length);
   blob.set(iv, 0);
@@ -42,5 +45,5 @@ export async function unwrapVrkForDevice(blob: Uint8Array, deviceKey: CryptoKey)
   const iv = view(blob.slice(0, IV_BYTES));
   const ciphertext = view(blob.slice(IV_BYTES));
 
-  return new Uint8Array(await subtle.decrypt({ name: ALGORITHM, iv }, deviceKey, ciphertext));
+  return new Uint8Array(await subtle.decrypt({ name: ALGORITHM, iv, additionalData: ADDITIONAL_DATA }, deviceKey, ciphertext));
 }

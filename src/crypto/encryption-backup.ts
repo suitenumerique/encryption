@@ -80,7 +80,14 @@ export function uint8ToBase64(bytes: Uint8Array): string {
 }
 
 export function base64ToUint8(base64: string): Uint8Array {
-  const binary = atob(base64);
+  // atob throws a bare DOMException; callers decode untrusted input (server
+  // responses, product payloads), so surface it as a stable code instead.
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new VaultError(VaultErrorCode.MALFORMED_BASE64, 'Value is not valid base64');
+  }
   const bytes = new Uint8Array(binary.length);
 
   for (let i = 0; i < binary.length; i++) {

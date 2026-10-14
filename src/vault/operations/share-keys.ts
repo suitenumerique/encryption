@@ -1,4 +1,5 @@
 import { encryptSymmetricKeyForUsers, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
+import { DOMAIN_KEM_DOCUMENT_KEY } from '@encryption/src/shared/crypto-domains';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
 
 /**
@@ -50,7 +51,7 @@ export async function handleShareKeys(
     usersPublicKeys[uid] = importPublicKeyFromBase64(base64Key);
   }
 
-  const encryptedKeysRaw = await encryptSymmetricKeyForUsers(symmetricKey, usersPublicKeys);
+  const encryptedKeysRaw = await encryptSymmetricKeyForUsers(symmetricKey, usersPublicKeys, DOMAIN_KEM_DOCUMENT_KEY);
 
   const encryptedKeys: Record<string, ArrayBuffer> = {};
 

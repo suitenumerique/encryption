@@ -1,9 +1,9 @@
 /**
  * Turning the recovery phrase into the keys that unlock the vault.
  *
- *   KEK  = Argon2id(recovery phrase, salt = hash(userId))
- *   VRK  = random 32 bytes, wrapped by the KEK -> wrappedVRK stored on the server
- *   auth = Ed25519 key pair derived from the KEK, domain-separated
+ *   KEK  = Argon2id(recovery phrase, salt = BLAKE2b(salt label | userId))
+ *   VRK  = random 32 bytes, wrapped by a subkey of the KEK -> wrappedVRK stored on the server
+ *   auth = Ed25519 key pair seeded by another subkey of the KEK
  *
  * The VRK actually encrypts the vault items; the KEK only wraps it, so changing
  * the recovery phrase re-wraps one key instead of re-encrypting the vault. The
@@ -13,14 +13,23 @@
  *
  * The salt is `userId`. It is not secret: only the client runs the KDF, so a
  * tampered salt just yields a wrong KEK and a detectable unwrap failure, not a
- * disclosure. libsodium has no HKDF, so the auth seed is a keyed BLAKE2b of the
- * KEK, which is a sound domain-separated derivation.
+ * disclosure. libsodium has no HKDF, so each subkey is a BLAKE2b keyed by the KEK
+ * over its own label: the KEK itself never keys a primitive, so the wrapping key
+ * and the auth seed stay independent.
  */
 import sodium from 'libsodium-wrappers-sumo';
 
-import { decryptContent, encryptContent, ensureSodium, writeUint32LE } from '@encryption/src/crypto/encryption';
+import { concat, decryptContent, deriveSubkey, encryptContent, ensureSodium, lengthPrefixed } from '@encryption/src/crypto/encryption';
 import { type MnemonicLanguage, keyToMnemonic } from '@encryption/src/crypto/mnemonic';
 import { type SignatureKeyPair, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
+import {
+  DOMAIN_VAULT_AUTH_BINDING,
+  DOMAIN_VAULT_AUTH_CHALLENGE,
+  DOMAIN_VAULT_AUTH_SEED,
+  DOMAIN_VAULT_KDF_SALT,
+  DOMAIN_VRK_WRAP,
+  DOMAIN_VRK_WRAP_KEY,
+} from '@encryption/src/shared/crypto-domains';
 
 export interface KdfParams {
   opsLimit: number;
@@ -31,11 +40,12 @@ export interface KdfParams {
 // params live in the keyring so they can be raised later without guesswork.
 export const DEFAULT_KDF_PARAMS: KdfParams = { opsLimit: 3, memLimit: 64 * 1024 * 1024 };
 
-const AUTH_SEED_CONTEXT = 'vault-auth-v1';
-const CHALLENGE_CONTEXT = 'vault-auth-challenge-v1';
-
 function deriveKdfSalt(userId: string): Uint8Array {
-  return sodium.crypto_generichash(sodium.crypto_pwhash_SALTBYTES, sodium.from_string(userId), null);
+  return sodium.crypto_generichash(sodium.crypto_pwhash_SALTBYTES, sodium.from_string(`${DOMAIN_VAULT_KDF_SALT}|${userId}`), null);
+}
+
+function deriveVrkWrapKey(kek: Uint8Array): Uint8Array {
+  return deriveSubkey(kek, DOMAIN_VRK_WRAP_KEY, sodium.crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
 }
 
 /**
@@ -81,30 +91,33 @@ export async function generateRecoveryPhrase(language: MnemonicLanguage = 'engli
 }
 
 export async function wrapVrk(vrk: Uint8Array, kek: Uint8Array): Promise<Uint8Array> {
-  return encryptContent(vrk, kek);
+  await ensureSodium();
+
+  return encryptContent(vrk, deriveVrkWrapKey(kek), DOMAIN_VRK_WRAP);
 }
 
 /** Throws VaultErrorCode.WRONG_SECRET_KEY when the phrase (hence the KEK) is wrong. */
 export async function unwrapVrk(wrapped: Uint8Array, kek: Uint8Array): Promise<Uint8Array> {
-  return decryptContent(wrapped, kek);
+  await ensureSodium();
+
+  return decryptContent(wrapped, deriveVrkWrapKey(kek), DOMAIN_VRK_WRAP);
 }
 
 export async function deriveVaultAuthKeyPair(kek: Uint8Array): Promise<SignatureKeyPair> {
   await ensureSodium();
 
-  const seed = sodium.crypto_generichash(sodium.crypto_sign_SEEDBYTES, sodium.from_string(AUTH_SEED_CONTEXT), kek);
+  const seed = deriveSubkey(kek, DOMAIN_VAULT_AUTH_SEED, sodium.crypto_sign_SEEDBYTES);
   const kp = sodium.crypto_sign_seed_keypair(seed);
 
   return { publicKey: kp.publicKey, secretKey: kp.privateKey };
 }
 
 function challengeMessage(nonce: Uint8Array, userId: string): Uint8Array {
-  const prefix = sodium.from_string(`${CHALLENGE_CONTEXT}:${userId}:`);
-  const message = new Uint8Array(prefix.length + nonce.length);
-  message.set(prefix, 0);
-  message.set(nonce, prefix.length);
-
-  return message;
+  return concat([
+    ...lengthPrefixed(sodium.from_string(DOMAIN_VAULT_AUTH_CHALLENGE)),
+    ...lengthPrefixed(sodium.from_string(userId)),
+    ...lengthPrefixed(nonce),
+  ]);
 }
 
 export async function signVaultChallenge(nonce: Uint8Array, userId: string, authSecretKey: Uint8Array): Promise<Uint8Array> {
@@ -119,8 +132,6 @@ export async function verifyVaultChallenge(nonce: Uint8Array, userId: string, si
   return verifyDetached(signature, challengeMessage(nonce, userId), authPublicKey);
 }
 
-const AUTH_BINDING_CONTEXT = 'vault-auth-binding-v1';
-
 /**
  * The message the identity signs to bind a keyring's auth public key. It is
  * domain-separated (context tag) and length-framed, so this signature can never
@@ -132,23 +143,7 @@ const AUTH_BINDING_CONTEXT = 'vault-auth-binding-v1';
  * context and key unambiguous.
  */
 function authBindingMessage(authPublicKey: Uint8Array): Uint8Array {
-  const framed = [sodium.from_string(AUTH_BINDING_CONTEXT), authPublicKey].map((part) => {
-    const len = writeUint32LE(part.length);
-    const out = new Uint8Array(len.length + part.length);
-    out.set(len, 0);
-    out.set(part, len.length);
-
-    return out;
-  });
-
-  const message = new Uint8Array(framed.reduce((n, p) => n + p.length, 0));
-  let offset = 0;
-  for (const part of framed) {
-    message.set(part, offset);
-    offset += part.length;
-  }
-
-  return message;
+  return concat([...lengthPrefixed(sodium.from_string(DOMAIN_VAULT_AUTH_BINDING)), ...lengthPrefixed(authPublicKey)]);
 }
 
 /** Identity signs the domain-separated binding over a keyring's auth public key. */

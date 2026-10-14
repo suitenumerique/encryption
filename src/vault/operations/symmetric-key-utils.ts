@@ -1,4 +1,5 @@
 import { decryptContent, decryptSymmetricKeyForUser } from '@encryption/src/crypto';
+import { DOMAIN_KEM_DOCUMENT_KEY, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { type KeyVersionSelector, getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
 import { getCachedSymmetricKey, setCachedSymmetricKey } from '@encryption/src/vault/symmetric-key-cache';
@@ -32,7 +33,7 @@ export async function resolveSymmetricKey(userId: string, encryptedKey: Uint8Arr
     throw new VaultError(VaultErrorCode.MISSING_KEYS, 'No key pair found. Generate or restore keys first.');
   }
 
-  const symmetricKey = await decryptSymmetricKeyForUser(pair.secretKey, encryptedKey);
+  const symmetricKey = await decryptSymmetricKeyForUser(pair.secretKey, encryptedKey, DOMAIN_KEM_DOCUMENT_KEY);
 
   setCachedSymmetricKey(userId, encryptedKey, symmetricKey);
 
@@ -68,7 +69,7 @@ export async function resolveKeyChain(
 
   // Step 2: Unwrap each subsequent key in the chain
   for (const wrappedKey of encryptedKeyChain) {
-    currentKey = await decryptContent(wrappedKey, currentKey);
+    currentKey = await decryptContent(wrappedKey, currentKey, DOMAIN_WRAPPED_KEY);
   }
 
   return currentKey;

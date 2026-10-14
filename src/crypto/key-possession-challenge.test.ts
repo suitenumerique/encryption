@@ -49,4 +49,12 @@ describe('key-possession-challenge', () => {
 
     expect(await verifyChallengeResponse(expectedHmac, responseForWrongId)).toBe(false);
   });
+
+  it('matches the known-answer response, so both sides keep deriving the same key', async () => {
+    const sharedSecret = Uint8Array.from({ length: 32 }, (_, i) => i);
+
+    expect(Buffer.from(await computeChallengeResponse(sharedSecret, 'challenge-1')).toString('hex')).toBe(
+      '64931cbb54d43368cf2fac8e6af0e42889617c31b96def12670416ac804f5b5b'
+    );
+  });
 });

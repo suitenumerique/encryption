@@ -40,13 +40,13 @@ describe('formatFingerprint', () => {
 });
 
 describe('fingerprint format (property)', () => {
-  it('is always 40 digits with a leading zero, for any key bytes', async () => {
+  it('is always 40 digits led by the scheme digit, for any key bytes', async () => {
     await fc.assert(
       fc.asyncProperty(fc.uint8Array({ minLength: 1, maxLength: 1300 }), async (bytes) => {
         const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
         const fingerprint = await computeKeyFingerprint(buffer);
 
-        expect(fingerprint).toMatch(/^0\d{39}$/);
+        expect(fingerprint).toMatch(/^1\d{39}$/);
         expect(await computeKeyFingerprint(btoa(String.fromCharCode(...bytes)))).toBe(fingerprint);
       })
     );

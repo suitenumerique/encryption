@@ -25,4 +25,13 @@ describe('device-key VRK cache', () => {
 
     await expect(unwrapVrkForDevice(wrapped, await generateDeviceKey())).rejects.toBeDefined();
   });
+
+  it('refuses a blob sealed without the device-cache label', async () => {
+    const deviceKey = await generateDeviceKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, deviceKey, crypto.getRandomValues(new Uint8Array(32))));
+    const unlabelled = new Uint8Array([...iv, ...ciphertext]);
+
+    await expect(unwrapVrkForDevice(unlabelled, deviceKey)).rejects.toBeDefined();
+  });
 });

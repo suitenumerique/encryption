@@ -1,4 +1,4 @@
-import { type UserKeyBundle, exportPublicKeyAsBase64 } from '@encryption/src/crypto';
+import { type UserKeyBundle, base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto';
 import type { HasKeysResult } from '@encryption/src/shared/has-keys';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getDeEnrollment } from '@encryption/src/vault/device-activity';
@@ -77,14 +77,7 @@ export async function handleHasKeys(userId: string): Promise<HasKeysResult> {
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return bytes.buffer as ArrayBuffer;
+  return base64ToUint8(base64).buffer as ArrayBuffer;
 }
 
 /**

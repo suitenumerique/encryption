@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { ensureSodium, generateUserKeyPair } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, exportPublicKeyAsBase64, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
 import { CRYPTO_VERSION } from '@encryption/src/shared/constants';
+import { VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 describe('encryption-backup', () => {
   describe('exportPublicKeyAsBase64 / importPublicKeyFromBase64', () => {
@@ -32,5 +33,9 @@ describe('encryption-backup', () => {
 
       expect(() => importPublicKeyFromBase64(tampered)).toThrow(/unsupported crypto version/i);
     });
+  });
+
+  it('refuses input that is not base64 with a stable code', () => {
+    expect(() => base64ToUint8('not base64!')).toThrow(expect.objectContaining({ code: VaultErrorCode.MALFORMED_BASE64 }));
   });
 });

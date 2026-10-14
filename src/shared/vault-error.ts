@@ -61,6 +61,8 @@ export const VaultErrorCode = {
   CIPHERTEXT_TOO_SHORT: 'CIPHERTEXT_TOO_SHORT',
   /** Ciphertext structure is inconsistent (e.g. a wrong length field): corrupt, not merely truncated. */
   MALFORMED_CIPHERTEXT: 'MALFORMED_CIPHERTEXT',
+  /** A value that should be base64 is not (corrupt or tampered input). */
+  MALFORMED_BASE64: 'MALFORMED_BASE64',
   /** A field cannot be represented in the canonical signed-payload encoding (length or number out of range). */
   INVALID_CANONICAL_PAYLOAD: 'INVALID_CANONICAL_PAYLOAD',
   /** Blob's leading version byte doesn't match a format this build can decode. */

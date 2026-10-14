@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
+import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { errorHandler } from '@encryption/src/server/server';
 import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/shared/error-codes';
 
@@ -31,7 +32,7 @@ function buildApp() {
 
   app.get('/zod', async () => z.object({ a: z.string() }).parse({}));
   app.get('/base64', async () => {
-    atob('not valid base64!!');
+    base64ToUint8('not valid base64!!');
 
     return 'unreachable';
   });

@@ -22,18 +22,25 @@ import {
   verifyManifest,
 } from '@encryption/src/crypto/vault-manifest';
 import type { VaultState } from '@encryption/src/crypto/vault-state';
+import { DOMAIN_VAULT_ITEM } from '@encryption/src/shared/crypto-domains';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+// Binds a ciphertext to the item it was sealed as, so a server cannot hand one
+// item's ciphertext back under another id or type and have it open.
+function itemContext(item: { id: string; type: string }): Uint8Array[] {
+  return [encoder.encode(item.id), encoder.encode(item.type)];
+}
+
 export async function sealItem(item: PlainItem, vrk: Uint8Array): Promise<SealedItem> {
-  const ciphertext = await encryptContent(encoder.encode(JSON.stringify(item.payload)), vrk);
+  const ciphertext = await encryptContent(encoder.encode(JSON.stringify(item.payload)), vrk, DOMAIN_VAULT_ITEM, itemContext(item));
 
   return { id: item.id, type: item.type, revisionDate: item.revisionDate, ciphertext: uint8ToBase64(ciphertext) };
 }
 
 export async function openItem(sealed: SealedItem, vrk: Uint8Array): Promise<PlainItem> {
-  const payload = JSON.parse(decoder.decode(await decryptContent(base64ToUint8(sealed.ciphertext), vrk)));
+  const payload = JSON.parse(decoder.decode(await decryptContent(base64ToUint8(sealed.ciphertext), vrk, DOMAIN_VAULT_ITEM, itemContext(sealed))));
 
   // Validate the decrypted shape against the item's declared type: authenticity
   // is proven by the manifest signature, this catches a payload that doesn't

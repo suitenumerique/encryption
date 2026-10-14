@@ -67,7 +67,7 @@ ExistingUserStory.args = {
   onUseAnotherDevice: () => console.log('onUseAnotherDevice'),
   onOpenEmergencyAccess: () => console.log('onOpenEmergencyAccess'),
   hasExistingBackendKey: true,
-  existingKeyFingerprint: '0031712345678901234567890123456789012345',
+  existingKeyFingerprint: '1031712345678901234567890123456789012345',
   userInfo: { name: 'Alice Martin', email: 'alice.martin@numerique.gouv.fr' },
 };
 ExistingUserStory.parameters = {
