@@ -125,7 +125,8 @@ describe('auth routes', () => {
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = false;
   });
 
-  const login = (body: Partial<typeof LOGIN> & { expected_sub?: string } = {}) => postApiAuthToken({ client, body: { ...LOGIN, ...body } });
+  const login = (body: Partial<typeof LOGIN> & { expected_sub?: string; language?: 'fr' | 'en' } = {}) =>
+    postApiAuthToken({ client, body: { ...LOGIN, ...body } });
 
   describe('GET /api/auth/authorize', () => {
     it('redirects the login tab to the provider with what the tab generated', async () => {
@@ -152,6 +153,16 @@ describe('auth routes', () => {
 
       expect((await app.inject({ method: 'GET', url: `/api/auth/authorize?${query}` })).statusCode).toBe(302);
       expect(buildAuthorizationUrl).toHaveBeenCalledWith(expect.objectContaining({ stepUp: true }));
+    });
+
+    it("passes the interface's language on to the provider URL, and only a supported one", async () => {
+      (buildAuthorizationUrl as Mock).mockResolvedValue('https://issuer.example/auth?x=1');
+
+      const query = `state=${'s'.repeat(43)}&nonce=${NONCE}&code_challenge=${'c'.repeat(43)}`;
+
+      expect((await app.inject({ method: 'GET', url: `/api/auth/authorize?${query}&ui_locales=fr` })).statusCode).toBe(302);
+      expect(buildAuthorizationUrl).toHaveBeenCalledWith(expect.objectContaining({ uiLocale: 'fr' }));
+      expect((await app.inject({ method: 'GET', url: `/api/auth/authorize?${query}&ui_locales=de` })).statusCode).toBe(400);
     });
 
     it('refuses a request without a PKCE challenge or with a weak state', async () => {
@@ -210,13 +221,22 @@ describe('auth routes', () => {
       expect((await login()).data?.email).toBe('user@example.org');
     });
 
-    it('does not call userinfo when the ID token already carries the email and the names', async () => {
-      providerSays({ ...VERIFIED, given_name: 'Jean', family_name: 'Dupont' });
+    it('does not call userinfo when the ID token already carries the email, the names and the locale', async () => {
+      providerSays({ ...VERIFIED, given_name: 'Jean', family_name: 'Dupont', locale: 'fr' });
 
       const { data } = await login();
 
       expect(fetchUserinfo).not.toHaveBeenCalled();
       expect(data).toMatchObject({ email: 'user@example.org', first_name: 'Jean', last_name: 'Dupont' });
+    });
+
+    it('asks userinfo for a locale the ID token lacks, though nothing required is missing', async () => {
+      providerSays({ ...VERIFIED, given_name: 'Jean', family_name: 'Dupont' }, { userinfo: { locale: 'fr-FR' } });
+
+      const { data } = await login();
+
+      expect(fetchUserinfo).toHaveBeenCalled();
+      expect(await testPrisma.user.findUniqueOrThrow({ where: { id: data!.user_id } })).toMatchObject({ language: 'fr' });
     });
 
     it('derives the last name from the full name when the provider gives none', async () => {
@@ -374,6 +394,24 @@ describe('auth routes', () => {
         await login();
 
         expect(await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ email: 'new@example.org', language: 'fr' });
+      });
+
+      it("takes the interface's language when the provider sends no locale, and the provider's over it", async () => {
+        providerSays({}, { userinfo: VERIFIED });
+        const { data } = await login({ language: 'fr' });
+        const userId = data!.user_id;
+
+        expect(await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ language: 'fr' });
+
+        providerSays({}, { userinfo: { ...VERIFIED, locale: 'en-GB' } });
+        await login({ language: 'fr' });
+
+        expect(await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ language: 'en' });
+
+        providerSays({}, { userinfo: VERIFIED });
+        await login();
+
+        expect(await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ language: 'en' });
       });
 
       it('records the login on the credential (lastSeenAt)', async () => {

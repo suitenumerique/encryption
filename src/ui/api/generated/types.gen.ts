@@ -28,6 +28,7 @@ export type PostApiAuthTokenData = {
     code_verifier: string;
     nonce: string;
     expected_sub?: string;
+    language?: 'fr' | 'en';
   };
   path?: never;
   query?: never;

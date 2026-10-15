@@ -4,7 +4,7 @@ import { initReactI18next } from 'react-i18next';
 
 import commonEn from '@encryption/src/i18n/en/common.json';
 import commonFr from '@encryption/src/i18n/fr/common.json';
-import { SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 
 export type { Locale } from '@encryption/src/shared/locale';
 
@@ -39,7 +39,7 @@ i18n
   .init({
     resources,
     defaultNS: defaultNamespace,
-    fallbackLng: 'fr',
+    fallbackLng: DEFAULT_LOCALE,
     supportedLngs: [...SUPPORTED_LOCALES],
     interpolation: {
       escapeValue: false,

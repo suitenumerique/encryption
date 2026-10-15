@@ -2,6 +2,7 @@ import { type JWTPayload, createRemoteJWKSet, jwtVerify } from 'jose';
 
 import { requestedUserinfoClaims } from '@encryption/src/server/auth/identity-claims';
 import { env } from '@encryption/src/server/env';
+import type { Locale } from '@encryption/src/shared/locale';
 
 /**
  * Everything the server asks of the OIDC provider.
@@ -139,6 +140,8 @@ export interface AuthorizationRequest {
   codeChallenge: string;
   /** `login` forces the provider to ask for credentials again (the wrong account was signed in). */
   prompt?: 'login';
+  /** The interface's language, for the provider's sign-in pages (`ui_locales`, OIDC Core 3.1.2.1). */
+  uiLocale?: Locale;
   /**
    * A step-up (RFC 9470): a fresh authentication with a second factor, for an
    * action the server refused with `insufficient_user_authentication`.
@@ -164,6 +167,9 @@ export async function buildAuthorizationUrl(request: AuthorizationRequest): Prom
   url.searchParams.set('code_challenge', request.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('claims', buildClaimsParameter(request.stepUp === true));
+
+  // A preference, not a requirement: a provider without that language ignores it.
+  if (request.uiLocale) url.searchParams.set('ui_locales', request.uiLocale);
 
   if (request.stepUp) {
     // Both: `max_age=0` is the standard way to demand a fresh authentication,

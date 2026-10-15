@@ -73,6 +73,11 @@ describe('prepareLogin', () => {
     expect(url.searchParams.has('prompt')).toBe(false);
   });
 
+  it("asks for the provider's sign-in pages in the interface's language", async () => {
+    expect(new URL(await prepareLogin('user-42', { language: 'en' }), 'https://encryption.example').searchParams.get('ui_locales')).toBe('en');
+    expect(new URL(await prepareLogin('user-42'), 'https://encryption.example').searchParams.has('ui_locales')).toBe(false);
+  });
+
   it('never reuses a state across logins', async () => {
     await prepareLogin();
     const first = pendingLogin().state;
@@ -142,8 +147,18 @@ describe('handleCallback', () => {
     await expect(handleCallback()).rejects.toThrow('User cancelled');
   });
 
-  it('turns the server refusing another account into WrongUserError, carrying the expected user for the retry', async () => {
-    await prepareLogin('user-42');
+  it("carries the interface's language from the start of the login to the server", async () => {
+    await prepareLogin('user-42', { language: 'fr' });
+    arriveOnCallback(`code=the-code&state=${pendingLogin().state}`);
+    fetchMock.mockResolvedValue(Response.json(tokenAnswer(), { status: 200 }));
+
+    await handleCallback();
+
+    expect(await (fetchMock.mock.calls[0][0] as Request).json()).toMatchObject({ language: 'fr' });
+  });
+
+  it('turns the server refusing another account into WrongUserError, carrying the expected user and the language for the retry', async () => {
+    await prepareLogin('user-42', { language: 'fr' });
     arriveOnCallback(`code=the-code&state=${pendingLogin().state}`);
     fetchMock.mockResolvedValue(Response.json({ code: 'wrong_user' }, { status: 409 }));
 
@@ -151,6 +166,7 @@ describe('handleCallback', () => {
 
     expect(error).toBeInstanceOf(WrongUserError);
     expect((error as WrongUserError).expectedSub).toBe('user-42');
+    expect((error as WrongUserError).language).toBe('fr');
   });
 });
 
@@ -167,6 +183,10 @@ describe('getLoginUrl', () => {
 
   it('carries the step-up flag', () => {
     expect(new URL(getLoginUrl('user-42', { stepUp: true })).searchParams.get('stepUp')).toBe('1');
+  });
+
+  it("carries the interface's language", () => {
+    expect(new URL(getLoginUrl('user-42', { language: 'en' })).searchParams.get('lang')).toBe('en');
   });
 });
 

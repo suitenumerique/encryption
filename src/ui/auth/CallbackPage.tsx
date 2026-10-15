@@ -16,7 +16,7 @@ import { WrongUserError, handleCallback, notifyAuthComplete, startLogin } from '
 export function CallbackPage() {
   const { t } = useTranslation('common');
   const [error, setError] = useState<string | null>(null);
-  const [wrongUserExpectedSub, setWrongUserExpectedSub] = useState<string | null>(null);
+  const [wrongUser, setWrongUser] = useState<WrongUserError | null>(null);
   const [success, setSuccess] = useState(false);
   const [unacknowledged, setUnacknowledged] = useState(false);
   const processed = useRef(false);
@@ -43,7 +43,7 @@ export function CallbackPage() {
       } catch (err) {
         if (err instanceof WrongUserError) {
           setError('wrong_user');
-          setWrongUserExpectedSub(err.expectedSub);
+          setWrongUser(err);
         } else {
           setError((err as Error).message);
         }
@@ -56,7 +56,7 @@ export function CallbackPage() {
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
         <Alert type={VariantType.WARNING}>{t('auth.wrong_user')}</Alert>
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <Button onClick={() => void startLogin(wrongUserExpectedSub ?? undefined, { forceLogin: true })}>
+          <Button onClick={() => void startLogin(wrongUser?.expectedSub, { forceLogin: true, language: wrongUser?.language })}>
             {t('auth.sign_in_another_account')}
           </Button>
           <Button color="neutral" onClick={() => window.close()}>

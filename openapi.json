@@ -56,6 +56,10 @@
                   "expected_sub": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "language": {
+                    "type": "string",
+                    "enum": ["fr", "en"]
                   }
                 },
                 "required": ["code", "code_verifier", "nonce"]

@@ -51,7 +51,7 @@ enum VaultItemType {
 model User {
   id        String   @id @default(uuid()) @db.Uuid
   email     String   @map("email") // latest email from OIDC claims to be used for notifications (not login), this one is not unique since over time an organization could reallocate an email for a new sub
-  language  String   @default("en") @map("language") // app locale ('fr' | 'en'), refreshed from the OIDC `locale` claim on each login; chooses the language of notification emails
+  language  String   @default("en") @map("language") // app locale ('fr' | 'en'), refreshed at each login from the OIDC `locale` claim, else from the interface's language; chooses the language of notification emails
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 

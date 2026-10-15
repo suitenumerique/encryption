@@ -18,6 +18,7 @@ import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
 import { API_ERROR_NAME_CLAIMS_REQUIRED, API_ERROR_OIDC_LOGIN_FAILED, API_ERROR_WRONG_USER } from '@encryption/src/shared/error-codes';
+import { SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 
 // What the login tab generates and keeps until the provider sends it back:
 // random base64url strings (RFC 7636 §4.1 sizes the PKCE verifier at 43-128
@@ -54,11 +55,20 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
         prompt: z.literal('login').optional(),
         // A step-up (RFC 9470), after an action answered `insufficient_user_authentication`.
         step_up: z.literal('1').optional(),
+        // The interface's language, for the provider's sign-in pages.
+        ui_locales: z.enum(SUPPORTED_LOCALES).optional(),
       }),
     },
     handler: async (request, reply) => {
-      const { state, nonce, code_challenge, prompt, step_up } = request.query;
-      const location = await buildAuthorizationUrl({ state, nonce, codeChallenge: code_challenge, prompt, stepUp: step_up === '1' });
+      const { state, nonce, code_challenge, prompt, step_up, ui_locales } = request.query;
+      const location = await buildAuthorizationUrl({
+        state,
+        nonce,
+        codeChallenge: code_challenge,
+        prompt,
+        stepUp: step_up === '1',
+        uiLocale: ui_locales,
+      });
 
       return reply.redirect(location, 302);
     },
@@ -74,6 +84,9 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
         // anyone else is refused BEFORE any user is resolved or minted, so
         // picking the wrong account at the provider leaves no trace here.
         expected_sub: z.string().min(1).optional(),
+        // The interface's language (the product's, else the browser's): the
+        // account's language when the provider sends no `locale`.
+        language: z.enum(SUPPORTED_LOCALES).optional(),
       }),
       response: {
         200: z.object({
@@ -93,7 +106,7 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
       },
     },
     handler: async (request, reply) => {
-      const { code, code_verifier, nonce, expected_sub } = request.body;
+      const { code, code_verifier, nonce, expected_sub, language } = request.body;
 
       let idToken: string;
       let idClaims: IdTokenClaims;
@@ -114,7 +127,8 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
         // whatever it lacks; the ID token keeps precedence on what it has.
         identity = pickIdentity([idClaims]);
 
-        if (isIncomplete(identity)) {
+        // The locale too, though optional: the provider's choice beats the interface's.
+        if (isIncomplete(identity) || identity.locale === null) {
           identity = pickIdentity([idClaims, await fetchUserinfo(tokens.accessToken, idClaims.sub)]);
         }
       } catch (err) {
@@ -136,11 +150,16 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
         return reply.status(403).send({ code: API_ERROR_NAME_CLAIMS_REQUIRED });
       }
 
-      const account = await resolveOidcAccount(env.OIDC_ISSUER, idClaims.sub, {
-        email: identity.email,
-        email_verified: identity.emailVerified,
-        locale: identity.locale,
-      });
+      const account = await resolveOidcAccount(
+        env.OIDC_ISSUER,
+        idClaims.sub,
+        {
+          email: identity.email,
+          email_verified: identity.emailVerified,
+          locale: identity.locale,
+        },
+        language
+      );
 
       if (account.linkedByEmail) {
         // The one mutation of the trust-critical mapping table that happens

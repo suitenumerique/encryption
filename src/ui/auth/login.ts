@@ -20,6 +20,7 @@
  */
 import { z } from 'zod';
 
+import { type Locale, SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 import '@encryption/src/shared/zod-jitless';
 import { ApiError, apiDefaults } from '@encryption/src/ui/api/client';
 import { postApiAuthToken } from '@encryption/src/ui/api/generated/sdk.gen';
@@ -56,6 +57,7 @@ const pendingLoginSchema = z.object({
   nonce: z.string(),
   codeVerifier: z.string(),
   expectedSub: z.string().optional(),
+  language: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
 export interface LoginOptions {
@@ -66,6 +68,13 @@ export interface LoginOptions {
    * the server refused a sensitive action with `insufficient_user_authentication`.
    */
   stepUp?: boolean;
+  /**
+   * The interface's language (the product's, else the browser's), handed to the
+   * server for the account's language when the provider sends no `locale`. Passed
+   * along from the iframe: the login tab is a top-level page, so it does not share
+   * the iframe's storage and would only know the browser's language.
+   */
+  language?: Locale;
 }
 
 function randomBase64Url(bytes: number): string {
@@ -94,6 +103,7 @@ export async function prepareLogin(expectedSub?: string, options: LoginOptions =
     nonce: randomBase64Url(32),
     codeVerifier: randomBase64Url(32), // 43 characters, the RFC 7636 minimum
     ...(expectedSub ? { expectedSub } : {}),
+    ...(options.language ? { language: options.language } : {}),
   };
 
   sessionStorage.setItem(PENDING_LOGIN_KEY, JSON.stringify(pending));
@@ -102,6 +112,8 @@ export async function prepareLogin(expectedSub?: string, options: LoginOptions =
 
   if (options.stepUp) params.set('step_up', '1');
   else if (options.forceLogin) params.set('prompt', 'login');
+
+  if (options.language) params.set('ui_locales', options.language);
 
   return `/api/auth/authorize?${params.toString()}`;
 }
@@ -113,11 +125,14 @@ export async function startLogin(expectedSub?: string, options: LoginOptions = {
 
 export class WrongUserError extends Error {
   expectedSub: string;
+  /** The language of the login that failed, for the retry. */
+  language?: Locale;
 
-  constructor(expectedSub: string) {
+  constructor(expectedSub: string, language?: Locale) {
     super('wrong_user');
     this.name = 'WrongUserError';
     this.expectedSub = expectedSub;
+    this.language = language;
   }
 }
 
@@ -156,6 +171,7 @@ export async function handleCallback(): Promise<IdTokenSet> {
         code_verifier: pending.codeVerifier,
         nonce: pending.nonce,
         ...(pending.expectedSub ? { expected_sub: pending.expectedSub } : {}),
+        ...(pending.language ? { language: pending.language } : {}),
       },
     });
 
@@ -171,7 +187,7 @@ export async function handleCallback(): Promise<IdTokenSet> {
     };
   } catch (err) {
     if (err instanceof ApiError && err.code === 'wrong_user' && pending.expectedSub) {
-      throw new WrongUserError(pending.expectedSub);
+      throw new WrongUserError(pending.expectedSub, pending.language);
     }
 
     throw err;
@@ -236,6 +252,7 @@ export function getLoginUrl(expectedSub?: string, options: LoginOptions = {}): s
   if (expectedSub) params.set('expectedSub', expectedSub);
   if (options.forceLogin) params.set('forceLogin', '1');
   if (options.stepUp) params.set('stepUp', '1');
+  if (options.language) params.set('lang', options.language);
 
   const qs = params.toString();
 

@@ -164,6 +164,12 @@ describe('buildAuthorizationUrl', () => {
     expect(url.searchParams.has('max_age')).toBe(false);
   });
 
+  it("asks for the sign-in pages in the interface's language", async () => {
+    const url = new URL(await buildAuthorizationUrl({ state: 's'.repeat(43), nonce: 'n'.repeat(43), codeChallenge: 'c'.repeat(43), uiLocale: 'fr' }));
+
+    expect(url.searchParams.get('ui_locales')).toBe('fr');
+  });
+
   it('for a step-up, demands a fresh authentication at one of the second-factor levels', async () => {
     const url = new URL(await buildAuthorizationUrl({ state: 's', nonce: 'n', codeChallenge: 'c', stepUp: true }));
     const claims = JSON.parse(url.searchParams.get('claims')!);

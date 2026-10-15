@@ -5,6 +5,7 @@
 import { Loader } from '@gouvfr-lasuite/cunningham-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { isLocale } from '@encryption/src/shared/locale';
 import { startLogin } from '@encryption/src/ui/auth/login';
 
 export function LoginPage() {
@@ -19,8 +20,9 @@ export function LoginPage() {
     const expectedSub = searchParams.get('expectedSub') ?? undefined;
     const forceLogin = searchParams.get('forceLogin') === '1';
     const stepUp = searchParams.get('stepUp') === '1';
+    const lang = searchParams.get('lang');
 
-    startLogin(expectedSub, { forceLogin, stepUp }).catch((err) => {
+    startLogin(expectedSub, { forceLogin, stepUp, language: isLocale(lang) ? lang : undefined }).catch((err) => {
       console.error('[encryption] Failed to start OIDC login:', err);
       setError(err instanceof Error ? err.message : String(err));
     });

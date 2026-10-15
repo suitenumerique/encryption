@@ -88,10 +88,18 @@ async function adoptRaceWinner(issuer: string, subject: string, raceError: unkno
  * merged by the caller. A KNOWN credential authenticates with no email at all;
  * an email is required only at first contact, because that is the moment it
  * seeds the notification channel and the migration continuity anchor.
+ * `interfaceLanguage` stands in for a `locale` the provider did not send.
  */
-export async function resolveOidcAccount(issuer: string, subject: string, claims: Record<string, unknown>): Promise<ResolvedAccount> {
+export async function resolveOidcAccount(
+  issuer: string,
+  subject: string,
+  claims: Record<string, unknown>,
+  interfaceLanguage?: Locale
+): Promise<ResolvedAccount> {
   const emails = extractEmails(claims);
-  const language = extractLanguage(claims);
+  // The provider's choice first, else what the interface is displayed in, else
+  // (both absent) whatever is stored.
+  const language = extractLanguage(claims) ?? interfaceLanguage ?? null;
   const account = await prisma.oidcAccount.findUnique({
     where: { issuer_subject: { issuer, subject } },
     include: { user: true },
@@ -106,8 +114,9 @@ export async function resolveOidcAccount(issuer: string, subject: string, claims
     // months after a provider migration, which credentials are dead.
     await prisma.oidcAccount.update({ where: { id: account.id }, data: { lastSeenAt: new Date() } });
 
-    // The stored email and language follow the provider, opportunistically: a
-    // login whose claims omit them keeps what is stored.
+    // The stored email and language follow the provider (the language, failing
+    // that, the interface), opportunistically: a login that carries neither keeps
+    // what is stored.
     const staleEmail = emails.email !== null && account.user.email !== emails.email;
     const staleLanguage = language !== null && account.user.language !== language;
 

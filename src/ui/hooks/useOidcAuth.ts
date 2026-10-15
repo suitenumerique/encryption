@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import i18n from '@encryption/src/i18n';
+import { isLocale } from '@encryption/src/shared/locale';
 import {
   type IdTokenSet,
   type LoginOptions,
@@ -95,7 +96,8 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
       if (!expectedSuiteUserId) return;
       if (waitingRef.current) return;
 
-      const loginUrl = getLoginUrl(expectedSuiteUserId, options);
+      const language = isLocale(i18n.resolvedLanguage) ? i18n.resolvedLanguage : undefined;
+      const loginUrl = getLoginUrl(expectedSuiteUserId, { ...options, language });
       const loginWindow = window.open(loginUrl, '_blank');
 
       // Popup blocked: there is no tab to wait on, so entering the "authenticating"
