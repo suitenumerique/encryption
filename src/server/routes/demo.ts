@@ -35,6 +35,7 @@ interface DemoDocument {
   title: string;
   encryptedContent: string; // base64 ciphertext
   encryptedKeys: Record<string, string>; // userId -> base64 wrapped symmetric key
+  keyVersions: Record<string, number>; // userId -> encryption-key version their copy is wrapped to
   createdBy: string; // demo username of the author
   createdAtMillis: number;
   sharedWith: SharedAccess[];
@@ -112,24 +113,25 @@ export async function demoRoute(app: FastifyInstance) {
 
   // Update sharing: the client re-wraps the document key for the new recipients
   // and sends the merged access list + wrapped-key map.
-  app.put<{ Params: { id: string }; Body: { sharedWith: SharedAccess[]; encryptedKeys: Record<string, string> } }>(
-    '/api/demo/documents/:id',
-    async (request, reply) => {
-      const existing = documents.get(request.params.id);
+  app.put<{
+    Params: { id: string };
+    Body: { sharedWith: SharedAccess[]; encryptedKeys: Record<string, string>; keyVersions: Record<string, number> };
+  }>('/api/demo/documents/:id', async (request, reply) => {
+    const existing = documents.get(request.params.id);
 
-      if (!existing) {
-        reply.code(404);
+    if (!existing) {
+      reply.code(404);
 
-        return { error: 'not found' };
-      }
-
-      existing.sharedWith = request.body.sharedWith;
-      existing.encryptedKeys = request.body.encryptedKeys;
-      broadcast(existing.product);
-
-      return existing;
+      return { error: 'not found' };
     }
-  );
+
+    existing.sharedWith = request.body.sharedWith;
+    existing.encryptedKeys = request.body.encryptedKeys;
+    existing.keyVersions = request.body.keyVersions;
+    broadcast(existing.product);
+
+    return existing;
+  });
 
   // Wipe one product's documents — convenient between test runs.
   app.delete('/api/demo/documents', async (request) => {

@@ -54,11 +54,22 @@ interface SharedAccess {
 // server is base64 ciphertext or metadata — never plaintext. `encryptedKeys`
 // maps each authorized userId to their own wrapped copy of the symmetric key,
 // so a recipient in any other instance can decrypt for real.
+// The version of each user's active encryption key, which the vault has just
+// wrapped to: read from the directory right after the wrap.
+async function activeKeyVersions(client: VaultClient, userIds: string[]): Promise<Record<string, number>> {
+  const users = await client.fetchPublicKeys(userIds);
+
+  return Object.fromEntries(Object.entries(users).map(([userId, user]) => [userId, user.version]));
+}
+
 interface FakeDocument {
   id: string;
   title: string;
   encryptedContent: string; // base64
   encryptedKeys: Record<string, string>; // userId -> base64 wrapped key
+  // userId -> version of the encryption key their copy is wrapped to: decrypting
+  // needs exactly that key, as a real product stores it next to the wrapped key.
+  keyVersions: Record<string, number>;
   createdBy: string;
   createdAtMillis: number;
   sharedWith: SharedAccess[];
@@ -317,6 +328,7 @@ export function DemoApp() {
         title: newDocTitle,
         encryptedContent: abToBase64(encryptedContent),
         encryptedKeys: { [authorId]: abToBase64(encryptedKeys[authorId]) },
+        keyVersions: await activeKeyVersions(client, [authorId]),
         createdBy: currentUser.username,
         createdAtMillis: Date.now(),
         sharedWith: [],
@@ -352,9 +364,11 @@ export function DemoApp() {
         // recipients decrypt with theirs, added at share time via shareKeys.
         const myWrappedKey = doc.encryptedKeys[currentKeycloakId];
 
-        if (!myWrappedKey) throw new Error('No encrypted key for you on this document');
+        const myKeyVersion = doc.keyVersions?.[currentKeycloakId];
 
-        const { data } = await client.decryptWithKey(base64ToAb(doc.encryptedContent), base64ToAb(myWrappedKey), 1);
+        if (!myWrappedKey || myKeyVersion === undefined) throw new Error('No encrypted key for you on this document');
+
+        const { data } = await client.decryptWithKey(base64ToAb(doc.encryptedContent), base64ToAb(myWrappedKey), myKeyVersion);
         const plaintext = new TextDecoder().decode(data);
 
         log(`Decrypted: '${plaintext}'`);
@@ -387,8 +401,10 @@ export function DemoApp() {
 
         // Keep the creator's and still-shared recipients' wrapped keys; drop the rest.
         const nextKeys: Record<string, string> = {};
+        const nextVersions: Record<string, number> = {};
         for (const [uid, wrapped] of Object.entries(doc.encryptedKeys)) {
           if (keptIds.has(uid)) nextKeys[uid] = wrapped;
+          if (keptIds.has(uid) && doc.keyVersions?.[uid] !== undefined) nextVersions[uid] = doc.keyVersions[uid];
         }
 
         // Wrap the key for newly added recipients (already TOFU-checked in the
@@ -402,17 +418,20 @@ export function DemoApp() {
 
           const { encryptedKeys } = await client.shareKeys(base64ToAb(myWrappedKey), recipients);
           for (const [uid, wrapped] of Object.entries(encryptedKeys)) nextKeys[uid] = abToBase64(wrapped);
+          Object.assign(nextVersions, await activeKeyVersions(client, Object.keys(encryptedKeys)));
           log(`Wrapped the document key for ${newRecipients.length} new recipient(s)`);
         }
 
         await fetch(`${DEMO_API}/${doc.id}?product=${PRODUCT_ID}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sharedWith: newAccesses, encryptedKeys: nextKeys }),
+          body: JSON.stringify({ sharedWith: newAccesses, encryptedKeys: nextKeys, keyVersions: nextVersions }),
         });
 
         // Reflect the change in the open modal immediately; SSE refreshes the list.
-        setShareDoc((prev) => (prev && prev.id === doc.id ? { ...prev, sharedWith: newAccesses, encryptedKeys: nextKeys } : prev));
+        setShareDoc((prev) =>
+          prev && prev.id === doc.id ? { ...prev, sharedWith: newAccesses, encryptedKeys: nextKeys, keyVersions: nextVersions } : prev
+        );
       } catch (err) {
         log(`Sharing update failed: ${(err as Error).message}`);
       }
