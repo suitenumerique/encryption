@@ -1,0 +1,63 @@
+import { encryptSymmetricKeyForUsers, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
+import { DOMAIN_KEM_DOCUMENT_KEY } from '@encryption/src/shared/crypto-domains';
+import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
+
+/**
+ * Share an existing document's or item's symmetric key with additional users.
+ *
+ * Low-level wrap: takes already-resolved recipient public keys and re-encrypts
+ * the symmetric key for each. The RECIPIENT TRUST GATE (binding + TOFU) runs one
+ * level up, at the vault's postMessage boundary (see message-handler +
+ * resolveTrustedRecipientKeys): a product calls in with userIds, the boundary
+ * resolves them to trusted keys, and only then reaches this function. Products
+ * can never inject raw keys here.
+ *
+ * 1. Decrypts the current user's copy of the symmetric key (cached)
+ * 2. Re-encrypts it with each target user's public key
+ * 3. Returns a map of user ID → encrypted symmetric key
+ *
+ * Supports an optional `encryptedKeyChain` for Drive's key hierarchy:
+ * when provided, resolves the chain from the user's entry-point key down
+ * to the target item's key before re-encrypting for the target users.
+ *
+ * The raw symmetric key never leaves the vault iframe.
+ */
+export async function handleShareKeys(
+  userId: string,
+  payload: {
+    encryptedSymmetricKey: ArrayBuffer;
+    userPublicKeys: Record<string, ArrayBuffer>;
+    encryptedKeyChain?: ArrayBuffer[];
+  }
+): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
+  const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
+
+  let symmetricKey: Uint8Array;
+
+  if (payload.encryptedKeyChain && payload.encryptedKeyChain.length > 0) {
+    // Drive key hierarchy: resolve the chain to get the target item's key
+    const chain = payload.encryptedKeyChain.map((buf) => new Uint8Array(buf));
+    symmetricKey = await resolveKeyChain(userId, encryptedKey, chain, 'active');
+  } else {
+    // Docs flat model: direct key resolution
+    symmetricKey = await resolveSymmetricKey(userId, encryptedKey, 'active');
+  }
+
+  // Convert ArrayBuffer public keys to internal format
+  const usersPublicKeys: Record<string, import('@encryption/src/crypto').HybridPublicKey> = {};
+
+  for (const [uid, keyBuffer] of Object.entries(payload.userPublicKeys)) {
+    const base64Key = uint8ToBase64(new Uint8Array(keyBuffer as ArrayBuffer));
+    usersPublicKeys[uid] = importPublicKeyFromBase64(base64Key);
+  }
+
+  const encryptedKeysRaw = await encryptSymmetricKeyForUsers(symmetricKey, usersPublicKeys, DOMAIN_KEM_DOCUMENT_KEY);
+
+  const encryptedKeys: Record<string, ArrayBuffer> = {};
+
+  for (const [uid, encKey] of Object.entries(encryptedKeysRaw)) {
+    encryptedKeys[uid] = encKey.buffer as ArrayBuffer;
+  }
+
+  return { encryptedKeys };
+}

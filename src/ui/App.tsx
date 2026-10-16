@@ -1,0 +1,739 @@
+import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
+import {
+  MSG_INTERFACE_CLOSED,
+  MSG_INTERFACE_ONBOARDING_COMPLETE,
+  MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_SHOWN,
+  MSG_INTERFACE_VERIFY_COMPLETE,
+} from '@encryption/src/shared/constants';
+import { fetchPublicKeys } from '@encryption/src/ui/api/public-keys-client';
+import { CallbackPage } from '@encryption/src/ui/auth/CallbackPage';
+import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
+import { clearIdTokenSet, readIdTokenSet, storeIdTokenSet, subscribeToIdTokenSet } from '@encryption/src/ui/auth/id-token-storage';
+import { isIdTokenExpired } from '@encryption/src/ui/auth/login';
+import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
+import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
+import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
+import { EmergencySignedOutPrompt } from '@encryption/src/ui/components/EmergencySignedOutPrompt';
+import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
+import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
+import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
+import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
+import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
+import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
+import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
+import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
+import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
+import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
+import { runtimeConfig } from '@encryption/src/ui/runtime-config';
+
+const DOCS_ENABLED = runtimeConfig.docsEnabled ?? true;
+
+function getHashParams(): URLSearchParams {
+  return new URLSearchParams(window.location.hash.slice(1));
+}
+
+/**
+ * Get the Cunningham theme name from the URL hash.
+ * The parent passes it via the hash: /onboarding#theme=dsfr
+ * Default: "default" (white label light theme).
+ */
+function getThemeFromHash(): string {
+  return getHashParams().get('theme') || 'default';
+}
+
+function getLangFromHash(): string | null {
+  return getHashParams().get('lang');
+}
+
+/** Send a result back to the parent frame */
+function notifyParent(parentOrigin: string | null, type: string, data?: Record<string, unknown>) {
+  if (window.parent !== window && parentOrigin) {
+    window.parent.postMessage({ type, ...data }, parentOrigin);
+  }
+}
+
+export interface UserInfo {
+  name: string | null;
+  email: string | null;
+}
+
+/**
+ * Owns the parent handshake and answers the product's close requests. The
+ * product's own close control never unmounts the iframe by itself: it asks, the
+ * screen shown may object (an unsaved recovery phrase), and the interface
+ * confirms with MSG_INTERFACE_CLOSED once it is really done. Wrapping every
+ * state here (auth gates included) guarantees a request is always answered.
+ */
+function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Route) => void }) {
+  const { t } = useTranslation('common');
+  const parentContext = useParentMessages();
+  // A screen opened from another one (settings -> emergency access, onboarding
+  // -> device approval) replaces it without changing the URL; lives here so the
+  // modal around the screens can follow the one actually shown.
+  const [routeOverride, setRouteOverride] = useState<Route | null>(null);
+  const activeRoute = routeOverride ?? route;
+  // The interface's own modal is closed like the product's used to be: a close
+  // request, which the shown screen may hold (an unsaved recovery phrase).
+  const [ownCloseRequests, setOwnCloseRequests] = useState(0);
+  const requestClose = useCallback(() => setOwnCloseRequests((n) => n + 1), []);
+
+  // The SDK keeps the frame invisible until this report, so the frame gets no
+  // animation frame before it and cannot wait for a paint: the report follows
+  // the first commit, by which time the modal and its backdrop are in the DOM
+  // (the design system opens its modal in that same commit), and the SDK shows
+  // the frame and has the product drop its loader together.
+  useEffect(() => {
+    if (window.parent === window) return;
+
+    window.parent.postMessage({ type: MSG_INTERFACE_SHOWN }, '*');
+  }, []);
+  const handleClose = useCallback(() => {
+    notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
+  }, [parentContext.parentOrigin]);
+
+  // The SDK lays a transparent full-viewport iframe over the product; the modal
+  // the user sees (backdrop, card, close control, width) is drawn HERE, so no
+  // size ever crosses the two windows. Documentation pages are whole pages, and
+  // two screens draw a modal of their own: the verify overlay, and the emergency
+  // prompt the SDK opens on its own (told apart by the context it carries).
+  const fullPage = route === 'docs-user' || route === 'docs-technical';
+  const drawsOwnModal = route === 'verify-recipients' || (activeRoute === 'emergency-access' && parentContext.emergencyPending !== null);
+  const [gateShown, setGateShown] = useState(false);
+  const modalSize = activeRoute === 'emergency-access' && !gateShown ? ModalSize.MEDIUM : ModalSize.SMALL;
+
+  // The two screens drawing their own modal do so only once shown: in their place,
+  // those screens still need one, or they sprawl see-through.
+  const frameGate = (screen: ReactNode): ReactNode =>
+    drawsOwnModal ? (
+      <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={ModalSize.SMALL} aria-label={t('interface.title')}>
+        {screen}
+      </Modal>
+    ) : (
+      <GateShown onShown={setGateShown}>{screen}</GateShown>
+    );
+
+  const screens = (
+    <InterfaceScreens
+      route={route}
+      navigate={navigate}
+      parentContext={parentContext}
+      routeOverride={routeOverride}
+      setRouteOverride={setRouteOverride}
+      frameGate={frameGate}
+    />
+  );
+
+  return (
+    <CloseRequestProvider requests={parentContext.closeRequests + ownCloseRequests} onClose={handleClose}>
+      {fullPage || drawsOwnModal ? (
+        screens
+      ) : (
+        <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={modalSize} aria-label={t('interface.title')}>
+          {screens}
+        </Modal>
+      )}
+    </CloseRequestProvider>
+  );
+}
+
+/** Tells the modal around it that a gate screen is shown, before the frame is painted. */
+function GateShown({ onShown, children }: { onShown: (shown: boolean) => void; children: ReactNode }) {
+  useLayoutEffect(() => {
+    onShown(true);
+
+    return () => onShown(false);
+  }, [onShown]);
+
+  return children;
+}
+
+/** Inner component that has access to the EncryptionContext */
+function InterfaceScreens({
+  route,
+  navigate,
+  parentContext,
+  routeOverride,
+  setRouteOverride,
+  frameGate,
+}: {
+  route: Route;
+  navigate: (to: Route) => void;
+  parentContext: ParentContext;
+  routeOverride: Route | null;
+  setRouteOverride: (to: Route | null) => void;
+  frameGate: (screen: ReactNode) => ReactNode;
+}) {
+  const { t } = useTranslation('common');
+  const { setAuthInfo, hasKeys, isReady, resolveInternalUser } = useEncryptionContext();
+
+  // The INTERNAL encryption user id. Resolved vault-first (alias store /
+  // registry, no ID token needed, so settings work with an expired one), with
+  // the user id the server returned at sign-in as the fallback for a never-onboarded user. It is what the
+  // vault operates under and what binding signatures embed; components wait on
+  // it (nullable userId props).
+  const [internalUserId, setInternalUserId] = useState<string | null>(null);
+
+  // Set auth info on the encryption context FIRST — the vault needs this before
+  // we can make any requests (including token restoration). Re-sent when the
+  // internal id lands so subsequent vault requests carry it.
+  useEffect(() => {
+    if (parentContext.suiteUserId) {
+      setAuthInfo(parentContext.suiteUserId, internalUserId);
+    }
+  }, [parentContext.suiteUserId, internalUserId, setAuthInfo]);
+
+  // Navigation guard: the setup/restore screens make no sense once this device
+  // already holds keys, so redirect to settings if we land on them with a vault
+  // present. Redirect only, no render gate: onboarding shows normally and we
+  // simply navigate away when keys are found, so a slow/hung vault call can never
+  // strand us on a loader.
+  //
+  // Evaluated ONCE per arrival (tracked by a ref) so it never re-guards a page we
+  // already entered: a fresh onboarding mints keys mid-flow, and a host context
+  // re-send must not trigger a redirect out of the backup/success step.
+  const guardedRoute = useRef<Route | null>(null);
+
+  useEffect(() => {
+    if (route !== 'onboarding' && route !== 'restore') {
+      guardedRoute.current = null;
+
+      return;
+    }
+    if (guardedRoute.current === route) return;
+    if (!parentContext.suiteUserId) return;
+
+    guardedRoute.current = route;
+    let cancelled = false;
+    hasKeys()
+      .then(({ hasKeys: has }) => {
+        if (!cancelled && has) navigate('settings');
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally NOT depending on live key state — this is an arrival guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, parentContext.suiteUserId]);
+
+  // OIDC self-authentication: the interface obtains its own ID token.
+  const oidcAuth = useOidcAuth(parentContext.suiteUserId);
+  // Both are stable across renders (a state setter and a memoized callback), so
+  // depending on them directly keeps the effects below honest about what they
+  // use without re-running them on every render — which listing the whole
+  // `oidcAuth` object would do.
+  const { updateIdTokenSet, clearIdTokenSet: dropIdTokenSet } = oidcAuth;
+
+  // Restore the ID token from the interface's own localStorage (not the vault).
+  // This avoids re-authentication when the iframe is recreated (page refresh, modal close/open).
+  const [restoreAttemptedFor, setRestoreAttemptedFor] = useState<string | null>(null);
+  const tokenRestoreAttempted = restoreAttemptedFor !== null;
+
+  if (parentContext.suiteUserId && !oidcAuth.idToken && restoreAttemptedFor !== parentContext.suiteUserId) {
+    setRestoreAttemptedFor(parentContext.suiteUserId);
+
+    const stored = readIdTokenSet(parentContext.suiteUserId);
+
+    if (stored && stored.sub === parentContext.suiteUserId && !isIdTokenExpired(stored)) {
+      updateIdTokenSet(stored);
+    }
+  }
+
+  // Adopt the ID token another page signed in with (another product tab, or a
+  // step-up there), so its sign-in screen does not wait for a click of its own.
+  useEffect(() => {
+    if (!parentContext.suiteUserId) return;
+
+    const suiteUserId = parentContext.suiteUserId;
+
+    return subscribeToIdTokenSet(suiteUserId, (stored) => {
+      if (stored.sub === suiteUserId && !isIdTokenExpired(stored)) {
+        updateIdTokenSet(stored);
+      }
+    });
+  }, [parentContext.suiteUserId, updateIdTokenSet]);
+
+  // If the parent never completes the auth-context handshake (suiteUserId never
+  // arrives), the token-restore effect above never runs, so tokenRestoreAttempted
+  // stays false and the "no user context" warning below would be unreachable —
+  // the UI would spin forever. A bounded wait flips this flag so that state
+  // resolves to the warning instead of an endless loader. Cleared automatically
+  // if the context arrives first (effect cleanup on the dep change).
+  const [handshakeTimedOut, setHandshakeTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (parentContext.suiteUserId || oidcAuth.idToken) return;
+
+    const timer = setTimeout(() => setHandshakeTimedOut(true), 10000);
+
+    return () => clearTimeout(timer);
+  }, [parentContext.suiteUserId, oidcAuth.idToken]);
+
+  // Persist the ID token in localStorage once signed in.
+  useEffect(() => {
+    if (!oidcAuth.idTokenSet || !parentContext.suiteUserId) return;
+
+    storeIdTokenSet(parentContext.suiteUserId, oidcAuth.idTokenSet);
+  }, [oidcAuth.idTokenSet, parentContext.suiteUserId]);
+
+  // A usable ID token, or null once it expired. There is no refresh: past its
+  // expiry it is dropped from memory AND localStorage, so `needsAuth` flips back
+  // on and the user is offered to sign in again (a tab that closes by itself
+  // while the provider's own session is alive).
+  const getValidIdToken = useCallback(async (): Promise<string | null> => {
+    const idTokenSet = oidcAuth.idTokenSet;
+
+    if (!idTokenSet) return null;
+
+    if (isIdTokenExpired(idTokenSet)) {
+      if (parentContext.suiteUserId) {
+        clearIdTokenSet(parentContext.suiteUserId);
+      }
+
+      dropIdTokenSet();
+
+      return null;
+    }
+
+    return idTokenSet.idToken;
+  }, [oidcAuth.idTokenSet, parentContext.suiteUserId, dropIdTokenSet]);
+
+  // Components get the ID token for display/checks, but must call
+  // getValidIdToken() before actual API calls, which drops an expired one.
+  const signedInUserId = oidcAuth.idTokenSet?.userId ?? null;
+
+  // Resolve the internal user id, vault first: the alias/registry chain needs
+  // no ID token, so an onboarded user gets their id (and a working settings
+  // page) even with an expired one. The sign-in answer is the fallback for a
+  // never-onboarded user: the server minted the user row when it signed them in
+  // (the row must exist before onboarding can sign a key registration, since the
+  // internal id is inside the binding signature) and answered with its id.
+  useEffect(() => {
+    if (!isReady || internalUserId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const resolved = await resolveInternalUser();
+
+        if (cancelled) return;
+        if (resolved) {
+          setInternalUserId(resolved);
+
+          return;
+        }
+      } catch {
+        // Vault unavailable: fall through to the sign-in answer below.
+      }
+
+      // No ID token at all: NOT a stuck state — the render falls to the
+      // sign-in branch, which shows a reconnect action rather than a spinner.
+      if (!cancelled && signedInUserId) setInternalUserId(signedInUserId);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isReady, signedInUserId, internalUserId, resolveInternalUser]);
+
+  // Seed the vault's persistent alias store once the id is known: the request
+  // envelope carries the internal id (setAuthInfo above re-ran), the vault
+  // adopts it and persists the sub -> id alias, so the NEXT interface visit
+  // resolves offline and token-free even if this one never touched the vault.
+  const aliasSeededRef = useRef(false);
+
+  useEffect(() => {
+    if (!internalUserId || !isReady || aliasSeededRef.current) return;
+
+    aliasSeededRef.current = true;
+    resolveInternalUser().catch(() => {
+      // Best-effort: the alias also gets written by any later vault request.
+    });
+  }, [internalUserId, isReady, resolveInternalUser]);
+
+  const [hasExistingBackendKey, setHasExistingBackendKey] = useState(false);
+  const [existingKeyFingerprint, setExistingKeyFingerprint] = useState<string | null>(null);
+
+  // Lets a screen (e.g. settings) push into device-approval in place without a
+  // real navigation, then return to where it was.
+  const activeRoute = routeOverride ?? route;
+
+  // Who the ID token is for, as the provider described them at sign-in.
+  const userInfo = useMemo<UserInfo | null>(
+    () =>
+      oidcAuth.idTokenSet
+        ? { name: [oidcAuth.idTokenSet.firstName, oidcAuth.idTokenSet.lastName].filter(Boolean).join(' '), email: oidcAuth.idTokenSet.email }
+        : null,
+    [oidcAuth.idTokenSet]
+  );
+
+  // Check for existing backend keys, to route the user to restore instead of
+  // fresh onboarding. Queried by sub because that is the only id the parent
+  // context guarantees, through the unauthenticated directory form, so it
+  // works with no (or an expired) ID token, like resolution above.
+  useEffect(() => {
+    if (!parentContext.suiteUserId) return;
+
+    // Directory lookup by OIDC sub (unauthenticated, like every directory read):
+    // used before the internal id is resolved.
+    fetchPublicKeys({ subs: [parentContext.suiteUserId] })
+      .then(async (data) => {
+        const keys = data.keys;
+        setHasExistingBackendKey(keys.length > 0);
+
+        if (keys.length > 0) {
+          // The fingerprint users verify out-of-band is the IDENTITY
+          // (signature) key, not the encryption key.
+          const fp = await computeKeyFingerprint(keys[0].signature_public_key);
+          setExistingKeyFingerprint(fp);
+        }
+      })
+      .catch((err) => {
+        console.warn('[encryption-ui] Failed to check for existing backend keys:', err);
+      });
+  }, [parentContext.suiteUserId]);
+
+  const handleOnboardingSuccess = useCallback(
+    (publicKey: string) => {
+      notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, { publicKey });
+    },
+    [parentContext.parentOrigin]
+  );
+
+  const handleClose = useCallback(() => {
+    notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
+  }, [parentContext.parentOrigin]);
+
+  // All hooks declared above — conditional returns are safe below this point.
+  // Show a loader while trying to restore a token from the vault.
+  // This prevents a flash of the "Authentication required" screen.
+  if (!oidcAuth.idToken && !tokenRestoreAttempted && !handshakeTimedOut) {
+    return frameGate(<LoadingScreen />);
+  }
+
+  // Wait for OIDC authentication.
+  if (!oidcAuth.idToken) {
+    // Waiting for the login tab to complete
+    if (oidcAuth.isAuthenticating) {
+      return frameGate(<LoadingScreen label={t('auth.authenticating')} />);
+    }
+
+    // Error from a previous attempt
+    if (oidcAuth.error) {
+      return frameGate(
+        <Screen
+          title={t('auth.required_title')}
+          banner={<Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>}
+          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
+        />
+      );
+    }
+
+    // Auth needed — show explanation and "Continue" button
+    if (oidcAuth.needsAuth) {
+      // The emergency prompt the SDK opened on its own: say what is pending at once.
+      const emergencyPending = activeRoute === 'emergency-access' ? parentContext.emergencyPending : null;
+      if (emergencyPending?.recovery || emergencyPending?.invitation) {
+        return frameGate(<EmergencySignedOutPrompt recovery={emergencyPending.recovery} onSignIn={oidcAuth.requestAuth} />);
+      }
+
+      return frameGate(
+        <Screen
+          illustration="shield-check"
+          title={t('auth.required_title')}
+          description={t('auth.required_explanation')}
+          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>}
+        />
+      );
+    }
+
+    // No auth context from the parent: either the token-restore ran (context was
+    // briefly present) or the handshake timed out without it ever arriving. Either
+    // way, show the warning rather than spin — the interface cannot proceed
+    // without knowing which user is authenticated.
+    if ((tokenRestoreAttempted || handshakeTimedOut) && !parentContext.suiteUserId) {
+      return frameGate(<Screen banner={<Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>} />);
+    }
+
+    return frameGate(<LoadingScreen />);
+  }
+
+  switch (activeRoute) {
+    case 'onboarding':
+      return (
+        <ModalEncryptionOnboarding
+          getIdToken={getValidIdToken}
+          userId={internalUserId}
+          parentOrigin={parentContext.parentOrigin}
+          hasExistingBackendKey={hasExistingBackendKey}
+          existingKeyFingerprint={existingKeyFingerprint}
+          userInfo={userInfo}
+          onSuccess={handleOnboardingSuccess}
+          onClose={handleClose}
+          onUseAnotherDevice={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
+        />
+      );
+
+    case 'backup':
+      return (
+        <ModalEncryptionOnboarding
+          getIdToken={getValidIdToken}
+          userId={internalUserId}
+          parentOrigin={parentContext.parentOrigin}
+          hasExistingBackendKey={true}
+          existingKeyFingerprint={existingKeyFingerprint}
+          userInfo={userInfo}
+          onSuccess={handleOnboardingSuccess}
+          onClose={handleClose}
+          onUseAnotherDevice={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
+        />
+      );
+
+    case 'restore':
+      return (
+        <ModalEncryptionOnboarding
+          getIdToken={getValidIdToken}
+          userId={internalUserId}
+          parentOrigin={parentContext.parentOrigin}
+          hasExistingBackendKey={true}
+          existingKeyFingerprint={existingKeyFingerprint}
+          userInfo={userInfo}
+          onSuccess={handleOnboardingSuccess}
+          onClose={handleClose}
+          onUseAnotherDevice={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
+        />
+      );
+
+    case 'settings':
+      return (
+        <EncryptionSettings
+          userInfo={userInfo}
+          userId={internalUserId}
+          getIdToken={getValidIdToken}
+          onClose={handleClose}
+          onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
+          onOpenDeviceApproval={() => setRouteOverride('device-approval')}
+          onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+        />
+      );
+
+    case 'emergency-access':
+      return (
+        <EmergencyAccess
+          getIdToken={getValidIdToken}
+          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
+          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+          emergencyPending={parentContext.emergencyPending}
+        />
+      );
+
+    case 'device-approval':
+      return (
+        <DeviceApproval
+          getIdToken={getValidIdToken}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+          onAdopted={() => {
+            notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
+
+            // Real navigation: the vault now has keys here, so the base route is
+            // settings from now on (URL included, so a refresh stays put). The
+            // approval overlay stays until the user dismisses its success screen.
+            navigate('settings');
+          }}
+          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
+          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
+        />
+      );
+
+    case 'verify-recipients':
+      return (
+        <VerifyRecipients
+          recipients={parentContext.verifyRecipients ?? {}}
+          onComplete={(outcome) => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_VERIFY_COMPLETE, { outcome })}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+        />
+      );
+
+    case 'recipient-profile':
+      return (
+        <RecipientProfile
+          userId={parentContext.recipientProfile?.userId ?? null}
+          label={parentContext.recipientProfile?.label ?? { email: '' }}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          currentIdToken={oidcAuth.idToken}
+        />
+      );
+
+    default:
+      return null;
+  }
+}
+
+// Browser version check — computed once at module load
+const browserCheck = checkBrowserVersion();
+
+export function App() {
+  const { t, i18n } = useTranslation('common');
+  const [route, setRoute] = useState<Route | null>(() => getRouteFromPath(window.location.pathname));
+  const [cunninghamTheme, setCunninghamTheme] = useState<string>(getThemeFromHash);
+
+  // In-app navigation: push the route's path (keeping the hash, which carries
+  // theme/lang) so the URL reflects the screen and a refresh stays on it.
+  const navigate = useCallback((to: Route) => {
+    const path = PATH_FOR_ROUTE[to];
+
+    if (path) window.history.pushState({}, '', path + window.location.hash);
+
+    setRoute(to);
+  }, []);
+
+  // Apply language from hash: /onboarding#theme=dark&lang=en
+  useEffect(() => {
+    const lang = getLangFromHash();
+
+    if (lang) {
+      i18n.changeLanguage(lang);
+    }
+  }, [i18n]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setCunninghamTheme(getThemeFromHash());
+
+      const lang = getLangFromHash();
+
+      if (lang) {
+        i18n.changeLanguage(lang);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+
+    // Live theme updates from the parent product (SDK setTheme). Driven via
+    // postMessage rather than an iframe src/hash change so an internal
+    // navigation (e.g. an unsaved recovery phrase mid-backup) is preserved.
+    const handleThemeMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; theme?: string } | null;
+
+      if (data?.type === MSG_INTERFACE_SET_THEME && typeof data.theme === 'string') {
+        setCunninghamTheme(data.theme);
+      }
+    };
+
+    window.addEventListener('message', handleThemeMessage);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('message', handleThemeMessage);
+    };
+  }, [i18n]);
+
+  useEffect(() => {
+    const handlePopState = () => setRoute(getRouteFromPath(window.location.pathname));
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // OIDC auth routes — opened in a new tab, not inside an iframe
+  if (route === 'login') {
+    return (
+      <CunninghamProvider theme={cunninghamTheme}>
+        <LoginPage />
+      </CunninghamProvider>
+    );
+  }
+
+  if (route === 'auth-callback') {
+    return (
+      <CunninghamProvider theme={cunninghamTheme}>
+        <CallbackPage />
+      </CunninghamProvider>
+    );
+  }
+
+  // Documentation routes
+  if (route === 'docs-user' || route === 'docs-technical') {
+    if (!DOCS_ENABLED) {
+      return (
+        <CunninghamProvider theme={cunninghamTheme}>
+          <Screen padded description={t('docs.disabled')} />
+        </CunninghamProvider>
+      );
+    }
+
+    return <CunninghamProvider theme={cunninghamTheme}>{route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}</CunninghamProvider>;
+  }
+
+  // Encryption interface routes
+  if (route) {
+    return (
+      <CunninghamProvider theme={cunninghamTheme}>
+        {!browserCheck.supported && (
+          <div
+            role="alert"
+            style={{
+              padding: 'var(--c--globals--spacings--sm)',
+              borderLeft: '4px solid var(--c--globals--colors--error-500)',
+              background: 'var(--c--contextuals--background--semantic--error--secondary)',
+              color: 'var(--c--contextuals--content--semantic--error--secondary)',
+              borderRadius: '0 4px 4px 0',
+              fontSize: 13,
+              margin: 'var(--c--globals--spacings--sm)',
+            }}
+          >
+            {t('browser_warning.message', {
+              browser: browserCheck.browser?.name ?? t('browser_warning.unknown'),
+              version: browserCheck.browser?.version ?? '?',
+              minVersion: browserCheck.minVersion ?? '?',
+            })}
+          </div>
+        )}
+        <EncryptionProvider>
+          <InterfaceRoutes route={route} navigate={navigate} />
+        </EncryptionProvider>
+      </CunninghamProvider>
+    );
+  }
+
+  return null;
+}

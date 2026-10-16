@@ -1,0 +1,98 @@
+import type { FastifyInstance } from 'fastify';
+import fp from 'fastify-plugin';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { env } from '@encryption/src/server/env';
+import { isOriginInAllowlist, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
+import { buildRuntimeConfigBlock } from '@encryption/src/shared/runtime-config';
+
+/**
+ * Same as the interface: data rather than script, parsed and frozen by the bundle.
+ */
+function buildVaultConfigBlock(): string {
+  const config = {
+    allowedOrigins: parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS),
+    interfaceOrigin: env.UI_URL,
+    deviceInactivityDays: env.VAULT_DEVICE_INACTIVITY_DAYS,
+  };
+
+  return buildRuntimeConfigBlock(config);
+}
+
+// The SDK files a product page loads in CORS mode: an ES module import, or a classic
+// script carrying an `integrity` attribute (SRI needs `crossorigin` cross-origin).
+// Only the products allowed to embed the vault get their origin echoed back; any
+// other page is refused by its browser, and no wildcard is ever sent. The other
+// files are only loaded by the vault itself, same-origin, and need no CORS header.
+// `client.d.ts` is downloaded by a developer's tooling, which CORS does not concern.
+const CORS_SDK_PATHS = new Set(['/client.js', '/client.mjs']);
+
+// Wrapped with fastify-plugin to break encapsulation: the hook below serves files that are
+// no route (`/vault.js`, `/client.js`...), and a hook private to a plugin only ever runs
+// for the routes declared inside that plugin. Unwrapped, every file is a 404.
+export const staticVaultPlugin = fp(async (app: FastifyInstance): Promise<void> => {
+  const vaultDir = resolve(process.cwd(), 'dist/vault');
+  const clientDir = resolve(process.cwd(), 'dist/client');
+
+  if (!existsSync(vaultDir)) {
+    app.log.warn('Vault dist files not found - run "npm run build:vault" first');
+
+    return;
+  }
+
+  const files = new Map<string, { content: string | Buffer; type: string }>();
+
+  const vaultFiles: Record<string, { dir: string; filename: string; type: string }> = {
+    '/bridge.html': { dir: 'vault', filename: 'bridge.html', type: 'text/html' },
+    '/vault.js': { dir: 'vault', filename: 'vault.js', type: 'application/javascript' },
+    '/sw.js': { dir: 'vault', filename: 'sw.js', type: 'application/javascript' },
+    '/client.js': { dir: 'client', filename: 'client.js', type: 'application/javascript' },
+    '/client.mjs': { dir: 'client', filename: 'client.mjs', type: 'application/javascript' },
+    '/client.d.ts': { dir: 'client', filename: 'client.d.ts', type: 'text/plain' },
+  };
+
+  for (const [path, info] of Object.entries(vaultFiles)) {
+    const baseDir = info.dir === 'vault' ? vaultDir : clientDir;
+    const filePath = resolve(baseDir, info.filename);
+
+    if (existsSync(filePath)) {
+      if (path === '/bridge.html') {
+        // Inject runtime config into the vault HTML
+        const rawHtml = readFileSync(filePath, 'utf-8');
+        const configBlock = buildVaultConfigBlock();
+        files.set(path, { content: rawHtml.replace('</head>', `${configBlock}\n</head>`), type: info.type });
+      } else {
+        files.set(path, { content: readFileSync(filePath), type: info.type });
+      }
+    }
+  }
+
+  const productOrigins = parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS);
+
+  app.addHook('onRequest', async (request, reply) => {
+    // `request.host` keeps the port, matching env.VAULT_HOST (derived from new URL(...).host).
+    // The port-stripped `request.hostname` would never match on a deployment with an explicit port.
+    if (request.host !== env.VAULT_HOST) {
+      return;
+    }
+
+    const path = request.url.split('?')[0];
+    const file = files.get(path);
+
+    if (file) {
+      if (CORS_SDK_PATHS.has(path)) {
+        // The answer depends on the caller, so a shared cache must key on it.
+        reply.header('Vary', 'Origin');
+
+        const origin = request.headers.origin;
+
+        if (origin && isOriginInAllowlist(origin, productOrigins)) {
+          reply.header('Access-Control-Allow-Origin', origin);
+        }
+      }
+
+      reply.type(file.type).send(file.content);
+    }
+  });
+});
