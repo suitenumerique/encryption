@@ -277,13 +277,13 @@ encryptedKeys['my-suite-user-id'],
 
 ### 7. Automatic updates
 
-The vault and the SDK are handled by a Service Worker that caches them and checks `GET /api/version` every 5 minutes. When a new version is detected, the SW updates its cache automatically and silently (no event is emitted).
+The vault is served by a Service Worker that caches it, so encryption keeps working offline. Each time the vault loads, the Service Worker first asks `GET /api/version` which version the server runs; when it differs from the cached one, it downloads the new vault into a separate cache and switches to it before serving the page, so the vault that starts matches the server. A vault already running keeps its version until its page reloads. No event is emitted and nothing is required on your side.
 
-The cache update is atomic: every bundle is fetched, then written in one go. New bundles take effect on the next natural page reload. Nothing is required on your side.
+The SDK (`client.js`, `client.mjs`) is not cached by the Service Worker: your page loads it from another origin, and a Service Worker only sees the requests of its own origin's pages. It comes from the server on every load of your page.
 
-<Alert severity="info" title="Cache and offline">
-  The Service Worker makes sure encryption keeps working even offline. A 1h HTTP cache acts as a safety net when the SW is not supported. The version
-  check fails silently on a network error and retries every 5 minutes.
+<Alert severity="info" title="Offline and slow networks">
+  When the browser reports being offline, the vault starts from the cache at once, without asking the server. Online, the check waits at most 3
+  seconds (a server that does not answer, a captive portal) before starting from the cache; the next load checks again.
 </Alert>
 
 ### 8. Cleanup
