@@ -83,6 +83,11 @@ shared:
     hostname: auth.suite.example.org
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt
+      # Keycloak copies the authorization request, `claims` included, into its KC_RESTART
+      # cookie, set again on the redirect that ends a sign-in. With the session cookies, the
+      # interface's request takes that response past ingress-nginx's default 4k buffer,
+      # which answers 502.
+      nginx.ingress.kubernetes.io/proxy-buffer-size: 16k
     username: admin
     password: pass
     tls:
