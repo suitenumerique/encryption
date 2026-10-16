@@ -209,7 +209,7 @@ jobs:
               continue
             fi
             echo "Deleting the label ${label}"
-            gh label delete "${label}" --yes
+            gh label delete "${label}" --repo "${GITHUB_REPOSITORY}" --yes
           done
 
   clean:
