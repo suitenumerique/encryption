@@ -298,6 +298,11 @@ encryption:
       # Accounts added by hand in the Keycloak console rarely have their email marked
       # verified; the bootstrap accounts always do.
       acceptUnverifiedEmail: true
+      # The dev-backend realm maps the names to `first_name` and `last_name`, not to the
+      # standard `given_name` and `family_name`.
+      claims:
+        firstName: [first_name]
+        lastName: [last_name]
       # The testers' Keycloak accounts have no second factor: a step-up only asks
       # them to sign in again.
       stepUp:
