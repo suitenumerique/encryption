@@ -266,6 +266,7 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
     await page.getByRole('tab', { name: 'Generate a maintenance key' }).click();
     await page.getByRole('combobox').selectOption('english');
     await page.getByRole('button', { name: 'Generate a maintenance key' }).click();
+    await page.getByRole('button', { name: 'Generate a new key' }).click();
 
     const words = await page.locator('.mt-words li').allTextContents();
     const shown = await page.getByRole('textbox', { name: 'The public key (for MAINTENANCE_ESCROW_KEYS)' }).inputValue();

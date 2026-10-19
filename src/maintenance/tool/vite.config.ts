@@ -62,9 +62,9 @@ export default defineConfig({
   // `npm run dev:maintenance`: the tool with hot reload while working on it. Served,
   // so without the policy the build folds in; the built file is what operators get.
   server: {
-    // IPv4 loopback, not Vite's default `localhost`, which Node resolves to ::1 only:
-    // a development VM forwards the guest's 127.0.0.1 ports to the host, not ::1.
-    host: '127.0.0.1',
+    // Every interface, as Storybook listens: a development VM forwards to the host
+    // the ports bound on all of them, not those bound on its loopback alone.
+    host: true,
     port: 7210,
     strictPort: true,
     open: false,

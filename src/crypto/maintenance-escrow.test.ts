@@ -17,6 +17,7 @@ import {
   exportMaintenancePublicKey,
   generateMaintenancePhrase,
   importMaintenancePublicKey,
+  maintenanceFingerprintToKeyIdHex,
   maintenanceKeyIdToFingerprint,
   maintenanceKeyPairFromPhrase,
   maintenanceKeyPairFromSeed,
@@ -164,6 +165,10 @@ describe('maintenance escrow primitives', () => {
 
     expect(fingerprint).toMatch(/^1\d{39}$/);
     expect(maintenanceKeyIdToFingerprint((await importMaintenancePublicKey(DEV_MAINTENANCE_PUBLIC_KEY)).keyId)).toBe(fingerprint);
+    // The same id, in the hexadecimal an export query matches the copies' bytes 2 to 17 against.
+    expect(maintenanceFingerprintToKeyIdHex(fingerprint)).toBe(
+      Buffer.from((await importMaintenancePublicKey(DEV_MAINTENANCE_PUBLIC_KEY)).keyId).toString('hex')
+    );
     expect(fingerprint).not.toBe(await computeKeyFingerprint(DEV_MAINTENANCE_PUBLIC_KEY));
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import { Fingerprint, KeyId } from '@encryption/src/maintenance/tool/Fingerprint';
 
 /** A maintenance public key as the deployment's team needs it: to read, copy or download, with its fingerprint. */
 export function PublicKeyView({ title, publicKey, fingerprint }: { title: string; publicKey: string; fingerprint: string }) {
@@ -13,6 +13,7 @@ export function PublicKeyView({ title, publicKey, fingerprint }: { title: string
   return (
     <section className="mt-step">
       <h2>{title}</h2>
+      <p className="mt-help">{t('maintenanceTool.publicKeyHandoff')}</p>
       {/* Selected whole on the first click: it is copied as one value, never in part. */}
       <textarea
         className="mt-public-key"
@@ -26,9 +27,8 @@ export function PublicKeyView({ title, publicKey, fingerprint }: { title: string
       <a className="mt-button" href={url} download="maintenance-public-key.txt">
         {t('maintenanceTool.generate.downloadPublicKey')}
       </a>
-      <p className="mt-status">
-        {t('maintenanceTool.generate.fingerprint')} <code className="mt-fingerprint">{formatDecimalFingerprint(fingerprint)}</code>
-      </p>
+      <Fingerprint fingerprint={fingerprint} help={t('maintenanceTool.generate.fingerprint')} />
+      <KeyId fingerprint={fingerprint} />
     </section>
   );
 }

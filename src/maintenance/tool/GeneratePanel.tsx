@@ -27,6 +27,7 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
   const [language, setLanguage] = useState<MnemonicLanguage>(mnemonicLanguageForLocale(i18n.language));
   const [generated, setGenerated] = useState<Generated | null>(null);
   const [copy, setCopy] = useState<CopyState>('idle');
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(
     () => () => {
@@ -88,10 +89,33 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
           <option value="french">{t('maintenanceTool.generate.french')}</option>
           <option value="english">{t('maintenanceTool.generate.english')}</option>
         </select>
-        <button type="button" className="mt-button mt-primary" onClick={() => void generate()}>
+        <button type="button" className="mt-button mt-primary" disabled={confirming} onClick={() => setConfirming(true)}>
           {t('maintenanceTool.generate.button')}
         </button>
       </div>
+      {/* A new phrase replaces nothing on the server: asked first, so an existing key is not forgotten for a new one by mistake. */}
+      {confirming && (
+        <section className="mt-confirm" role="alertdialog" aria-labelledby="mt-confirm-title">
+          <h2 id="mt-confirm-title">{t('maintenanceTool.generate.confirmTitle')}</h2>
+          <p>{t('maintenanceTool.generate.confirmText')}</p>
+          {generated && <p className="mt-warning">{t('maintenanceTool.generate.confirmReplaceShown')}</p>}
+          <div className="mt-row">
+            <button
+              type="button"
+              className="mt-button mt-primary"
+              onClick={() => {
+                setConfirming(false);
+                void generate();
+              }}
+            >
+              {t('maintenanceTool.generate.confirm')}
+            </button>
+            <button type="button" className="mt-button" onClick={() => setConfirming(false)}>
+              {t('maintenanceTool.generate.cancel')}
+            </button>
+          </div>
+        </section>
+      )}
 
       {generated && (
         <>

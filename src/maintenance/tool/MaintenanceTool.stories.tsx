@@ -2,7 +2,12 @@ import { Meta, StoryFn } from '@storybook/react';
 import { expect, spyOn, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
-import { importMaintenancePublicKey, maintenanceKeyIdToFingerprint, parseMaintenancePublicKey } from '@encryption/src/crypto/maintenance-escrow';
+import {
+  generateMaintenancePhrase,
+  importMaintenancePublicKey,
+  maintenanceKeyIdToFingerprint,
+  parseMaintenancePublicKey,
+} from '@encryption/src/crypto/maintenance-escrow';
 import i18n from '@encryption/src/i18n';
 import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
 import {
@@ -76,8 +81,14 @@ DecryptedStory.play = async ({ canvasElement }) => {
   await typePhrase(canvasElement, DEV_MAINTENANCE_PHRASE);
   await canvas.findByText(i18n.t('maintenanceTool.decrypt.fingerprint'), { exact: false });
 
+  // Read from the copies' headers before anything is decrypted: 3 of the 4 roots are for this key.
+  expect(canvas.getByText(i18n.t('maintenanceTool.decrypt.coverageSome', { ours: 3, roots: 4 }))).toBeVisible();
+
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') }));
   await canvas.findByText(i18n.t('maintenanceTool.decrypt.summary', { ok: 7, failed: 1 }));
+  const [tookBefore, tookAfter] = i18n.t('maintenanceTool.decrypt.took', { duration: '|' }).split('|');
+
+  expect(canvas.getByText((text) => text.startsWith(tookBefore) && text.endsWith(tookAfter) && /\d+:\d\d/.test(text))).toBeVisible();
   // Another organization's document and its attachment: set aside, not failed.
   expect(canvas.getByText(i18n.t('maintenanceTool.decrypt.otherKeys', { count: 2 }))).toBeVisible();
   expect(
@@ -112,6 +123,21 @@ DecryptedStory.play = async ({ canvasElement }) => {
 };
 
 export const Decrypted = prepareStory(DecryptedStory);
+
+const PhraseOfAnotherKeyStory = Template.bind({});
+PhraseOfAnotherKeyStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+
+  // A valid phrase, but not the one this export was made for: said before the run, and after it.
+  await pickSampleExport(canvasElement);
+  await typePhrase(canvasElement, await generateMaintenancePhrase('english', new Uint8Array(32).fill(3)));
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.coverageNone', { roots: 4 }));
+
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') }));
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.noneForThisKey', { count: 10 }));
+};
+
+export const PhraseOfAnotherKey = prepareStory(PhraseOfAnotherKeyStory);
 
 const TryItStory = Template.bind({});
 TryItStory.parameters = {
@@ -221,6 +247,9 @@ GeneratedKeyStory.play = async ({ canvasElement }) => {
 
   await userEvent.click(canvas.getByRole('tab', { name: i18n.t('maintenanceTool.tabs.generate') }));
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.generate.button') }));
+  // Asked first: a new phrase replaces nothing on the server.
+  await canvas.findByRole('alertdialog', { name: i18n.t('maintenanceTool.generate.confirmTitle') });
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.generate.confirm') }));
 
   await waitFor(() => expect(canvasElement.querySelectorAll('.mt-words li')).toHaveLength(24));
 
@@ -242,6 +271,13 @@ GeneratedKeyStory.play = async ({ canvasElement }) => {
   expect(canvas.getByRole('link', { name: i18n.t('maintenanceTool.generate.downloadPhrase') })).toHaveAttribute('download', 'maintenance-phrase.txt');
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.generate.printPhrase') }));
   expect(print).toHaveBeenCalledOnce();
+
+  // Generating again warns that the phrase shown would be replaced, and cancelling keeps it.
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.generate.button') }));
+  await canvas.findByText(i18n.t('maintenanceTool.generate.confirmReplaceShown'));
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.generate.cancel') }));
+  expect(canvas.queryByRole('alertdialog')).toBeNull();
+  expect(canvasElement.querySelectorAll('.mt-words li')).toHaveLength(24);
 
   // Handed back, so the buttons work for whoever then clicks them in Storybook.
   writeText.mockRestore();

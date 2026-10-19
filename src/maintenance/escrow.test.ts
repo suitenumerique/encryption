@@ -146,35 +146,80 @@ const manifestOf = (folder: Map<string, Uint8Array>) =>
     .filter((line) => line !== '')
     .map((line) => JSON.parse(line) as Record<string, string>);
 
-// The product team's write-back: the plaintext replaces the ciphertext, and a document
-// edited since the export (its `updatedAt` moved) is left alone, to be exported again.
+// The product team's write-back, one document at a time:
+//
+//   1. the decrypted attachments are uploaded under NEW object keys, this product's
+//      objects being immutable (a versioned bucket whose content names its objects,
+//      like Docs', writes new versions of the same keys instead); either way the
+//      ciphertext stays readable until the switch is committed;
+//   2. one short transaction switches the document, its attachments and comments to
+//      plaintext, only if the document was not edited since the export (`updatedAt`);
+//   3. after the commit, the old ciphertext objects are deleted; after a rollback,
+//      the new plaintext objects are.
+//
+// A document goes whole or not at all: if any of its items failed (a missing file,
+// a damaged row), it stays encrypted with its escrow copy, to be exported again. Per
+// document rather than one transaction for the export: no lock held for hours, and a
+// failure costs one document, not the batch. Rerunning the import is harmless.
 async function writeBack(output: Map<string, Uint8Array>): Promise<{ skipped: string[] }> {
+  const lines = manifestOf(output);
   const skipped: string[] = [];
 
-  await testPrisma.$transaction(async (tx) => {
-    for (const line of manifestOf(output)) {
-      if (line.error) {
-        skipped.push(line.id);
-      } else if (line.type === 'document') {
-        const updated = await tx.$executeRaw`
-          UPDATE product.documents SET content = decode(${line.content}, 'base64'), encrypted_content = NULL, maintenance_key = NULL
-          WHERE id = ${line.id}::uuid AND updated_at = ${line.updatedAt}::timestamptz`;
+  for (const document of lines.filter((line) => line.type === 'document')) {
+    const items = lines.filter((line) => line.parent === document.id);
 
-        if (updated === 0) skipped.push(line.id);
-      } else if (line.type === 'attachment') {
-        // `file` is the object's key: the plaintext goes back where the ciphertext was.
-        objectStorage.set(line.file, output.get(line.file) as Uint8Array);
-        await tx.$executeRaw`UPDATE product.attachments SET wrapped_key = NULL WHERE id = ${line.id}::uuid`;
-      } else if (line.type === 'comment') {
-        await tx.$executeRaw`
-          UPDATE product.comments SET body = convert_from(decode(${line.content}, 'base64'), 'UTF8'), encrypted_body = NULL
-          WHERE id = ${line.id}::uuid`;
-      }
+    if ([document, ...items].some((line) => line.error)) {
+      skipped.push(document.id);
+      continue;
     }
-  });
+
+    const attachments = items.filter((line) => line.type === 'attachment');
+    const uploaded = new Map(attachments.map((line) => [line.id, `${document.id}/attachments/${randomUUID()}`]));
+
+    for (const line of attachments) objectStorage.set(uploaded.get(line.id) as string, output.get(line.file) as Uint8Array);
+
+    try {
+      const replaced = await testPrisma.$transaction(async (tx) => {
+        const updated = await tx.$executeRaw`
+          UPDATE product.documents SET content = decode(${document.content}, 'base64'), encrypted_content = NULL, maintenance_key = NULL
+          WHERE id = ${document.id}::uuid AND updated_at = ${document.updatedAt}::timestamptz`;
+
+        if (updated === 0) throw new EditedSinceExport();
+
+        const previous: string[] = [];
+
+        for (const line of attachments) {
+          const [{ object_key: objectKey }] = await tx.$queryRaw<{ object_key: string }[]>`
+            SELECT object_key FROM product.attachments WHERE id = ${line.id}::uuid FOR UPDATE`;
+
+          previous.push(objectKey);
+          await tx.$executeRaw`
+            UPDATE product.attachments SET object_key = ${uploaded.get(line.id)}, wrapped_key = NULL WHERE id = ${line.id}::uuid`;
+        }
+
+        for (const line of items.filter((item) => item.type === 'comment')) {
+          await tx.$executeRaw`
+            UPDATE product.comments SET body = convert_from(decode(${line.content}, 'base64'), 'UTF8'), encrypted_body = NULL
+            WHERE id = ${line.id}::uuid`;
+        }
+
+        return previous;
+      });
+
+      for (const objectKey of replaced) objectStorage.delete(objectKey);
+    } catch (error) {
+      for (const objectKey of uploaded.values()) objectStorage.delete(objectKey);
+
+      if (!(error instanceof EditedSinceExport)) throw error;
+
+      skipped.push(document.id);
+    }
+  }
 
   return { skipped };
 }
+
+class EditedSinceExport extends Error {}
 
 // ----- The devices: real vault operations, routed to one person's key pair ------
 
@@ -338,7 +383,11 @@ describe('batch recovery, end to end', () => {
       [plan]: ['le plan de bob', null],
     });
     expect(await testPrisma.$queryRaw`SELECT body FROM product.comments`).toEqual([{ body: 'une remarque de bob' }]);
-    expect([...objectStorage.values()]).toEqual([photo]);
+    // The plaintext under a new object key, the row pointing at it, the ciphertext object gone.
+    const [{ object_key: objectKey }] = await testPrisma.$queryRaw<{ object_key: string }[]>`SELECT object_key FROM product.attachments`;
+
+    expect(objectKey).not.toBe(`${notes}/attachments/${attachment}`);
+    expect([...objectStorage]).toEqual([[objectKey, photo]]);
   });
 
   it('carries the product fields through, so a document edited after the export is not overwritten', async () => {
@@ -371,6 +420,23 @@ describe('batch recovery, end to end', () => {
     const output = await runTool(phrase, await exportFolder());
     expect(Buffer.from(manifestOf(output)[0].content, 'base64').toString()).toBe('created before the escrow existed');
     expect(await testPrisma.$queryRaw`SELECT count(*)::int AS n FROM product.document_accesses`).toEqual([{ n: 1 }]);
+  });
+
+  it('leaves a document encrypted, its escrow copy kept, when one of its items could not be decrypted', async () => {
+    const id = await createDocument(alice, 'incomplete', 'with an attachment left behind', maintenance);
+    const attachment = await attach(id, alice, 'missing.png', new Uint8Array([9, 9, 9]));
+    const folder = await exportFolder();
+
+    // The attachment was not copied from the object storage into the export.
+    folder.delete(`${id}/attachments/${attachment}`);
+
+    const output = await runTool(phrase, folder);
+
+    expect(manifestOf(output).find((line) => line.id === attachment)?.error).toMatch(/is not in the export folder/);
+    expect(await writeBack(output)).toEqual({ skipped: [id] });
+    expect(await openDocument(id, alice)).toBe('with an attachment left behind');
+    expect(await testPrisma.$queryRaw`SELECT maintenance_key IS NOT NULL AS kept FROM product.documents`).toEqual([{ kept: true }]);
+    expect([...objectStorage.keys()]).toEqual([`${id}/attachments/${attachment}`]);
   });
 
   it("sets aside another organization's documents, still encrypted, as an export its custodians open", async () => {

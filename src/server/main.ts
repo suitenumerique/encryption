@@ -1,3 +1,4 @@
+import { maintenanceFingerprintToKeyIdHex } from '@encryption/src/crypto/maintenance-escrow';
 import { startEmergencyJobs } from '@encryption/src/server/emergency-jobs';
 import { env } from '@encryption/src/server/env';
 import { maintenanceEscrowKeyFingerprint } from '@encryption/src/server/maintenance-escrow';
@@ -27,7 +28,9 @@ async function main() {
   for (const entry of env.MAINTENANCE_ESCROW_KEYS ?? []) {
     const fingerprint = await maintenanceEscrowKeyFingerprint(entry.publicKey);
 
-    app.log.info(`Maintenance escrow for ${entry.domains.join(', ')}: key fingerprint ${formatDecimalFingerprint(fingerprint)}`);
+    app.log.info(
+      `Maintenance escrow for ${entry.domains.join(', ')}: key fingerprint ${formatDecimalFingerprint(fingerprint)}, key id ${maintenanceFingerprintToKeyIdHex(fingerprint)} (to export its documents)`
+    );
   }
 
   // A throw outside a request never reaches the Fastify error handler, and these

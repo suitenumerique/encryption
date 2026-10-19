@@ -6,13 +6,41 @@
  * decrypting. Rewritten only when the export format changes on purpose:
  *
  *   npm run maintenance:sample-export
+ *
+ * The randomness is seeded, here only: running it again without a change rewrites
+ * the same bytes, so the diff shows only what really changed. Keys and nonces
+ * derived from a public seed are fine for fake content under the development
+ * phrase, and nothing else ever goes through this script.
  */
+import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { importMaintenancePublicKey } from '@encryption/src/crypto/maintenance-escrow';
-import { DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
-import { buildSampleExport } from '@encryption/src/maintenance/testing';
+let counter = 0;
+
+// libsodium draws every random byte from here: replaced before it loads (hence the dynamic imports below).
+Object.defineProperty(globalThis.crypto, 'getRandomValues', {
+  configurable: true,
+  value: <T extends ArrayBufferView>(array: T): T => {
+    const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+
+    for (let offset = 0; offset < bytes.length; offset += 32) {
+      bytes.set(
+        createHash('sha256')
+          .update(`lasuite-maintenance-sample-export:${counter++}`)
+          .digest()
+          .subarray(0, bytes.length - offset),
+        offset
+      );
+    }
+
+    return array;
+  },
+});
+
+const { importMaintenancePublicKey } = await import('@encryption/src/crypto/maintenance-escrow');
+const { DEV_MAINTENANCE_PUBLIC_KEY } = await import('@encryption/src/maintenance/dev-maintenance-key');
+const { buildSampleExport } = await import('@encryption/src/maintenance/testing');
 
 const root = resolve(import.meta.dirname, 'sample-export');
 

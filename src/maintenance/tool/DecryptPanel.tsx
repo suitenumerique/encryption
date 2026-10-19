@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
+import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
+import { maintenanceKeyIdToFingerprint, readMaintenanceCopyKeyId } from '@encryption/src/crypto/maintenance-escrow';
 import { type ExportItem, ManifestError, parseManifest } from '@encryption/src/maintenance/export-format';
 import { type ExportSink, type ItemOutcome, writeDecryptedExport } from '@encryption/src/maintenance/export-writer';
 import { type ItemResult, createRecovery, recoverItems } from '@encryption/src/maintenance/recover';
+import { Fingerprint, KeyId } from '@encryption/src/maintenance/tool/Fingerprint';
 import { PhraseInput, type PhraseKey } from '@encryption/src/maintenance/tool/PhraseInput';
 import { type ExportFolder, SeveralExportsError, openExportFolder } from '@encryption/src/maintenance/tool/export-folder';
 import { formatSize } from '@encryption/src/maintenance/tool/format-size';
@@ -21,7 +23,18 @@ import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerp
 
 type Written = { kind: 'folder'; label: string } | { kind: 'zip'; url: string; name: string; output: ZipOutput } | { kind: 'error'; message: string };
 
-const PROGRESS_STEP = 25;
+// The progress shown is refreshed at most this often: often enough to move, rarely enough not to slow the work.
+const PROGRESS_INTERVAL_MS = 100;
+
+/** `1:05`, `12:30`, `1:02:03`: the same in every language. */
+export function formatDuration(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds / 60) % 60;
+
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}` : `${minutes}:${pad(seconds % 60)}`;
+}
 const MISSING_FILE_EXAMPLES = 3;
 // A preview decrypts the item again, whole: past this size, open it from the output instead.
 const PREVIEW_LIMIT = 50_000_000;
@@ -34,12 +47,25 @@ export function DecryptPanel() {
   const [opened, setOpened] = useState<{ folder: ExportFolder; items: ExportItem[]; missingFiles: string[] } | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
   const [key, setKey] = useState<PhraseKey | null>(null);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; startedAt: number } | null>(null);
+  // Ticks every second while decrypting, so the elapsed time moves even during one long item.
+  const [now, setNow] = useState(() => performance.now());
+  const [tookMs, setTookMs] = useState<number | null>(null);
   // Outcomes only: the plaintexts went to the output as they were decrypted.
   const [outcomes, setOutcomes] = useState<ItemOutcome[] | null>(null);
   const [written, setWritten] = useState<Written | null>(null);
   const [previewing, setPreviewing] = useState<ItemResult | { item: ExportItem; tooLarge: number } | null>(null);
   const recovery = useRef<ReturnType<typeof createRecovery> | null>(null);
+
+  const running = progress !== null;
+
+  useEffect(() => {
+    if (!running) return;
+
+    const timer = setInterval(() => setNow(performance.now()), 1000);
+
+    return () => clearInterval(timer);
+  }, [running]);
 
   // A tab closed earlier may have left a decrypted archive in the browser's storage.
   useEffect(() => void deleteLeftovers(), []);
@@ -75,6 +101,7 @@ export function DecryptPanel() {
 
   const reset = () => {
     setOutcomes(null);
+    setTookMs(null);
     setWritten(null);
     setPreviewing(null);
     recovery.current = null;
@@ -120,17 +147,25 @@ export function DecryptPanel() {
 
     const collected: ItemOutcome[] = [];
     const total = opened.items.length;
+    const startedAt = performance.now();
+    let shownAt = 0;
 
-    setProgress({ done: 0, total });
+    setNow(startedAt);
+    setTookMs(null);
+    setProgress({ done: 0, total, startedAt });
 
     try {
       await writeDecryptedExport(recoverItems(key, opened.items, opened.folder.readFile), opened.folder.readFile, sink, (outcome) => {
         collected.push(outcome);
 
-        if (collected.length % PROGRESS_STEP === 0) setProgress({ done: collected.length, total });
+        if (performance.now() - shownAt >= PROGRESS_INTERVAL_MS) {
+          shownAt = performance.now();
+          setProgress({ done: collected.length, total, startedAt });
+        }
       });
       recovery.current = createRecovery(key, opened.items, opened.folder.readFile);
     } finally {
+      setTookMs(performance.now() - startedAt);
       setProgress(null);
       setOutcomes(collected);
     }
@@ -210,7 +245,31 @@ export function DecryptPanel() {
   }
 
   const otherCount = [...otherKeys.values()].reduce((sum, count) => sum + count, 0);
+  const decrypted = (outcomes?.length ?? 0) - failed - otherCount;
   const ready = opened !== null && key !== null && progress === null;
+
+  // Before anything is decrypted, the copies' headers say which key each root is
+  // escrowed for: a phrase that opens none of them is said at once, not after the run.
+  const coverage = useMemo(() => {
+    if (!opened || !key) return null;
+
+    let roots = 0;
+    let ours = 0;
+
+    for (const item of opened.items) {
+      if (item.maintenanceKey === undefined) continue;
+
+      roots++;
+
+      try {
+        if (maintenanceKeyIdToFingerprint(readMaintenanceCopyKeyId(base64ToUint8(item.maintenanceKey))) === key.fingerprint) ours++;
+      } catch {
+        // A damaged copy is reported by the run itself.
+      }
+    }
+
+    return roots === 0 ? null : { roots, ours };
+  }, [opened, key]);
 
   return (
     <div className="mt-panel">
@@ -252,16 +311,23 @@ export function DecryptPanel() {
         <h2>{t('maintenanceTool.decrypt.phraseTitle')}</h2>
         <p className="mt-help">{t('maintenanceTool.decrypt.phraseHelp')}</p>
         <PhraseInput idPrefix="mt-decrypt" onKey={setKey} />
-        {key && (
-          <p className="mt-status">
-            {t('maintenanceTool.decrypt.fingerprint')} <code className="mt-fingerprint">{formatDecimalFingerprint(key.fingerprint)}</code>
-          </p>
-        )}
+        {key && <Fingerprint fingerprint={key.fingerprint} help={t('maintenanceTool.decrypt.fingerprint')} />}
+        {key && <KeyId fingerprint={key.fingerprint} />}
       </section>
 
       <section className="mt-step">
         <h2>{t('maintenanceTool.decrypt.runTitle')}</h2>
         <p className="mt-help">{t(canWriteFolder() ? 'maintenanceTool.decrypt.runHelpFolder' : 'maintenanceTool.decrypt.runHelpZip')}</p>
+        {coverage && coverage.ours === 0 && (
+          <p className="mt-alert" role="alert">
+            {t('maintenanceTool.decrypt.coverageNone', { roots: coverage.roots })}
+          </p>
+        )}
+        {coverage && coverage.ours > 0 && (
+          <p className="mt-status" role="status">
+            {t(coverage.ours === coverage.roots ? 'maintenanceTool.decrypt.coverageAll' : 'maintenanceTool.decrypt.coverageSome', coverage)}
+          </p>
+        )}
         <div className="mt-row">
           {canWriteFolder() && (
             <button type="button" className="mt-button mt-primary" disabled={!ready} onClick={() => void runIntoFolder()}>
@@ -278,9 +344,19 @@ export function DecryptPanel() {
           </button>
         </div>
         {progress && (
-          <p className="mt-status" role="status">
-            {t('maintenanceTool.decrypt.running', progress)}
-          </p>
+          <div className="mt-progress" role="status">
+            <progress max={progress.total} value={progress.done} aria-label={t('maintenanceTool.decrypt.runTitle')} />
+            <span>
+              {t('maintenanceTool.decrypt.running', {
+                done: progress.done,
+                total: progress.total,
+                percent: Math.floor((progress.done / Math.max(progress.total, 1)) * 100),
+              })}
+            </span>
+            <span className="mt-help">
+              {t('maintenanceTool.decrypt.elapsed', { duration: formatDuration(Math.max(now - progress.startedAt, 0)) })}
+            </span>
+          </div>
         )}
         {written?.kind === 'error' && (
           <p className="mt-error" role="alert">
@@ -290,8 +366,14 @@ export function DecryptPanel() {
         {outcomes && (
           <>
             <p className={failed > 0 ? 'mt-error' : 'mt-status'} role="status">
-              {t('maintenanceTool.decrypt.summary', { ok: outcomes.length - failed - otherCount, failed })}
+              <span>{t('maintenanceTool.decrypt.summary', { ok: decrypted, failed })}</span>
+              {tookMs !== null && <span> {t('maintenanceTool.decrypt.took', { duration: formatDuration(tookMs) })}</span>}
             </p>
+            {decrypted === 0 && otherCount > 0 && (
+              <p className="mt-alert" role="alert">
+                {t('maintenanceTool.decrypt.noneForThisKey', { count: otherCount })}
+              </p>
+            )}
             {otherKeys.size > 0 && (
               <div className="mt-status">
                 <p>{t('maintenanceTool.decrypt.otherKeys', { count: otherCount })}</p>
@@ -352,7 +434,7 @@ function ResultTable({ outcomes, onPreview }: { outcomes: ItemOutcome[]; onPrevi
   return (
     <>
       <div className="mt-row">
-        <label>
+        <label className="mt-check">
           <input
             type="checkbox"
             checked={onlyFailures}
@@ -360,7 +442,7 @@ function ResultTable({ outcomes, onPreview }: { outcomes: ItemOutcome[]; onPrevi
               setOnlyFailures(event.target.checked);
               setPage(0);
             }}
-          />{' '}
+          />
           {t('maintenanceTool.decrypt.onlyFailures')}
         </label>
         {shown.length > PAGE_SIZE && (

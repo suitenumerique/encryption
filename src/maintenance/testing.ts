@@ -54,7 +54,8 @@ const ids = SAMPLE_IDS;
 export const SAMPLE_FILES = {
   logo: `${ids.report}/attachments/${ids.logo}.png`,
   chart: `${ids.report}/attachments/${ids.chart}.png`,
-  invoice: `drive/${ids.invoice}`,
+  // Drive's own layout: `item/<id>/<file name>`.
+  invoice: `item/${ids.invoice}/facture.png`,
   elsewherePhoto: `${ids.elsewhere}/attachments/${ids.elsewherePhoto}.png`,
 };
 
