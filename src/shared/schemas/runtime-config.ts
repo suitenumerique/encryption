@@ -35,6 +35,8 @@ export const vaultRuntimeConfigSchema = z.object({
   interfaceOrigin: z.string().url(),
   // VAULT_DEVICE_INACTIVITY_DAYS; 0 = never de-enroll.
   deviceInactivityDays: z.number().int().min(0),
+  // MAINTENANCE_ESCROW_PUBLIC_KEY, optional like the variable: absent = no escrow copy.
+  maintenanceEscrowPublicKey: z.string().min(1).optional(),
 });
 
 export type UiRuntimeConfig = z.infer<typeof uiRuntimeConfigSchema>;
