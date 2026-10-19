@@ -537,7 +537,8 @@
     "language": "Langue",
     "tabs": {
       "decrypt": "Déchiffrer un export",
-      "generate": "Générer une clé de maintenance"
+      "generate": "Générer une clé de maintenance",
+      "publicKey": "Retrouver la clé publique d'une phrase"
     },
     "decrypt": {
       "folderTitle": "1. Le dossier d'export",
@@ -545,23 +546,32 @@
       "folderButton": "Choisir le dossier d'export",
       "folderSummary": "{{folder}} : {{items}} éléments, {{files}} fichiers",
       "folderNoManifest": "Aucun manifest.ndjson dans ce dossier.",
+      "folderSeveralExports": "Ce dossier contient plusieurs exports côte à côte ({{folders}}) : choisissez l'un d'eux.",
       "folderMissingFiles": "{{count}} fichiers nommés par le manifeste sont absents du dossier, par exemple {{examples}}. Copiez-les depuis le stockage objet avant de déchiffrer, sinon ces éléments échoueront.",
       "phraseTitle": "2. La phrase de maintenance",
-      "phraseHelp": "Les 24 mots, en français ou en anglais, séparés par des espaces ou des retours à la ligne.",
-      "phraseLabel": "Phrase de maintenance",
-      "phraseCount": "{{count}} mots sur 24",
-      "phraseInvalid": "Cette phrase n'est pas valide : un mot est mal orthographié, ou n'est pas à sa place.",
+      "phraseHelp": "Les 24 mots générés quand le séquestre de maintenance a été mis en place pour ce déploiement (ou pour votre organisation), conservés par ses dépositaires, sur papier, sur un support amovible ou sur une feuille imprimée. Saisissez un mot par case, ou collez la phrase entière dans la première. L'empreinte affichée ensuite doit être celle que le serveur affiche au démarrage pour votre organisation.",
       "fingerprint": "Empreinte de la clé, à comparer avec celle que le serveur affiche au démarrage :",
       "runTitle": "3. Déchiffrer",
-      "run": "Déchiffrer l'export",
+      "runHelpFolder": "Dans un dossier : chaque fichier est écrit dès qu'il est déchiffré, quel que soit le poids de l'export ; choisissez l'emplacement, un nouveau dossier y est créé. Dans une archive .zip : un seul fichier à transporter, construit dans le stockage de ce navigateur s'il en a un, en mémoire sinon.",
+      "runHelpZip": "Ce navigateur ne peut pas écrire dans un dossier (Chrome et Edge le peuvent) : l'export devient une archive .zip, construite dans le stockage du navigateur puis enregistrée où vous le choisissez ; chaque fichier est écrit dès qu'il est déchiffré.",
+      "runFolder": "Déchiffrer dans un dossier…",
+      "runZip": "Déchiffrer dans une archive .zip",
       "running": "Déchiffrement : {{done}} sur {{total}}",
       "summary": "{{ok}} éléments déchiffrés, {{failed}} en échec.",
+      "onlyFailures": "Seulement les éléments non déchiffrés",
+      "pageRange": "Éléments {{from}} à {{to}} sur {{total}}",
+      "previousPage": "Précédents",
+      "nextPage": "Suivants",
       "otherKeys": "{{count}} éléments sont séquestrés pour d'autres clés de maintenance (d'autres organisations). L'archive les contient toujours chiffrés, dans un dossier d'export par clé (other-keys/<empreinte>/), à remettre aux détenteurs de ces clés :",
       "otherKeyGroup": "{{fingerprint}} : {{count}} éléments",
       "otherKey": "Autre clé de maintenance",
       "download": "Télécharger l'export déchiffré (.zip)",
+      "writtenTo": "Écrit dans {{folder}}.",
+      "outputExists": "{{folder}} existe déjà : choisissez un autre emplacement, ou déplacez d'abord ce dossier.",
+      "outputFailed": "L'écriture de l'export déchiffré a échoué : {{error}}",
+      "discardArchive": "Supprimer l'archive de ce navigateur",
+      "archiveInBrowser": "L'archive reste dans le stockage de ce navigateur jusqu'à ce que vous la supprimiez, ou jusqu'à la prochaine ouverture de cette page : supprimez-la une fois enregistrée.",
       "plaintextWarning": "L'archive contient les contenus en clair. Gardez-la sur cet ordinateur ou sur le support amovible qui la rapporte, et supprimez-la une fois importée par l'équipe du produit.",
-      "zipFailed": "L'archive n'a pas pu être construite : {{error}}",
       "columns": {
         "id": "Identifiant",
         "type": "Type",
@@ -572,12 +582,13 @@
       "keyOnly": "Clé seule",
       "preview": "Aperçu",
       "previewTitle": "Aperçu de {{id}}",
-      "previewBinary": "Contenu binaire ({{kind}}), {{size}} octets, commençant par {{head}}",
+      "previewBinary": "Contenu binaire ({{kind}}), {{size}}, commençant par {{head}}",
       "previewTruncated": "Seul le début est affiché.",
+      "previewTooLarge": "{{id}} est trop volumineux pour un aperçu ici ({{size}}) : ouvrez-le depuis l'export déchiffré.",
       "closePreview": "Fermer l'aperçu"
     },
     "generate": {
-      "help": "À faire une fois par clé de maintenance, sur un ordinateur isolé, quand le déploiement active le séquestre de maintenance : en général une clé pour tous les utilisateurs, ou une par organisation sur un déploiement partagé. La phrase est la clé secrète : ne la gardez jamais sur un ordinateur connecté. La clé publique va dans la variable MAINTENANCE_ESCROW_KEYS du serveur, avec les domaines de messagerie qu'elle couvre (« * » pour tous les utilisateurs).",
+      "help": "À faire une fois par clé de maintenance, sur un ordinateur isolé, quand le déploiement active le séquestre de maintenance : en général une clé pour tous les utilisateurs, ou une par organisation sur un déploiement partagé. La phrase est la clé secrète : ne la gardez jamais sur un ordinateur connecté. Remettez la clé publique à l'équipe qui exploite le déploiement : elle l'ajoute à la variable MAINTENANCE_ESCROW_KEYS du serveur, avec les domaines de messagerie qu'elle couvre (« * » pour tous les utilisateurs).",
       "wordlist": "Mots en",
       "french": "français",
       "english": "anglais",
@@ -595,6 +606,18 @@
       "publicKeyTitle": "La clé publique (pour MAINTENANCE_ESCROW_KEYS)",
       "downloadPublicKey": "Télécharger la clé publique (.txt)",
       "fingerprint": "Empreinte : une fois le serveur lancé avec cette clé, son journal de démarrage affiche les mêmes chiffres à côté des domaines de l'organisation."
+    },
+    "publicKey": {
+      "help": "Pour les dépositaires qui détiennent une phrase mais n'ont plus sa clé publique, afin de la remettre à l'équipe qui exploite le déploiement. La clé publique n'est pas secrète ; la phrase, si.",
+      "title": "La clé publique de cette phrase"
+    },
+    "phrase": {
+      "label": "Phrase de maintenance",
+      "word": "Mot {{number}}",
+      "count": "{{count}} mots sur 24",
+      "clear": "Effacer",
+      "unknownWords": "Pas un mot de la liste française ou anglaise : mot {{numbers}}. Vérifiez l'orthographe sur la feuille.",
+      "invalid": "Chaque mot existe, mais la phrase n'est pas cohérente : un mot est faux ou n'est pas à sa place."
     },
     "previewKinds": {
       "pdf": "document PDF",

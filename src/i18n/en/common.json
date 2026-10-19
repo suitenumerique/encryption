@@ -537,7 +537,8 @@
     "language": "Language",
     "tabs": {
       "decrypt": "Decrypt an export",
-      "generate": "Generate a maintenance key"
+      "generate": "Generate a maintenance key",
+      "publicKey": "Find a phrase's public key"
     },
     "decrypt": {
       "folderTitle": "1. The export folder",
@@ -545,23 +546,32 @@
       "folderButton": "Choose the export folder",
       "folderSummary": "{{folder}}: {{items}} items, {{files}} files",
       "folderNoManifest": "No manifest.ndjson in this folder.",
+      "folderSeveralExports": "This folder holds several exports side by side ({{folders}}): pick one of them.",
       "folderMissingFiles": "{{count}} files named by the manifest are not in the folder, such as {{examples}}. Copy them from the object storage before decrypting, or those items will fail.",
       "phraseTitle": "2. The maintenance phrase",
-      "phraseHelp": "The 24 words, in French or English, separated by spaces or line breaks.",
-      "phraseLabel": "Maintenance phrase",
-      "phraseCount": "{{count}} words out of 24",
-      "phraseInvalid": "This phrase is not valid: a word is misspelled, or not in the right place.",
+      "phraseHelp": "The 24 words generated when the maintenance escrow was set up for this deployment (or for your organization), kept by its custodians, on paper, a drive or a printed sheet. Type one word per box, or paste the whole phrase into the first box. The fingerprint shown below must match the one the server logs at startup for your organization.",
       "fingerprint": "Key fingerprint, to compare with the one the server logs at startup:",
       "runTitle": "3. Decrypt",
-      "run": "Decrypt the export",
+      "runHelpFolder": "Into a folder: each file is written as soon as it is decrypted, whatever the export weighs; pick where, and a new folder is created there. Into a .zip archive: one file to carry, built in this browser's storage when it has some, in memory otherwise.",
+      "runHelpZip": "This browser cannot write into a folder (Chrome and Edge can), so the export becomes a .zip archive, built in this browser's storage and then saved where you choose: each file is written as soon as it is decrypted.",
+      "runFolder": "Decrypt into a folder…",
+      "runZip": "Decrypt into a .zip archive",
       "running": "Decrypting: {{done}} of {{total}}",
       "summary": "{{ok}} items decrypted, {{failed}} failed.",
+      "onlyFailures": "Only the items not decrypted",
+      "pageRange": "Items {{from}} to {{to}} of {{total}}",
+      "previousPage": "Previous",
+      "nextPage": "Next",
       "otherKeys": "{{count}} items are escrowed for other maintenance keys (other organizations). The archive holds them still encrypted, one export folder per key (other-keys/<fingerprint>/), to hand to those keys' custodians:",
       "otherKeyGroup": "{{fingerprint}}: {{count}} items",
       "otherKey": "Another maintenance key",
       "download": "Download the decrypted export (.zip)",
+      "writtenTo": "Written to {{folder}}.",
+      "outputExists": "{{folder}} already exists: choose another place, or move that folder away first.",
+      "outputFailed": "Writing the decrypted export failed: {{error}}",
+      "discardArchive": "Delete the archive from this browser",
+      "archiveInBrowser": "The archive stays in this browser's storage until you delete it, or until this page is opened again: delete it once saved.",
       "plaintextWarning": "The archive holds the content in plaintext. Keep it on this computer or the removable drive it goes back on, and delete it once the product team has imported it.",
-      "zipFailed": "The archive could not be built: {{error}}",
       "columns": {
         "id": "Id",
         "type": "Type",
@@ -572,12 +582,13 @@
       "keyOnly": "Key only",
       "preview": "Preview",
       "previewTitle": "Preview of {{id}}",
-      "previewBinary": "Binary content ({{kind}}), {{size}} bytes, starting with {{head}}",
+      "previewBinary": "Binary content ({{kind}}), {{size}}, starting with {{head}}",
       "previewTruncated": "Only the beginning is shown.",
+      "previewTooLarge": "{{id}} is too large to preview here ({{size}}): open it from the decrypted export.",
       "closePreview": "Close the preview"
     },
     "generate": {
-      "help": "Run this once per maintenance key, on an isolated computer, when the deployment enables the maintenance escrow: usually one key for every user, or one per organization on a shared deployment. The phrase is the secret key: never keep it on a connected computer. The public key goes into the server's MAINTENANCE_ESCROW_KEYS, with the email domains it covers (\"*\" for every user).",
+      "help": "Run this once per maintenance key, on an isolated computer, when the deployment enables the maintenance escrow: usually one key for every user, or one per organization on a shared deployment. The phrase is the secret key: never keep it on a connected computer. Hand the public key to the team that runs the deployment: they add it to the server's MAINTENANCE_ESCROW_KEYS, with the email domains it covers (\"*\" for every user).",
       "wordlist": "Words in",
       "french": "French",
       "english": "English",
@@ -595,6 +606,18 @@
       "publicKeyTitle": "The public key (for MAINTENANCE_ESCROW_KEYS)",
       "downloadPublicKey": "Download the public key (.txt)",
       "fingerprint": "Fingerprint: once the server runs with this key, its startup log shows the same digits beside the organization's domains."
+    },
+    "publicKey": {
+      "help": "For custodians who hold a phrase but no longer have its public key, to hand it again to the team that runs the deployment. The public key is not secret; the phrase is.",
+      "title": "The public key of this phrase"
+    },
+    "phrase": {
+      "label": "Maintenance phrase",
+      "word": "Word {{number}}",
+      "count": "{{count}} words out of 24",
+      "clear": "Clear",
+      "unknownWords": "Not a word of the French or English list: word {{numbers}}. Check the spelling against the sheet.",
+      "invalid": "Every word exists, but the phrase does not check out: a word is wrong or not in its place."
     },
     "previewKinds": {
       "pdf": "PDF document",

@@ -3,14 +3,16 @@ import { useTranslation } from 'react-i18next';
 
 import { DecryptPanel } from '@encryption/src/maintenance/tool/DecryptPanel';
 import { GeneratePanel } from '@encryption/src/maintenance/tool/GeneratePanel';
+import { PublicKeyPanel } from '@encryption/src/maintenance/tool/PublicKeyPanel';
 import '@encryption/src/maintenance/tool/tool.css';
 import { SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 
-type Tab = 'decrypt' | 'generate';
+type Tab = 'decrypt' | 'generate' | 'publicKey';
 
 /**
  * The maintenance tool: one page, opened from a file on an isolated computer, that
- * decrypts a product's export with the maintenance phrase or generates that phrase
+ * decrypts a product's export with a maintenance phrase, generates that phrase, or
+ * gives back the public key of one already held
  * (architecture.md, Appendix E). Plain markup and a small stylesheet rather than the
  * interface's design system, so the single file stays small and readable.
  */
@@ -39,7 +41,7 @@ export function MaintenanceTool({ seed }: { seed?: Uint8Array }) {
       <p className="mt-intro">{t('maintenanceTool.intro')}</p>
 
       <div className="mt-tabs" role="tablist">
-        {(['decrypt', 'generate'] as const).map((name) => (
+        {(['decrypt', 'generate', 'publicKey'] as const).map((name) => (
           <button
             key={name}
             type="button"
@@ -60,6 +62,9 @@ export function MaintenanceTool({ seed }: { seed?: Uint8Array }) {
       </div>
       <div role="tabpanel" id="mt-tabpanel-generate" aria-labelledby="mt-tab-generate" hidden={tab !== 'generate'}>
         <GeneratePanel seed={seed} />
+      </div>
+      <div role="tabpanel" id="mt-tabpanel-publicKey" aria-labelledby="mt-tab-publicKey" hidden={tab !== 'publicKey'}>
+        <PublicKeyPanel />
       </div>
     </main>
   );

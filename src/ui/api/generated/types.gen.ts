@@ -400,31 +400,26 @@ export type PostApiPublicKeysRegisterCompleteResponses = {
 
 export type PostApiPublicKeysRegisterCompleteResponse = PostApiPublicKeysRegisterCompleteResponses[keyof PostApiPublicKeysRegisterCompleteResponses];
 
-export type GetApiMaintenanceEscrowAssignmentsData = {
+export type GetApiMaintenanceEscrowAssignmentData = {
   body?: never;
   path?: never;
   query?: {
-    user_ids?: string | Array<string>;
-    subs?: string | Array<string>;
+    user_id?: string;
+    sub?: string;
   };
-  url: '/api/maintenance-escrow/assignments';
+  url: '/api/maintenance-escrow/assignment';
 };
 
-export type GetApiMaintenanceEscrowAssignmentsResponses = {
+export type GetApiMaintenanceEscrowAssignmentResponses = {
   /**
    * Default Response
    */
   200: {
-    assignments: Array<{
-      user_id: string;
-      sub?: string;
-      key_fingerprint: string | null;
-    }>;
+    key_fingerprint: string | null;
   };
 };
 
-export type GetApiMaintenanceEscrowAssignmentsResponse =
-  GetApiMaintenanceEscrowAssignmentsResponses[keyof GetApiMaintenanceEscrowAssignmentsResponses];
+export type GetApiMaintenanceEscrowAssignmentResponse = GetApiMaintenanceEscrowAssignmentResponses[keyof GetApiMaintenanceEscrowAssignmentResponses];
 
 export type GetApiVaultMetaData = {
   body?: never;

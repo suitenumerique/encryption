@@ -9,7 +9,7 @@ import type {
   GetApiEmergencyAccessPendingResponses,
   GetApiEmergencyAccessSearchResponses,
   GetApiEmergencyAccessTrustedResponses,
-  GetApiMaintenanceEscrowAssignmentsResponses,
+  GetApiMaintenanceEscrowAssignmentResponses,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdResponses,
   GetApiPublicKeysNextResponses,
@@ -389,20 +389,20 @@ export function handlePostApiPublicKeysRegisterComplete(
   );
 }
 
-export type HandleGetApiMaintenanceEscrowAssignmentsResponse = {
-  body: GetApiMaintenanceEscrowAssignmentsResponses[200];
+export type HandleGetApiMaintenanceEscrowAssignmentResponse = {
+  body: GetApiMaintenanceEscrowAssignmentResponses[200];
   status?: 200;
 };
 
 /**
- * Handler for the `GET /api/maintenance-escrow/assignments` operation.
+ * Handler for the `GET /api/maintenance-escrow/assignment` operation.
  */
-export function handleGetApiMaintenanceEscrowAssignments(
-  response?: HandleGetApiMaintenanceEscrowAssignmentsResponse | HttpResponseResolver<never, never>,
+export function handleGetApiMaintenanceEscrowAssignment(
+  response?: HandleGetApiMaintenanceEscrowAssignmentResponse | HttpResponseResolver<never, never>,
   options?: RequestHandlerOptions
 ): HttpHandler {
   return http.get<never, never>(
-    `${options?.baseUrl ?? '*'}/api/maintenance-escrow/assignments`,
+    `${options?.baseUrl ?? '*'}/api/maintenance-escrow/assignment`,
     (info) => {
       if (typeof response === 'function') {
         return response(info);
@@ -1477,9 +1477,9 @@ export type MswHandlerFactories = {
    */
   postApiPublicKeysRegisterComplete: typeof handlePostApiPublicKeysRegisterComplete;
   /**
-   * Handler for the `GET /api/maintenance-escrow/assignments` operation.
+   * Handler for the `GET /api/maintenance-escrow/assignment` operation.
    */
-  getApiMaintenanceEscrowAssignments: typeof handleGetApiMaintenanceEscrowAssignments;
+  getApiMaintenanceEscrowAssignment: typeof handleGetApiMaintenanceEscrowAssignment;
   /**
    * Handler for the `GET /api/vault/meta` operation.
    */
@@ -1610,7 +1610,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     getApiPublicKeysNext: wrap(handleGetApiPublicKeysNext),
     postApiPublicKeysRegisterInit: wrap(handlePostApiPublicKeysRegisterInit),
     postApiPublicKeysRegisterComplete: wrap(handlePostApiPublicKeysRegisterComplete),
-    getApiMaintenanceEscrowAssignments: wrap(handleGetApiMaintenanceEscrowAssignments),
+    getApiMaintenanceEscrowAssignment: wrap(handleGetApiMaintenanceEscrowAssignment),
     getApiVaultMeta: wrap(handleGetApiVaultMeta),
     getApiVaultRevision: wrap(handleGetApiVaultRevision),
     getApiVaultItems: wrap(handleGetApiVaultItems),
@@ -1661,7 +1661,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
       invoke(pick.postApiAuthToken, overrides.postApiAuthToken),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),
-      invoke(pick.getApiMaintenanceEscrowAssignments, overrides.getApiMaintenanceEscrowAssignments),
+      invoke(pick.getApiMaintenanceEscrowAssignment, overrides.getApiMaintenanceEscrowAssignment),
       invoke(pick.getApiVaultMeta, overrides.getApiVaultMeta),
       invoke(pick.getApiVaultRevision, overrides.getApiVaultRevision),
       invoke(pick.getApiVaultItems, overrides.getApiVaultItems),

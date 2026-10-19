@@ -3,8 +3,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { type MaintenanceKeyPair, encryptContent, generateSymmetricKey, uint8ToBase64, wrapKeyForMaintenance } from '@encryption/src/crypto';
 import { maintenanceKeyIdToFingerprint, maintenanceKeyPairFromPhrase } from '@encryption/src/crypto/maintenance-escrow';
 import { DEV_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
-import { type ExportItem, MANIFEST_FILE, parseManifest } from '@encryption/src/maintenance/export-format';
-import { type ItemResult, decryptedExportEntries, decryptedManifestLine, recoverItems } from '@encryption/src/maintenance/recover';
+import { type ExportItem, parseManifest } from '@encryption/src/maintenance/export-format';
+import { type ItemResult, decryptedManifestLine, recoverItems } from '@encryption/src/maintenance/recover';
 import { sampleOtherOrganizationKey } from '@encryption/src/maintenance/testing';
 import { DOMAIN_CONTENT, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 
@@ -57,6 +57,28 @@ describe('recoverItems', () => {
     expect(results.find((r) => r.item.id === 'folder')).toEqual({ item: expect.anything(), ok: true, plaintext: undefined });
   });
 
+  it('keeps integer ids as integers, and finds a parent named by either type', async () => {
+    const root = await generateSymmetricKey();
+    const items = parseManifest(
+      [
+        { id: 42, maintenanceKey: b64(await wrapKeyForMaintenance(root, maintenance)) },
+        { id: 43, parent: 42, content: b64(await encryptContent(bytes('by integer'), root, DOMAIN_CONTENT)) },
+        { id: 44, parent: '42', content: b64(await encryptContent(bytes('by string'), root, DOMAIN_CONTENT)) },
+      ]
+        .map((item) => JSON.stringify(item))
+        .join('\n')
+    );
+
+    const results = await collect(items);
+
+    expect(outcome(results)).toMatchObject({ 43: 'by integer', 44: 'by string' });
+    expect(results.map((result) => JSON.stringify(decryptedManifestLine(result)))).toEqual([
+      '{"id":42}',
+      `{"id":43,"parent":42,"content":"${b64(bytes('by integer'))}"}`,
+      `{"id":44,"parent":"42","content":"${b64(bytes('by string'))}"}`,
+    ]);
+  });
+
   it('reports each broken item on its own and keeps going', async () => {
     const root = await generateSymmetricKey();
     const maintenanceKey = b64(await wrapKeyForMaintenance(root, maintenance));
@@ -104,29 +126,6 @@ describe("another organization's items", () => {
       { item: expect.objectContaining({ id: 'their-comment' }), ok: false, otherKey: fingerprint, error: expect.any(String) },
     ]);
   });
-
-  it('come back still encrypted, files included, as one export folder per key', async () => {
-    async function* results(): AsyncGenerator<ItemResult> {
-      yield { item: { id: 'd', type: 'document', maintenanceKey: 'AAAA' } as ExportItem, ok: true };
-      yield { item: { id: 'x', maintenanceKey: 'BBBB', title: 'Theirs' } as ExportItem, ok: false, error: 'elsewhere', otherKey: '1234' };
-      yield { item: { id: 'y', parent: 'x', file: 'att/y' } as ExportItem, ok: false, error: 'elsewhere', otherKey: '1234' };
-    }
-
-    const entries = [];
-
-    for await (const entry of decryptedExportEntries(results(), async (path) => (path === 'att/y' ? bytes('sealed') : undefined))) {
-      entries.push({ path: entry.path, text: new TextDecoder().decode(entry.data) });
-    }
-
-    expect(entries).toEqual([
-      { path: 'other-keys/1234/att/y', text: 'sealed' },
-      {
-        path: `other-keys/1234/${MANIFEST_FILE}`,
-        text: '{"id":"x","maintenanceKey":"BBBB","title":"Theirs"}\n{"id":"y","parent":"x","file":"att/y"}\n',
-      },
-      { path: MANIFEST_FILE, text: '{"id":"d","type":"document"}\n' },
-    ]);
-  });
 });
 
 describe('the decrypted export', () => {
@@ -137,22 +136,5 @@ describe('the decrypted export', () => {
     expect(decryptedManifestLine({ item, ok: true, plaintext: bytes('hi') })).toEqual({ id: 'd', type: 'document', title: 'Notes', content: 'aGk=' });
     expect(decryptedManifestLine({ item: child, ok: true, plaintext: bytes('hi') })).toEqual({ id: 'f', parent: 'd', file: 'att/f' });
     expect(decryptedManifestLine({ item: child, ok: false, error: 'nope' })).toEqual({ id: 'f', parent: 'd', error: 'nope' });
-  });
-
-  it('writes the files first and the manifest last, with every result in it', async () => {
-    async function* results(): AsyncGenerator<ItemResult> {
-      yield { item: { id: 'f', parent: 'd', file: 'att/f' } as ExportItem, ok: true, plaintext: bytes('file') };
-      yield { item: { id: 'g', parent: 'd', file: 'att/g' } as ExportItem, ok: false, error: 'nope' };
-    }
-
-    const entries = [];
-
-    for await (const entry of decryptedExportEntries(results(), async () => undefined))
-      entries.push({ path: entry.path, text: new TextDecoder().decode(entry.data) });
-
-    expect(entries).toEqual([
-      { path: 'att/f', text: 'file' },
-      { path: MANIFEST_FILE, text: '{"id":"f","parent":"d","file":"att/f"}\n{"id":"g","parent":"d","error":"nope"}\n' },
-    ]);
   });
 });

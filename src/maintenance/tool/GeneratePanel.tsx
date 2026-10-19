@@ -8,6 +8,7 @@ import {
   maintenanceKeyPairFromPhrase,
 } from '@encryption/src/crypto/maintenance-escrow';
 import { type MnemonicLanguage, mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
+import { PublicKeyView } from '@encryption/src/maintenance/tool/PublicKeyView';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
 interface Generated {
@@ -15,7 +16,6 @@ interface Generated {
   publicKey: string;
   fingerprint: string;
   generatedAt: Date;
-  publicKeyUrl: string;
   phraseUrl: string;
 }
 
@@ -32,7 +32,6 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
     () => () => {
       if (!generated) return;
 
-      URL.revokeObjectURL(generated.publicKeyUrl);
       URL.revokeObjectURL(generated.phraseUrl);
     },
     [generated]
@@ -63,7 +62,6 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
       publicKey,
       fingerprint,
       generatedAt,
-      publicKeyUrl: URL.createObjectURL(new Blob([`${publicKey}\n`], { type: 'text/plain' })),
       phraseUrl: URL.createObjectURL(new Blob([phraseFile(words, fingerprint, generatedAt)], { type: 'text/plain' })),
     });
   };
@@ -133,22 +131,7 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
               </p>
             )}
           </section>
-          <section className="mt-step">
-            <h2>{t('maintenanceTool.generate.publicKeyTitle')}</h2>
-            <textarea
-              className="mt-public-key"
-              readOnly
-              rows={6}
-              value={generated.publicKey}
-              aria-label={t('maintenanceTool.generate.publicKeyTitle')}
-            />
-            <a className="mt-button" href={generated.publicKeyUrl} download="maintenance-public-key.txt">
-              {t('maintenanceTool.generate.downloadPublicKey')}
-            </a>
-            <p className="mt-status">
-              {t('maintenanceTool.generate.fingerprint')} <code className="mt-fingerprint">{formatDecimalFingerprint(generated.fingerprint)}</code>
-            </p>
-          </section>
+          <PublicKeyView title={t('maintenanceTool.generate.publicKeyTitle')} publicKey={generated.publicKey} fingerprint={generated.fingerprint} />
         </>
       )}
     </div>

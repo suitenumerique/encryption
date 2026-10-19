@@ -17,8 +17,8 @@ import type {
   GetApiEmergencyAccessSearchResponses,
   GetApiEmergencyAccessTrustedData,
   GetApiEmergencyAccessTrustedResponses,
-  GetApiMaintenanceEscrowAssignmentsData,
-  GetApiMaintenanceEscrowAssignmentsResponses,
+  GetApiMaintenanceEscrowAssignmentData,
+  GetApiMaintenanceEscrowAssignmentResponses,
   GetApiPublicKeysByUserIdContinuityData,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdData,
@@ -190,11 +190,11 @@ export const postApiPublicKeysRegisterComplete = <ThrowOnError extends boolean =
     },
   });
 
-export const getApiMaintenanceEscrowAssignments = <ThrowOnError extends boolean = false>(
-  options?: Options<GetApiMaintenanceEscrowAssignmentsData, ThrowOnError>
-): RequestResult<GetApiMaintenanceEscrowAssignmentsResponses, unknown, ThrowOnError> =>
-  (options?.client ?? client).get<GetApiMaintenanceEscrowAssignmentsResponses, unknown, ThrowOnError>({
-    url: '/api/maintenance-escrow/assignments',
+export const getApiMaintenanceEscrowAssignment = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiMaintenanceEscrowAssignmentData, ThrowOnError>
+): RequestResult<GetApiMaintenanceEscrowAssignmentResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiMaintenanceEscrowAssignmentResponses, unknown, ThrowOnError>({
+    url: '/api/maintenance-escrow/assignment',
     ...options,
   });
 

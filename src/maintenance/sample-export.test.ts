@@ -12,17 +12,18 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { maintenanceKeyIdToFingerprint, maintenanceKeyPairFromPhrase } from '@encryption/src/crypto/maintenance-escrow';
 import { DEV_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
-import { MANIFEST_FILE, parseManifest } from '@encryption/src/maintenance/export-format';
-import { OTHER_KEYS_FOLDER, decryptedExportEntries, recoverItems } from '@encryption/src/maintenance/recover';
+import { MANIFEST_FILE, OTHER_KEYS_FOLDER, parseManifest } from '@encryption/src/maintenance/export-format';
+import { memorySpool, writeDecryptedExport, zipSink } from '@encryption/src/maintenance/export-writer';
+import { recoverItems } from '@encryption/src/maintenance/recover';
 import {
   SAMPLE_FILES,
   SAMPLE_IDS,
   SAMPLE_OTHER_ORGANIZATION_PHRASE,
   SAMPLE_PLAINTEXTS,
+  memoryFile,
   readZip,
   sampleOtherOrganizationKey,
 } from '@encryption/src/maintenance/testing';
-import { ZipWriter } from '@encryption/src/maintenance/zip';
 
 const SAMPLE_EXPORT = resolve(import.meta.dirname, 'sample-export');
 
@@ -48,11 +49,15 @@ async function runTool(phrase: string, folder: Map<string, Uint8Array>): Promise
   const key = await maintenanceKeyPairFromPhrase(phrase);
   const items = parseManifest(new TextDecoder().decode(folder.get(MANIFEST_FILE)));
   const readFile = async (path: string) => folder.get(path);
-  const zip = new ZipWriter();
+  const output = memoryFile();
 
-  for await (const entry of decryptedExportEntries(recoverItems(key, items, readFile), readFile)) zip.add(entry.path, entry.data);
+  await writeDecryptedExport(
+    recoverItems(key, items, readFile),
+    readFile,
+    zipSink(output, async () => memorySpool())
+  );
 
-  const archive = new Uint8Array(await new Blob(zip.finish() as BlobPart[]).arrayBuffer());
+  const archive = output.bytes();
 
   return new Map(readZip(archive).map((entry) => [entry.name, entry.data]));
 }

@@ -16,7 +16,7 @@
  * a user's copy can never be accepted as each other, behind a header naming the
  * key it was made for:
  *
- *   [version:1][keyId:16][X-Wing wrap, keyId bound as associated data]
+ *   [version:1][keyId:16][X-Wing wrap]
  *
  * The key id is the 128 bits the key's fingerprint writes in digits, so a copy
  * says which custodians can open it (the tool sets aside another organization's
@@ -106,7 +106,7 @@ export async function importMaintenancePublicKey(base64: string): Promise<Mainte
 }
 
 export async function wrapKeyForMaintenance(symmetricKey: Uint8Array, key: MaintenancePublicKey): Promise<Uint8Array> {
-  const { maintenance } = await encryptSymmetricKeyForUsers(symmetricKey, { maintenance: key.publicKey }, DOMAIN_KEM_MAINTENANCE_KEY, [key.keyId]);
+  const { maintenance } = await encryptSymmetricKeyForUsers(symmetricKey, { maintenance: key.publicKey }, DOMAIN_KEM_MAINTENANCE_KEY);
   const copy = new Uint8Array(COPY_HEADER_BYTES + maintenance.length);
 
   copy[0] = MAINTENANCE_COPY_VERSION;
@@ -132,8 +132,11 @@ export function readMaintenanceCopyKeyId(copy: Uint8Array): Uint8Array {
 /**
  * Open a copy with the custodians' key. A copy made for another key fails with
  * OTHER_MAINTENANCE_KEY before any decryption, naming that key's fingerprint; a
- * copy that names this key but does not open is damaged (WRONG_SECRET_KEY, or a
- * header rewritten to name this key, which the associated data catches).
+ * copy that names this key but does not open is damaged, or relabelled: the id is
+ * a routing hint, and naming this key does not make another key's copy open
+ * (WRONG_SECRET_KEY either way). Binding it into the wrap would add nothing, since
+ * anyone who can rewrite the header can replace the whole copy with one wrapped
+ * for any public key.
  */
 export async function unwrapMaintenanceKey(key: { secretKey: HybridSecretKey; keyId: Uint8Array }, copy: Uint8Array): Promise<Uint8Array> {
   const keyId = readMaintenanceCopyKeyId(copy);
@@ -143,7 +146,7 @@ export async function unwrapMaintenanceKey(key: { secretKey: HybridSecretKey; ke
     throw new VaultError(VaultErrorCode.OTHER_MAINTENANCE_KEY, `Escrowed for the maintenance key ${maintenanceKeyIdToFingerprint(keyId)}`);
   }
 
-  return decryptSymmetricKeyForUser(key.secretKey, copy.slice(COPY_HEADER_BYTES), DOMAIN_KEM_MAINTENANCE_KEY, [keyId]);
+  return decryptSymmetricKeyForUser(key.secretKey, copy.slice(COPY_HEADER_BYTES), DOMAIN_KEM_MAINTENANCE_KEY);
 }
 
 // ============================================================================

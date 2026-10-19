@@ -24,6 +24,12 @@ describe('openExportFolder', () => {
     expect(await folder?.readFile('../notes.txt')).toBeUndefined();
   });
 
+  it('refuses to guess between two exports picked side by side', async () => {
+    await expect(openExportFolder(picked({ 'usb/docs/manifest.ndjson': '{}', 'usb/drive/manifest.ndjson': '{}' }))).rejects.toMatchObject({
+      folders: ['usb/docs', 'usb/drive'],
+    });
+  });
+
   it('says there is nothing to open without a manifest', async () => {
     expect(await openExportFolder(picked({ 'export/blob': 'x' }))).toBeNull();
   });

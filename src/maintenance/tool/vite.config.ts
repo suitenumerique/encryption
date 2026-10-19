@@ -11,6 +11,23 @@ const configDir = import.meta.dirname;
  * output is the one file operators carry to an isolated computer and open from
  * disk (see single-file.ts for the policy it gets).
  */
+/** In development, the server root opens the tool, which is the only page there is. */
+function openToolAtRoot(): Plugin {
+  return {
+    name: 'maintenance-tool-root',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        if (request.url !== '/') return next();
+
+        response.statusCode = 302;
+        response.setHeader('Location', '/maintenance-tool.html');
+        response.end();
+      });
+    },
+  };
+}
+
 function singleFile(): Plugin {
   return {
     name: 'maintenance-tool-single-file',
@@ -41,7 +58,17 @@ export default defineConfig({
   root: configDir,
   // Relative URLs: the page is opened from a file, never served from a root.
   base: './',
-  plugins: [react(), singleFile()],
+  plugins: [react(), singleFile(), openToolAtRoot()],
+  // `npm run dev:maintenance`: the tool with hot reload while working on it. Served,
+  // so without the policy the build folds in; the built file is what operators get.
+  server: {
+    // IPv4 loopback, not Vite's default `localhost`, which Node resolves to ::1 only:
+    // a development VM forwards the guest's 127.0.0.1 ports to the host, not ::1.
+    host: '127.0.0.1',
+    port: 7210,
+    strictPort: true,
+    open: false,
+  },
   build: {
     outDir: resolve(configDir, '../../../dist/maintenance'),
     emptyOutDir: true,

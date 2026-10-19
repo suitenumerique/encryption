@@ -33,6 +33,12 @@ export function contentSecurityPolicy(script: string, style: string): string {
  */
 export function inlineIntoHtml(html: string, script: string, style: string): string {
   const safeScript = script.replace(/<\/(script)/gi, '<\\/$1');
+
+  // After a `<!--`, a `<script` puts the HTML parser in a state where the closing
+  // tag no longer ends the element, and no rewrite of it is read identically by
+  // JavaScript in every context (a u-flag regular expression, String.raw...). No
+  // bundle has one today: refuse it, so a dependency adding one fails the build.
+  if (script.includes('<!--')) throw new Error("The tool's script contains `<!--`, which can keep the HTML parser from closing it");
   const scriptTags = html.match(/<script\b[^>]*\bsrc="[^"]*"[^>]*><\/script>/g) ?? [];
   const styleTags = html.match(/<link\b[^>]*\brel="stylesheet"[^>]*>/g) ?? [];
 

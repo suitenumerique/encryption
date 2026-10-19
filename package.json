@@ -9,7 +9,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others -c \"auto\" \"npm:dev:server\" \"npm:dev:client\" \"npm:dev:demo:product-a\" \"npm:dev:demo:product-b\" \"npm:dev:storybook\"",
+    "dev": "concurrently --kill-others -c \"auto\" \"npm:dev:server\" \"npm:dev:client\" \"npm:dev:demo:product-a\" \"npm:dev:demo:product-b\" \"npm:dev:storybook\" \"npm:dev:maintenance\"",
     "dev:product": "concurrently --kill-others -c \"auto\" \"npm:dev:server:product\" \"npm:dev:client\"",
     "dev:client": "vite build --watch --config src/client/vite.config.ts",
     "dev:server": "dotenv-run-script .env.test -- dev:server:unsecure",
@@ -18,6 +18,7 @@
     "dev:demo:product-a": "DEMO_PORT=7201 vite --config src/demo/vite.config.ts",
     "dev:demo:product-b": "DEMO_PORT=7202 vite --config src/demo/vite.config.ts",
     "dev:storybook": "storybook dev -p 7204 --no-open",
+    "dev:maintenance": "vite --config src/maintenance/tool/vite.config.ts",
     "css:types": "tsx src/build/css-module-types.ts",
     "stack:resolve": "tsx src/build/resolve-stack.ts",
     "build:storybook": "storybook build",

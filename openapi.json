@@ -902,43 +902,27 @@
         }
       }
     },
-    "/api/maintenance-escrow/assignments": {
+    "/api/maintenance-escrow/assignment": {
       "get": {
         "parameters": [
           {
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              ]
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
             },
             "in": "query",
-            "name": "user_ids",
+            "name": "user_id",
             "required": false
           },
           {
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              ]
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
             },
             "in": "query",
-            "name": "subs",
+            "name": "sub",
             "required": false
           }
         ],
@@ -950,31 +934,12 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "assignments": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "user_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                          },
-                          "sub": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "key_fingerprint": {
-                            "nullable": true,
-                            "type": "string"
-                          }
-                        },
-                        "required": ["user_id", "key_fingerprint"],
-                        "additionalProperties": false
-                      }
+                    "key_fingerprint": {
+                      "nullable": true,
+                      "type": "string"
                     }
                   },
-                  "required": ["assignments"],
+                  "required": ["key_fingerprint"],
                   "additionalProperties": false
                 }
               }

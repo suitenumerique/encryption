@@ -11,9 +11,11 @@
   --mt-warning: #8a5300;
 
   box-sizing: border-box;
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px 48px;
+  /* The whole window: the results table and a side preview use the width, and the
+     page is tried at any size by resizing it. Prose keeps a readable measure below. */
+  min-height: 100vh;
+  margin: 0;
+  padding: 24px clamp(16px, 4vw, 48px) 48px;
   color: var(--mt-text);
   background: var(--mt-background);
   font-family:
@@ -70,6 +72,7 @@ body {
 
 .mt-intro,
 .mt-help {
+  max-width: 80ch;
   color: var(--mt-muted);
 }
 
@@ -81,20 +84,28 @@ body {
 }
 
 .mt-tabs button {
-  padding: 8px 16px;
+  margin-bottom: -1px;
+  padding: 10px 18px;
   border: 1px solid transparent;
-  border-bottom: none;
+  border-bottom: 3px solid transparent;
   border-radius: 6px 6px 0 0;
   background: none;
-  color: inherit;
+  color: var(--mt-muted);
   font: inherit;
   cursor: pointer;
 }
 
+.mt-tabs button:hover {
+  color: var(--mt-text);
+}
+
+/* The selected tab: accent text, a thick accent underline, and the page's own
+   background joining the panel below, so it reads as the one open. */
 .mt-tabs button[aria-selected='true'] {
-  border-color: var(--mt-border);
+  border-color: var(--mt-border) var(--mt-border) var(--mt-accent);
   background: var(--mt-surface);
-  font-weight: 600;
+  color: var(--mt-accent);
+  font-weight: 700;
 }
 
 .mt-panel {
@@ -121,6 +132,60 @@ body {
 .mt-label {
   display: block;
   font-weight: 600;
+}
+
+.mt-panel select {
+  padding: 8px 12px;
+  border: 1px solid var(--mt-border);
+  border-radius: 6px;
+  background: var(--mt-background);
+  color: var(--mt-text);
+  font: inherit;
+}
+
+.mt-phrase-input {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.mt-phrase-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 12px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mt-phrase-grid li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mt-phrase-grid label {
+  min-width: 1.6em;
+  color: var(--mt-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mt-phrase-grid input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--mt-border);
+  border-radius: 6px;
+  background: var(--mt-background);
+  color: var(--mt-text);
+  font: inherit;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.mt-phrase-grid input[aria-invalid='true'] {
+  border-color: var(--mt-error);
+  outline: 1px solid var(--mt-error);
 }
 
 .mt-button {
@@ -172,7 +237,6 @@ body {
   text-decoration: none;
 }
 
-.mt-phrase,
 .mt-public-key {
   width: 100%;
   padding: 8px;
@@ -207,6 +271,8 @@ body {
 }
 
 .mt-words {
+  /* One click selects the whole phrase, the numbers left out (they are list markers). */
+  user-select: all;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 4px 16px;
@@ -240,11 +306,48 @@ body {
 }
 
 .mt-preview {
-  margin: 24px 0;
+  width: min(900px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   padding: 16px;
   border: 1px solid var(--mt-border);
   border-radius: 6px;
   background: var(--mt-surface);
+  color: var(--mt-text);
+}
+
+.mt-preview::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
+/* On a wide window the preview is a panel beside the table, which stays usable:
+   another row's preview replaces it without closing it first. */
+.mt-preview-side {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(45vw, 720px);
+  max-height: none;
+  height: 100vh;
+  margin: 0;
+  overflow: auto;
+  border-width: 0 0 0 1px;
+  border-radius: 0;
+  box-shadow: -8px 0 24px rgb(0 0 0 / 15%);
+}
+
+/* The page makes room for it, so no row or button ends up underneath. */
+.mt-page:has(.mt-preview-side[open]) {
+  padding-right: calc(min(45vw, 720px) + 24px);
+}
+
+.mt-pages {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.mt-size,
+.mt-nowrap {
+  white-space: nowrap;
 }
 
 .mt-preview header {
@@ -288,11 +391,28 @@ body {
     visibility: visible;
   }
 
+  @page {
+    margin: 20mm;
+  }
+
   .mt-printable {
     position: absolute;
     inset: 0 auto auto 0;
+    box-sizing: border-box;
     width: 100%;
+    padding: 0 8mm;
     color: #000000;
+  }
+
+  .mt-printable h2 {
+    margin-bottom: 8mm;
+    font-size: 1.4rem;
+  }
+
+  .mt-printable .mt-words {
+    gap: 3mm 8mm;
+    margin: 6mm 0;
+    font-size: 1.2rem;
   }
 
   .mt-print-only {

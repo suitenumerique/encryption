@@ -5,7 +5,15 @@ import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { importMaintenancePublicKey, maintenanceKeyIdToFingerprint, parseMaintenancePublicKey } from '@encryption/src/crypto/maintenance-escrow';
 import i18n from '@encryption/src/i18n';
 import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
-import { SAMPLE_FILES, SAMPLE_IDS, SAMPLE_TEXTS, buildSampleExport, sampleOtherOrganizationKey } from '@encryption/src/maintenance/testing';
+import {
+  SAMPLE_FILES,
+  SAMPLE_IDS,
+  SAMPLE_IMAGE_SIZE,
+  SAMPLE_TEXTS,
+  buildLongExport,
+  buildSampleExport,
+  sampleOtherOrganizationKey,
+} from '@encryption/src/maintenance/testing';
 import { MaintenanceTool } from '@encryption/src/maintenance/tool/MaintenanceTool';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
@@ -25,8 +33,11 @@ export default {
 const Template: StoryFn<ComponentType> = (args) => <MaintenanceTool {...args} />;
 
 // What a folder picker hands over: each file named by its path under the picked folder.
-async function pickSampleExport(canvasElement: HTMLElement, { leaveOut = [] }: { leaveOut?: string[] } = {}): Promise<void> {
-  const files = Object.entries(await buildSampleExport(await importMaintenancePublicKey(DEV_MAINTENANCE_PUBLIC_KEY)))
+async function pickSampleExport(
+  canvasElement: HTMLElement,
+  { leaveOut = [], build = buildSampleExport }: { leaveOut?: string[]; build?: typeof buildSampleExport } = {}
+): Promise<void> {
+  const files = Object.entries(await build(await importMaintenancePublicKey(DEV_MAINTENANCE_PUBLIC_KEY)))
     .filter(([path]) => !leaveOut.includes(path))
     .map(([path, data]) => {
       const file = new File([data as BlobPart], path.split('/').pop() as string);
@@ -39,8 +50,9 @@ async function pickSampleExport(canvasElement: HTMLElement, { leaveOut = [] }: {
   await userEvent.upload(canvasElement.querySelector('input[type="file"]') as HTMLInputElement, files);
 }
 
-async function typePhrase(canvasElement: HTMLElement, phrase: string): Promise<void> {
-  await userEvent.click(within(canvasElement).getByLabelText(i18n.t('maintenanceTool.decrypt.phraseLabel')));
+// The whole phrase pasted into the first box, as from a downloaded file: it spreads over the 24.
+async function typePhrase(canvasElement: HTMLElement, phrase: string, panel = 'mt-decrypt'): Promise<void> {
+  await userEvent.click(canvasElement.querySelector(`#${panel}-word-0`) as HTMLInputElement);
   await userEvent.paste(phrase);
 }
 
@@ -49,7 +61,7 @@ DefaultStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
 
   await canvas.findByRole('heading', { level: 1, name: i18n.t('maintenanceTool.title') });
-  expect(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.run') })).toBeDisabled();
+  expect(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') })).toBeDisabled();
 };
 
 export const Default = prepareStory(DefaultStory);
@@ -64,7 +76,7 @@ DecryptedStory.play = async ({ canvasElement }) => {
   await typePhrase(canvasElement, DEV_MAINTENANCE_PHRASE);
   await canvas.findByText(i18n.t('maintenanceTool.decrypt.fingerprint'), { exact: false });
 
-  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.run') }));
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') }));
   await canvas.findByText(i18n.t('maintenanceTool.decrypt.summary', { ok: 7, failed: 1 }));
   // Another organization's document and its attachment: set aside, not failed.
   expect(canvas.getByText(i18n.t('maintenanceTool.decrypt.otherKeys', { count: 2 }))).toBeVisible();
@@ -76,16 +88,50 @@ DecryptedStory.play = async ({ canvasElement }) => {
       })
     )
   ).toBeVisible();
-  expect(canvas.getByRole('link', { name: i18n.t('maintenanceTool.decrypt.download') })).toHaveAttribute('download', 'export-2026-10-decrypted.zip');
+  expect(await canvas.findByRole('link', { name: i18n.t('maintenanceTool.decrypt.download') })).toHaveAttribute(
+    'download',
+    'export-2026-10-decrypted.zip'
+  );
 
-  const documentRow = canvas.getByRole('row', { name: new RegExp(SAMPLE_IDS.report) });
-
-  await userEvent.click(within(documentRow).getByRole('button', { name: i18n.t('maintenanceTool.decrypt.preview') }));
-  await canvas.findByText(SAMPLE_TEXTS.report, { collapseWhitespace: false, trim: false });
   expect(within(canvas.getByRole('row', { name: new RegExp(SAMPLE_IDS.damaged) })).getByText(/^WRONG_SECRET_KEY: /)).toBeVisible();
+
+  const previewOf = async (id: string) =>
+    userEvent.click(
+      within(canvas.getByRole('row', { name: new RegExp(id) })).getByRole('button', { name: i18n.t('maintenanceTool.decrypt.preview') })
+    );
+
+  await previewOf(SAMPLE_IDS.report);
+  await canvas.findByText(SAMPLE_TEXTS.report, { collapseWhitespace: false, trim: false });
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.closePreview') }));
+
+  // Left open on an image, so the story ends on what a preview looks like.
+  await previewOf(SAMPLE_IDS.logo);
+  await waitFor(() =>
+    expect((canvasElement.querySelector('.mt-preview-image') as HTMLImageElement | null)?.naturalWidth).toBe(SAMPLE_IMAGE_SIZE.width)
+  );
 };
 
 export const Decrypted = prepareStory(DecryptedStory);
+
+const TryItStory = Template.bind({});
+TryItStory.parameters = {
+  docs: {
+    description: {
+      story:
+        'The sample export picked and the development phrase typed, nothing more: click "Decrypt into a .zip archive" (or into a folder), then "Preview" on a row. The Decrypted story plays the same steps by itself.',
+    },
+  },
+};
+TryItStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+
+  await pickSampleExport(canvasElement);
+  await typePhrase(canvasElement, DEV_MAINTENANCE_PHRASE);
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.fingerprint'), { exact: false });
+  expect(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') })).toBeEnabled();
+};
+
+export const TryIt = prepareStory(TryItStory);
 
 const MissingAttachmentStory = Template.bind({});
 MissingAttachmentStory.play = async ({ canvasElement }) => {
@@ -108,11 +154,64 @@ MistypedPhraseStory.play = async ({ canvasElement }) => {
   [words[0], words[1]] = [words[1], words[0]];
   await typePhrase(canvasElement, words.join(' '));
 
-  await canvas.findByText(i18n.t('maintenanceTool.decrypt.phraseInvalid'));
+  await canvas.findByText(i18n.t('maintenanceTool.phrase.invalid'));
   expect(canvas.queryByText(i18n.t('maintenanceTool.decrypt.fingerprint'), { exact: false })).toBeNull();
 };
 
 export const MistypedPhrase = prepareStory(MistypedPhraseStory);
+
+const UnknownWordStory = Template.bind({});
+UnknownWordStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  const words = DEV_MAINTENANCE_PHRASE.split(' ');
+
+  // A misspelled word is flagged in its own box, by its number on the sheet.
+  words[4] = `${words[4]}x`;
+  await typePhrase(canvasElement, words.join(' '));
+
+  await canvas.findByText(i18n.t('maintenanceTool.phrase.unknownWords', { numbers: '5' }));
+  expect(canvasElement.querySelector('#mt-decrypt-word-4')).toHaveAttribute('aria-invalid', 'true');
+  expect(canvasElement.querySelector('#mt-decrypt-word-3')).not.toHaveAttribute('aria-invalid');
+};
+
+export const UnknownWord = prepareStory(UnknownWordStory);
+
+const LongExportStory = Template.bind({});
+LongExportStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+
+  await pickSampleExport(canvasElement, { build: (key) => buildLongExport(key, 249) });
+  await typePhrase(canvasElement, DEV_MAINTENANCE_PHRASE);
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.fingerprint'), { exact: false });
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') }));
+
+  // 250 rows, shown a hundred at a time.
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.pageRange', { from: 1, to: 100, total: 250 }));
+  expect(canvas.getAllByRole('row')).toHaveLength(101);
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.nextPage') }));
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.nextPage') }));
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.pageRange', { from: 201, to: 250, total: 250 }));
+  expect(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.nextPage') })).toBeDisabled();
+
+  await userEvent.click(canvas.getByLabelText(i18n.t('maintenanceTool.decrypt.onlyFailures')));
+  expect(canvas.getAllByRole('row')).toHaveLength(1);
+};
+
+export const LongExport = prepareStory(LongExportStory);
+
+const PublicKeyOfAPhraseStory = Template.bind({});
+PublicKeyOfAPhraseStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+
+  await userEvent.click(canvas.getByRole('tab', { name: i18n.t('maintenanceTool.tabs.publicKey') }));
+  await typePhrase(canvasElement, DEV_MAINTENANCE_PHRASE, 'mt-public-key');
+
+  const publicKey = (await canvas.findByRole('textbox', { name: i18n.t('maintenanceTool.publicKey.title') })) as HTMLTextAreaElement;
+
+  expect(publicKey.value).toBe(DEV_MAINTENANCE_PUBLIC_KEY);
+};
+
+export const PublicKeyOfAPhrase = prepareStory(PublicKeyOfAPhraseStory);
 
 const GeneratedKeyStory = Template.bind({});
 // A fixed seed, so the words and the key shown are the same on every run.
@@ -143,6 +242,10 @@ GeneratedKeyStory.play = async ({ canvasElement }) => {
   expect(canvas.getByRole('link', { name: i18n.t('maintenanceTool.generate.downloadPhrase') })).toHaveAttribute('download', 'maintenance-phrase.txt');
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.generate.printPhrase') }));
   expect(print).toHaveBeenCalledOnce();
+
+  // Handed back, so the buttons work for whoever then clicks them in Storybook.
+  writeText.mockRestore();
+  print.mockRestore();
 };
 
 export const GeneratedKey = prepareStory(GeneratedKeyStory);

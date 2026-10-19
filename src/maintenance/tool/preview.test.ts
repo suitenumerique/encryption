@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SAMPLE_PIXELS } from '@encryption/src/maintenance/testing';
+import { SAMPLE_IMAGES } from '@encryption/src/maintenance/testing';
 import { previewOf } from '@encryption/src/maintenance/tool/preview';
 
 const bytes = (s: string) => new TextEncoder().encode(s);
@@ -12,7 +12,7 @@ describe('previewOf', () => {
   });
 
   it('recognises images by their first bytes', () => {
-    expect(previewOf(SAMPLE_PIXELS.red)).toEqual({ kind: 'image', mime: 'image/png' });
+    expect(previewOf(SAMPLE_IMAGES.red)).toEqual({ kind: 'image', mime: 'image/png' });
     expect(previewOf(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]))).toEqual({ kind: 'image', mime: 'image/jpeg' });
   });
 

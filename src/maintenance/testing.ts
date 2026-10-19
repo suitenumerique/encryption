@@ -8,14 +8,25 @@ import {
 } from '@encryption/src/crypto';
 import { maintenanceKeyPairFromPhrase } from '@encryption/src/crypto/maintenance-escrow';
 import { MANIFEST_FILE } from '@encryption/src/maintenance/export-format';
+import { type DirectoryHandle, type ExportSink, type WritableFile } from '@encryption/src/maintenance/export-writer';
 import { DOMAIN_CONTENT, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 
-// 1x1 PNGs, so attachments are real images a preview shows, at a few bytes each.
-export const SAMPLE_PIXELS = {
-  red: base64ToUint8('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6EBAAMQAS0Qc/Z2AAAAAElFTkSuQmCC'),
-  blue: base64ToUint8('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mNgYJgIAACVAJLm/w0TAAAAAElFTkSuQmCC'),
-  green: base64ToUint8('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOQ63EDAAG8APHZPG7qAAAAAElFTkSuQmCC'),
-  grey: base64ToUint8('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mOoqKgAAALUAWngtuJXAAAAAElFTkSuQmCC'),
+// Solid 96x64 PNGs: real images a preview shows at a glance, at about a hundred bytes each.
+export const SAMPLE_IMAGE_SIZE = { width: 96, height: 64 };
+
+export const SAMPLE_IMAGES = {
+  red: base64ToUint8(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAaUlEQVR42u3QMQ0AAAgDsMmZfz2IwQE3R5MqaKblEAWCBAkSJEiQIEEIEiRIkCBBggQhSJAgQYIECRKEIEGCBAkSJEiQIAQJEiRIkCBBghAkSJAgQYIECUKQIEGCBAkSJEgQggQJEvTPArTwIaXkCnk+AAAAAElFTkSuQmCC'
+  ),
+  blue: base64ToUint8(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAZklEQVR42u3QMQ0AAAjAsPn/cIwDbo4mVdBqOCkQJEiQIEGCBAlCkCBBggQJEiQIQYIECRIkSJAgFAgSJEiQIEGCBCFIkCBBggQJEoQgQYIECRIkSBCCBAkSJEiQIEGCECRIkKB3Fnc+mMTJYghFAAAAAElFTkSuQmCC'
+  ),
+  green: base64ToUint8(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAaUlEQVR42u3QMQ0AAAgDsClBDuoQjQNujiZV0NQ0hygQJEiQIEGCBAlCkCBBggQJEiQIQYIECRIkSJAgBAkSJEiQIEGCBCFIkCBBggQJEoQgQYIECRIkSBCCBAkSJEiQIEGCECRIkKB/FisEgUu5+DTSAAAAAElFTkSuQmCC'
+  ),
+  grey: base64ToUint8(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAZElEQVR42u3QMQEAAAwCIGMb3wa7d0AEUk5RIEiQIEGCBAkShCBBggQJEiRIEIIECRIkSJAgQQgSJEiQIEGCBAlCkCBBggQJEiQIQYIECRIkSJAgBAkSJEiQIEGCBCFIkCBB/wy8scHwrIAwdAAAAABJRU5ErkJggg=='
+  ),
 };
 
 /** Another organization's maintenance phrase, fixed, so its fingerprint is the same on every run and its items can be opened too. */
@@ -54,12 +65,12 @@ export const SAMPLE_PLAINTEXTS: Record<string, Uint8Array> = {
   [ids.report]: text(
     '# Compte rendu du comité de pilotage\n\nLe déploiement continue au premier trimestre. Décision : ouvrir aux directions régionales.\n'
   ),
-  [ids.logo]: SAMPLE_PIXELS.red,
-  [ids.chart]: SAMPLE_PIXELS.blue,
+  [ids.logo]: SAMPLE_IMAGES.red,
+  [ids.chart]: SAMPLE_IMAGES.blue,
   [ids.remark]: text('Penser à joindre le planning détaillé.'),
-  [ids.invoice]: SAMPLE_PIXELS.green,
+  [ids.invoice]: SAMPLE_IMAGES.green,
   [ids.elsewhere]: text("Note de l'autre organisation."),
-  [ids.elsewherePhoto]: SAMPLE_PIXELS.grey,
+  [ids.elsewherePhoto]: SAMPLE_IMAGES.grey,
 };
 
 export const SAMPLE_TEXTS = { report: new TextDecoder().decode(SAMPLE_PLAINTEXTS[ids.report]) };
@@ -154,15 +165,106 @@ export async function buildSampleExport(maintenancePublicKey: MaintenancePublicK
   };
 }
 
-/** Reads an archive the way an unzip tool does: from the end record, through the central directory, to each local header. */
+/** A document with `comments` comments: a long export, to page through. */
+export async function buildLongExport(maintenancePublicKey: MaintenancePublicKey, comments: number): Promise<Record<string, Uint8Array>> {
+  const key = await generateSymmetricKey();
+  const lines: Record<string, string>[] = [
+    { id: 'long-document', type: 'document', maintenanceKey: uint8ToBase64(await wrapKeyForMaintenance(key, maintenancePublicKey)) },
+  ];
+
+  for (let index = 1; index <= comments; index++) {
+    lines.push({
+      id: `comment-${index}`,
+      type: 'comment',
+      parent: 'long-document',
+      content: uint8ToBase64(await encryptContent(text(`Commentaire ${index}`), key, DOMAIN_CONTENT)),
+    });
+  }
+
+  return { [MANIFEST_FILE]: text(`${lines.map((line) => JSON.stringify(line)).join('\n')}\n`) };
+}
+
+/** A sink that keeps the written export in a map, path to bytes: the decrypted folder, to assert on. */
+export function mapSink(): ExportSink & { files: Map<string, Uint8Array> } {
+  const files = new Map<string, Uint8Array>();
+
+  return {
+    files,
+    writeFile: async (path, data) => void files.set(path, data),
+    async openManifest(path) {
+      const lines: string[] = [];
+
+      return {
+        append: async (line) => void lines.push(line),
+        close: async () => void files.set(path, new TextEncoder().encode(lines.map((line) => `${line}\n`).join(''))),
+      };
+    },
+    close: async () => undefined,
+  };
+}
+
+/** A folder in memory with the shape of the File System Access API's handles, flattened to paths. */
+export function memoryDirectory(files = new Map<string, Uint8Array>(), prefix = ''): DirectoryHandle & { files: Map<string, Uint8Array> } {
+  return {
+    files,
+    getDirectoryHandle: async (name) => memoryDirectory(files, `${prefix}${name}/`),
+    getFileHandle: async (name) => ({
+      createWritable: async (): Promise<WritableFile> => {
+        const parts: Uint8Array[] = [];
+
+        return {
+          write: async (data) => void parts.push(data.slice()),
+          close: async () => void files.set(`${prefix}${name}`, Uint8Array.from(parts.flatMap((part) => [...part]))),
+        };
+      },
+    }),
+  };
+}
+
+/** A writable file in memory, its parts kept in order. */
+export function memoryFile(): WritableFile & { bytes(): Uint8Array; closed: boolean } {
+  const parts: Uint8Array[] = [];
+  const file = {
+    closed: false,
+    write: async (data: Uint8Array) => void parts.push(data.slice()),
+    close: async () => void (file.closed = true),
+    bytes: () => {
+      const all = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+      let offset = 0;
+
+      for (const part of parts) {
+        all.set(part, offset);
+        offset += part.length;
+      }
+
+      return all;
+    },
+  };
+
+  return file;
+}
+
+/** Reads an archive the way an unzip tool does: from the end record, through the central directory, to each local header, ZIP64 included. */
 export function readZip(archive: Uint8Array): { name: string; flags: number; crc: number; data: Uint8Array }[] {
   const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
   const end = archive.length - 22;
 
   if (view.getUint32(end, true) !== 0x06054b50) throw new Error('no end of central directory record');
 
-  const count = view.getUint16(end + 10, true);
+  let count = view.getUint16(end + 10, true);
   let cursor = view.getUint32(end + 16, true);
+
+  if (count === 0xffff || cursor === 0xffffffff) {
+    if (view.getUint32(end - 20, true) !== 0x07064b50) throw new Error('no ZIP64 end of central directory locator');
+
+    const record = Number(view.getBigUint64(end - 12, true));
+
+    if (view.getUint32(record, true) !== 0x06064b50) throw new Error('no ZIP64 end of central directory record');
+
+    count = Number(view.getBigUint64(record + 32, true));
+    cursor = Number(view.getBigUint64(record + 48, true));
+  }
+
   const entries = [];
 
   for (let i = 0; i < count; i++) {
@@ -170,18 +272,47 @@ export function readZip(archive: Uint8Array): { name: string; flags: number; crc
 
     const flags = view.getUint16(cursor + 8, true);
     const crc = view.getUint32(cursor + 16, true);
-    const size = view.getUint32(cursor + 24, true);
+    let size = view.getUint32(cursor + 24, true);
     const nameLength = view.getUint16(cursor + 28, true);
-    const offset = view.getUint32(cursor + 42, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    let offset = view.getUint32(cursor + 42, true);
     const name = new TextDecoder().decode(archive.subarray(cursor + 46, cursor + 46 + nameLength));
 
+    // The ZIP64 field carries, in order, only the values set to 0xffffffff above.
+    for (let field = cursor + 46 + nameLength; field < cursor + 46 + nameLength + extraLength; ) {
+      const id = view.getUint16(field, true);
+      const length = view.getUint16(field + 2, true);
+
+      if (id === 0x0001) {
+        let value = field + 4;
+
+        if (size === 0xffffffff) {
+          size = Number(view.getBigUint64(value, true));
+          value += 16;
+        }
+
+        if (offset === 0xffffffff) offset = Number(view.getBigUint64(value, true));
+      }
+
+      field += 4 + length;
+    }
+
     if (view.getUint32(offset, true) !== 0x04034b50) throw new Error(`no local header for ${name}`);
-    if (view.getUint32(offset + 14, true) !== crc) throw new Error(`local and central CRC of ${name} differ`);
 
     const dataStart = offset + 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true);
 
+    // A streamed entry says its CRC in the descriptor after its data, not in its header.
+    const localCrc =
+      flags & 0x0008
+        ? view.getUint32(dataStart + size, true) === 0x08074b50
+          ? view.getUint32(dataStart + size + 4, true)
+          : -1
+        : view.getUint32(offset + 14, true);
+
+    if (localCrc !== crc) throw new Error(`local and central CRC of ${name} differ`);
+
     entries.push({ name, flags, crc, data: archive.slice(dataStart, dataStart + size) });
-    cursor += 46 + nameLength;
+    cursor += 46 + nameLength + extraLength;
   }
 
   return entries;

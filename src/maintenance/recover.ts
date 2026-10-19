@@ -9,8 +9,8 @@
  * An export may mix organizations: a deployment escrows each owner's resources
  * for the key covering their email domain. A root escrowed for another key, and
  * everything under it, is set aside with that key's fingerprint rather than
- * reported as damaged, and handed back still encrypted, as an export of its own
- * for that key's custodians.
+ * reported as damaged; export-writer.ts hands it back still encrypted, as an
+ * export of its own for that key's custodians.
  */
 import {
   base64ToUint8,
@@ -21,7 +21,7 @@ import {
   unwrapMaintenanceKey,
 } from '@encryption/src/crypto';
 import type { HybridSecretKey } from '@encryption/src/crypto';
-import { type ExportItem, MANIFEST_FILE } from '@encryption/src/maintenance/export-format';
+import { type ExportItem, idKey } from '@encryption/src/maintenance/export-format';
 import { DOMAIN_CONTENT, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
@@ -31,9 +31,6 @@ export type ReadExportFile = (path: string) => Promise<Uint8Array | undefined>;
 
 /** `otherKey`: the fingerprint of the maintenance key the item is escrowed for, when it is not this one. */
 export type ItemResult = { item: ExportItem; ok: true; plaintext?: Uint8Array } | { item: ExportItem; ok: false; error: string; otherKey?: string };
-
-/** Where the decrypted export puts the items of other keys: `other-keys/<fingerprint>/`, an export folder each. */
-export const OTHER_KEYS_FOLDER = 'other-keys';
 
 /** A failure's reason, led by the stable code when there is one (libsodium's own messages are not). */
 export function describeError(error: unknown): string {
@@ -50,18 +47,19 @@ class OtherKeyError extends Error {
   }
 }
 
-export async function* recoverItems(
-  key: { secretKey: HybridSecretKey; keyId: Uint8Array },
-  items: ExportItem[],
-  readFile: ReadExportFile
-): AsyncGenerator<ItemResult> {
-  const byId = new Map(items.map((item) => [item.id, item]));
+/**
+ * The recovery of one export: each item on demand, the keys opened once and kept
+ * (a key is 32 bytes, a plaintext can be gigabytes), so the tool can decrypt item
+ * after item without holding the results, and decrypt one again to preview it.
+ */
+export function createRecovery(key: { secretKey: HybridSecretKey; keyId: Uint8Array }, items: ExportItem[], readFile: ReadExportFile) {
+  const byId = new Map(items.map((item) => [idKey(item.id), item]));
   const keys = new Map<string, Promise<Uint8Array>>();
 
   // Memoized, so a document with a thousand attachments is unwrapped once; the
   // chain of ids being resolved catches an export whose parents loop.
   const keyOf = (item: ExportItem, chain: string[] = []): Promise<Uint8Array> => {
-    let itemKey = keys.get(item.id);
+    let itemKey = keys.get(idKey(item.id));
 
     if (!itemKey) {
       itemKey = (async () => {
@@ -79,16 +77,16 @@ export async function* recoverItems(
           }
         }
 
-        const parentId = item.parent as string;
+        const parentId = idKey(item.parent as string | number);
         const parent = byId.get(parentId);
 
         if (!parent) throw new ParentError(`parent ${parentId} is not in the export`);
-        if (chain.includes(parentId)) throw new ParentError(`parents loop: ${[...chain, item.id, parentId].join(' -> ')}`);
+        if (chain.includes(parentId)) throw new ParentError(`parents loop: ${[...chain, idKey(item.id), parentId].join(' -> ')}`);
 
         let parentKey: Uint8Array;
 
         try {
-          parentKey = await keyOf(parent, [...chain, item.id]);
+          parentKey = await keyOf(parent, [...chain, idKey(item.id)]);
         } catch (error) {
           // A child goes where its root goes: set aside with it, or reported with it.
           throw error instanceof ParentError || error instanceof OtherKeyError ? error : new ParentError(`parent ${parentId} could not be opened`);
@@ -96,32 +94,44 @@ export async function* recoverItems(
 
         return item.wrappedKey === undefined ? parentKey : decryptContent(base64ToUint8(item.wrappedKey), parentKey, DOMAIN_WRAPPED_KEY);
       })();
-      keys.set(item.id, itemKey);
+      keys.set(idKey(item.id), itemKey);
     }
 
     return itemKey;
   };
 
-  for (const item of items) {
-    try {
-      const itemKey = await keyOf(item);
-      let ciphertext: Uint8Array | undefined;
+  return {
+    async recover(item: ExportItem): Promise<ItemResult> {
+      try {
+        const itemKey = await keyOf(item);
+        let ciphertext: Uint8Array | undefined;
 
-      if (item.content !== undefined) {
-        ciphertext = base64ToUint8(item.content);
-      } else if (item.file !== undefined) {
-        ciphertext = await readFile(item.file);
+        if (item.content !== undefined) {
+          ciphertext = base64ToUint8(item.content);
+        } else if (item.file !== undefined) {
+          ciphertext = await readFile(item.file);
 
-        if (!ciphertext) throw new Error(`file ${item.file} is not in the export folder`);
+          if (!ciphertext) throw new Error(`file ${item.file} is not in the export folder`);
+        }
+
+        return { item, ok: true, plaintext: ciphertext && (await decryptContent(ciphertext, itemKey, DOMAIN_CONTENT)) };
+      } catch (error) {
+        return error instanceof OtherKeyError
+          ? { item, ok: false, error: error.message, otherKey: error.fingerprint }
+          : { item, ok: false, error: describeError(error) };
       }
+    },
+  };
+}
 
-      yield { item, ok: true, plaintext: ciphertext && (await decryptContent(ciphertext, itemKey, DOMAIN_CONTENT)) };
-    } catch (error) {
-      yield error instanceof OtherKeyError
-        ? { item, ok: false, error: error.message, otherKey: error.fingerprint }
-        : { item, ok: false, error: describeError(error) };
-    }
-  }
+export async function* recoverItems(
+  key: { secretKey: HybridSecretKey; keyId: Uint8Array },
+  items: ExportItem[],
+  readFile: ReadExportFile
+): AsyncGenerator<ItemResult> {
+  const recovery = createRecovery(key, items, readFile);
+
+  for (const item of items) yield await recovery.recover(item);
 }
 
 /**
@@ -139,41 +149,4 @@ export function decryptedManifestLine(result: ItemResult): Record<string, unknow
   }
 
   return content !== undefined && result.plaintext ? { ...rest, content: uint8ToBase64(result.plaintext) } : rest;
-}
-
-/**
- * Everything the decrypted export holds, in order: the manifests last, once every
- * result is known. The items of other keys are left out of the decrypted manifest
- * and copied as they came, files included, into one export folder per key.
- */
-export async function* decryptedExportEntries(
-  results: AsyncIterable<ItemResult>,
-  readFile: ReadExportFile
-): AsyncGenerator<{ path: string; data: Uint8Array }> {
-  const lines: string[] = [];
-  const otherKeyLines = new Map<string, string[]>();
-
-  for await (const result of results) {
-    if (!result.ok && result.otherKey !== undefined) {
-      const folder = `${OTHER_KEYS_FOLDER}/${result.otherKey}`;
-      const ciphertext = result.item.file !== undefined ? await readFile(result.item.file) : undefined;
-
-      if (ciphertext) yield { path: `${folder}/${result.item.file}`, data: ciphertext };
-
-      otherKeyLines.set(result.otherKey, [...(otherKeyLines.get(result.otherKey) ?? []), JSON.stringify(result.item)]);
-      continue;
-    }
-
-    if (result.ok && result.item.file !== undefined && result.plaintext) {
-      yield { path: result.item.file, data: result.plaintext };
-    }
-
-    lines.push(JSON.stringify(decryptedManifestLine(result)));
-  }
-
-  for (const [fingerprint, keyLines] of otherKeyLines) {
-    yield { path: `${OTHER_KEYS_FOLDER}/${fingerprint}/${MANIFEST_FILE}`, data: new TextEncoder().encode(`${keyLines.join('\n')}\n`) };
-  }
-
-  yield { path: MANIFEST_FILE, data: new TextEncoder().encode(`${lines.join('\n')}\n`) };
 }

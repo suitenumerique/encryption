@@ -24,13 +24,68 @@ import {
 } from '@encryption/src/crypto/maintenance-escrow';
 import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
 import { MANIFEST_FILE } from '@encryption/src/maintenance/export-format';
-import { SAMPLE_FILES, SAMPLE_IDS, SAMPLE_PLAINTEXTS, SAMPLE_TEXTS, readZip, sampleOtherOrganizationKey } from '@encryption/src/maintenance/testing';
+import {
+  SAMPLE_FILES,
+  SAMPLE_IDS,
+  SAMPLE_IMAGE_SIZE,
+  SAMPLE_PLAINTEXTS,
+  SAMPLE_TEXTS,
+  readZip,
+  sampleOtherOrganizationKey,
+} from '@encryption/src/maintenance/testing';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
 const TOOL = resolve(import.meta.dirname, '../../../dist/maintenance/maintenance-tool.html');
 const SAMPLE_EXPORT = resolve(import.meta.dirname, '../sample-export');
 const ENGINES = { chromium, firefox, webkit };
 const browsers = (process.env.MAINTENANCE_TOOL_BROWSERS ?? 'chromium').split(',') as (keyof typeof ENGINES)[];
+
+// The decrypted sample export, whichever way it was written.
+function expectDecryptedExport(entries: Record<string, Uint8Array>) {
+  const otherKeyFolder = `other-keys/${OTHER_KEY_FINGERPRINT}`;
+  const manifest = new TextDecoder()
+    .decode(entries[MANIFEST_FILE])
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, string>);
+
+  expect(Object.keys(entries).sort()).toEqual(
+    [
+      SAMPLE_FILES.logo,
+      SAMPLE_FILES.chart,
+      SAMPLE_FILES.invoice,
+      `${otherKeyFolder}/${SAMPLE_FILES.elsewherePhoto}`,
+      `${otherKeyFolder}/${MANIFEST_FILE}`,
+      MANIFEST_FILE,
+    ].sort()
+  );
+
+  for (const [file, id] of [
+    [SAMPLE_FILES.logo, SAMPLE_IDS.logo],
+    [SAMPLE_FILES.chart, SAMPLE_IDS.chart],
+    [SAMPLE_FILES.invoice, SAMPLE_IDS.invoice],
+  ]) {
+    expect(entries[file], file).toEqual(SAMPLE_PLAINTEXTS[id]);
+  }
+
+  expect(manifest.map((line) => [line.id, line.error === undefined])).toEqual([
+    [SAMPLE_IDS.report, true],
+    [SAMPLE_IDS.logo, true],
+    [SAMPLE_IDS.chart, true],
+    [SAMPLE_IDS.remark, true],
+    [SAMPLE_IDS.budget, true],
+    [SAMPLE_IDS.annexes, true],
+    [SAMPLE_IDS.invoice, true],
+    [SAMPLE_IDS.damaged, false],
+  ]);
+  expect(Buffer.from(manifest[0].content, 'base64').toString()).toBe(SAMPLE_TEXTS.report);
+}
+
+let OTHER_KEY_FINGERPRINT: string;
+
+beforeAll(async () => {
+  OTHER_KEY_FINGERPRINT = maintenanceKeyIdToFingerprint((await sampleOtherOrganizationKey()).keyId);
+});
 
 describe.each(browsers)('the built maintenance tool in %s', (name) => {
   let browser: Browser;
@@ -55,6 +110,32 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
       document.addEventListener('securitypolicyviolation', (event) => {
         console.error(`CSP violation: ${event.violatedDirective} ${event.blockedURI}`);
       });
+
+      // Playwright cannot answer a folder picker: where the browser has one, it is
+      // stood in for by a folder in memory, behind the same handles the real one gives.
+      if (typeof (window as { showDirectoryPicker?: unknown }).showDirectoryPicker !== 'function') return;
+
+      const written = new Map<string, Uint8Array>();
+      const directory = (prefix: string): object => ({
+        name: 'picked',
+        getDirectoryHandle: async (name: string, { create }: { create: boolean }) => {
+          if (!create && ![...written.keys()].some((path) => path.startsWith(`${prefix}${name}/`))) throw new DOMException('absent', 'NotFoundError');
+
+          return directory(`${prefix}${name}/`);
+        },
+        getFileHandle: async (name: string) => ({
+          createWritable: async () => {
+            const parts: number[] = [];
+
+            return {
+              write: async (data: Uint8Array) => void parts.push(...data),
+              close: async () => void written.set(`${prefix}${name}`, Uint8Array.from(parts)),
+            };
+          },
+        }),
+      });
+
+      Object.assign(window, { showDirectoryPicker: async () => directory(''), writtenFolder: written });
     });
 
     await page.goto(pathToFileURL(TOOL).href);
@@ -63,6 +144,15 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
   afterAll(async () => {
     await browser?.close();
   });
+
+  const storedFiles = () =>
+    page.evaluate(async () => {
+      const names: string[] = [];
+
+      for await (const entry of (await navigator.storage.getDirectory()) as unknown as AsyncIterable<[string, unknown]>) names.push(entry[0]);
+
+      return names;
+    });
 
   it('is one page with its script and style inline, and a policy that allows no request', async () => {
     const html = readFileSync(TOOL, 'utf8');
@@ -84,12 +174,13 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
     await page.setInputFiles('input[type="file"]', SAMPLE_EXPORT);
     await expect.poll(() => page.getByRole('status').first().textContent()).toBe('sample-export: 10 items, 4 files');
 
-    await page.getByLabel('Maintenance phrase').fill(DEV_MAINTENANCE_PHRASE);
+    // Pasted whole into the first box, as from the downloaded phrase: it spreads over the 24.
+    await page.locator('#mt-decrypt-word-0').fill(DEV_MAINTENANCE_PHRASE);
 
     const fingerprint = formatDecimalFingerprint(await computeMaintenanceKeyFingerprint(DEV_MAINTENANCE_PUBLIC_KEY));
     await expect.poll(() => page.locator('.mt-fingerprint').first().textContent()).toBe(fingerprint);
 
-    await page.getByRole('button', { name: 'Decrypt the export' }).click();
+    await page.getByRole('button', { name: 'Decrypt into a .zip archive' }).click();
     await expect.poll(() => page.getByText('7 items decrypted, 1 failed.').count()).toBe(1);
     await expect.poll(() => page.getByText(/^2 items are escrowed for other maintenance keys/).count()).toBe(1);
 
@@ -98,13 +189,31 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
       .getByRole('button', { name: 'Preview' })
       .click();
     await expect.poll(() => page.locator('.mt-preview-text').textContent()).toBe(SAMPLE_TEXTS.report);
+    // A wide window (1280px): a panel beside the table, which stays usable, so the
+    // next row's preview replaces it without closing it first.
+    expect(await page.locator('dialog.mt-preview-side').count()).toBe(1);
 
     // The image preview goes through a data: URL, the one source the policy grants images.
     await page
       .getByRole('row', { name: new RegExp(SAMPLE_IDS.logo) })
       .getByRole('button', { name: 'Preview' })
       .click();
-    await expect.poll(() => page.locator('.mt-preview-image').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth)).toBe(1);
+    await expect
+      .poll(() => page.locator('.mt-preview-image').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth))
+      .toBe(SAMPLE_IMAGE_SIZE.width);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('dialog.mt-preview').count()).toBe(0);
+
+    // A narrow one: a modal dialog over the table, closed by Escape.
+    await page.setViewportSize({ width: 800, height: 720 });
+    await page
+      .getByRole('row', { name: new RegExp(SAMPLE_IDS.report) })
+      .getByRole('button', { name: 'Preview' })
+      .click();
+    await expect.poll(() => page.locator('dialog.mt-preview:modal').count()).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('dialog.mt-preview').count()).toBe(0);
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
@@ -112,45 +221,45 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
     ]);
 
     expect(download.suggestedFilename()).toBe('sample-export-decrypted.zip');
+    expectDecryptedExport(Object.fromEntries(readZip(new Uint8Array(readFileSync(await download.path()))).map((entry) => [entry.name, entry.data])));
 
-    const entries = Object.fromEntries(readZip(new Uint8Array(readFileSync(await download.path()))).map((entry) => [entry.name, entry.data]));
-    const manifest = new TextDecoder()
-      .decode(entries[MANIFEST_FILE])
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as Record<string, string>);
-    const otherKeyFolder = `other-keys/${maintenanceKeyIdToFingerprint((await sampleOtherOrganizationKey()).keyId)}`;
+    // Firefox builds the archive in its private storage (Chrome refuses that storage
+    // to a file:// page, and builds it in memory): deleting it leaves nothing there.
+    if (name === 'firefox') {
+      const leavingIsHeld = () =>
+        page.evaluate(() => {
+          const event = new Event('beforeunload', { cancelable: true });
 
-    expect(Object.keys(entries).sort()).toEqual(
-      [
-        SAMPLE_FILES.logo,
-        SAMPLE_FILES.chart,
-        SAMPLE_FILES.invoice,
-        `${otherKeyFolder}/${SAMPLE_FILES.elsewherePhoto}`,
-        `${otherKeyFolder}/${MANIFEST_FILE}`,
-        MANIFEST_FILE,
-      ].sort()
+          window.dispatchEvent(event);
+
+          return event.defaultPrevented;
+        });
+
+      expect(await storedFiles()).toHaveLength(1); // the archive: the manifests spooled beside it are gone
+      expect(await leavingIsHeld()).toBe(true);
+      await page.getByRole('button', { name: 'Delete the archive from this browser' }).click();
+      await expect.poll(storedFiles).toEqual([]);
+      expect(await leavingIsHeld()).toBe(false);
+    }
+  });
+
+  it.runIf(name === 'chromium')('writes the decrypted export file by file into a new folder where the browser can', async () => {
+    await page.getByRole('button', { name: 'Decrypt into a folder…' }).click();
+    await expect.poll(() => page.getByText('Written to picked/sample-export-decrypted.').count()).toBe(1);
+
+    const written = await page.evaluate(() =>
+      Object.fromEntries(
+        [...(window as unknown as { writtenFolder: Map<string, Uint8Array> }).writtenFolder].map(([path, data]) => [path, [...data]])
+      )
     );
 
-    for (const [file, id] of [
-      [SAMPLE_FILES.logo, SAMPLE_IDS.logo],
-      [SAMPLE_FILES.chart, SAMPLE_IDS.chart],
-      [SAMPLE_FILES.invoice, SAMPLE_IDS.invoice],
-    ]) {
-      expect(entries[file], file).toEqual(SAMPLE_PLAINTEXTS[id]);
-    }
+    expectDecryptedExport(
+      Object.fromEntries(Object.entries(written).map(([path, data]) => [path.replace(/^sample-export-decrypted\//, ''), Uint8Array.from(data)]))
+    );
 
-    expect(manifest.map((line) => [line.id, line.error === undefined])).toEqual([
-      [SAMPLE_IDS.report, true],
-      [SAMPLE_IDS.logo, true],
-      [SAMPLE_IDS.chart, true],
-      [SAMPLE_IDS.remark, true],
-      [SAMPLE_IDS.budget, true],
-      [SAMPLE_IDS.annexes, true],
-      [SAMPLE_IDS.invoice, true],
-      [SAMPLE_IDS.damaged, false],
-    ]);
-    expect(Buffer.from(manifest[0].content, 'base64').toString()).toBe(SAMPLE_TEXTS.report);
+    // A second run into the same place is refused rather than mixed into the first.
+    await page.getByRole('button', { name: 'Decrypt into a folder…' }).click();
+    await expect.poll(() => page.getByText('picked/sample-export-decrypted already exists', { exact: false }).count()).toBe(1);
   });
 
   it('generates a phrase whose public key is the one it shows and the server accepts', async () => {

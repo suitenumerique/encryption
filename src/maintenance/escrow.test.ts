@@ -23,8 +23,10 @@ import {
 } from '@encryption/src/crypto';
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { maintenanceKeyIdToFingerprint } from '@encryption/src/crypto/maintenance-escrow';
-import { MANIFEST_FILE, parseManifest } from '@encryption/src/maintenance/export-format';
-import { OTHER_KEYS_FOLDER, decryptedExportEntries, recoverItems } from '@encryption/src/maintenance/recover';
+import { MANIFEST_FILE, OTHER_KEYS_FOLDER, parseManifest } from '@encryption/src/maintenance/export-format';
+import { writeDecryptedExport } from '@encryption/src/maintenance/export-writer';
+import { recoverItems } from '@encryption/src/maintenance/recover';
+import { mapSink } from '@encryption/src/maintenance/testing';
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { handleDecryptWithKey } from '@encryption/src/vault/operations/decrypt';
 import { handleEncryptNestedWithoutKey, handleEncryptWithKey, handleEncryptWithoutKey } from '@encryption/src/vault/operations/encrypt';
@@ -128,14 +130,12 @@ async function exportFolder(manifestSql = MANIFEST_SQL): Promise<Map<string, Uin
 async function runTool(phrase: string, folder: Map<string, Uint8Array>): Promise<Map<string, Uint8Array>> {
   const key = await maintenanceKeyPairFromPhrase(phrase);
   const items = parseManifest(new TextDecoder().decode(folder.get(MANIFEST_FILE)));
-  const output = new Map<string, Uint8Array>();
   const readFile = async (path: string) => folder.get(path);
+  const sink = mapSink();
 
-  for await (const entry of decryptedExportEntries(recoverItems(key, items, readFile), readFile)) {
-    output.set(entry.path, entry.data);
-  }
+  await writeDecryptedExport(recoverItems(key, items, readFile), readFile, sink);
 
-  return output;
+  return sink.files;
 }
 
 const manifestOf = (folder: Map<string, Uint8Array>) =>

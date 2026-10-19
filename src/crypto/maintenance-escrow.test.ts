@@ -85,15 +85,14 @@ describe('maintenance escrow primitives', () => {
     });
   });
 
-  it('refuses a copy whose header was rewritten to name another key, since the id is bound as associated data', async () => {
+  it("does not open another key's copy relabelled with this key's id: the id routes, the key decides", async () => {
     const ours = await generateMaintenanceKeyPair();
-    const copy = await wrapKeyForMaintenance(await generateSymmetricKey(), ours);
-    const relabelled = copy.slice();
-    const forged = { ...ours, keyId: Uint8Array.from(ours.keyId, (byte) => byte ^ 0xff) };
+    const theirs = await generateMaintenanceKeyPair();
+    const relabelled = await wrapKeyForMaintenance(await generateSymmetricKey(), theirs);
 
-    relabelled.set(forged.keyId, 1);
+    relabelled.set(ours.keyId, 1);
 
-    await expect(unwrapMaintenanceKey(forged, relabelled)).rejects.toBeInstanceOf(VaultError);
+    await expect(unwrapMaintenanceKey(ours, relabelled)).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
   });
 
   it('rejects a truncated copy or one of an unknown version before trying to open it', async () => {
@@ -127,7 +126,7 @@ describe('maintenance escrow primitives', () => {
     const maintenance = sodium.crypto_kem_xwing_seed_keypair(seq(32));
     const copy = Uint8Array.from(
       Buffer.from(
-        'ARR2Mqh8qYKsyA2Afjf1EOMBYAQIljVWJ3cxqYYbZSWUndmh6Yca09CN8rAJ1du0AAwuxW4mjzVJ62XuY9WjmBTyrFkAHavcmf8afgy1C/j7mKPwMlzA1zxURSbcydECwUeLM9P5MkzungSeicKI57T0gtp/cdayfORtpA2BLMcbQkXgmIkdEEmTU21t/0JGIXlLr4B1bAKh2J0eQWhCDokmMjIVFI9OTD8pLCBjqz5GJbqQejCTbcUGpDt7Nlt10Iy0g26fdoDbwQTVHrlf8c4E6IC3hoMtgiMwbHAEAwV0QKCNOHvuC07LifGIAeP6PNXBQ9XxxNES4My9GNvA0AuKW1cxIgidNmoCkQUSQ1uxAH07XUx9gSsXIq51xEOtrZgq45WRq7tvc07rZZz/rAVV2Z6T+Xh+EChK31YZ1sM/3cWZ3noJWQjRr7wAbW3bwlhcA/UCx7d9fdosWfAQrV1X0lR1b0C5lUUGnj19Lahkgw29xjJXR8gPWZdySsn6WS2pj0arscmjntKWlh7WkMs/IdMFZC49xPSOo1tXtjJBlJEIxaB40gAEZa8mZUrplWq034tYE5NlDwyzMzYw2lLYJGIc2f1BXtgyiLTNOpY6x5aQSJg88dg9IEyUWQuywx0mbBaAR9fxDbMBVCOcA56NCJPX16mMmby2YuOwdFDQox+VCrsqgtzEo+KLdVtQSDACYP1OOZu2LENpX1bQgHhNKXPKbUOai6IyGfw8ubQ6AsqcRn5Vib3DEJcHmguFcdzA3+6j+eJG/lsvQCtr7cK1lg5EEguhXRWHBijdgpv8a3Iw/B91mYlgTpsxLQOYTP0xfQ93v0UF4Ok90kKlYGzNDqwW5idl3dRe0mUpcz010qS/H+xDYow4f7g4HEzyss9w8ox2gcmd6mFBKODaUbjFpocDIu3Wvrw16JgJ8l+NKZ1O6JwgtNWGD0Rv3f2UB1BSzlMJiMczPOCiNrmz0i8CfkNgaS7VgeMqbIqQbtHB4iLeTMUgQ1lTderA16rhAncfV61ekBfzAtc0H8mIiEhiHj/9TwTMXabX/h692bGIdWB6u9O2ZYTy+QiMosRJqDfxWpIn7Yx/I3KdIHTGhTAm3zjkx93+BTot6fYuhSV+OkSEkdTfJgypb1Q6PBy4ZbAyMyO+xxyWSWWFHgIo4+RH+4DrpzbMx8P9yGrJm4ft0qb4s7I/8rNych0uLG0dDO+k1aCrCPec7vFBxrARJSeA3v5OCKDKka/1d7NaROObay6p441tfXpb09RTjafFzIGJGgKceUqDarKfvwlih8D7uHK3j3qzBsGiLhnQxMWrkgHYeny5SiPjlP88hcXyqGWbjgemnrGfGk0jwF+ntYjMvgBqUFianDJVDkjmgsj77xdC6EiL4el6p6T/e6J/gIsZkXZLQWFGsGiz0hTYwbx6Q1EuC43QkORRGQdGHvrisyqqx+C2jJaKDnBoGGv2sainWWyhJEJhMaZVxoB15POqq42bMS9BLGF1narLeWvnLakiAQqjJ+CP7ISTZRn/7hN4RYri1uOgYkLjjeYIBYAyAr1PgeGi85gWCuyqMschpkCztfIBpKZKsuPjZi3XucPfOzvbF3f2HbEarg==',
+        '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',
         'base64'
       )
     );

@@ -41,6 +41,10 @@ describe('inlineIntoHtml', () => {
     expect(html).toContain(hash(written));
   });
 
+  it('refuses a script containing "<!--", which no escaping keeps from swallowing the closing tag', () => {
+    expect(() => inlineIntoHtml(VITE_HTML, 'const html = "<!--<script>";', '')).toThrow(/<!--/);
+  });
+
   it('reads a bundle that contains replacement patterns literally', () => {
     expect(inlineIntoHtml(VITE_HTML, 'x.replace(/a/, "$&$1")', '')).toContain('x.replace(/a/, "$&$1")');
   });

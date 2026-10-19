@@ -17,7 +17,7 @@ const ALICE = '11111111-1111-4111-8111-111111111111';
 const BOB = '22222222-2222-4222-8222-222222222222';
 const CAROL = '33333333-3333-4333-8333-333333333333';
 
-describe('GET /api/maintenance-escrow/assignments', () => {
+describe('GET /api/maintenance-escrow/assignment', () => {
   useTestDatabase();
 
   let agriculture: string;
@@ -50,18 +50,25 @@ describe('GET /api/maintenance-escrow/assignments', () => {
 
     app.register(maintenanceEscrowRoute);
 
-    const response = await app.inject({ method: 'GET', url: `/api/maintenance-escrow/assignments?${query}` });
+    return app.inject({ method: 'GET', url: `/api/maintenance-escrow/assignment?${query}` });
+  };
+
+  const fingerprintFor = async (query: string) => {
+    const response = await get(query);
 
     expect(response.statusCode).toBe(200);
 
-    return (JSON.parse(response.body) as { assignments: unknown[] }).assignments;
+    return (JSON.parse(response.body) as { key_fingerprint: string | null }).key_fingerprint;
   };
 
-  it("answers the fingerprint of the key covering each owner's email, null when none does", async () => {
-    expect(await get('subs=kc-alice&subs=kc-bob&subs=kc-carol&subs=kc-nobody')).toEqual([
-      { user_id: ALICE, sub: 'kc-alice', key_fingerprint: await computeMaintenanceKeyFingerprint(agriculture) },
-      { user_id: BOB, sub: 'kc-bob', key_fingerprint: null },
-    ]);
+  it("answers the fingerprint of the key covering the owner's email, null when none does", async () => {
+    expect(await fingerprintFor('sub=kc-alice')).toBe(await computeMaintenanceKeyFingerprint(agriculture));
+    expect(await fingerprintFor('sub=kc-bob')).toBeNull();
+  });
+
+  it('answers null for an owner the service has no account for, a retired-issuer sub included', async () => {
+    expect(await fingerprintFor('sub=kc-nobody')).toBeNull();
+    expect(await fingerprintFor('sub=kc-carol')).toBeNull();
   });
 
   it('resolves internal ids too, and follows the * entry for every other email', async () => {
@@ -70,15 +77,18 @@ describe('GET /api/maintenance-escrow/assignments', () => {
       { domains: ['*'], publicKey: fallback },
     ];
 
-    expect(await get(`user_ids=${BOB}&user_ids=${CAROL}`)).toEqual([
-      { user_id: BOB, key_fingerprint: await computeMaintenanceKeyFingerprint(fallback) },
-      { user_id: CAROL, key_fingerprint: await computeMaintenanceKeyFingerprint(agriculture) },
-    ]);
+    expect(await fingerprintFor(`user_id=${BOB}`)).toBe(await computeMaintenanceKeyFingerprint(fallback));
+    expect(await fingerprintFor(`user_id=${CAROL}`)).toBe(await computeMaintenanceKeyFingerprint(agriculture));
   });
 
   it('assigns no key to anyone when the deployment configured none', async () => {
     env.MAINTENANCE_ESCROW_KEYS = undefined;
 
-    expect(await get(`user_ids=${ALICE}`)).toEqual([{ user_id: ALICE, key_fingerprint: null }]);
+    expect(await fingerprintFor(`user_id=${ALICE}`)).toBeNull();
+  });
+
+  it('asks about exactly one owner', async () => {
+    expect((await get('')).statusCode).toBe(400);
+    expect((await get(`sub=kc-alice&user_id=${ALICE}`)).statusCode).toBe(400);
   });
 });

@@ -38,33 +38,58 @@ export function getMaintenanceKeys(): Promise<Map<string, MaintenancePublicKey>>
 /** Whose resource it is: the vault's own user (an internal id), or a user a product names by sub. */
 export type MaintenanceOwner = { userId: string } | { sub: string };
 
+// An owner's key changes only with their email or the deployment's config, so an
+// answer is kept a while: a Drive upload of a hundred files asks once, not per
+// file. A failed request is not kept, the next wrap asks again.
+const ASSIGNMENT_TTL_MS = 5 * 60_000;
+
+const assignments = new Map<string, { expiresAt: number; fingerprint: Promise<string | null> }>();
+
+function fetchAssignment(owner: MaintenanceOwner): Promise<string | null> {
+  const cacheKey = 'userId' in owner ? `user_id:${owner.userId}` : `sub:${owner.sub}`;
+  const cached = assignments.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) return cached.fingerprint;
+
+  const fingerprint = (async () => {
+    const params = new URLSearchParams('userId' in owner ? { user_id: owner.userId } : { sub: owner.sub });
+    const response = await fetch(`${API_BASE}/api/maintenance-escrow/assignment?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch the maintenance escrow assignment: ${response.status}`);
+    }
+
+    return ((await response.json()) as { key_fingerprint: string | null }).key_fingerprint;
+  })();
+  const entry = { expiresAt: Date.now() + ASSIGNMENT_TTL_MS, fingerprint };
+
+  assignments.set(cacheKey, entry);
+  fingerprint.catch(() => {
+    if (assignments.get(cacheKey) === entry) assignments.delete(cacheKey);
+  });
+
+  return fingerprint;
+}
+
 /** The key the owner's resources are escrowed for, or null when no configured key covers them. */
 export async function resolveMaintenanceKey(owner: MaintenanceOwner): Promise<MaintenancePublicKey | null> {
   const keys = await getMaintenanceKeys();
 
   if (keys.size === 0) return null;
 
-  const params = new URLSearchParams('userId' in owner ? { user_ids: owner.userId } : { subs: owner.sub });
-  const response = await fetch(`${API_BASE}/api/maintenance-escrow/assignments?${params.toString()}`);
+  // null: no configured key covers the owner, or the service has no account for
+  // them (no email to go by). No copy rather than a failed share: the product's
+  // backfill makes it once the owner is covered.
+  const fingerprint = await fetchAssignment(owner);
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch the maintenance escrow assignment: ${response.status}`);
-  }
+  if (fingerprint === null) return null;
 
-  const { assignments } = (await response.json()) as { assignments: { user_id: string; sub?: string; key_fingerprint: string | null }[] };
-  const assignment = assignments.find((entry) => ('userId' in owner ? entry.user_id === owner.userId : entry.sub === owner.sub));
-
-  // An owner the service has no account for (never signed in to it) has no known
-  // email, so no key can be chosen. No copy rather than a failed share: the
-  // product's backfill makes it once the owner is known.
-  if (!assignment || assignment.key_fingerprint === null) return null;
-
-  const key = keys.get(assignment.key_fingerprint);
+  const key = keys.get(fingerprint);
 
   if (!key) {
     throw new VaultError(
       VaultErrorCode.INVALID_MAINTENANCE_KEY,
-      `The server assigned the maintenance key ${assignment.key_fingerprint}, which is not one of the configured keys`
+      `The server assigned the maintenance key ${fingerprint}, which is not one of the configured keys`
     );
   }
 
