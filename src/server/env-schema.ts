@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { parseMaintenancePublicKey } from '@encryption/src/crypto/maintenance-escrow';
+import { maintenanceEscrowKeysSchema } from '@encryption/src/server/maintenance-escrow';
 import { parseDeviceInactivityDays } from '@encryption/src/shared/device-inactivity';
 import { isValidOriginEntry, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 
@@ -158,28 +158,22 @@ const envFields = z.object({
         return z.NEVER;
       }
     }),
-  // Optional maintenance escrow (architecture.md, Appendix E): the operator's X-Wing
-  // public key in the registry wire format. When set, the vault hands products one
-  // extra wrapped copy of every resource key for it. Validated in full at boot: a
-  // malformed key would otherwise fail every document creation in the browser.
-  MAINTENANCE_ESCROW_PUBLIC_KEY: z.preprocess(
-    (value) => (value === '' ? undefined : value),
-    z
-      .string()
-      .refine(
-        (value) => {
-          try {
-            parseMaintenancePublicKey(value);
+  // Optional maintenance escrow (architecture.md, Appendix E): a JSON list of the
+  // operators' X-Wing public keys, each with the email domains whose owners'
+  // resources it escrows (src/server/maintenance-escrow.ts). Validated in full at
+  // boot: a malformed key would otherwise fail every document creation in the
+  // browser, and a domain listed twice would make the choice of key ambiguous.
+  MAINTENANCE_ESCROW_KEYS: z.preprocess((value, ctx) => {
+    if (value === undefined || value === '') return undefined;
 
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        { message: 'must be a base64 X-Wing public key in the registry wire format (see `npm run maintenance -- keygen`)' }
-      )
-      .optional()
-  ),
+    try {
+      return JSON.parse(value as string);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'must be a JSON list of { "domains": [...], "publicKey": "..." }' });
+
+      return z.NEVER;
+    }
+  }, maintenanceEscrowKeysSchema.optional()),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.

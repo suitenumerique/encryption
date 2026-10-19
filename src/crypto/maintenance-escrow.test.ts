@@ -9,17 +9,27 @@ import {
   generateUserKeyPair,
 } from '@encryption/src/crypto/encryption';
 import { exportPublicKeyAsBase64, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
+import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import {
   MAINTENANCE_PUBLIC_KEY_WIRE_BYTES,
-  generateMaintenanceKeyPair,
-  parseMaintenanceKeyPair,
+  computeMaintenanceKeyFingerprint,
+  computeMaintenanceKeyId,
+  exportMaintenancePublicKey,
+  generateMaintenancePhrase,
+  importMaintenancePublicKey,
+  maintenanceKeyIdToFingerprint,
+  maintenanceKeyPairFromPhrase,
+  maintenanceKeyPairFromSeed,
   parseMaintenancePublicKey,
-  serializeMaintenanceKeyPair,
+  readMaintenanceCopyKeyId,
   unwrapMaintenanceKey,
   wrapKeyForMaintenance,
 } from '@encryption/src/crypto/maintenance-escrow';
+import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
 import { DOMAIN_KEM_DOCUMENT_KEY } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
+
+const generateMaintenanceKeyPair = async () => maintenanceKeyPairFromPhrase(await generateMaintenancePhrase('english'));
 
 const seq = (length: number, start = 0) => Uint8Array.from({ length }, (_, i) => (start + i) & 0xff);
 
@@ -53,25 +63,58 @@ describe('maintenance escrow primitives', () => {
     }
   });
 
-  it('wraps a resource key that only the matching secret key opens', async () => {
+  it('wraps a resource key that only the matching secret key opens, behind a header naming that key', async () => {
     const maintenance = await generateMaintenanceKeyPair();
-    const other = await generateMaintenanceKeyPair();
     const key = await generateSymmetricKey();
 
-    const blob = await wrapKeyForMaintenance(key, maintenance.publicKey);
+    const copy = await wrapKeyForMaintenance(key, maintenance);
 
-    expect(await unwrapMaintenanceKey(maintenance.secretKey, blob)).toEqual(key);
-    await expect(unwrapMaintenanceKey(other.secretKey, blob)).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
+    expect(copy[0]).toBe(1);
+    expect(readMaintenanceCopyKeyId(copy)).toEqual(maintenance.keyId);
+    expect(await unwrapMaintenanceKey(maintenance, copy)).toEqual(key);
+  });
+
+  it("sets aside another organization's copy by its key id, naming that key's fingerprint", async () => {
+    const ours = await generateMaintenanceKeyPair();
+    const theirs = await generateMaintenanceKeyPair();
+    const copy = await wrapKeyForMaintenance(await generateSymmetricKey(), theirs);
+
+    await expect(unwrapMaintenanceKey(ours, copy)).rejects.toMatchObject({
+      code: VaultErrorCode.OTHER_MAINTENANCE_KEY,
+      message: expect.stringContaining(maintenanceKeyIdToFingerprint(theirs.keyId)),
+    });
+  });
+
+  it('refuses a copy whose header was rewritten to name another key, since the id is bound as associated data', async () => {
+    const ours = await generateMaintenanceKeyPair();
+    const copy = await wrapKeyForMaintenance(await generateSymmetricKey(), ours);
+    const relabelled = copy.slice();
+    const forged = { ...ours, keyId: Uint8Array.from(ours.keyId, (byte) => byte ^ 0xff) };
+
+    relabelled.set(forged.keyId, 1);
+
+    await expect(unwrapMaintenanceKey(forged, relabelled)).rejects.toBeInstanceOf(VaultError);
+  });
+
+  it('rejects a truncated copy or one of an unknown version before trying to open it', async () => {
+    const pair = await generateMaintenanceKeyPair();
+    const copy = await wrapKeyForMaintenance(await generateSymmetricKey(), pair);
+
+    expect(() => readMaintenanceCopyKeyId(copy.slice(0, 17))).toThrow(expect.objectContaining({ code: VaultErrorCode.CIPHERTEXT_TOO_SHORT }));
+    expect(() => readMaintenanceCopyKeyId(Uint8Array.from([2, ...copy.slice(1)]))).toThrow(
+      expect.objectContaining({ code: VaultErrorCode.UNSUPPORTED_CRYPTO_VERSION })
+    );
   });
 
   it('never accepts a maintenance copy as a user copy, or the other way round', async () => {
     const pair = await generateMaintenanceKeyPair();
     const key = await generateSymmetricKey();
     const { user } = await encryptSymmetricKeyForUsers(key, { user: pair.publicKey }, DOMAIN_KEM_DOCUMENT_KEY);
+    const header = Uint8Array.from([1, ...pair.keyId]);
 
-    await expect(unwrapMaintenanceKey(pair.secretKey, user)).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
+    await expect(unwrapMaintenanceKey(pair, Uint8Array.from([...header, ...user]))).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
     await expect(
-      decryptSymmetricKeyForUser(pair.secretKey, await wrapKeyForMaintenance(key, pair.publicKey), DOMAIN_KEM_DOCUMENT_KEY)
+      decryptSymmetricKeyForUser(pair.secretKey, (await wrapKeyForMaintenance(key, pair)).slice(header.length), DOMAIN_KEM_DOCUMENT_KEY)
     ).rejects.toMatchObject({
       code: VaultErrorCode.WRONG_SECRET_KEY,
     });
@@ -84,25 +127,44 @@ describe('maintenance escrow primitives', () => {
     const maintenance = sodium.crypto_kem_xwing_seed_keypair(seq(32));
     const copy = Uint8Array.from(
       Buffer.from(
-        'AWAEl35PnbmHzxqwdgFT2ZSi13p+XFdMh81nPoDtxGg3QPHMIpTFYV5B95dgUrp4UdEdbJ4Toh/PjIHdV9USRy9tdElXwbbyqlqct6XqoQIkTlybEQv30pGDNxd1v1mFF04/1iQIXTLGbrsn/761XOEGHw8/RGAeKNZEcU1b7pl5TEHsCJBABUOMYKYsWNMWTWr5hQTOz9qWRSpRDXG2NiFxT/gwDdvswLPF5nrsAi+dzwm433FLsDOC8Q99LfAocHqa2kK2Dbl7AuqLZyV7nCytcQJdoK3tnUNMfueRNJzSdLOLNazB2mng367Drb+peytTQPEpngEXW+jHI9ph2Ol2LDK/tfLEXenWVefOPu1J7uzN6KA+OKk5vmzXmXBI3eRV4FJSPNABG9WYq4PcbWPzgJUpPtawFFImmP6mTHcUhw4du4vL9PDhIiaA6RBs3v76bdTVIQBLw5RnHGn72u/mK4543Ima+5LuqmOm8T2HNJd1Apy0MQyiocbS/FfuA28Ku3tsrDD1nDlb+2JHW08kt9ytURcUEeVTaFotws4vL3c9sOw5K210ur+QEA8BdZmgwlyd+mNqu5HazPAOyavoGpBbC6lQPQLMlwEb8rpgYDuD/OQFqwXH5MO+ZvBjZg311IbCxCZcVAFZ8nEVY3BbR3b1c0dppWkGbLC0t/Gbtaz/mXeqknwqKKFPMWPRw6sSkwiaU1z63C6yZgLyHqk0sJp80IZ/ERJX3wkK3CocU1t7o8hGKa2MwPwhwKClOp8j/6Yijgg0HenGEqBzzXAQMO73dZUQGC0IsZIYAALbbmyNjR2SlMXnLxZiVVZNgUWgLPzjkhNrFNkCptDa3j7Ur6A5bKVi3qbpRDNX3WZybIifGwFgfJ56NZlRSCOTrz52KBNsO/SE+G6tm+ACBUd5S+j+UB6sD1RHXDCMciNL9JaXuUSnedy5SbfB/sHq0fnskpGPXLr1YieVeUB5FHLe9mGjBOncLrpL5UAX+7kRSYzTDvK5IiUMlhp6nKwqDhT2dTajooaBBJ50U97IM/H1BualurZmmUA+jh36qWT1+e9Z8gJtVDfXcYZdKNKo8QXTfBa7X6Kk983R5mW9EDqYRYLt9nkryUAdu+MJyI9vQ9FTxVqqvp33dtRN6asA3fx3Oq5m9Cva7Rb2GbX2aJmtOz39Nq6pIaOmAYmfNS3e9vGbeK2/ldD2dh+gyW8KquzMzH4I4seRMZpX4+BjyPTh5UvvJiAeuaJxjNjB3ZlgzDpoBsI8p2HPxmGHGlyt4etw3e3tfiSa84NnRuOij8zZWK2L98zDQ2g1LPCxE/CSjYrN3Gxwooz0Rhdcbiw8ghKSAGby6p5NRTaBKRmd4f8kbRhNk8u30vP6lNYGNtQGPE17pu81sxD5i34oDM+cQ/qZ+DdGAmA6/xSYaG76sz6oJ2cnTmCqeCtfnO06AIK80fJuhy1aJN9q6ZnDg41TEcAkFc2/YdwvWEAeGZVvkscZKwHY4mqMAi9gFmtytit4DzxW+UVpXol8+fh06vQohBzVgI+r/KfDqVtQn/3dneCaQBbZAon5/+N71uPSrLHCazJ09rEjA8a8ZaM=',
+        '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',
         'base64'
       )
     );
 
-    expect(await unwrapMaintenanceKey(maintenance.privateKey, copy)).toEqual(seq(32, 100));
+    expect(
+      await unwrapMaintenanceKey({ secretKey: maintenance.privateKey, keyId: await computeMaintenanceKeyId(maintenance.publicKey) }, copy)
+    ).toEqual(seq(32, 100));
   });
 
-  it('round-trips the operator key file and rejects a malformed one', async () => {
-    const pair = await generateMaintenanceKeyPair();
-    const text = serializeMaintenanceKeyPair(pair);
-    const file = JSON.parse(text) as { version: number; publicKey: string; secretKey: string };
+  it('derives the same key pair from a phrase in either wordlist, and the public key from the seed alone', async () => {
+    const seed = seq(32, 7);
+    const pair = await maintenanceKeyPairFromSeed(seed);
 
-    expect(file.version).toBe(1);
-    expect(parseMaintenancePublicKey(file.publicKey)).toEqual(pair.publicKey);
-    expect(parseMaintenanceKeyPair(text)).toEqual(pair);
+    expect(pair.secretKey).toEqual(seed);
+    expect(await maintenanceKeyPairFromPhrase(await generateMaintenancePhrase('french', seed))).toEqual(pair);
+    expect(await maintenanceKeyPairFromPhrase(await generateMaintenancePhrase('english', seed))).toEqual(pair);
+    await expect(maintenanceKeyPairFromSeed(seq(31))).rejects.toMatchObject({ code: VaultErrorCode.INVALID_MAINTENANCE_KEY });
+  });
 
-    for (const bad of ['{', '{"version":2}', JSON.stringify({ ...file, publicKey: 'AAAA' })]) {
-      expect(() => parseMaintenanceKeyPair(bad)).toThrow(VaultError);
-    }
+  it('refuses a phrase with a typo instead of deriving another key', async () => {
+    const words = (await generateMaintenancePhrase('french', seq(32))).split(' ');
+    words[3] = words[3] === 'abaisser' ? 'abandon' : 'abaisser';
+
+    await expect(maintenanceKeyPairFromPhrase(words.join(' '))).rejects.toMatchObject({ code: VaultErrorCode.INVALID_MNEMONIC });
+  });
+
+  it('keeps the committed development phrase and the public key .env.test configures together', async () => {
+    const pair = await maintenanceKeyPairFromPhrase(DEV_MAINTENANCE_PHRASE);
+
+    expect(exportMaintenancePublicKey(pair.publicKey)).toBe(DEV_MAINTENANCE_PUBLIC_KEY);
+  });
+
+  it('fingerprints the configured value as 40 digits, distinct from an identity fingerprint of the same bytes', async () => {
+    const fingerprint = await computeMaintenanceKeyFingerprint(DEV_MAINTENANCE_PUBLIC_KEY);
+
+    expect(fingerprint).toMatch(/^1\d{39}$/);
+    expect(maintenanceKeyIdToFingerprint((await importMaintenancePublicKey(DEV_MAINTENANCE_PUBLIC_KEY)).keyId)).toBe(fingerprint);
+    expect(fingerprint).not.toBe(await computeKeyFingerprint(DEV_MAINTENANCE_PUBLIC_KEY));
   });
 });

@@ -17,6 +17,8 @@ import type {
   GetApiEmergencyAccessSearchResponses,
   GetApiEmergencyAccessTrustedData,
   GetApiEmergencyAccessTrustedResponses,
+  GetApiMaintenanceEscrowAssignmentsData,
+  GetApiMaintenanceEscrowAssignmentsResponses,
   GetApiPublicKeysByUserIdContinuityData,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdData,
@@ -186,6 +188,14 @@ export const postApiPublicKeysRegisterComplete = <ThrowOnError extends boolean =
       'Content-Type': 'application/json',
       ...options.headers,
     },
+  });
+
+export const getApiMaintenanceEscrowAssignments = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiMaintenanceEscrowAssignmentsData, ThrowOnError>
+): RequestResult<GetApiMaintenanceEscrowAssignmentsResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiMaintenanceEscrowAssignmentsResponses, unknown, ThrowOnError>({
+    url: '/api/maintenance-escrow/assignments',
+    ...options,
   });
 
 export const getApiVaultMeta = <ThrowOnError extends boolean = false>(

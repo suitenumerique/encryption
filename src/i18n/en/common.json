@@ -530,5 +530,76 @@
   "identity": {
     "copied": "Copied",
     "copy_fingerprint": "Copy the fingerprint"
+  },
+  "maintenanceTool": {
+    "title": "LaSuite Encryption: maintenance tool",
+    "intro": "Decrypts an export of encrypted content with a maintenance phrase, or generates that phrase. Everything happens in this page: it cannot connect to any network, and nothing leaves this computer except the files you download. The maintenance escrow is a temporary mode for a massive loss (a technical failure, an organization stopping encryption); a user who lost their keys has their own recovery means, which let no one else read.",
+    "language": "Language",
+    "tabs": {
+      "decrypt": "Decrypt an export",
+      "generate": "Generate a maintenance key"
+    },
+    "decrypt": {
+      "folderTitle": "1. The export folder",
+      "folderHelp": "The folder the product team handed over, with manifest.ndjson at its root.",
+      "folderButton": "Choose the export folder",
+      "folderSummary": "{{folder}}: {{items}} items, {{files}} files",
+      "folderNoManifest": "No manifest.ndjson in this folder.",
+      "folderMissingFiles": "{{count}} files named by the manifest are not in the folder, such as {{examples}}. Copy them from the object storage before decrypting, or those items will fail.",
+      "phraseTitle": "2. The maintenance phrase",
+      "phraseHelp": "The 24 words, in French or English, separated by spaces or line breaks.",
+      "phraseLabel": "Maintenance phrase",
+      "phraseCount": "{{count}} words out of 24",
+      "phraseInvalid": "This phrase is not valid: a word is misspelled, or not in the right place.",
+      "fingerprint": "Key fingerprint, to compare with the one the server logs at startup:",
+      "runTitle": "3. Decrypt",
+      "run": "Decrypt the export",
+      "running": "Decrypting: {{done}} of {{total}}",
+      "summary": "{{ok}} items decrypted, {{failed}} failed.",
+      "otherKeys": "{{count}} items are escrowed for other maintenance keys (other organizations). The archive holds them still encrypted, one export folder per key (other-keys/<fingerprint>/), to hand to those keys' custodians:",
+      "otherKeyGroup": "{{fingerprint}}: {{count}} items",
+      "otherKey": "Another maintenance key",
+      "download": "Download the decrypted export (.zip)",
+      "plaintextWarning": "The archive holds the content in plaintext. Keep it on this computer or the removable drive it goes back on, and delete it once the product team has imported it.",
+      "zipFailed": "The archive could not be built: {{error}}",
+      "columns": {
+        "id": "Id",
+        "type": "Type",
+        "result": "Result",
+        "size": "Size"
+      },
+      "ok": "Decrypted",
+      "keyOnly": "Key only",
+      "preview": "Preview",
+      "previewTitle": "Preview of {{id}}",
+      "previewBinary": "Binary content ({{kind}}), {{size}} bytes, starting with {{head}}",
+      "previewTruncated": "Only the beginning is shown.",
+      "closePreview": "Close the preview"
+    },
+    "generate": {
+      "help": "Run this once per maintenance key, on an isolated computer, when the deployment enables the maintenance escrow: usually one key for every user, or one per organization on a shared deployment. The phrase is the secret key: never keep it on a connected computer. The public key goes into the server's MAINTENANCE_ESCROW_KEYS, with the email domains it covers (\"*\" for every user).",
+      "wordlist": "Words in",
+      "french": "French",
+      "english": "English",
+      "button": "Generate a maintenance key",
+      "phraseTitle": "The maintenance phrase (secret)",
+      "phraseCopiesHelp": "Keep it the way that suits the place: shown here to write by hand, copied, downloaded to a removable drive, or printed. Every copy is the secret key: a file or a sheet is kept like the paper, in the vault, and a printer that keeps its jobs is no place for it.",
+      "copyPhrase": "Copy the phrase",
+      "downloadPhrase": "Download the phrase (.txt)",
+      "printPhrase": "Print the phrase",
+      "copied": "Phrase copied.",
+      "copyFailed": "This browser refused the copy: download the phrase or write it down.",
+      "phraseFileTitle": "LaSuite Encryption: maintenance phrase (SECRET)",
+      "phraseFileDate": "Generated on {{date}}",
+      "phraseFileFingerprint": "Key fingerprint: {{fingerprint}}",
+      "publicKeyTitle": "The public key (for MAINTENANCE_ESCROW_KEYS)",
+      "downloadPublicKey": "Download the public key (.txt)",
+      "fingerprint": "Fingerprint: once the server runs with this key, its startup log shows the same digits beside the organization's domains."
+    },
+    "previewKinds": {
+      "pdf": "PDF document",
+      "zip": "archive",
+      "unknown": "unknown format"
+    }
   }
 }

@@ -108,10 +108,17 @@ config:
   # Where researchers report a problem with THIS instance, published as
   # /.well-known/security.txt. Empty = the path does not exist.
   securityContactUrl: ''
-  # Maintenance escrow (architecture.md, Appendix E): the operator's public key from
-  # `npm run maintenance -- keygen`. Empty = no escrow copy is produced. A public
-  # key, so a plain value; the matching secret key never reaches the cluster.
-  maintenanceEscrowPublicKey: ''
+  # Maintenance escrow (architecture.md, Appendix E): one public key per organization,
+  # as the maintenance tool generates it, with the email domains whose owners'
+  # documents it escrows (longest matching domain wins, "*" for every other email).
+  # Empty = no escrow copy is produced. Public keys, so plain values; each secret key
+  # is a 24-word phrase that never reaches the cluster.
+  #   maintenanceEscrowKeys:
+  #     - domains: [agriculture.gouv.fr]
+  #       publicKey: AUJC...
+  #     - domains: ['*']
+  #       publicKey: AUJD...
+  maintenanceEscrowKeys: []
   retention:
     # Days a dormant vault (replaced by a start-over, or left by leaving encryption)
     # stays restorable before its content is deleted, with emails 30 and 7 days

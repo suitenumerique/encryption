@@ -421,7 +421,8 @@ export function DemoApp() {
           const recipients: Record<string, RecipientLabel> = {};
           for (const a of newRecipients) recipients[a.userId] = { email: a.email, name: a.fullName };
 
-          const shared = await client.shareKeys(base64ToAb(myWrappedKey), recipients);
+          // The creator owns the document: their email domain picks the maintenance key.
+          const shared = await client.shareKeys(base64ToAb(myWrappedKey), recipients, undefined, creatorId ?? undefined);
           for (const [uid, wrapped] of Object.entries(shared.encryptedKeys)) nextKeys[uid] = abToBase64(wrapped);
           Object.assign(nextVersions, await activeKeyVersions(client, Object.keys(shared.encryptedKeys)));
           if (shared.maintenanceKey) maintenanceKey = abToBase64(shared.maintenanceKey);

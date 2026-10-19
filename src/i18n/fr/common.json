@@ -530,5 +530,76 @@
   "identity": {
     "copied": "Copié",
     "copy_fingerprint": "Copier l'empreinte"
+  },
+  "maintenanceTool": {
+    "title": "LaSuite Encryption : outil de maintenance",
+    "intro": "Déchiffre un export de contenus chiffrés avec une phrase de maintenance, ou génère cette phrase. Tout se passe dans cette page : elle ne peut se connecter à aucun réseau, et rien ne quitte cet ordinateur en dehors des fichiers que vous téléchargez. Le séquestre de maintenance est un mode temporaire, pour une perte massive (une défaillance technique, une organisation qui arrête le chiffrement) ; une personne qui a perdu ses clés a ses propres moyens de récupération, qui ne laissent personne d'autre lire.",
+    "language": "Langue",
+    "tabs": {
+      "decrypt": "Déchiffrer un export",
+      "generate": "Générer une clé de maintenance"
+    },
+    "decrypt": {
+      "folderTitle": "1. Le dossier d'export",
+      "folderHelp": "Le dossier remis par l'équipe du produit, avec manifest.ndjson à sa racine.",
+      "folderButton": "Choisir le dossier d'export",
+      "folderSummary": "{{folder}} : {{items}} éléments, {{files}} fichiers",
+      "folderNoManifest": "Aucun manifest.ndjson dans ce dossier.",
+      "folderMissingFiles": "{{count}} fichiers nommés par le manifeste sont absents du dossier, par exemple {{examples}}. Copiez-les depuis le stockage objet avant de déchiffrer, sinon ces éléments échoueront.",
+      "phraseTitle": "2. La phrase de maintenance",
+      "phraseHelp": "Les 24 mots, en français ou en anglais, séparés par des espaces ou des retours à la ligne.",
+      "phraseLabel": "Phrase de maintenance",
+      "phraseCount": "{{count}} mots sur 24",
+      "phraseInvalid": "Cette phrase n'est pas valide : un mot est mal orthographié, ou n'est pas à sa place.",
+      "fingerprint": "Empreinte de la clé, à comparer avec celle que le serveur affiche au démarrage :",
+      "runTitle": "3. Déchiffrer",
+      "run": "Déchiffrer l'export",
+      "running": "Déchiffrement : {{done}} sur {{total}}",
+      "summary": "{{ok}} éléments déchiffrés, {{failed}} en échec.",
+      "otherKeys": "{{count}} éléments sont séquestrés pour d'autres clés de maintenance (d'autres organisations). L'archive les contient toujours chiffrés, dans un dossier d'export par clé (other-keys/<empreinte>/), à remettre aux détenteurs de ces clés :",
+      "otherKeyGroup": "{{fingerprint}} : {{count}} éléments",
+      "otherKey": "Autre clé de maintenance",
+      "download": "Télécharger l'export déchiffré (.zip)",
+      "plaintextWarning": "L'archive contient les contenus en clair. Gardez-la sur cet ordinateur ou sur le support amovible qui la rapporte, et supprimez-la une fois importée par l'équipe du produit.",
+      "zipFailed": "L'archive n'a pas pu être construite : {{error}}",
+      "columns": {
+        "id": "Identifiant",
+        "type": "Type",
+        "result": "Résultat",
+        "size": "Taille"
+      },
+      "ok": "Déchiffré",
+      "keyOnly": "Clé seule",
+      "preview": "Aperçu",
+      "previewTitle": "Aperçu de {{id}}",
+      "previewBinary": "Contenu binaire ({{kind}}), {{size}} octets, commençant par {{head}}",
+      "previewTruncated": "Seul le début est affiché.",
+      "closePreview": "Fermer l'aperçu"
+    },
+    "generate": {
+      "help": "À faire une fois par clé de maintenance, sur un ordinateur isolé, quand le déploiement active le séquestre de maintenance : en général une clé pour tous les utilisateurs, ou une par organisation sur un déploiement partagé. La phrase est la clé secrète : ne la gardez jamais sur un ordinateur connecté. La clé publique va dans la variable MAINTENANCE_ESCROW_KEYS du serveur, avec les domaines de messagerie qu'elle couvre (« * » pour tous les utilisateurs).",
+      "wordlist": "Mots en",
+      "french": "français",
+      "english": "anglais",
+      "button": "Générer une clé de maintenance",
+      "phraseTitle": "La phrase de maintenance (secrète)",
+      "phraseCopiesHelp": "Conservez-la de la façon qui convient au lieu : affichée ici pour l'écrire à la main, copiée, téléchargée sur un support amovible, ou imprimée. Chaque copie est la clé secrète : un fichier ou une feuille se garde comme le papier, au coffre, et une imprimante qui conserve ses travaux n'est pas un endroit pour elle.",
+      "copyPhrase": "Copier la phrase",
+      "downloadPhrase": "Télécharger la phrase (.txt)",
+      "printPhrase": "Imprimer la phrase",
+      "copied": "Phrase copiée.",
+      "copyFailed": "Ce navigateur a refusé la copie : téléchargez la phrase ou recopiez-la.",
+      "phraseFileTitle": "LaSuite Encryption : phrase de maintenance (SECRÈTE)",
+      "phraseFileDate": "Générée le {{date}}",
+      "phraseFileFingerprint": "Empreinte de la clé : {{fingerprint}}",
+      "publicKeyTitle": "La clé publique (pour MAINTENANCE_ESCROW_KEYS)",
+      "downloadPublicKey": "Télécharger la clé publique (.txt)",
+      "fingerprint": "Empreinte : une fois le serveur lancé avec cette clé, son journal de démarrage affiche les mêmes chiffres à côté des domaines de l'organisation."
+    },
+    "previewKinds": {
+      "pdf": "document PDF",
+      "zip": "archive",
+      "unknown": "format inconnu"
+    }
   }
 }

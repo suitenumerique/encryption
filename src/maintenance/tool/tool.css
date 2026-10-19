@@ -1,0 +1,305 @@
+/* The maintenance tool's only stylesheet: system fonts, no external resource. */
+.mt-page {
+  --mt-text: #1e1e1e;
+  --mt-muted: #5c5c5c;
+  --mt-background: #ffffff;
+  --mt-surface: #f4f4f6;
+  --mt-border: #d0d0d6;
+  --mt-accent: #000091;
+  --mt-accent-text: #ffffff;
+  --mt-error: #c9191e;
+  --mt-warning: #8a5300;
+
+  box-sizing: border-box;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  color: var(--mt-text);
+  background: var(--mt-background);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mt-page {
+    --mt-text: #ececf0;
+    --mt-muted: #a8a8b3;
+    --mt-background: #16161a;
+    --mt-surface: #222228;
+    --mt-border: #3c3c46;
+    --mt-accent: #8585f6;
+    --mt-accent-text: #000000;
+    --mt-error: #ff7a7a;
+    --mt-warning: #ffb85c;
+  }
+}
+
+html,
+body {
+  margin: 0;
+}
+
+.mt-page *,
+.mt-page *::before,
+.mt-page *::after {
+  box-sizing: inherit;
+}
+
+.mt-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.mt-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.mt-languages {
+  display: flex;
+  gap: 8px;
+}
+
+.mt-intro,
+.mt-help {
+  color: var(--mt-muted);
+}
+
+.mt-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 24px 0 0;
+  border-bottom: 1px solid var(--mt-border);
+}
+
+.mt-tabs button {
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mt-tabs button[aria-selected='true'] {
+  border-color: var(--mt-border);
+  background: var(--mt-surface);
+  font-weight: 600;
+}
+
+.mt-panel {
+  padding: 16px 0;
+}
+
+.mt-step {
+  margin: 0 0 24px;
+}
+
+.mt-step h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.mt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin: 0 0 24px;
+}
+
+.mt-label {
+  display: block;
+  font-weight: 600;
+}
+
+.mt-button {
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--mt-accent);
+  border-radius: 6px;
+  background: var(--mt-background);
+  color: var(--mt-accent);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.mt-primary {
+  background: var(--mt-accent);
+  color: var(--mt-accent-text);
+}
+
+.mt-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mt-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.mt-file:focus-within {
+  outline: 2px solid var(--mt-accent);
+  outline-offset: 2px;
+}
+
+.mt-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--mt-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mt-link[aria-pressed='true'] {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.mt-phrase,
+.mt-public-key {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--mt-border);
+  border-radius: 6px;
+  background: var(--mt-surface);
+  color: inherit;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.mt-public-key {
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.mt-status {
+  margin: 8px 0;
+}
+
+.mt-error {
+  margin: 8px 0;
+  color: var(--mt-error);
+}
+
+.mt-warning {
+  color: var(--mt-warning);
+}
+
+.mt-fingerprint {
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
+.mt-words {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 4px 16px;
+  padding-left: 2.5em;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 1.05rem;
+}
+
+.mt-table {
+  width: 100%;
+  margin: 16px 0;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.mt-table th,
+.mt-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--mt-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.mt-row-failed td {
+  color: var(--mt-error);
+}
+
+.mt-row-other td {
+  color: var(--mt-muted);
+}
+
+.mt-preview {
+  margin: 24px 0;
+  padding: 16px;
+  border: 1px solid var(--mt-border);
+  border-radius: 6px;
+  background: var(--mt-surface);
+}
+
+.mt-preview header {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.mt-preview h2 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.mt-preview-text {
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mt-preview-image {
+  max-width: 100%;
+  max-height: 400px;
+}
+
+/* Printing the phrase prints the phrase alone: its sheet, with its date and
+   fingerprint, nothing else of the page. */
+.mt-print-only {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .mt-printable,
+  .mt-printable * {
+    visibility: visible;
+  }
+
+  .mt-printable {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    color: #000000;
+  }
+
+  .mt-print-only {
+    display: block;
+  }
+
+  .mt-no-print {
+    display: none;
+  }
+}

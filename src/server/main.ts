@@ -1,9 +1,11 @@
 import { startEmergencyJobs } from '@encryption/src/server/emergency-jobs';
 import { env } from '@encryption/src/server/env';
+import { maintenanceEscrowKeyFingerprint } from '@encryption/src/server/maintenance-escrow';
 import { captureServerError, flushMonitoring, initMonitoring, isMonitoringEnabled } from '@encryption/src/server/monitoring';
 import { getBuildVersion } from '@encryption/src/server/routes/versions';
 import { createServer } from '@encryption/src/server/server';
 import { startVaultPurgeJobs } from '@encryption/src/server/vault-purge-jobs';
+import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
 async function main() {
   // Optional: with no SENTRY_DSN this is a no-op and nothing is ever sent.
@@ -17,6 +19,15 @@ async function main() {
 
   if (isMonitoringEnabled()) {
     app.log.info('Error reporting enabled');
+  }
+
+  // The custodians of each maintenance phrase compare these digits with the ones the
+  // maintenance tool shows for their phrase: the proof the server escrows their
+  // organization's documents for THEIR key.
+  for (const entry of env.MAINTENANCE_ESCROW_KEYS ?? []) {
+    const fingerprint = await maintenanceEscrowKeyFingerprint(entry.publicKey);
+
+    app.log.info(`Maintenance escrow for ${entry.domains.join(', ')}: key fingerprint ${formatDecimalFingerprint(fingerprint)}`);
   }
 
   // A throw outside a request never reaches the Fastify error handler, and these

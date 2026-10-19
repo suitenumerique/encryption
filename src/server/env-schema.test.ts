@@ -81,20 +81,29 @@ describe('OIDC name claims', () => {
   });
 });
 
-describe('MAINTENANCE_ESCROW_PUBLIC_KEY', () => {
-  const parse = (value: string | undefined) => envSchema.shape.MAINTENANCE_ESCROW_PUBLIC_KEY.safeParse(value);
+describe('MAINTENANCE_ESCROW_KEYS', () => {
+  const parse = (value: string | undefined) => envSchema.shape.MAINTENANCE_ESCROW_KEYS.safeParse(value);
 
   it('is unset when absent or empty', () => {
     expect(parse(undefined).data).toBeUndefined();
     expect(parse('').data).toBeUndefined();
   });
 
-  it('accepts a registry-format X-Wing public key and refuses anything else at boot', async () => {
+  it('reads the JSON list, domains lowercased, and refuses at boot a malformed key, domain or document', async () => {
     const key = exportPublicKeyAsBase64((await generateUserKeyPair()).publicKey);
 
-    expect(parse(key).data).toBe(key);
+    expect(parse(JSON.stringify([{ domains: ['Agriculture.GOUV.fr', '*'], publicKey: key }])).data).toEqual([
+      { domains: ['agriculture.gouv.fr', '*'], publicKey: key },
+    ]);
 
-    for (const value of ['AAAA', key.slice(0, -12), 'not base64']) {
+    for (const value of [
+      'not json',
+      JSON.stringify({ domains: ['*'], publicKey: key }),
+      JSON.stringify([{ domains: ['*'], publicKey: 'AAAA' }]),
+      JSON.stringify([{ domains: [], publicKey: key }]),
+      JSON.stringify([{ domains: ['user@agriculture.gouv.fr'], publicKey: key }]),
+      JSON.stringify([{ domains: ['monéquipe.gouv.fr'], publicKey: key }]),
+    ]) {
       expect(parse(value).success, value).toBe(false);
     }
   });

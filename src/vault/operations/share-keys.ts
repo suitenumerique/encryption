@@ -1,5 +1,6 @@
 import {
   type HybridPublicKey,
+  type MaintenancePublicKey,
   encryptSymmetricKeyForUsers,
   importPublicKeyFromBase64,
   uint8ToBase64,
@@ -26,11 +27,12 @@ import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/oper
  * when provided, resolves the chain from the user's entry-point key down
  * to the target item's key before re-encrypting for the target users.
  *
- * With a `maintenancePublicKey` (the deployment's escrow key, injected by the
- * message boundary), the resolved key is also wrapped for it and returned as
- * `maintenanceKey`. An EMPTY recipient list is valid and yields only that copy:
- * it is how a product backfills the escrow of a resource created before the
- * deployment enabled it, at the cost of one unwrap by any current holder.
+ * With a `maintenanceEscrowKey` (the deployment's escrow key covering the
+ * resource's owner, chosen by the message boundary), the resolved key is also
+ * wrapped for it and returned as `maintenanceKey`. An EMPTY recipient list is
+ * valid and yields only that copy: it is how a product backfills the escrow of a
+ * resource created before the deployment enabled it, or before its owner's
+ * domain was covered, at the cost of one unwrap by any current holder.
  *
  * The raw symmetric key never leaves the vault iframe.
  */
@@ -40,7 +42,7 @@ export async function handleShareKeys(
     encryptedSymmetricKey: ArrayBuffer;
     userPublicKeys: Record<string, ArrayBuffer>;
     encryptedKeyChain?: ArrayBuffer[];
-    maintenancePublicKey?: HybridPublicKey | null;
+    maintenanceEscrowKey?: MaintenancePublicKey | null;
   }
 ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
@@ -72,8 +74,8 @@ export async function handleShareKeys(
     encryptedKeys[uid] = encKey.buffer as ArrayBuffer;
   }
 
-  if (payload.maintenancePublicKey) {
-    const maintenanceKey = await wrapKeyForMaintenance(symmetricKey, payload.maintenancePublicKey);
+  if (payload.maintenanceEscrowKey) {
+    const maintenanceKey = await wrapKeyForMaintenance(symmetricKey, payload.maintenanceEscrowKey);
 
     return { encryptedKeys, maintenanceKey: maintenanceKey.buffer as ArrayBuffer };
   }

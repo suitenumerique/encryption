@@ -277,7 +277,8 @@ encryptedKeys['my-suite-user-id'],
 
 <Alert severity="info" title="maintenanceKey">
   When the deployment runs the maintenance escrow, `encryptWithoutKey` and `shareKeys` also return `maintenanceKey`. Persist it on the resource
-  whenever it is present (see "Maintenance escrow" below). It is absent otherwise, and it is never a recipient.
+  whenever it is present, and pass the resource's owner to `shareKeys` (see "Maintenance escrow" below). It is absent otherwise, and it is never a
+  recipient.
 </Alert>
 
 ### 7. Automatic updates
@@ -304,14 +305,14 @@ encryption.destroy();`}
 
 ### Product operations (through the vault)
 
-| Method                                                 | Description                                                                                  | Returns                                                |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `hasKeys()`                                            | Whether keys exist on this device (`deEnrolled` when it forgot them after a long inactivity) | `HasKeysResult` (`{ hasKeys, deEnrolled? }`)           |
-| `getPublicKey()`                                       | Fetch the public key                                                                         | `{ publicKey: ArrayBuffer }`                           |
-| `encryptWithoutKey(data, userPublicKeys)`              | Encrypt content (generates a new symmetric key)                                              | `{ encryptedContent, encryptedKeys, maintenanceKey? }` |
-| `encryptWithKey(data, encryptedSymmetricKey)`          | Re-encrypt with an existing key (collab, auto-save)                                          | `{ encryptedData: ArrayBuffer }`                       |
-| `decryptWithKey(encryptedData, encryptedSymmetricKey)` | Decrypt with a provided symmetric key                                                        | `{ data: ArrayBuffer }`                                |
-| `shareKeys(encryptedSymmetricKey, userPublicKeys)`     | Share the key with other users                                                               | `{ encryptedKeys: Record, maintenanceKey? }`           |
+| Method                                                                            | Description                                                                                  | Returns                                                |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `hasKeys()`                                                                       | Whether keys exist on this device (`deEnrolled` when it forgot them after a long inactivity) | `HasKeysResult` (`{ hasKeys, deEnrolled? }`)           |
+| `getPublicKey()`                                                                  | Fetch the public key                                                                         | `{ publicKey: ArrayBuffer }`                           |
+| `encryptWithoutKey(data, userPublicKeys)`                                         | Encrypt content (generates a new symmetric key)                                              | `{ encryptedContent, encryptedKeys, maintenanceKey? }` |
+| `encryptWithKey(data, encryptedSymmetricKey)`                                     | Re-encrypt with an existing key (collab, auto-save)                                          | `{ encryptedData: ArrayBuffer }`                       |
+| `decryptWithKey(encryptedData, encryptedSymmetricKey)`                            | Decrypt with a provided symmetric key                                                        | `{ data: ArrayBuffer }`                                |
+| `shareKeys(encryptedSymmetricKey, userPublicKeys, encryptedKeyChain?, ownerSub?)` | Share the key with other users                                                               | `{ encryptedKeys: Record, maintenanceKey? }`           |
 
 ### Configuration
 
@@ -356,13 +357,65 @@ To integrate the encryption service, each Suite product must:
 
 ### Maintenance escrow
 
-A deployment may keep, for every encrypted resource, one extra copy of the resource key wrapped for an operator-held maintenance key, kept offline, so that a stored document can be repaired or re-encoded (a fix on stored data, a migration to another tool) without waiting for its users. The encryption server decides (`MAINTENANCE_ESCROW_PUBLIC_KEY`); a product has nothing to configure and one rule to follow:
+A deployment may keep, for every encrypted resource, one extra copy of the resource key wrapped for an operator-held maintenance key, kept offline, so that the stored content can be decrypted in batch (after a general failure, or to stop encrypting) without waiting for its users. It is a temporary mode, for a massive loss rather than a user who lost their keys, and while it runs the custodians can read what it covers. Most deployments configure one key for every user; a deployment shared by several organizations can give each its own key, chosen by the email domain of the resource's **owner**. The encryption server decides (`MAINTENANCE_ESCROW_KEYS`); a product has nothing to configure and these rules to follow:
 
-1. **Persist `maintenanceKey` when it is present.** `encryptWithoutKey` and `shareKeys` return it next to `encryptedKeys` (a blob of the same shape as a wrapped key). Store it on the resource that holds the ciphertext, in a nullable column, and overwrite it on every share. In a key hierarchy (Drive), it is returned for the encryption root only, which is enough: nested keys chain from it.
-2. **Never treat it as a recipient.** It is not in `encryptedKeys`, it is not a user, and it must not appear in a sharing list or be removable from one.
-3. **Backfill lazily.** A resource created before the option was enabled has no copy. Calling `shareKeys` with an empty recipient map, from any current holder, returns only `maintenanceKey`; do it when you open such a resource and the column is null.
+1. **Persist `maintenanceKey` when it is present.** `encryptWithoutKey` and `shareKeys` return it next to `encryptedKeys`. Store it on the resource that holds the ciphertext, in a nullable column, and overwrite it on every share. Name the column after what it holds, the resource key wrapped for maintenance (`maintenance_wrapped_document_key`, say); the export renames it `maintenanceKey`. In a key hierarchy (Drive), it is returned for the encryption root only, which is enough: nested keys chain from it.
+2. **Name the owner when you share.** `encryptWithoutKey` escrows for the caller's organization, the caller creating the resource. `shareKeys` takes the owner's OIDC sub as its fourth argument (the creator, say) and escrows for the owner's organization; without it, the sharer counts as the owner, and a document shared onwards by someone from another organization would move to that organization's custodians. An owner who never signed in to the encryption service has no known email: no copy comes back, and the share itself goes through.
+3. **Never treat it as a recipient.** It is not in `encryptedKeys`, it is not a user, and it must not appear in a sharing list or be removable from one.
+4. **Backfill lazily.** A resource created before the option was enabled, or before its owner's domain was covered, has no copy. Calling `shareKeys` with an empty recipient map, from any current holder, returns only `maintenanceKey`; do it when you open such a resource and the column is null.
 
-The operator later exports the rows (`id`, `maintenanceKey`, `encryptedContent`, and the recipients to re-wrap for) and runs `npm run maintenance` from the encryption repository; the product writes the results back, each re-wrapped copy with the key version it is wrapped to (`keyVersions`), exactly as after a share. Architecture, Appendix E, has the full model and the alternatives that were considered.
+#### The export for a batch recovery
+
+The day the content has to be decrypted without its users (a general failure of the encryption, an organization that stops encrypting), the product team exports it into a folder, the deployment's custodians decrypt it on an isolated computer with the maintenance tool (downloadable at `/public-assets/maintenance-tool.html` on the interface host), and the team imports the plaintext back. The folder has the same shape for every product:
+
+- `manifest.ndjson`: one JSON object per line, one line per encrypted item (a document, an attachment, a comment, a Drive folder or file).
+- Any other file: a ciphertext too large for a column, such as an attachment from object storage, at the path its line names.
+
+Each line has:
+
+| Field            | Required                         | Meaning                                                                                                                                         |
+| ---------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | yes                              | Unique in the export (a string or an integer)                                                                                                   |
+| `type`           | no                               | A free label shown in the tool (`document`, `attachment`...)                                                                                    |
+| `maintenanceKey` | one of `maintenanceKey`/`parent` | A root resource: its stored `maintenanceKey`, base64                                                                                            |
+| `parent`         | one of `maintenanceKey`/`parent` | A nested item: the `id` of the item whose key opens it                                                                                          |
+| `wrappedKey`     | no, with `parent`                | The item's own key wrapped by the parent's key, base64 (the `wrappedKey` of `encryptNestedWithoutKey`); absent, the parent's key itself is used |
+| `content`        | no                               | The ciphertext, base64 on one line                                                                                                              |
+| `file`           | no                               | Or: the ciphertext's path in the folder, relative, forward slashes                                                                              |
+
+One line per item, as `psql -At` writes it, so an example reads as long lines:
+
+<CodeBlock language="json">
+  {`{"id":"0f1e…","type":"document","title":"Notes","updatedAt":"2026-10-19T10:00:00Z","maintenanceKey":"AWAE…","content":"AfGk…"}
+{"id":"7c2a…","type":"attachment","parent":"0f1e…","wrappedKey":"AY3x…","file":"0f1e…/attachments/7c2a…"}
+{"id":"9b41…","type":"comment","parent":"0f1e…","content":"AQx9…"}`}
+</CodeBlock>
+
+An item with neither `content` nor `file` only carries a key for its children (a Drive folder). Every other field (a title, an `updatedAt`, an object key...) passes through unchanged.
+
+**Attachments in an object storage.** The tool runs offline and reads only the folder it is given, so the export has one more step than the query: copying each object named by a `file` into the folder. Make `file` the object's key in the bucket, and that step and its reverse need no mapping:
+
+<CodeBlock language="bash">
+  {`# Export: fill the folder with the ciphertexts the manifest names
+jq -r 'select(.file) | .file' export/manifest.ndjson | while read -r key; do
+  aws s3 cp "s3://$BUCKET/$key" "export/$key"
+done
+
+# Import, from the unzipped archive: each decrypted file is at the same path
+
+jq -r 'select(.file and (.error | not)) | .file' decrypted/manifest.ndjson | while read -r key; do
+aws s3 cp "decrypted/$key" "s3://$BUCKET/$key"
+done`}
+
+</CodeBlock>
+
+The tool lists the files the manifest names but the folder lacks as soon as the folder is picked. Whether the plaintext replaces the ciphertext at the same key or goes to a new one is the product's import to decide; a passed-through field can carry whatever it needs.
+
+**What comes back.** The tool hands back an archive with the same structure: `manifest.ndjson` with the same lines without `maintenanceKey` and `wrappedKey`, `content` holding the plaintext in base64, each `file` path holding the plaintext, and an `error` field on any line it could not decrypt. Compare a passed-through `updatedAt` at import to leave a document edited after the export for the next batch. The items escrowed for another organization's key are not in that manifest: the archive holds them as they came, files included, in one export folder per key (`other-keys/<fingerprint>/`), to hand to those custodians.
+
+**One organization at a time.** A copy starts with a version byte and the 16-byte id of the key it was made for (the 128 bits its fingerprint writes in digits), so an export can be limited to one organization with SQL alone: `WHERE substring(decode(maintenance_wrapped_document_key, 'base64') from 2 for 16) = decode('<key id in hex>', 'hex')` on a base64 column (without the inner `decode` on a binary one).
+
+PostgreSQL's `encode(…, 'base64')` breaks lines every 76 characters: wrap it in `translate(encode(…, 'base64'), E'\n', '')`, the tool refuses wrapped base64. An archive holds at most 65,535 files and 4 GiB, so split larger exports into batches. Architecture, Appendix E, has the full model and the alternatives that were considered.
 
 ### Second authentication factor (2FA) and step-up
 

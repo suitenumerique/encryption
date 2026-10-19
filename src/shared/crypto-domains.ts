@@ -42,6 +42,8 @@ export const DOMAIN_KEY_POSSESSION_KEY = 'lasuite-encryption/key-possession-key/
 // match an identity, and the other way round.
 export const DOMAIN_IDENTITY_FINGERPRINT = 'lasuite-encryption/identity-fingerprint/v1';
 export const DOMAIN_DEVICE_PAIRING_FINGERPRINT = 'lasuite-encryption/device-pairing-fingerprint/v1';
+// The maintenance escrow key, compared by its custodians against the server's boot log.
+export const DOMAIN_MAINTENANCE_KEY_FINGERPRINT = 'lasuite-encryption/maintenance-key-fingerprint/v1';
 
 // Associated data of AEAD ciphertexts. All but the device cache (WebCrypto
 // AES-GCM) go through `encryptContent`, which only takes an `AeadDomain`.

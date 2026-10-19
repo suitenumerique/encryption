@@ -1,5 +1,6 @@
 import {
   type HybridPublicKey,
+  type MaintenancePublicKey,
   encryptContent,
   encryptSymmetricKeyForUsers,
   generateSymmetricKey,
@@ -77,13 +78,14 @@ export async function handleEncryptWithKey(
  * of an encrypted subtree. Callers persist each returned wrapped key on the
  * matching user's access row.
  *
- * With a `maintenancePublicKey` (the deployment's escrow key, injected by the
- * message boundary, never by a product), K_new is also wrapped for it and
- * returned as `maintenanceKey`, which the caller persists on the resource.
+ * With a `maintenanceEscrowKey` (the deployment's escrow key covering the
+ * creator, chosen by the message boundary, never by a product), K_new is also
+ * wrapped for it and returned as `maintenanceKey`, which the caller persists on
+ * the resource.
  */
 export async function handleEncryptWithoutKey(
   userId: string,
-  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer>; maintenancePublicKey?: HybridPublicKey | null }
+  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer>; maintenanceEscrowKey?: MaintenancePublicKey | null }
 ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
   const pair = await getStoredKeyPair(userId);
 
@@ -107,8 +109,8 @@ export async function handleEncryptWithoutKey(
     encryptedKeys[uid] = encKey.buffer as ArrayBuffer;
   }
 
-  if (payload.maintenancePublicKey) {
-    const maintenanceKey = await wrapKeyForMaintenance(newKey, payload.maintenancePublicKey);
+  if (payload.maintenanceEscrowKey) {
+    const maintenanceKey = await wrapKeyForMaintenance(newKey, payload.maintenanceEscrowKey);
 
     return { encryptedContent, encryptedKeys, maintenanceKey: maintenanceKey.buffer as ArrayBuffer };
   }

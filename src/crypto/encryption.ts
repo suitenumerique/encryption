@@ -286,14 +286,15 @@ function kemWrapKey(sharedSecret: Uint8Array): Uint8Array {
 export async function encryptSymmetricKeyForUsers(
   symmetricKey: Uint8Array,
   usersPublicKeys: Record<string, HybridPublicKey>,
-  domain: KemWrapDomain
+  domain: KemWrapDomain,
+  context: Uint8Array[] = []
 ): Promise<Record<string, Uint8Array>> {
   const entries = Object.entries(usersPublicKeys);
 
   const results = await Promise.all(
     entries.map(async ([userId, publicKey]) => {
       const { sharedSecret, ciphertext: kemCiphertext } = await hybridEncapsulate(publicKey);
-      const encrypted = await encryptContent(symmetricKey, kemWrapKey(sharedSecret), domain);
+      const encrypted = await encryptContent(symmetricKey, kemWrapKey(sharedSecret), domain, context);
 
       const kemLen = writeUint16LE(kemCiphertext.length);
       const combined = new Uint8Array(1 + 2 + kemCiphertext.length + encrypted.length);
@@ -312,7 +313,12 @@ export async function encryptSymmetricKeyForUsers(
 /**
  * Decrypt a symmetric key that was encrypted for the local user.
  */
-export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, encryptedKey: Uint8Array, domain: KemWrapDomain): Promise<Uint8Array> {
+export async function decryptSymmetricKeyForUser(
+  secretKey: HybridSecretKey,
+  encryptedKey: Uint8Array,
+  domain: KemWrapDomain,
+  context: Uint8Array[] = []
+): Promise<Uint8Array> {
   if (encryptedKey.length < 3) {
     throw new VaultError(VaultErrorCode.CIPHERTEXT_TOO_SHORT, 'Encrypted key is too short to be valid');
   }
@@ -345,5 +351,5 @@ export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, enc
 
   const sharedSecret = await hybridDecapsulate(secretKey, kemCiphertext);
 
-  return decryptContent(encryptedSymKey, kemWrapKey(sharedSecret), domain);
+  return decryptContent(encryptedSymKey, kemWrapKey(sharedSecret), domain, context);
 }
