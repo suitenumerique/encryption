@@ -1,0 +1,135 @@
+{{- if .Values.accounts.enabled }}
+{{- $fullName := include "suite-stack.fullname" . }}
+{{- $hookName := printf "%s-accounts-applications-%d" $fullName .Release.Revision }}
+{{- $b := .Values.bootstrap }}
+{{/*
+The OAuth2 applications Docs, Drive and the encryption service sign in to Accounts with.
+Accounts has no command to declare them, so this Job writes them through its own models,
+with its own image and settings, once its migration has run. It is a hook of the phases
+AFTER the release's objects exist (post-install, post-upgrade), unlike the bootstrap:
+Accounts' migration Job is an ordinary object, so on an upgrade it only starts once the
+pre-upgrade hooks are done, and a wait for it there would never end. Idempotent, by
+client id: the secret and the URIs are written again at every run.
+*/}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $hookName | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: accounts-applications
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+type: Opaque
+stringData:
+  applications.json: {{ $b.accounts.applications | toJson | quote }}
+  # Run by `manage.py shell`, so with Accounts' settings and its database.
+  applications.py: |
+    import json
+
+    from oauth2_provider.models import get_application_model
+
+    Application = get_application_model()
+
+    with open("/scripts/applications.json", encoding="utf-8") as file:
+        specs = json.load(file)
+
+    for spec in specs:
+        application = Application.objects.filter(client_id=spec["clientId"]).first()
+        created = application is None
+        if created:
+            application = Application(client_id=spec["clientId"])
+        application.name = spec["clientId"]
+        application.client_type = Application.CLIENT_CONFIDENTIAL
+        application.authorization_grant_type = Application.GRANT_AUTHORIZATION_CODE
+        # Stored hashed, like any secret typed in the admin.
+        application.client_secret = spec["secret"]
+        application.hash_client_secret = True
+        application.redirect_uris = " ".join(spec["redirectUris"])
+        application.post_logout_redirect_uris = " ".join(spec.get("postLogoutRedirectUris") or [])
+        application.algorithm = Application.RS256_ALGORITHM
+        application.skip_authorization = True
+        application.clean()
+        application.save()
+        print(("created" if created else "updated") + " application " + spec["clientId"])
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $hookName | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: accounts-applications
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: {{ $b.job.backoffLimit }}
+  activeDeadlineSeconds: {{ $b.job.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "suite-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: accounts-applications
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: applications
+          image: {{ include "suite-stack.accountsImage" . | quote }}
+          imagePullPolicy: {{ .Values.accounts.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python manage.py migrate --check > /dev/null 2>&1; do
+                echo "waiting for Accounts' migration"; sleep 3
+              done
+              python manage.py shell --command "exec(open('/scripts/applications.py').read())"
+          env:
+            - name: HOME
+              value: /tmp
+            {{- range $name, $value := .Values.accounts.backend.envVars }}
+            - name: {{ $name | quote }}
+              {{- if kindIs "map" $value }}
+              valueFrom:
+                {{- toYaml $value | nindent 16 }}
+              {{- else }}
+              value: {{ $value | quote }}
+              {{- end }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scripts
+          secret:
+            secretName: {{ $hookName | quote }}
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+{{- end }}

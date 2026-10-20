@@ -62,7 +62,7 @@ TrustedStory.args = {
   ...baseArgs,
   tone: 'success',
   aside: (
-    <Chip tone="success" icon="check_circle">
+    <Chip tone="success" icon="trusted">
       Trusted
     </Chip>
   ),
@@ -75,7 +75,7 @@ RefusedStory.args = {
   ...baseArgs,
   tone: 'error',
   aside: (
-    <Chip tone="error" icon="block">
+    <Chip tone="error" icon="refused">
       Refused
     </Chip>
   ),

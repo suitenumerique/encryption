@@ -1,5 +1,5 @@
-import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
@@ -23,15 +23,17 @@ import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSett
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
-import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
 import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
+import { ModalSizeProvider } from '@encryption/src/ui/hooks/useModalSize';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
 import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
-import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
+import { PATH_FOR_ROUTE, type Route, getRouteFromPath, getSettingsSectionFromPath } from '@encryption/src/ui/routes';
 import { runtimeConfig } from '@encryption/src/ui/runtime-config';
+import { resolveThemeName } from '@encryption/src/ui/theme';
 
 const DOCS_ENABLED = runtimeConfig.docsEnabled ?? true;
 
@@ -40,12 +42,16 @@ function getHashParams(): URLSearchParams {
 }
 
 /**
- * Get the Cunningham theme name from the URL hash.
- * The parent passes it via the hash: /onboarding#theme=dsfr
- * Default: "default" (white label light theme).
+ * The design system theme from the URL hash: the parent passes it as
+ * /onboarding#theme=dsfr. Default: "default" (white label light theme).
  */
 function getThemeFromHash(): string {
-  return getHashParams().get('theme') || 'default';
+  return resolveThemeName(getHashParams().get('theme'));
+}
+
+/** The design system's own labels (close control, loaders) follow the interface language. */
+function designSystemLocale(language: string): string {
+  return language.startsWith('fr') ? 'fr-FR' : 'en-US';
 }
 
 function getLangFromHash(): string | null {
@@ -103,10 +109,10 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
   // size ever crosses the two windows. Documentation pages are whole pages, and
   // two screens draw a modal of their own: the verify overlay, and the emergency
   // prompt the SDK opens on its own (told apart by the context it carries).
+  // A screen asks for the wide modal itself (useModalSize), so the width follows
+  // the step actually shown, the sign-in gates included.
   const fullPage = route === 'docs-user' || route === 'docs-technical';
   const drawsOwnModal = route === 'verify-recipients' || (activeRoute === 'emergency-access' && parentContext.emergencyPending !== null);
-  const [gateShown, setGateShown] = useState(false);
-  const modalSize = activeRoute === 'emergency-access' && !gateShown ? ModalSize.MEDIUM : ModalSize.SMALL;
 
   // The two screens drawing their own modal do so only once shown: in their place,
   // those screens still need one, or they sprawl see-through.
@@ -116,7 +122,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
         {screen}
       </Modal>
     ) : (
-      <GateShown onShown={setGateShown}>{screen}</GateShown>
+      screen
     );
 
   const screens = (
@@ -135,23 +141,22 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
       {fullPage || drawsOwnModal ? (
         screens
       ) : (
-        <Modal isOpen onClose={requestClose} closeOnClickOutside={false} size={modalSize} aria-label={t('interface.title')}>
-          {screens}
-        </Modal>
+        <ModalSizeProvider>
+          {(size) => (
+            <Modal
+              isOpen
+              onClose={requestClose}
+              closeOnClickOutside={false}
+              size={size === 'medium' ? ModalSize.MEDIUM : ModalSize.SMALL}
+              aria-label={t('interface.title')}
+            >
+              {screens}
+            </Modal>
+          )}
+        </ModalSizeProvider>
       )}
     </CloseRequestProvider>
   );
-}
-
-/** Tells the modal around it that a gate screen is shown, before the frame is painted. */
-function GateShown({ onShown, children }: { onShown: (shown: boolean) => void; children: ReactNode }) {
-  useLayoutEffect(() => {
-    onShown(true);
-
-    return () => onShown(false);
-  }, [onShown]);
-
-  return children;
 }
 
 /** Inner component that has access to the EncryptionContext */
@@ -366,6 +371,7 @@ function InterfaceScreens({
   // Lets a screen (e.g. settings) push into device-approval in place without a
   // real navigation, then return to where it was.
   const activeRoute = routeOverride ?? route;
+  const settingsSection = route === 'settings' ? getSettingsSectionFromPath(window.location.pathname) : null;
 
   // Who the ID token is for, as the provider described them at sign-in.
   const userInfo = useMemo<UserInfo | null>(
@@ -432,7 +438,7 @@ function InterfaceScreens({
       return frameGate(
         <Screen
           title={t('auth.required_title')}
-          banner={<Alert type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Alert>}
+          banner={<Notice type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Notice>}
           actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
         />
       );
@@ -448,7 +454,7 @@ function InterfaceScreens({
 
       return frameGate(
         <Screen
-          illustration="shield-check"
+          illustration="shield-gear"
           title={t('auth.required_title')}
           description={t('auth.required_explanation')}
           actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.continue')}</Button>}
@@ -461,10 +467,50 @@ function InterfaceScreens({
     // way, show the warning rather than spin — the interface cannot proceed
     // without knowing which user is authenticated.
     if ((tokenRestoreAttempted || handshakeTimedOut) && !parentContext.suiteUserId) {
-      return frameGate(<Screen banner={<Alert type={VariantType.WARNING}>{t('auth.no_user_context')}</Alert>} />);
+      return frameGate(<Screen banner={<Notice type={VariantType.WARNING}>{t('auth.no_user_context')}</Notice>} />);
     }
 
     return frameGate(<LoadingScreen />);
+  }
+
+  // Opened over another screen (settings home, onboarding), a flow comes back to
+  // it; opened on its own (its route, or a product's settings section), it closes
+  // the interface when done.
+  const overlaid = routeOverride !== null;
+
+  function emergencyAccess(direct: boolean) {
+    return (
+      <EmergencyAccess
+        getIdToken={getValidIdToken}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+        onReconnect={oidcAuth.requestAuth}
+        isAuthenticating={oidcAuth.isAuthenticating}
+        currentIdToken={oidcAuth.idToken}
+        emergencyPending={parentContext.emergencyPending}
+      />
+    );
+  }
+
+  function deviceApproval(direct: boolean) {
+    return (
+      <DeviceApproval
+        getIdToken={getValidIdToken}
+        onReconnect={oidcAuth.requestAuth}
+        isAuthenticating={oidcAuth.isAuthenticating}
+        currentIdToken={oidcAuth.idToken}
+        onAdopted={() => {
+          notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
+
+          // Real navigation: the vault now has keys here, so the base route is
+          // settings from now on (URL included, so a refresh stays put). The
+          // approval overlay stays until the user dismisses its success screen.
+          if (!direct) navigate('settings');
+        }}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+      />
+    );
   }
 
   switch (activeRoute) {
@@ -531,14 +577,21 @@ function InterfaceScreens({
         />
       );
 
-    case 'settings':
+    case 'settings': {
+      // A product's account page opens one flow at a time; the trusted contacts and
+      // the device pairing are screens of their own, the rest belongs to settings.
+      if (settingsSection === 'add-device') return deviceApproval(true);
+      if (settingsSection === 'trusted-contacts') return emergencyAccess(true);
+
       return (
         <EncryptionSettings
           userInfo={userInfo}
           userId={internalUserId}
           getIdToken={getValidIdToken}
+          section={settingsSection}
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
+          onSetUp={() => navigate('onboarding')}
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
@@ -546,39 +599,13 @@ function InterfaceScreens({
           currentIdToken={oidcAuth.idToken}
         />
       );
+    }
 
     case 'emergency-access':
-      return (
-        <EmergencyAccess
-          getIdToken={getValidIdToken}
-          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
-          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
-          onReconnect={oidcAuth.requestAuth}
-          isAuthenticating={oidcAuth.isAuthenticating}
-          currentIdToken={oidcAuth.idToken}
-          emergencyPending={parentContext.emergencyPending}
-        />
-      );
+      return emergencyAccess(false);
 
     case 'device-approval':
-      return (
-        <DeviceApproval
-          getIdToken={getValidIdToken}
-          onReconnect={oidcAuth.requestAuth}
-          isAuthenticating={oidcAuth.isAuthenticating}
-          currentIdToken={oidcAuth.idToken}
-          onAdopted={() => {
-            notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
-
-            // Real navigation: the vault now has keys here, so the base route is
-            // settings from now on (URL included, so a refresh stays put). The
-            // approval overlay stays until the user dismisses its success screen.
-            navigate('settings');
-          }}
-          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
-          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
-        />
-      );
+      return deviceApproval(false);
 
     case 'verify-recipients':
       return (
@@ -654,7 +681,7 @@ export function App() {
       const data = event.data as { type?: string; theme?: string } | null;
 
       if (data?.type === MSG_INTERFACE_SET_THEME && typeof data.theme === 'string') {
-        setCunninghamTheme(data.theme);
+        setCunninghamTheme(resolveThemeName(data.theme));
       }
     };
 
@@ -677,7 +704,7 @@ export function App() {
   // OIDC auth routes — opened in a new tab, not inside an iframe
   if (route === 'login') {
     return (
-      <CunninghamProvider theme={cunninghamTheme}>
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
         <LoginPage />
       </CunninghamProvider>
     );
@@ -685,7 +712,7 @@ export function App() {
 
   if (route === 'auth-callback') {
     return (
-      <CunninghamProvider theme={cunninghamTheme}>
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
         <CallbackPage />
       </CunninghamProvider>
     );
@@ -695,29 +722,33 @@ export function App() {
   if (route === 'docs-user' || route === 'docs-technical') {
     if (!DOCS_ENABLED) {
       return (
-        <CunninghamProvider theme={cunninghamTheme}>
+        <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
           <Screen padded description={t('docs.disabled')} />
         </CunninghamProvider>
       );
     }
 
-    return <CunninghamProvider theme={cunninghamTheme}>{route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}</CunninghamProvider>;
+    return (
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
+        {route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}
+      </CunninghamProvider>
+    );
   }
 
   // Encryption interface routes
   if (route) {
     return (
-      <CunninghamProvider theme={cunninghamTheme}>
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
         {!browserCheck.supported && (
           <div
             role="alert"
             style={{
               padding: 'var(--c--globals--spacings--sm)',
-              borderLeft: '4px solid var(--c--globals--colors--error-500)',
-              background: 'var(--c--contextuals--background--semantic--error--secondary)',
+              border: '1px solid var(--c--contextuals--border--semantic--error--tertiary)',
+              background: 'var(--c--contextuals--background--semantic--error--tertiary)',
               color: 'var(--c--contextuals--content--semantic--error--secondary)',
-              borderRadius: '0 4px 4px 0',
-              fontSize: 13,
+              borderRadius: 'var(--c--globals--spacings--xxxs)',
+              fontSize: 'var(--c--globals--font--sizes--xs)',
               margin: 'var(--c--globals--spacings--sm)',
             }}
           >

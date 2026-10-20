@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { VaultClient } from '@encryption/src/client/vault-client';
+import { MSG_VAULT_FETCH_PUBLIC_KEYS, MSG_VAULT_GET_PUBLIC_KEY, MSG_VAULT_HAS_KEYS } from '@encryption/src/shared/constants';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 // The auto-verify flow is exercised at the public API boundary (shareKeys /
@@ -165,5 +166,74 @@ describe('VaultClient.openRecipientProfile', () => {
       }),
       INTERFACE_ORIGIN
     );
+  });
+});
+
+describe('VaultClient encryption status', () => {
+  const identity = new Uint8Array([1, 2, 3, 4]).buffer;
+  const otherIdentity = new Uint8Array([5, 6, 7, 8]).buffer;
+
+  // The vault answers by message type: has-keys, fetch-public-keys, get-public-key.
+  async function statusWith({ hasKeys, registered }: { hasKeys: boolean; registered: ArrayBuffer | null }) {
+    const { client, internal } = makeClient();
+    const registeredFingerprint = registered ? await client.computeKeyFingerprint(registered) : null;
+
+    internal.vaultRequest = vi.fn(async (type: unknown) => {
+      if (type === MSG_VAULT_HAS_KEYS) return { hasKeys };
+      if (type === MSG_VAULT_FETCH_PUBLIC_KEYS) {
+        return { users: registered ? { sub1: { verified: true, identityFingerprint: registeredFingerprint } } : {} };
+      }
+      if (type === MSG_VAULT_GET_PUBLIC_KEY) return { publicKey: new ArrayBuffer(4), signaturePublicKey: identity };
+      throw new Error(`unexpected ${String(type)}`);
+    });
+    client.setAuthContext({ suiteUserId: 'sub1' });
+
+    return client.getEncryptionStatus();
+  }
+
+  it('is active when this device holds the identity registered for the account', async () => {
+    await expect(statusWith({ hasKeys: true, registered: identity })).resolves.toEqual({ state: 'active', registered: true });
+  });
+
+  it('needs attention when this device holds another identity than the registered one', async () => {
+    await expect(statusWith({ hasKeys: true, registered: otherIdentity })).resolves.toEqual({ state: 'needs-attention', registered: true });
+  });
+
+  it('is disabled for the account when this device holds keys the account no longer registers', async () => {
+    await expect(statusWith({ hasKeys: true, registered: null })).resolves.toEqual({ state: 'disabled-for-account', registered: false });
+  });
+
+  it('is not set up on a device without keys, telling whether the account has encryption elsewhere', async () => {
+    await expect(statusWith({ hasKeys: false, registered: identity })).resolves.toEqual({ state: 'not-set-up', registered: true });
+    await expect(statusWith({ hasKeys: false, registered: null })).resolves.toEqual({ state: 'not-set-up', registered: false });
+  });
+
+  it('needs the auth context', async () => {
+    const { client } = makeClient();
+
+    await expect(client.getEncryptionStatus()).rejects.toMatchObject({ code: VaultErrorCode.NOT_INITIALIZED });
+  });
+});
+
+describe('VaultClient settings sections', () => {
+  it('opens the home without a section and a single flow with one', () => {
+    // Overlays left open by the tests above.
+    document.body.replaceChildren();
+    const { client } = makeClient();
+
+    client.openSettings();
+    expect(document.querySelector('iframe')?.src).toMatch(/^https:\/\/encryption\.test\/settings#/);
+
+    client.openSettings('trusted-contacts');
+    expect(document.querySelectorAll('iframe')).toHaveLength(1);
+    expect(document.querySelector('iframe')?.src).toMatch(/^https:\/\/encryption\.test\/settings\/trusted-contacts#/);
+
+    client.closeInterface();
+  });
+
+  it('refuses an unknown section', () => {
+    const { client } = makeClient();
+
+    expect(() => client.openSettings('nope' as never)).toThrow(/Unknown settings section/);
   });
 });

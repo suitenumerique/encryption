@@ -1,5 +1,5 @@
-import { Alert, Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, DropdownMenu, type DropdownMenuItem, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Key, More, Shield, UserAdd, XMark } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -43,9 +43,10 @@ import {
   rearmBodyFromDesignation,
 } from '@encryption/src/ui/components/emergency-access-logic';
 import { Chip, Identity, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
-import { Actions, LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
+import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
@@ -74,13 +75,70 @@ function countdownLabel(countdown: Countdown, locale: string): string {
 }
 
 const CHIP_TONES = { invited: 'info', confirmed: 'success', requested: 'error', approved: 'warning' } as const;
-const CHIP_ICONS = { invited: 'schedule', confirmed: 'check_circle', requested: 'error', approved: 'lock_open' } as const;
+const CHIP_ICONS = { invited: 'pending', confirmed: 'trusted', requested: 'alert', approved: 'unlocked' } as const;
 
 function StatusChip({ phase, t }: { phase: 'invited' | 'confirmed' | 'requested' | 'approved'; t: TFunction }) {
   return (
     <Chip tone={CHIP_TONES[phase]} icon={CHIP_ICONS[phase]}>
       {t(`emergency.status_${phase}`)}
     </Chip>
+  );
+}
+
+/** The "⋯" of a contact row: the design system's dropdown menu. */
+function RowMenu({ label, options, disabled }: { label: string; options: DropdownMenuItem[]; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <DropdownMenu options={options} isOpen={open} onOpenChange={setOpen}>
+      <Button
+        size="nano"
+        variant="tertiary"
+        color="neutral"
+        aria-label={label}
+        title={label}
+        disabled={disabled}
+        icon={<More aria-hidden size={16} />}
+        onClick={() => setOpen(true)}
+      />
+    </DropdownMenu>
+  );
+}
+
+/**
+ * One person in the trusted contacts lists: who, their status, a menu, and,
+ * under it, a tinted band for what this person's state asks of the user.
+ */
+function ContactRow({
+  name,
+  secondary,
+  status,
+  menu,
+  band,
+  bandTone = 'neutral',
+  tone = 'default',
+}: {
+  name: string;
+  secondary?: string;
+  status?: ReactNode;
+  menu?: ReactNode;
+  band?: ReactNode;
+  bandTone?: 'neutral' | 'warning' | 'error';
+  tone?: 'default' | 'error';
+}) {
+  const bandClass = bandTone === 'error' ? styles.contactBandError : bandTone === 'warning' ? styles.contactBandWarning : '';
+
+  return (
+    <div className={tone === 'error' ? `${styles.contact} ${styles.contactError}` : styles.contact}>
+      <div className={styles.contactMain}>
+        <Identity name={name} secondary={secondary} />
+        <div className={styles.cardAside}>
+          {status}
+          {menu}
+        </div>
+      </div>
+      {band && <div className={`${styles.contactBand} ${bandClass}`}>{band}</div>}
+    </div>
   );
 }
 
@@ -246,7 +304,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
     }
   }, [contact, effectiveWaitDays, createEmergencyEscrow, request, getIdToken, i18n.language, markSessionExpired, t]);
 
-  const errorAlert = error && <Alert type={VariantType.ERROR}>{error}</Alert>;
+  const errorAlert = error && <Notice type={VariantType.ERROR}>{error}</Notice>;
 
   if (step === 'success' && contact) {
     return (
@@ -301,18 +359,18 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
           </>
         }
       >
-        <div className={styles.card}>
-          <div className={styles.cardHeader}>
-            <Identity name={contact.email} />
-            <Chip tone="success" icon="check_circle">
+        <IdentityCard
+          name={contact.email}
+          aside={
+            <Chip tone="success" icon="trusted">
               {t('verify.trusted')}
             </Chip>
-          </div>
-        </div>
+          }
+        />
 
         <div className={styles.section}>
           <p className={styles.sectionTitle}>{t('emergency.designate_wait_title')}</p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className={styles.textLinks} style={{ justifyContent: 'flex-start' }}>
             {WAIT_TIME_PRESETS.map((days) => (
               <Button
                 key={days}
@@ -331,7 +389,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
             </Button>
           </div>
           {useCustom && (
-            <div>
+            <div className={styles.section}>
               <label className={styles.label} htmlFor="emergency-custom-wait">
                 {t('emergency.wait_custom_label', { min: MIN_WAIT_DAYS, max: MAX_WAIT_DAYS })}
               </label>
@@ -343,7 +401,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
                 max={MAX_WAIT_DAYS}
                 value={customWait}
                 onChange={(e) => setCustomWait(e.target.value)}
-                style={{ width: 140 }}
+                style={{ maxWidth: 140 }}
               />
             </div>
           )}
@@ -379,7 +437,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
         <label className={styles.label} htmlFor="emergency-contact-email">
           {t('emergency.designate_email_label')}
         </label>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className={styles.settingsRow}>
           <input
             id="emergency-contact-email"
             className={styles.input}
@@ -391,14 +449,14 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
             }}
             placeholder={t('emergency.designate_email_placeholder')}
           />
-          <Button onClick={() => handleSearch()} disabled={busy || email.trim().length === 0} icon={<Icon aria-hidden name="search" />}>
+          <Button onClick={() => handleSearch()} disabled={busy || email.trim().length === 0}>
             {busy ? t('emergency.searching') : t('emergency.btn_search')}
           </Button>
         </div>
       </div>
 
-      {searchOutcome === 'not-found' && <Alert type={VariantType.INFO}>{t('emergency.designate_not_found')}</Alert>}
-      {searchOutcome === 'not-onboarded' && <Alert type={VariantType.INFO}>{t('emergency.designate_not_onboarded')}</Alert>}
+      {searchOutcome === 'not-found' && <Notice type={VariantType.INFO}>{t('emergency.designate_not_found')}</Notice>}
+      {searchOutcome === 'not-onboarded' && <Notice type={VariantType.INFO}>{t('emergency.designate_not_onboarded')}</Notice>}
     </Screen>
   );
 }
@@ -503,7 +561,7 @@ function RevealView({ entry, getIdToken, onDone, markSessionExpired, banner }: R
   );
 
   if (error) {
-    return <Screen back={back} title={t('emergency.reveal_title')} banner={<Alert type={VariantType.ERROR}>{error}</Alert>} />;
+    return <Screen back={back} title={t('emergency.reveal_title')} banner={<Notice type={VariantType.ERROR}>{error}</Notice>} />;
   }
 
   if (untrustedGrantor) {
@@ -572,6 +630,9 @@ export function EmergencyAccess({
   const { t, i18n } = useTranslation('common');
   const { isReady, request, createEmergencyEscrow, verifyEscrows } = useEncryptionContext();
   const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
+
+  // The lists need the wide modal, the steps of a designation or a reveal too.
+  useModalSize('medium');
 
   const [view, setView] = useState<'list' | 'designate' | 'reveal'>('list');
   const [designatePrefill, setDesignatePrefill] = useState<string | null>(null);
@@ -999,9 +1060,9 @@ export function EmergencyAccess({
           banner={
             <>
               {sessionBanner}
-              {notice && <Alert type={VariantType.SUCCESS}>{notice}</Alert>}
-              {actionError && <Alert type={VariantType.ERROR}>{actionError}</Alert>}
-              {loadError && <Alert type={VariantType.ERROR}>{loadError}</Alert>}
+              {notice && <Notice type={VariantType.SUCCESS}>{notice}</Notice>}
+              {actionError && <Notice type={VariantType.ERROR}>{actionError}</Notice>}
+              {loadError && <Notice type={VariantType.ERROR}>{loadError}</Notice>}
             </>
           }
         >
@@ -1011,8 +1072,10 @@ export function EmergencyAccess({
             <>
               {/* Section A: contacts I designated (grantor side). */}
               <div className={styles.section}>
-                <p className={styles.sectionTitle}>{t('emergency.trusted_title')}</p>
-                <p className={styles.sectionSubtitle}>{t('emergency.trusted_subtitle')}</p>
+                <div className={styles.sectionHeader}>
+                  <p className={styles.sectionTitle}>{t('emergency.trusted_title')}</p>
+                  <p className={styles.sectionSubtitle}>{t('emergency.trusted_subtitle')}</p>
+                </div>
 
                 {trusted && trusted.length === 0 && <div className={styles.empty}>{t('emergency.trusted_empty')}</div>}
 
@@ -1021,77 +1084,102 @@ export function EmergencyAccess({
                   const rowAudit = entry.vault_active === false ? undefined : audit[entry.id];
                   const countdown = entry.deadline_millis !== null ? countdownTo(entry.deadline_millis, now) : null;
                   const busy = busyId === entry.id;
+                  const recoveryRunning = rowAudit !== 'tampered' && (phase === 'requested' || phase === 'approved');
+
+                  // One band per row: what is wrong with the escrow first, then a
+                  // running recovery, then what is merely informative.
+                  let band: ReactNode = null;
+                  let bandTone: 'neutral' | 'warning' | 'error' = 'neutral';
+
+                  if (rowAudit === 'tampered') {
+                    band = <span>{t('emergency.audit_tampered')}</span>;
+                    bandTone = 'error';
+                  } else if (recoveryRunning) {
+                    bandTone = 'error';
+                    band = (
+                      <>
+                        <span>
+                          {phase === 'approved'
+                            ? t('emergency.trusted_approved_warning', { email: entry.grantee_email })
+                            : countdown && !countdown.expired
+                              ? t('emergency.trusted_requested_warning', {
+                                  email: entry.grantee_email,
+                                  time: countdownLabel(countdown, i18n.language),
+                                })
+                              : t('emergency.trusted_approved_warning', { email: entry.grantee_email })}
+                        </span>
+                        <Button size="nano" color="error" disabled={busy} onClick={() => handleReject(entry)}>
+                          {phase === 'approved' ? t('emergency.btn_relock') : t('emergency.btn_refuse_request')}
+                        </Button>
+                      </>
+                    );
+                  } else if (rowAudit === 'stale-identity') {
+                    bandTone = 'warning';
+                    band = (
+                      <>
+                        <span>{t('emergency.audit_stale')}</span>
+                        <Button size="nano" variant="bordered" color="neutral" disabled={busy} onClick={() => handleRenew(entry)}>
+                          {t('emergency.btn_renew')}
+                        </Button>
+                      </>
+                    );
+                  } else if (rowAudit === 'outdated-key') {
+                    band = (
+                      <>
+                        <span>{t('emergency.audit_outdated')}</span>
+                        <Button size="nano" variant="bordered" color="neutral" disabled={busy} onClick={() => handleUpdateEscrow(entry)}>
+                          {t('emergency.btn_update_escrow')}
+                        </Button>
+                      </>
+                    );
+                  } else if (entry.vault_active === false) {
+                    band = <span>{t('emergency.vault_inactive_note')}</span>;
+                  }
 
                   return (
-                    <div key={entry.id} className={rowAudit === 'tampered' ? `${styles.card} ${styles.cardError}` : styles.card}>
-                      <div className={styles.cardHeader}>
-                        <Identity name={entry.grantee_email} secondary={t('emergency.wait_label', { count: entry.wait_time_days })} />
-                        <StatusChip phase={phase} t={t} />
-                      </div>
-
-                      {entry.vault_active === false && <p className={styles.hint}>{t('emergency.vault_inactive_note')}</p>}
-
-                      {rowAudit === 'tampered' && <Alert type={VariantType.ERROR}>{t('emergency.audit_tampered')}</Alert>}
-
-                      {rowAudit === 'stale-identity' && (
-                        <Alert type={VariantType.WARNING}>
-                          <div className={styles.alertStack}>
-                            <span>{t('emergency.audit_stale')}</span>
-                            <div>
-                              <Button size="small" variant="bordered" disabled={busy} onClick={() => handleRenew(entry)}>
-                                {t('emergency.btn_renew')}
-                              </Button>
-                            </div>
-                          </div>
-                        </Alert>
-                      )}
-
-                      {rowAudit === 'outdated-key' && (
-                        <Alert type={VariantType.INFO}>
-                          <div className={styles.alertStack}>
-                            <span>{t('emergency.audit_outdated')}</span>
-                            <div>
-                              <Button size="small" variant="bordered" disabled={busy} onClick={() => handleUpdateEscrow(entry)}>
-                                {t('emergency.btn_update_escrow')}
-                              </Button>
-                            </div>
-                          </div>
-                        </Alert>
-                      )}
-
-                      {rowAudit !== 'tampered' && phase === 'requested' && countdown && !countdown.expired && (
-                        <Alert type={VariantType.WARNING}>
-                          {t('emergency.trusted_requested_warning', { email: entry.grantee_email, time: countdownLabel(countdown, i18n.language) })}
-                        </Alert>
-                      )}
-
-                      {rowAudit !== 'tampered' && phase === 'approved' && (
-                        <Alert type={VariantType.WARNING}>{t('emergency.trusted_approved_warning', { email: entry.grantee_email })}</Alert>
-                      )}
-
-                      <Actions layout="row">
-                        <Button size="small" variant="tertiary" color="error" disabled={busy} onClick={() => setConfirm({ kind: 'revoke', entry })}>
-                          {t('emergency.btn_revoke')}
-                        </Button>
-                        {(phase === 'requested' || phase === 'approved') && (
-                          <Button size="small" color="error" disabled={busy} onClick={() => handleReject(entry)}>
-                            {phase === 'approved' ? t('emergency.btn_relock') : t('emergency.btn_refuse_request')}
-                          </Button>
-                        )}
-                      </Actions>
-                    </div>
+                    <ContactRow
+                      key={entry.id}
+                      name={entry.grantee_email}
+                      secondary={t('emergency.wait_label', { count: entry.wait_time_days })}
+                      tone={rowAudit === 'tampered' || recoveryRunning ? 'error' : 'default'}
+                      status={phase !== 'confirmed' && <StatusChip phase={phase} t={t} />}
+                      band={band}
+                      bandTone={bandTone}
+                      menu={
+                        <RowMenu
+                          label={t('emergency.row_menu', { email: entry.grantee_email })}
+                          disabled={busy}
+                          options={[
+                            {
+                              label: t('emergency.btn_revoke'),
+                              icon: <XMark aria-hidden size={16} />,
+                              callback: () => setConfirm({ kind: 'revoke', entry }),
+                            },
+                          ]}
+                        />
+                      }
+                    />
                   );
                 })}
 
-                <Button variant="secondary" onClick={() => setView('designate')} icon={<Icon aria-hidden name="person_add" />} fullWidth>
+                <Button
+                  className={styles.textLink}
+                  size="nano"
+                  variant="bordered"
+                  color="neutral"
+                  onClick={() => setView('designate')}
+                  icon={<UserAdd aria-hidden size={16} />}
+                >
                   {t('emergency.btn_designate')}
                 </Button>
               </div>
 
               {/* Section B: vaults entrusted to me (contact side). */}
               <div className={styles.section}>
-                <p className={styles.sectionTitle}>{t('emergency.granted_title')}</p>
-                <p className={styles.sectionSubtitle}>{t('emergency.granted_subtitle')}</p>
+                <div className={styles.sectionHeader}>
+                  <p className={styles.sectionTitle}>{t('emergency.granted_title')}</p>
+                  <p className={styles.sectionSubtitle}>{t('emergency.granted_subtitle')}</p>
+                </div>
 
                 {granted && granted.length === 0 && <div className={styles.empty}>{t('emergency.granted_empty')}</div>}
 
@@ -1100,71 +1188,82 @@ export function EmergencyAccess({
                   const countdown = entry.deadline_millis !== null ? countdownTo(entry.deadline_millis, now) : null;
                   const busy = busyId === entry.id;
 
+                  let band: ReactNode = null;
+                  let bandTone: 'neutral' | 'warning' = 'neutral';
+
+                  if (phase === 'invited') {
+                    band = (
+                      <>
+                        <span>{t('emergency.granted_invited_text', { email: entry.grantor_email })}</span>
+                        <Button size="nano" variant="bordered" color="error" disabled={busy} onClick={() => setConfirm({ kind: 'decline', entry })}>
+                          {t('emergency.btn_decline')}
+                        </Button>
+                        <Button size="nano" disabled={busy} onClick={() => handleAccept(entry)}>
+                          {t('emergency.btn_accept')}
+                        </Button>
+                      </>
+                    );
+                  } else if (phase === 'requested' && countdown && !countdown.expired) {
+                    bandTone = 'warning';
+                    band = <span>{t('emergency.granted_requested_text', { time: countdownLabel(countdown, i18n.language) })}</span>;
+                  } else if (phase === 'approved') {
+                    bandTone = 'warning';
+                    band = (
+                      <>
+                        <span>{t('emergency.granted_approved_text', { email: entry.grantor_email })}</span>
+                        <Button
+                          size="nano"
+                          disabled={busy}
+                          icon={<Key aria-hidden size={16} />}
+                          onClick={() => {
+                            setRevealEntry(entry);
+                            setView('reveal');
+                          }}
+                        >
+                          {t('emergency.btn_reveal')}
+                        </Button>
+                      </>
+                    );
+                  }
+
+                  const options: DropdownMenuItem[] = [];
+
+                  if (phase === 'confirmed') {
+                    options.push({
+                      label: t('emergency.btn_request_access'),
+                      icon: <Shield aria-hidden size={16} />,
+                      callback: () => setConfirm({ kind: 'request', entry }),
+                    });
+                  }
+                  if (phase === 'requested') {
+                    options.push({
+                      label: t('emergency.btn_cancel_request'),
+                      icon: <XMark aria-hidden size={16} />,
+                      callback: () => handleCancelRequest(entry),
+                    });
+                  }
+                  if (phase !== 'invited') {
+                    options.push({
+                      label: t('emergency.btn_stop_being_contact'),
+                      icon: <XMark aria-hidden size={16} />,
+                      callback: () => setConfirm({ kind: 'decline', entry }),
+                    });
+                  }
+
                   return (
-                    <div key={entry.id} className={styles.card}>
-                      <div className={styles.cardHeader}>
-                        <Identity name={entry.grantor_email} secondary={t('emergency.wait_label', { count: entry.wait_time_days })} />
-                        <StatusChip phase={phase} t={t} />
-                      </div>
-
-                      {phase === 'invited' && (
-                        <>
-                          <p className={styles.hint}>{t('emergency.granted_invited_text', { email: entry.grantor_email })}</p>
-                          <Actions layout="row">
-                            <Button
-                              size="small"
-                              variant="bordered"
-                              color="error"
-                              disabled={busy}
-                              onClick={() => setConfirm({ kind: 'decline', entry })}
-                            >
-                              {t('emergency.btn_decline')}
-                            </Button>
-                            <Button size="small" disabled={busy} onClick={() => handleAccept(entry)}>
-                              {t('emergency.btn_accept')}
-                            </Button>
-                          </Actions>
-                        </>
-                      )}
-
-                      {phase === 'confirmed' && (
-                        <Actions layout="row">
-                          <Button size="small" variant="bordered" disabled={busy} onClick={() => setConfirm({ kind: 'request', entry })}>
-                            {t('emergency.btn_request_access')}
-                          </Button>
-                        </Actions>
-                      )}
-
-                      {phase === 'requested' && countdown && !countdown.expired && (
-                        <>
-                          <p className={styles.hint}>{t('emergency.granted_requested_text', { time: countdownLabel(countdown, i18n.language) })}</p>
-                          <Actions layout="row">
-                            <Button size="small" variant="bordered" disabled={busy} onClick={() => handleCancelRequest(entry)}>
-                              {t('emergency.btn_cancel_request')}
-                            </Button>
-                          </Actions>
-                        </>
-                      )}
-
-                      {phase === 'approved' && (
-                        <>
-                          <p className={styles.hint}>{t('emergency.granted_approved_text', { email: entry.grantor_email })}</p>
-                          <Actions layout="row">
-                            <Button
-                              size="small"
-                              disabled={busy}
-                              icon={<Icon aria-hidden name="key" size={16} />}
-                              onClick={() => {
-                                setRevealEntry(entry);
-                                setView('reveal');
-                              }}
-                            >
-                              {t('emergency.btn_reveal')}
-                            </Button>
-                          </Actions>
-                        </>
-                      )}
-                    </div>
+                    <ContactRow
+                      key={entry.id}
+                      name={entry.grantor_email}
+                      secondary={t('emergency.wait_label', { count: entry.wait_time_days })}
+                      status={phase !== 'confirmed' && <StatusChip phase={phase} t={t} />}
+                      band={band}
+                      bandTone={bandTone}
+                      menu={
+                        options.length > 0 && (
+                          <RowMenu label={t('emergency.row_menu', { email: entry.grantor_email })} disabled={busy} options={options} />
+                        )
+                      }
+                    />
                   );
                 })}
               </div>

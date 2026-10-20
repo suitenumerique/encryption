@@ -28,9 +28,25 @@ import { computeDecimalFingerprint, formatDecimalFingerprint } from '@encryption
 import type { HasKeysResult } from '@encryption/src/shared/has-keys';
 import { type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
 import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
+import { type SettingsSection, isSettingsSection } from '@encryption/src/shared/settings-section';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 export type { RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
+export type { SettingsSection } from '@encryption/src/shared/settings-section';
+
+/**
+ * Where encryption stands for the signed-in user on this device, for a product's
+ * own account page:
+ * - `active`: this device holds the user's keys and they are the ones registered for the account;
+ * - `disabled-for-account`: this device holds keys, but encryption was turned off for the account;
+ * - `needs-attention`: this device holds keys of another identity than the one registered (replaced elsewhere);
+ * - `not-set-up`: this device holds no keys. `registered` then tells whether the account set
+ *   encryption up on another device (the onboarding offers to restore it rather than start over).
+ */
+export interface EncryptionStatus {
+  state: 'active' | 'disabled-for-account' | 'needs-attention' | 'not-set-up';
+  registered: boolean;
+}
 
 export interface EncryptionClientOptions {
   /** URL of the vault domain (data.encryption), e.g. "https://data.encryption.numerique.gouv.fr" */
@@ -40,8 +56,8 @@ export interface EncryptionClientOptions {
   /** Timeout in ms for vault operations (default: 30000) */
   timeout?: number;
   /**
-   * Cunningham theme name for the interface iframe.
-   * Standard names: "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark".
+   * Design system theme for the interface iframe.
+   * Standard names: "default", "dark", "dsfr" (or "dsfr-light"), "dsfr-dark", "anct" (or "anct-light"), "anct-dark".
    * Default: "default"
    */
   theme?: string;
@@ -334,6 +350,32 @@ export class VaultClient {
   /** Get the user's public key as ArrayBuffer. */
   async getPublicKey(): Promise<{ publicKey: ArrayBuffer }> {
     return (await this.vaultRequest(MSG_VAULT_GET_PUBLIC_KEY)) as { publicKey: ArrayBuffer };
+  }
+
+  /**
+   * Where encryption stands for the signed-in user on this device (see
+   * {@link EncryptionStatus}), from the vault (the keys on this device) and the
+   * public directory (the identity registered for the account). Needs no sign-in
+   * to the encryption interface: an account page can show it before any modal is
+   * opened, and each of its actions opens the interface, which signs in if needed.
+   */
+  async getEncryptionStatus(): Promise<EncryptionStatus> {
+    const suiteUserId = this.authContext?.suiteUserId;
+
+    if (!suiteUserId) {
+      throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'setAuthContext() must be called before getEncryptionStatus()');
+    }
+
+    const [{ hasKeys }, directory] = await Promise.all([this.hasKeys(), this.fetchPublicKeys([suiteUserId])]);
+    const registeredUser = directory[suiteUserId];
+
+    if (!hasKeys) return { state: 'not-set-up', registered: registeredUser !== undefined };
+    if (!registeredUser) return { state: 'disabled-for-account', registered: false };
+
+    const local = (await this.vaultRequest(MSG_VAULT_GET_PUBLIC_KEY)) as { signaturePublicKey?: ArrayBuffer };
+    const localFingerprint = local.signaturePublicKey ? await this.computeKeyFingerprint(local.signaturePublicKey) : null;
+
+    return { state: localFingerprint === registeredUser.identityFingerprint ? 'active' : 'needs-attention', registered: true };
   }
 
   /**
@@ -761,10 +803,23 @@ export class VaultClient {
   }
 
   /**
-   * Open the encryption settings (view fingerprint, delete keys).
+   * Open the encryption settings. Without a section, the interface's own
+   * encryption home (status and every flow below), for a product with no account
+   * page of its own. With a section, that single flow, which closes the interface
+   * when it ends, for a product listing the flows on its own page:
+   * - `manage`: turn encryption off (this device or the account), or review a
+   *   device out of step with the account (turned off, replaced elsewhere);
+   * - `add-device`: give another device access, from this one;
+   * - `verification-code`: the code others compare to verify this user;
+   * - `recovery-phrase`: change the recovery phrase;
+   * - `trusted-contacts`: the trusted contacts, and the people this user can help.
    */
-  openSettings(): void {
-    this.openOverlay('/settings');
+  openSettings(section?: SettingsSection): void {
+    if (section !== undefined && !isSettingsSection(section)) {
+      throw new Error(`Unknown settings section: ${String(section)}`);
+    }
+
+    this.openOverlay(section ? `/settings/${section}` : '/settings');
   }
 
   /**

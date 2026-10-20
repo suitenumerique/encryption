@@ -4,8 +4,9 @@
 # script, before the helmfile command, which then ends with `$PR_LABEL_OPTIONS`. It turns
 # the labels of a pull request into the options that pick the product images under test:
 #
-#   docs:pr-2694      ->  --state-values-set docsImageTag=pr-2694
-#   drive:encryption  ->  --state-values-set driveImageTag=encryption
+#   docs:pr-2694         ->  --state-values-set docsImageTag=pr-2694
+#   drive:encryption     ->  --state-values-set driveImageTag=encryption
+#   accounts:encryption  ->  --state-values-set accountsImageTag=encryption
 #
 # The ApplicationSet (applicationset-preview.example.yaml) passes the labels as they are,
 # comma-separated, in PR_LABELS, which a sidecar plugin sees as ARGOCD_ENV_PR_LABELS. Other
@@ -30,7 +31,7 @@ OLD_IFS=$IFS
 IFS=','
 for label in ${ARGOCD_ENV_PR_LABELS:-}; do
   case "$label" in
-    docs:* | drive:*)
+    docs:* | drive:* | accounts:*)
       app="${label%%:*}"
       tag="${label#*:}"
       # Set on GitHub by anyone and passed to eval: only a valid image tag is accepted

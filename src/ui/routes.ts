@@ -1,5 +1,6 @@
-// Interface routes and the path<->route mapping, kept free of React/Cunningham
-// imports so the routing can be unit-tested without pulling the whole app.
+// Interface routes and the path<->route mapping, kept free of React and design
+// system imports so the routing can be unit-tested without pulling the whole app.
+import { type SettingsSection, isSettingsSection } from '@encryption/src/shared/settings-section';
 
 export type Route =
   | 'onboarding'
@@ -32,7 +33,16 @@ export function getRouteFromPath(path: string): Route | null {
     '/auth/callback': 'auth-callback',
   };
 
-  return routes[path] ?? null;
+  if (routes[path]) return routes[path];
+
+  return getSettingsSectionFromPath(path) ? 'settings' : null;
+}
+
+/** The single flow a product opened (`/settings/<section>`), or null for the encryption home. */
+export function getSettingsSectionFromPath(path: string): SettingsSection | null {
+  const match = /^\/settings\/([a-z-]+)$/.exec(path);
+
+  return match && isSettingsSection(match[1]) ? match[1] : null;
 }
 
 // Primary path for a route, for real in-app navigation (pushState). Only the

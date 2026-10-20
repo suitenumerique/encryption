@@ -1,40 +1,67 @@
-import { Button, Loader } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
+import { ChevronLeft, CircleCheckFilled, Info, WarningFilled } from '@gouvfr-lasuite/ui-components/icons';
 import type { ReactNode } from 'react';
 
-import shieldCheck from '@encryption/src/ui/assets/illustrations/shield-check.png';
+import shieldCheck from '@encryption/src/ui/assets/illustrations/shield-check.svg';
+import shieldGear from '@encryption/src/ui/assets/illustrations/shield-gear.svg';
+import shieldRestore from '@encryption/src/ui/assets/illustrations/shield-restore.svg';
 import shieldX from '@encryption/src/ui/assets/illustrations/shield-x.png';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
-export type IllustrationName = 'shield-check' | 'shield-x';
+export type IllustrationName = 'shield-gear' | 'shield-check' | 'shield-restore' | 'shield-x';
 
 const ILLUSTRATIONS: Record<IllustrationName, string> = {
+  'shield-gear': shieldGear,
   'shield-check': shieldCheck,
+  'shield-restore': shieldRestore,
   'shield-x': shieldX,
 };
 
 export function Illustration({ name }: { name: IllustrationName }) {
   return (
     <div className={styles.screenIllustration}>
-      <img src={ILLUSTRATIONS[name]} alt="" />
+      <img src={ILLUSTRATIONS[name]} alt="" className={name === 'shield-x' ? styles.screenIllustrationRaster : undefined} />
     </div>
   );
 }
 
+// As designed: the filled warning triangle for errors as well.
+const NOTICE_ICONS: Record<VariantType, ReactNode> = {
+  [VariantType.ERROR]: <WarningFilled aria-hidden size={16} />,
+  [VariantType.WARNING]: <WarningFilled aria-hidden size={16} />,
+  [VariantType.SUCCESS]: <CircleCheckFilled aria-hidden size={16} />,
+  [VariantType.INFO]: <Info aria-hidden size={16} />,
+  [VariantType.NEUTRAL]: <Info aria-hidden size={16} />,
+};
+
+/**
+ * The design system's alert with the design system's SVG icons: left to itself it
+ * draws a Material Icons ligature, a font the interface does not load.
+ */
+export function Notice({ type, children }: { type: VariantType; children: ReactNode }) {
+  return (
+    <Alert type={type} icon={NOTICE_ICONS[type]}>
+      {children}
+    </Alert>
+  );
+}
+
 interface ScreenProps {
-  /** A step back inside a flow, shown as a small link above the title. */
+  /** A step back inside a flow, shown as a small link in the top left corner. */
   back?: { label: string; onClick: () => void; disabled?: boolean };
   illustration?: IllustrationName;
   title?: ReactNode;
   titleTone?: 'default' | 'error';
   description?: ReactNode;
-  /** Alerts that must stay above the title (session expired, a failed action). */
+  /** `sm` (14px, the default) or `xs` (12px, the settings flows of the design). */
+  descriptionSize?: 'sm' | 'xs';
+  /** Alerts that must stay above the body (session expired, a failed action). */
   banner?: ReactNode;
   children?: ReactNode;
   actions?: ReactNode;
   /** `stack` (full-width buttons, the default) or `row` (right-aligned Cancel/Confirm). */
   actionsLayout?: 'stack' | 'row';
-  /** Add the screen's own padding; off when the host modal already pads the content. */
+  /** Add the screen's own padding, for a screen shown outside a modal. */
   padded?: boolean;
   /** Give the title the `heading` role tests and screen readers look for. */
   titleAs?: 'h1' | 'h2';
@@ -43,8 +70,7 @@ interface ScreenProps {
 /**
  * The content of one interface modal: illustration, title + description, a body
  * and stacked actions. The modal chrome (card, padding, close control) belongs
- * to whoever hosts the screen: the product's modal, or the interface's own
- * Cunningham Modal in the SDK overlays.
+ * to the design system's Modal that App.tsx draws around every screen.
  */
 export function Screen({
   back,
@@ -52,6 +78,7 @@ export function Screen({
   title,
   titleTone = 'default',
   description,
+  descriptionSize = 'sm',
   banner,
   children,
   actions,
@@ -59,15 +86,17 @@ export function Screen({
   padded = false,
   titleAs: TitleTag = 'h2',
 }: ScreenProps) {
+  const descriptionClass = descriptionSize === 'xs' ? `${styles.screenDescription} ${styles.screenDescriptionXs}` : styles.screenDescription;
+
   return (
     <div className={padded ? `${styles.screen} ${styles.screenPadded}` : styles.screen}>
       {back && (
         <Button
           className={styles.screenBack}
-          size="small"
+          size="nano"
           variant="tertiary"
           color="neutral"
-          icon={<Icon aria-hidden name="arrow_back" size={16} />}
+          icon={<ChevronLeft aria-hidden size={16} />}
           onClick={back.onClick}
           disabled={back.disabled}
         >
@@ -80,11 +109,9 @@ export function Screen({
           {title && (
             <TitleTag className={titleTone === 'error' ? `${styles.screenTitle} ${styles.screenTitleError}` : styles.screenTitle}>{title}</TitleTag>
           )}
-          {description && <div className={styles.screenDescription}>{typeof description === 'string' ? <p>{description}</p> : description}</div>}
+          {description && <div className={descriptionClass}>{typeof description === 'string' ? <p>{description}</p> : description}</div>}
         </div>
       )}
-      {/* Under the header, not above it: the product's close control occupies the
-          top right corner of the content, and an alert is about what follows. */}
       {banner}
       {children && <div className={styles.screenBody}>{children}</div>}
       {actions && <Actions layout={actionsLayout}>{actions}</Actions>}
@@ -100,7 +127,7 @@ export function LoadingScreen({ label }: { label?: string }) {
   return (
     <div className={styles.loading}>
       <Loader />
-      {label && <p style={{ margin: 0 }}>{label}</p>}
+      {label && <p className={styles.loadingLabel}>{label}</p>}
     </div>
   );
 }

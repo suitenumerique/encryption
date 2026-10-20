@@ -1,9 +1,9 @@
-import { Alert, Button, Checkbox, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, Checkbox, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Key, PhoneDesktop } from '@gouvfr-lasuite/ui-components/icons';
 import { Meta, StoryFn } from '@storybook/react';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
-import { Screen } from '@encryption/src/ui/components/layout/Screen';
+import { Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
 type ComponentType = typeof Screen;
@@ -58,10 +58,10 @@ ChoicesStory.args = {
   description: 'You already enabled encryption on another device. Choose how to restore your keys on this device.',
   actions: (
     <>
-      <Button variant="secondary" icon={<Icon aria-hidden name="laptop" />}>
+      <Button variant="secondary" icon={<PhoneDesktop aria-hidden />}>
         Use another device
       </Button>
-      <Button variant="tertiary" icon={<Icon aria-hidden name="key" />}>
+      <Button variant="tertiary" icon={<Key aria-hidden />}>
         Use my recovery phrase
       </Button>
       <Button variant="tertiary" color="neutral">
@@ -81,12 +81,12 @@ DestructiveStory.args = {
   description:
     'You will lose access to documents encrypted with your current keys. New keys will be generated so others can share encrypted documents with you again.',
   children: (
-    <Alert type={VariantType.ERROR}>
+    <Notice type={VariantType.ERROR}>
       <div className={styles.alertStack}>
         <span>If you are the only person with full access to an encrypted document, it may be lost for good.</span>
         <Checkbox label="I understand." />
       </div>
-    </Alert>
+    </Notice>
   ),
   actionsLayout: 'row',
   actions: (

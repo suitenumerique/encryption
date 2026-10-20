@@ -1,8 +1,14 @@
-# One complete environment, ready to render: the encryption service, Docs and Drive, and
-# the services they share. Every hostname below sits under ONE domain, `suite.example.org`,
-# and the chart is meant to be installed in the namespace `suite`. To point it somewhere
-# else, replace both strings everywhere in this file (or in your override): the four
-# subcharts each read their own block, so a hostname cannot be written once and derived.
+# One complete environment, ready to render: the encryption service, Docs and Drive,
+# LaSuite Accounts, and the services they share. Every hostname below sits under ONE
+# domain, `suite.example.org`, and the chart is meant to be installed in the namespace
+# `suite`. To point it somewhere else, replace both strings everywhere in this file (or in
+# your override): the five subcharts each read their own block, so a hostname cannot be
+# written once and derived.
+#
+# Who signs in where: the testers' accounts live in Keycloak, and only Accounts talks to
+# it (as its upstream identity provider, the slot ProConnect fills in production). Docs,
+# Drive and the encryption service are clients of Accounts, so every one of them sees the
+# same `sub` for a user: the one Accounts mints, never Keycloak's.
 # The chart refuses to render when the blocks disagree with each other (see the
 # "bootstrap" section and templates/_checks.tpl), so a missed replacement fails early.
 #
@@ -130,10 +136,12 @@ bootstrap:
       - docs
       - drive
       - encryption
+      - accounts
   minio:
     buckets:
       - docs-media-storage
       - drive-media-storage
+      - accounts-media-storage
     versioning: true
   keycloak:
     # Created or updated in the realm above, by clientId. Every client here is confidential
@@ -141,31 +149,39 @@ bootstrap:
     # application signing in from the browser, which none of these does. `pkce: true`
     # makes the realm require a PKCE S256 challenge on the client's sign-ins.
     # `idTokenLifespanSeconds` overrides the realm's token lifespan (5 minutes) for the
-    # client: Keycloak gives ID tokens the access token's lifespan. Passwords and
-    # secrets must not contain quotes.
+    # client: Keycloak gives ID tokens the access token's lifespan. `attributes` are
+    # merged into the client's, `optionalClientScopes` are attached to it (each must exist
+    # in the realm, see `clientScopes`). Passwords and secrets must not contain quotes.
+    #
+    # With Accounts in front (accounts.enabled), it is the realm's only client: the
+    # products are clients of Accounts (bootstrap.accounts.applications). Without it, the
+    # products' own clients go here instead (ci/without-accounts-values.yaml).
     clients:
-      - clientId: docs
+      # Accounts' upstream sign-in, through its "ProConnect" backend: it decodes the
+      # userinfo answer as a signed JWT (hence the attribute), and asks for the scopes
+      # ProConnect has, which Keycloak refuses unless the client has them.
+      - clientId: accounts
         secret: ThisIsAnExampleKeyForDevPurposeOnly
         redirectUris:
-          - https://docs.suite.example.org/*
-        webOrigins:
-          - https://docs.suite.example.org
-      - clientId: drive
-        secret: ThisIsAnExampleKeyForDevPurposeOnly
-        redirectUris:
-          - https://drive.suite.example.org/*
-        webOrigins:
-          - https://drive.suite.example.org
-      # The encryption server exchanges its interface's sign-in codes with this
-      # secret: the browser never calls Keycloak, so no web origin. The interface's
-      # session lasts as long as the ID token, with no refresh.
-      - clientId: encryption
-        secret: ThisIsAnExampleKeyForDevPurposeOnly
-        pkce: true
-        idTokenLifespanSeconds: 3600
-        redirectUris:
-          - https://encryption.suite.example.org/auth/callback
+          - https://accounts.suite.example.org/*
         webOrigins: []
+        attributes:
+          user.info.response.signature.alg: RS256
+        optionalClientScopes:
+          - given_name
+          - usual_name
+          - siret
+    # Created in the realm if missing (never updated: Keycloak keeps a scope's mappers
+    # apart). Each scope carries one claim of its own name, read from a user property
+    # (`userProperty`) or none at all. These are the names ProConnect uses for the first
+    # and last names, which the realm's `profile` scope calls `first_name` and
+    # `last_name`; `siret` stays empty, the testers belong to no organization.
+    clientScopes:
+      - name: given_name
+        userProperty: firstName
+      - name: usual_name
+        userProperty: lastName
+      - name: siret
     # The testers. Created if missing, the password is (re)set every run, the email is
     # marked verified so every product accepts the account as is.
     users:
@@ -192,6 +208,34 @@ bootstrap:
         console d'administration et la boîte mail sont publiques : un compte peut être lu ou
         repris par n'importe qui. N'y mettez aucune donnée réelle, ni document, ni mot de
         passe utilisé ailleurs. Tout peut être effacé à tout moment.
+  accounts:
+    # The OAuth2 applications of Accounts (django-oauth-toolkit), created or updated by
+    # client id by the accounts-applications Job once Accounts has migrated. All
+    # confidential, RS256-signed, with the consent screen skipped (the products sign in
+    # silently, `prompt=none`, which a pending consent would refuse). Accounts compares
+    # redirect URIs exactly, no wildcard: Docs and Drive come back to `/api/v1.0/callback/`
+    # and leave through `/api/v1.0/logout-callback/`, the encryption interface comes back
+    # to `/auth/callback`. Secrets must not contain quotes.
+    applications:
+      - clientId: docs
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://docs.suite.example.org/api/v1.0/callback/
+        postLogoutRedirectUris:
+          - https://docs.suite.example.org/api/v1.0/logout-callback/
+      - clientId: drive
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://drive.suite.example.org/api/v1.0/callback/
+        postLogoutRedirectUris:
+          - https://drive.suite.example.org/api/v1.0/logout-callback/
+      # The encryption server exchanges its interface's sign-in codes with this secret
+      # and a PKCE verifier (Accounts checks a challenge whenever one is sent).
+      - clientId: encryption
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://encryption.suite.example.org/auth/callback
+        postLogoutRedirectUris: []
   encryption:
     # The service's database and the passwords of its two roles. The chart checks that
     # `encryption.database.url` below is the runtime role's URL built from these, and
@@ -287,27 +331,38 @@ encryption:
     vault: data.encryption.suite.example.org
     interface: encryption.suite.example.org
   config:
+    # Every product that embeds the vault, Accounts included (its interface embeds it too).
     allowedFrameAncestors:
       - https://docs.suite.example.org
       - https://drive.suite.example.org
+      - https://accounts.suite.example.org
     oidc:
-      issuer: https://auth.suite.example.org/realms/suite
+      # Accounts' issuer (accounts.backend.envVars.OAUTH2_PROVIDER_OIDC_ISS_ENDPOINT).
+      issuer: https://accounts.suite.example.org/api/v1.0/o
       clientId: encryption
-      # Must equal the secret of bootstrap.keycloak.clients[encryption].
+      # Must equal the secret of bootstrap.accounts.applications[encryption].
       clientSecret: ThisIsAnExampleKeyForDevPurposeOnly
-      # Accounts added by hand in the Keycloak console rarely have their email marked
-      # verified; the bootstrap accounts always do.
+      # Accounts ignores the `claims` parameter and filters its claims by scope: without
+      # `email` and `profile` granted, the service would get no email and no names. The
+      # names then come as `given_name` and `name` (the last name is the full name minus
+      # the first), which the service's default claim lists already read.
+      scopes: openid email profile
+      # Accounts reports `email_verified` as its upstream provider did, which a tester
+      # added by hand in the Keycloak console rarely has; the bootstrap accounts do.
       acceptUnverifiedEmail: true
-      # The dev-backend realm maps the names to `first_name` and `last_name`, not to the
-      # standard `given_name` and `family_name`.
-      claims:
-        firstName: [first_name]
-        lastName: [last_name]
-      # The testers' Keycloak accounts have no second factor: a step-up only asks
-      # them to sign in again.
+      # Accounts sends no `acr` nor `amr`, and the testers have no second factor anyway,
+      # so only the age of the authentication is left to check. Accounts cannot renew it:
+      # on `prompt=login` it sends a signed-in user through its upstream sign-in again,
+      # but keeps the session it has, and `auth_time` stays the moment that session
+      # started (`max_age` is ignored). A max age under the session's lifetime would then
+      # refuse every sensitive action once the session is older than it, whatever the
+      # tester does. So the max age is the session's lifetime (Accounts'
+      # SESSION_COOKIE_AGE, 12 hours by default, checked): a step-up passes with any
+      # live session and proves no fresh authentication.
       stepUp:
         acrValues: []
         amrValues: []
+        maxAgeSeconds: 43200
     mailer:
       smtpHost: mailpit
       smtpPort: 1025
@@ -329,7 +384,8 @@ encryption:
 # ---------------------------------------------------------------------------------------
 # Docs (the `docs` chart, src/helm/impress in https://github.com/suitenumerique/docs).
 # Copied from the chart's own feature-environment values, with every coordinate pointed at
-# the shared services and the three encryption variables added.
+# the shared services, the sign-in pointed at Accounts, and the three encryption variables
+# added.
 # ---------------------------------------------------------------------------------------
 docs:
   enabled: true
@@ -370,18 +426,21 @@ docs:
       LOGGING_LEVEL_HANDLERS_CONSOLE: ERROR
       LOGGING_LEVEL_LOGGERS_ROOT: INFO
       LOGGING_LEVEL_LOGGERS_APP: INFO
-      OIDC_USERINFO_SHORTNAME_FIELD: first_name
+      # Accounts' `profile` scope: `given_name` and `name`.
+      OIDC_USERINFO_SHORTNAME_FIELD: given_name
       OIDC_USERINFO_FULLNAME_FIELDS: name
-      OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
-      OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
-      OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
-      OIDC_OP_USER_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/userinfo
-      OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
+      # Accounts' endpoints, under its issuer.
+      OIDC_OP_JWKS_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/.well-known/jwks.json
+      OIDC_OP_AUTHORIZATION_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/authorize/
+      OIDC_OP_TOKEN_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/token/
+      OIDC_OP_USER_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/userinfo/
+      OIDC_OP_LOGOUT_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/logout/
       OIDC_REDIRECT_ALLOWED_HOSTS: docs.suite.example.org
       OIDC_RP_CLIENT_ID: docs
       OIDC_RP_CLIENT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
       OIDC_RP_SIGN_ALGO: RS256
       OIDC_RP_SCOPES: openid email profile
+      OIDC_USE_PKCE: 'True'
       # The encryption integration reads the access token from the session.
       OIDC_STORE_ACCESS_TOKEN: 'True'
       LOGIN_REDIRECT_URL: https://docs.suite.example.org
@@ -522,17 +581,20 @@ drive:
       DJANGO_EMAIL_LOGO_IMG: https://drive.suite.example.org/assets/logo-suite-numerique.png
       LOGGING_LEVEL_LOGGERS_ROOT: INFO
       LOGGING_LEVEL_LOGGERS_APP: INFO
-      OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
-      OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
-      OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
-      OIDC_OP_USER_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/userinfo
-      OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
+      # Accounts' endpoints, under its issuer.
+      OIDC_OP_JWKS_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/.well-known/jwks.json
+      OIDC_OP_AUTHORIZATION_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/authorize/
+      OIDC_OP_TOKEN_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/token/
+      OIDC_OP_USER_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/userinfo/
+      OIDC_OP_LOGOUT_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o/logout/
       OIDC_RP_CLIENT_ID: drive
       OIDC_RP_CLIENT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
       OIDC_RP_SIGN_ALGO: RS256
-      OIDC_RP_SCOPES: openid email
-      OIDC_USER_FIELD_TO_SHORTNAME: given_name
-      OIDC_USER_FIELDS_TO_FULLNAME: given_name,usual_name
+      # Accounts' `profile` scope: `given_name` and `name`.
+      OIDC_RP_SCOPES: openid email profile
+      OIDC_USE_PKCE: 'True'
+      OIDC_USERINFO_SHORTNAME_FIELD: given_name
+      OIDC_USERINFO_FULLNAME_FIELDS: name
       OIDC_STORE_ACCESS_TOKEN: 'True'
       LOGIN_REDIRECT_URL: https://drive.suite.example.org
       LOGIN_REDIRECT_URL_FAILURE: https://drive.suite.example.org
@@ -694,6 +756,150 @@ drive:
       nginx.ingress.kubernetes.io/auth-response-headers: 'Authorization, X-Amz-Date, X-Amz-Content-SHA256'
       nginx.ingress.kubernetes.io/upstream-vhost: s3.suite.example.org
       nginx.ingress.kubernetes.io/rewrite-target: /drive-media-storage/$1
+  serviceMedia:
+    host: minio.suite.svc.cluster.local
+    port: 9000
+  posthog:
+    ingress:
+      enabled: false
+    ingressAssets:
+      enabled: false
+
+# ---------------------------------------------------------------------------------------
+# LaSuite Accounts (the `accounts` chart, src/helm/accounts in
+# https://github.com/suitenumerique/accounts): the identity provider of the stack. It signs
+# the testers in at Keycloak through its "ProConnect" backend (Python Social Auth), keeps
+# one account per person, and is the OIDC provider (django-oauth-toolkit) of Docs, Drive
+# and the encryption service. Its frontend embeds the encryption SDK like the products.
+# ---------------------------------------------------------------------------------------
+accounts:
+  enabled: true
+  # Fixed names for the in-cluster Services (`accounts-backend`, `accounts-frontend`).
+  fullnameOverride: accounts
+  image:
+    repository: lasuite/accounts-backend
+    pullPolicy: Always
+    tag: main
+  backend:
+    migrateJobAnnotations:
+      argocd.argoproj.io/hook: Sync
+      argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    replicas: 1
+    envVars:
+      DJANGO_CONFIGURATION: Feature
+      DJANGO_SETTINGS_MODULE: accounts.settings
+      DJANGO_SECRET_KEY: ThisIsAnExampleKeyForDevPurposeOnly
+      DJANGO_SALT_KEY: ThisIsAnExampleSaltForDevPurposeOnly
+      DJANGO_ALLOWED_HOSTS: accounts.suite.example.org
+      DJANGO_CSRF_TRUSTED_ORIGINS: https://accounts.suite.example.org
+      DJANGO_SUPERUSER_EMAIL: admin@example.org
+      DJANGO_SUPERUSER_PASSWORD: admin
+      DJANGO_EMAIL_HOST: mailpit
+      DJANGO_EMAIL_PORT: 1025
+      DJANGO_EMAIL_FROM: noreply@suite.example.org
+      LOGGING_LEVEL_LOGGERS_ROOT: INFO
+      LOGGING_LEVEL_LOGGERS_APP: INFO
+      FRONTEND_LOGOUT_URL: https://accounts.suite.example.org/logout
+      LOGIN_REDIRECT_URL: https://accounts.suite.example.org
+      LOGOUT_REDIRECT_URL: https://accounts.suite.example.org
+      MEDIA_BASE_URL: https://accounts.suite.example.org
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: accounts
+      DB_USER: dinum
+      DB_PASSWORD: pass
+      REDIS_URL: redis://user:pass@redis:6379/3
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+      AWS_S3_ACCESS_KEY_ID: dinum
+      AWS_S3_SECRET_ACCESS_KEY: password
+      AWS_STORAGE_BUCKET_NAME: accounts-media-storage
+      STORAGES_STATICFILES_BACKEND: django.contrib.staticfiles.storage.StaticFilesStorage
+      # The OIDC provider the products sign in with: the issuer the Docs, Drive and
+      # encryption blocks name, and the key its ID tokens are signed with (required
+      # outside development, generated for this stack and committed: dev grade).
+      OAUTH2_PROVIDER_OIDC_ISS_ENDPOINT: https://accounts.suite.example.org/api/v1.0/o
+      OAUTH2_PROVIDER_OIDC_RSA_PRIVATE_KEY: |-
+        -----BEGIN RSA PRIVATE KEY-----
+        MIIEowIBAAKCAQEAt4ydm/exBkhPRkNF3fVsTttcvtGwgjmP8p8gqMr8Iv3u+fPm
+        J+EXHsi0fy0OwmC+Klf5K4XFIJKFK2Pk5uAYVMIVLcpcJylI7C2ie4xX0RUoC9EC
+        XwgSc3IZ4op+CgLMraUJTyarbfZoUHHueLNZHf5rCW0v1FZGcsRPr0S2kg5l2U8P
+        ZHhubayWXSVvtSiMvgEiN85vpZ8eiJ901l7S5SjFzEWxYrN22DN+H/ppqr2O0RYL
+        JX7DkAZOOyu0v0U0DVGLE6GilEFQUEEQMHADlnxQh86aGtE1GPVtdpdIk8a/WMo5
+        uu8ZEGSITYgoYcMy9bbpIk+IgnOrgtwyE5a8iQIDAQABAoIBACBETvy5KVyiX5VJ
+        hEHFwDmIpKBC+pWaCu0q/jHOJU79dwJn1wERt9/IhrqIsDyJh0SoXHxDMulL+K8t
+        C3Nu17gmulRna5XS0yf5ycOQY2u1HWoeXx1XrO6wk05Y7FlULqkkByPr910IYUQr
+        EzISzUrRi/2HPU5FsHLCggOcv7+jDdq1lZVvqD7cUYcNC5nc3fgrTpEfkW6nC1Oa
+        OAveqx+tMRJfCspf71ZRAlrSa1Ia7RKRQMd5NwYSi1jnWyp+gMCoqxz7ih7fCwpK
+        fBkn8avbbSrZBXgI9gQkVMFS49Y48qIR8pyVWdfSL2N43yUB/yKzqi+By3bKX5fo
+        5/HM+RECgYEA6zHjV3G69K/Cb9RXttT42RYLLjTr3eAfEwFyTTPgRe/G7yCvPrk+
+        +FTbs4XuUTfywBvbAVCQ/RJ01MYdWV0D8aIQ5EYiQ/H7ELB8gTVhy0LvVwCxw6yX
+        Dhvo31J4jqX0ipGojmXFUH+1LcfvjECy/eTcsKjkdc6oVekRkwWApW0CgYEAx8kv
+        lXvsQZ/Fenl1eIzOLj6hY3sdtR57W2VHP872psVVu+0/AegqtP3bobhcWh60hDyc
+        k+or6hpuUAdWv8dGljr1X9EPfPpJDN2SsAIN0urYs3Ba2PCx9oYS6ZuEfd1zFZSF
+        484K3ZTtrUchDQ4sRLGCc/RGUkL2lrjd2Fhv7g0CgYAUtejqC1bGMy/w/wbWT7y2
+        CQ3k/L4EZLb3ynnROI84OVwQNJWZ9WAJKBfMoC+TMVUL+6f2XqzVzClDj0qIUvuE
+        7JuGLnLX/tf36UKdciDxcCx5QdNlgq4ujOCdwbph/VUiWp84ItgUNZqztFZwyEW6
+        u8t/NvAfO5pxLjvg8WwZpQKBgGKfjj3czuQWWwX6r2KzH5T0lfbl7+RZB8w2UtXM
+        9TWedJQwqcnnMi3mo2VR/UT/o10kDqd2Efee1JXtCYXieZXvxPFn4p1vcGBJgQAi
+        A3D7Pb5W2IH/T9rClNN9UgpQJ1+f0fiC3hpESpAfbNFlDbVba2qSS6SQKep9mAYU
+        oiyBAoGBAOjt//J98/OabjFiyLJj/mRslFv7aiblKplNMnUsFOP4e4diOjSbslj3
+        BCupHLN6P82PRKUQGhyDcLhkpzYmftmnnmvSWqf56hF9fAJT1h6FQvHTQA6TH2XA
+        8HRIxwc/CfAiSz61D8UXtYFBlclcP17EDUXuh/LPDXnLuO9yt+oF
+        -----END RSA PRIVATE KEY-----
+      # Its own sign-in, at the shared Keycloak's realm with the client
+      # bootstrap.keycloak.clients[accounts]. The `acr_values=eidas1` it sends by default
+      # (ProConnect's level) is unknown to the realm, which ignores it.
+      SOCIAL_AUTH_ALLOWED_REDIRECT_HOSTS: accounts.suite.example.org
+      SOCIAL_AUTH_PRO_CONNECT_KEY: accounts
+      SOCIAL_AUTH_PRO_CONNECT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
+      SOCIAL_AUTH_PRO_CONNECT_OIDC_ENDPOINT: https://auth.suite.example.org/realms/suite
+      ENCRYPTION_FEATURE_ENABLED: 'True'
+      ENCRYPTION_VAULT_URL: https://data.encryption.suite.example.org
+      ENCRYPTION_INTERFACE_URL: https://encryption.suite.example.org
+    # Not hooks, like the products' Jobs: they wait for the database themselves.
+    migrate:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while ! python manage.py check --database default > /dev/null 2>&1
+          do
+            echo "Database not ready"
+            sleep 2
+          done
+          echo "Database is ready"
+          python manage.py migrate --no-input
+      restartPolicy: Never
+    createsuperuser:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          while ! python manage.py check --database default > /dev/null 2>&1
+          do
+            echo "Database not ready"
+            sleep 2
+          done
+          python manage.py createsuperuser --email "$DJANGO_SUPERUSER_EMAIL" --password "$DJANGO_SUPERUSER_PASSWORD"
+      restartPolicy: Never
+  frontend:
+    replicas: 1
+    image:
+      repository: lasuite/accounts-frontend
+      pullPolicy: Always
+      tag: main
+    envVars:
+      PORT: 8080
+      NEXT_PUBLIC_API_ORIGIN: https://accounts.suite.example.org
+  ingress:
+    enabled: true
+    host: accounts.suite.example.org
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+  ingressAdmin:
+    enabled: true
+    host: accounts.suite.example.org
+  # An ExternalName Service, so it needs the fully qualified name of the shared MinIO.
   serviceMedia:
     host: minio.suite.svc.cluster.local
     port: 9000

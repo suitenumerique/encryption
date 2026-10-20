@@ -25,17 +25,19 @@
 # overrides both: an ApplicationSet that passes the commit tag the workflow also
 # publishes, `sha-<8 chars>`, gets a rollout on every push instead of a moving tag.
 #
-# The products' tags come from the state values docsImageTag and driveImageTag, one per
-# product for all its images (Docs' CI tags its three images alike, Drive's three alike),
-# `main` when unset. The deployment's plugin sets them from labels of the pull request,
-# `docs:pr-2694` and `drive:encryption`, so the committed defaults stay `main` and a pull
-# request tests a product branch without a commit to undo before merging. By hand, the
-# same keys: `--state-values-set docsImageTag=pr-2694,driveImageTag=encryption`.
+# The products' tags come from the state values docsImageTag, driveImageTag and
+# accountsImageTag, one per product for all its images (Docs' CI tags its three images
+# alike, Drive's three alike, Accounts' two alike), `main` when unset. The deployment's
+# plugin sets them from labels of the pull request, `docs:pr-2694`, `drive:encryption` or
+# `accounts:encryption`, so the committed defaults stay `main` and a pull request tests a
+# product branch without a commit to undo before merging. By hand, the same keys:
+# `--state-values-set docsImageTag=pr-2694,driveImageTag=encryption`.
 #
 # Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
 # <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
-# start with `data.`), <feature>-auth, <feature>-s3, <feature>-s3-console, <feature>-mail
-# and <feature>-office. One wildcard DNS record on <domain> covers them all, and cert-manager
+# start with `data.`), <feature>-accounts (the products' identity provider), <feature>-auth
+# (the Keycloak behind it), <feature>-s3, <feature>-s3-console, <feature>-mail and
+# <feature>-office. One wildcard DNS record on <domain> covers them all, and cert-manager
 # issues one certificate per host. The namespace is the one given (`-n`, or the Argo CD
 # destination), else `preview-<feature>`.
 {{- $feature := coalesce (env "ARGOCD_ENV_FEATURE") (env "FEATURE") "ci" }}
@@ -77,6 +79,12 @@ environments:
           driveRelay:
             repository: lasuite/drive-collaboration-relay
             tag: main
+          accounts:
+            repository: lasuite/accounts-backend
+            tag: main
+          accountsFrontend:
+            repository: lasuite/accounts-frontend
+            tag: main
         ingressClassName: nginx
         clusterIssuer: letsencrypt
 ---
@@ -87,6 +95,8 @@ repositories:
     url: https://suitenumerique.github.io/docs
   - name: suitenumerique-drive
     url: https://suitenumerique.github.io/drive
+  - name: suitenumerique-accounts
+    url: https://suitenumerique.github.io/accounts
   - name: suitenumerique-dev-backend
     url: https://suitenumerique.github.io/helm-dev-backend
 ---

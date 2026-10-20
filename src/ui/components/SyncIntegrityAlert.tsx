@@ -1,6 +1,7 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useTranslation } from 'react-i18next';
 
+import { Notice } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
 interface SyncIntegrityAlertProps {
@@ -18,15 +19,15 @@ export function SyncIntegrityAlert({ onRetry, isRetrying = false }: SyncIntegrit
   const { t } = useTranslation('common');
 
   return (
-    <Alert type={VariantType.WARNING}>
+    <Notice type={VariantType.WARNING}>
       <div className={styles.alertStack}>
         <span>{t('settings.sync_integrity_failed')}</span>
         <div>
-          <Button size="small" variant="secondary" onClick={onRetry} disabled={isRetrying}>
+          <Button size="nano" variant="bordered" color="neutral" onClick={onRetry} disabled={isRetrying}>
             {isRetrying ? t('settings.sync_integrity_retrying') : t('settings.sync_integrity_retry')}
           </Button>
         </div>
       </div>
-    </Alert>
+    </Notice>
   );
 }

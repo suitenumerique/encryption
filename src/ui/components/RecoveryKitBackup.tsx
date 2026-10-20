@@ -1,9 +1,9 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Checkmark, Copy, Download, Eye, Print } from '@gouvfr-lasuite/ui-components/icons';
 import { type ReactNode, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { type IllustrationName, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { type IllustrationName, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { RecoveryKitPrint } from '@encryption/src/ui/documents/RecoveryKitSheet';
 
@@ -132,11 +132,11 @@ export function RecoveryKitBackup({
           fullWidth
           color={isCopied ? 'success' : 'brand'}
           onClick={handleCopyPassphrase}
-          icon={<Icon aria-hidden name={isCopied ? 'check' : 'content_copy'} />}
+          icon={isCopied ? <Checkmark aria-hidden /> : <Copy aria-hidden />}
         >
           {isCopied ? t('onboarding.btn_copied') : t('emergency.reveal_copy_to_send')}
         </Button>
-        {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+        {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
       </Screen>
     );
   }
@@ -144,25 +144,25 @@ export function RecoveryKitBackup({
   return (
     <Screen
       back={back}
-      illustration={illustration ?? 'shield-check'}
+      illustration={illustration ?? 'shield-gear'}
       title={title ?? t('onboarding.title_backup')}
       description={description ?? t('onboarding.backup_description')}
       banner={banner}
-      actions={<>{confirmButton}</>}
+      actions={<div className={`${styles.actions} ${styles.actionsSpaced}`}>{confirmButton}</div>}
     >
       <div className={styles.actions}>
         <Button
           variant="secondary"
           color={isCopied ? 'success' : 'brand'}
           onClick={handleCopyPassphrase}
-          icon={<Icon aria-hidden name={isCopied ? 'check' : 'content_copy'} />}
+          icon={isCopied ? <Checkmark aria-hidden /> : <Copy aria-hidden />}
         >
           {isCopied ? t('onboarding.btn_copied') : t('onboarding.btn_copy_clipboard')}
         </Button>
-        <Button variant="bordered" onClick={handleSaveFile} icon={<Icon aria-hidden name="download" />}>
+        <Button variant="bordered" onClick={handleSaveFile} icon={<Download aria-hidden />}>
           {t('onboarding.btn_save_file')}
         </Button>
-        <Button variant="bordered" onClick={() => setPrinting(true)} disabled={printing} icon={<Icon aria-hidden name="print" />}>
+        <Button variant="bordered" onClick={() => setPrinting(true)} disabled={printing} icon={<Print aria-hidden />}>
           {t('onboarding.btn_print')}
         </Button>
       </div>
@@ -172,23 +172,22 @@ export function RecoveryKitBackup({
       {showPassphrase ? (
         <WordGrid passphrase={passphrase} />
       ) : (
-        <div style={{ textAlign: 'center' }}>
-          <Button
-            size="small"
-            variant="tertiary"
-            color="neutral"
-            onClick={() => {
-              setShowPassphrase(true);
-              setSaved(true);
-            }}
-            icon={<Icon aria-hidden name="visibility" size={16} />}
-          >
-            {t('onboarding.btn_reveal')}
-          </Button>
-        </div>
+        <Button
+          className={styles.textLink}
+          size="nano"
+          variant="tertiary"
+          color="neutral"
+          onClick={() => {
+            setShowPassphrase(true);
+            setSaved(true);
+          }}
+          icon={<Eye aria-hidden size={16} />}
+        >
+          {t('onboarding.btn_reveal')}
+        </Button>
       )}
 
-      {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+      {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
     </Screen>
   );
 }

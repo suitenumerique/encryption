@@ -7,11 +7,12 @@
  * 2. Posts the ID token to `window.opener`, which is the interface iframe
  * 3. Closes the tab
  */
-import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { WrongUserError, handleCallback, notifyAuthComplete, startLogin } from '@encryption/src/ui/auth/login';
+import { Notice } from '@encryption/src/ui/components/layout/Screen';
 
 export function CallbackPage() {
   const { t } = useTranslation('common');
@@ -54,7 +55,7 @@ export function CallbackPage() {
   if (error === 'wrong_user') {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.WARNING}>{t('auth.wrong_user')}</Alert>
+        <Notice type={VariantType.WARNING}>{t('auth.wrong_user')}</Notice>
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '1.5rem' }}>
           <Button onClick={() => void startLogin(wrongUser?.expectedSub, { forceLogin: true, language: wrongUser?.language })}>
             {t('auth.sign_in_another_account')}
@@ -70,7 +71,7 @@ export function CallbackPage() {
   if (error) {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={VariantType.ERROR}>{t('auth.failed', { error })}</Alert>
+        <Notice type={VariantType.ERROR}>{t('auth.failed', { error })}</Notice>
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
           <Button onClick={() => window.close()}>{t('settings.close')}</Button>
         </div>
@@ -81,9 +82,9 @@ export function CallbackPage() {
   if (success) {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Alert type={unacknowledged ? VariantType.WARNING : VariantType.SUCCESS}>
+        <Notice type={unacknowledged ? VariantType.WARNING : VariantType.SUCCESS}>
           {t(unacknowledged ? 'auth.not_acknowledged' : 'auth.success')}
-        </Alert>
+        </Notice>
         {unacknowledged && (
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
             <Button onClick={() => window.close()}>{t('settings.close')}</Button>

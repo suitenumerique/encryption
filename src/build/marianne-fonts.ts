@@ -5,7 +5,7 @@ import type { Plugin } from 'vite';
 
 // A BRAND_FONT pointing at Marianne needs its .woff files (the brand-font
 // @font-face declares the woff format, which mail clients read too), and they
-// are already shipped by @gouvfr-lasuite/ui-kit. Rather than commit the binaries
+// are already shipped by @gouvfr-lasuite/ui-components. Rather than commit the binaries
 // (which git cannot diff), we treat them as ordinary build assets: emitted under
 // `/assets/fonts/*` at build (so production serves them through the existing
 // `/assets` static route, with no committed file and nothing to gitignore) and
@@ -18,7 +18,7 @@ const FONTS_URL_PREFIX = '/assets/fonts/';
 function marianneFontsDir(): string {
   const require = createRequire(import.meta.url);
 
-  return dirname(require.resolve('@gouvfr-lasuite/ui-kit/fonts/Marianne'));
+  return dirname(require.resolve('@gouvfr-lasuite/ui-components/fonts/marianne'));
 }
 
 /** Serve (dev) and emit (build) the three Marianne .woff files under `/assets/fonts/`. */

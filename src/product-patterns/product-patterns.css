@@ -1,0 +1,450 @@
+/*
+ * What the products draw on top of the design system, restated here: Docs
+ * writes it with styled-components props (DocShareModal.tsx, SearchUserRow.tsx,
+ * PendingEncryptionSection.tsx, EncryptionLayout.tsx), Drive in
+ * features/encryption/Encryption.scss.
+ */
+
+/* Docs: the dialog title row (DocShareModal.tsx) */
+.pp-docs-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pp-docs-title__text {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-weight: 600;
+}
+
+.pp-docs-share {
+  display: flex;
+  flex-direction: column;
+}
+
+.pp-docs-share [cmdk-item] {
+  cursor: auto;
+}
+
+.pp-docs-share__selected {
+  padding: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) 0;
+}
+
+.pp-docs-share__groups {
+  padding: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px);
+}
+
+.pp-docs-share__search {
+  padding: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px);
+}
+
+.pp-docs-share__hint {
+  margin: 0;
+  padding: var(--c--globals--spacings--3xs, 4px) var(--c--globals--spacings--xs, 8px) 0;
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* Docs: SearchUserRow.tsx */
+.pp-docs-user-row {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs, 8px);
+}
+
+.pp-docs-user-row__avatar-button {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.pp-docs-user-row__text {
+  display: flex;
+  flex-direction: column;
+}
+
+.pp-docs-user-row__name-line {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--3xs, 4px);
+}
+
+.pp-docs-user-row__name {
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-weight: 500;
+  line-break: anywhere;
+}
+
+.pp-docs-user-row__email {
+  margin-top: -2px;
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  line-break: anywhere;
+}
+
+.pp-docs-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.pp-docs-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--c--contextuals--content--semantic--brand--tertiary);
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+}
+
+/* Docs: DocVisibility.tsx and DocShareModalFooter.tsx */
+.pp-docs-visibility {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--base, 16px);
+  padding: 0 var(--c--globals--spacings--base, 16px);
+}
+
+.pp-docs-visibility__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-weight: 700;
+}
+
+.pp-docs-visibility__row {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--3xs, 4px);
+}
+
+.pp-docs-visibility__description {
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.pp-docs-footer__actions {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px);
+}
+
+/* Docs: PendingEncryptionSection.tsx */
+.pp-docs-pending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs, 8px);
+  margin: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--sm, 12px);
+}
+
+.pp-docs-pending__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pp-docs-pending__title {
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-weight: 700;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.pp-docs-pending__hint {
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.pp-docs-pending__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs, 8px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-docs-pending__row {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs, 8px);
+  min-height: 42px;
+}
+
+.pp-docs-pending__who {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs, 8px);
+  min-width: 0;
+}
+
+.pp-docs-pending__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pp-docs-pending__name {
+  overflow: hidden;
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-docs-pending__email {
+  overflow: hidden;
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-docs-pending__error {
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--error--primary);
+}
+
+.pp-docs-pending__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 var(--c--globals--spacings--2xs, 6px);
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--tertiary);
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-weight: 500;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  white-space: nowrap;
+}
+
+/* Docs: EncryptionLayout.tsx `EncryptionEmptyState` */
+.pp-docs-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--3xs, 4px);
+  max-width: 320px;
+  margin: auto;
+  padding: var(--c--globals--spacings--md, 24px);
+  text-align: center;
+}
+
+.pp-docs-empty-state__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-weight: 700;
+}
+
+.pp-docs-empty-state__description {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* Docs: EncryptionLayout.tsx `EncryptionModalContent`, in ModalEncryptDoc.tsx */
+.pp-docs-encrypt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--base, 16px);
+}
+
+.pp-docs-encrypt__illustration {
+  display: block;
+  align-self: center;
+  object-fit: contain;
+}
+
+.pp-docs-encrypt__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--3xs, 4px);
+  padding-right: var(--c--globals--spacings--base, 16px);
+}
+
+.pp-docs-encrypt__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.pp-docs-encrypt__description {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm, 14px);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.pp-docs-encrypt__blockers {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.pp-docs-encrypt__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs, 8px);
+}
+
+/* Drive: Encryption.scss `.drive__encryption-pending` */
+.pp-drive-pending {
+  border-top: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.pp-drive-pending__title {
+  margin: 0;
+}
+
+.pp-drive-pending__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pp-drive-pending__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.pp-drive-pending__enabled {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--success--primary);
+}
+
+.pp-drive-pending__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-drive-pending__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  min-height: 42px;
+  padding: var(--c--globals--spacings--3xs) var(--c--globals--spacings--2xs);
+}
+
+.pp-drive-pending__who {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  min-width: 0;
+}
+
+.pp-drive-pending__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pp-drive-pending__ellipsis {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-drive-pending__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.pp-drive-pending__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--c--contextuals--background--surface--tertiary);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  white-space: nowrap;
+}
+
+/* Drive: Encryption.scss `.drive__encryption-verify-identity` */
+.pp-drive-verify-identity {
+  display: flex;
+  justify-content: center;
+  padding: var(--c--globals--spacings--2xs) 0;
+}
+
+/*
+ * The overview lays every state out on one page: each modal is portaled into
+ * its own cell (a nested ModalProvider) and taken out of the fixed, centered
+ * position it has over a product.
+ */
+.pp-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+  gap: 32px;
+}
+
+/* An open modal locks the page scroll, which the overview needs. */
+body.c__noscroll:has(.pp-overview) {
+  overflow: auto;
+}
+
+.pp-overview__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pp-overview__label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pp-overview__source {
+  margin: 0;
+  font-size: 12px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.pp-overview__cell .c__modal__backdrop {
+  position: relative;
+  inset: auto;
+  padding: 16px;
+  border-radius: 8px;
+  opacity: 1;
+  animation: none;
+}
+
+.pp-overview__cell .c__modal {
+  position: relative;
+  top: auto;
+  left: auto;
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  transform: none;
+}

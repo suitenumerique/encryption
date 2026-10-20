@@ -3,11 +3,11 @@
 //
 // Every value below is the resolved value of a Cunningham design token (named per
 // line). Ideally they would be read live from the token values Cunningham exports
-// in JS (`defaultTokens` in `@gouvfr-lasuite/cunningham-react`), but that entry
-// point cannot be imported server-side: it is the same bundle as the React
-// components and runs browser APIs (document.*) at import (still true in 4.4.0,
-// checked; there is no tokens-only subpath export). And email clients cannot read
-// CSS custom properties anyway, so a colour must reach the mail as a literal.
+// in JS (`defaultTokens` in `@gouvfr-lasuite/ui-components`), but that entry
+// point is not meant for the server: it is the same bundle as the React
+// components (and the package has no tokens-only subpath export). And email
+// clients cannot read CSS custom properties anyway, so a colour must reach the
+// mail as a literal.
 // Hence literals here, mirroring the tokens by hand.
 //
 // These are the DEFAULTS. esbuild bundles and minifies this file into the server

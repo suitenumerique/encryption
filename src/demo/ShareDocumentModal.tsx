@@ -1,7 +1,7 @@
 /**
  * Share document modal — adapted from docs/DocShareModal.tsx
  *
- * Uses QuickSearch + QuickSearchGroup from ui-kit with custom renderElement
+ * Uses QuickSearch + QuickSearchGroup from ui-components with custom renderElement
  * for suffix warnings.
  * Stripped of Docs-specific dependencies (Box, Text, useDocAccesses, etc.)
  *
@@ -12,8 +12,9 @@
  * DEMO LIMITATIONS:
  * - Documents and accesses are in-memory only (local to the tab).
  */
-import { Button, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
-import { Icon, QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
+import { Button, Modal, ModalSize } from '@gouvfr-lasuite/ui-components';
+import { QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-components';
+import { Plus, ShieldCheck, Trash } from '@gouvfr-lasuite/ui-components/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RegisteredUser, VaultClient } from '@encryption/src/client/vault-client';
@@ -80,7 +81,7 @@ function VerifyButton({ onClick }: { onClick: () => void }) {
         whiteSpace: 'nowrap',
       }}
     >
-      <Icon aria-hidden name="verified_user" size={16} />
+      <ShieldCheck aria-hidden size={16} />
       Verify
     </button>
   );
@@ -185,7 +186,7 @@ function InviteUserRow({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {onViewProfile && user.encryption_public_key && <VerifyButton onClick={() => onViewProfile(user.id)} />}
           <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400)', fontSize: 13 }}>
-            Add <Icon aria-hidden name="add" size={18} />
+            Add <Plus aria-hidden size={18} />
           </span>
         </div>
       }
@@ -250,7 +251,7 @@ function MemberRow({
               lineHeight: 1,
             }}
           >
-            <Icon aria-hidden name="delete" size={18} />
+            <Trash aria-hidden size={18} />
           </button>
         </div>
       }
@@ -575,7 +576,7 @@ export function ShareDocumentModal({
                           display: 'inline-flex',
                         }}
                       >
-                        <Icon aria-hidden name="verified_user" size={16} />
+                        <ShieldCheck aria-hidden size={16} />
                       </button>
                     )}
                     <button

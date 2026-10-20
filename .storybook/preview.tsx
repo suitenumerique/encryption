@@ -1,7 +1,7 @@
-import { Button, CunninghamProvider } from '@gouvfr-lasuite/cunningham-react';
-import '@gouvfr-lasuite/cunningham-react/icons';
-import '@gouvfr-lasuite/cunningham-react/style';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, CunninghamProvider } from '@gouvfr-lasuite/ui-components';
+import '@gouvfr-lasuite/ui-components/fonts/marianne';
+import { XMark } from '@gouvfr-lasuite/ui-components/icons';
+import '@gouvfr-lasuite/ui-components/style';
 import type { Preview } from '@storybook/react';
 import { mswLoader } from 'msw-storybook-addon/csf3';
 import { setupWorker } from 'msw/browser';
@@ -18,6 +18,7 @@ import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
 import type { EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import { defaultHandlers } from '@encryption/src/ui/testing/default-handlers';
 import { MockEncryptionProvider } from '@encryption/src/ui/testing/mock-encryption';
+import { resolveThemeName } from '@encryption/src/ui/theme';
 
 const DARK_MODE_EVENT_NAME = 'DARK_MODE';
 
@@ -56,12 +57,13 @@ function HostCloseControl({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="c__modal__close">
+      {/* Where the interface's modal puts its cross (layout.module.css). */}
+      <div style={{ position: 'absolute', top: 5, right: 5, zIndex: 1 }}>
         <Button
-          icon={<Icon aria-hidden name="close" />}
+          icon={<XMark aria-hidden size={16} />}
           variant="tertiary"
           color="neutral"
-          size="small"
+          size="nano"
           aria-label="Close"
           onClick={() => setRequests((n) => n + 1)}
         />
@@ -99,6 +101,20 @@ const preview: Preview = {
   // `parameters.date` pins "now" for a story that displays a date derived from it.
   beforeEach: ({ parameters }) => (parameters.date instanceof Date ? installClock(parameters.date) : undefined),
   globalTypes: {
+    theme: {
+      description: 'Design system theme the product passes',
+      // DSFR by default: the theme of the designs (Marianne).
+      defaultValue: 'dsfr',
+      toolbar: {
+        icon: 'paintbrush',
+        items: [
+          { value: 'dsfr', title: 'DSFR' },
+          { value: 'anct', title: 'ANCT' },
+          { value: 'default', title: 'Default' },
+        ],
+        dynamicTitle: true,
+      },
+    },
     locale: {
       description: 'Interface language',
       defaultValue: DEFAULT_LOCALE,
@@ -150,7 +166,8 @@ const preview: Preview = {
       }
 
       const isDark = useStorybookDarkMode();
-      const cunninghamTheme = isDark ? 'dark' : 'default';
+      const brand = (context.globals.theme as string | undefined) ?? 'dsfr';
+      const cunninghamTheme = resolveThemeName(brand === 'default' ? (isDark ? 'dark' : 'default') : `${brand}-${isDark ? 'dark' : 'light'}`);
 
       const hostModal = context.parameters.hostModal as boolean | 'medium' | 'card' | undefined;
 
@@ -159,8 +176,6 @@ const preview: Preview = {
       // box, and what shows around it is the preview document, which knows
       // nothing of the theme otherwise.
       useEffect(() => {
-        document.documentElement.classList.toggle('cunningham-theme--dark', isDark);
-        document.documentElement.classList.toggle('cunningham-theme--default', !isDark);
         document.body.style.backgroundColor = hostModal
           ? 'var(--c--contextuals--background--surface--tertiary)'
           : 'var(--c--contextuals--background--surface--primary)';
@@ -180,7 +195,7 @@ const preview: Preview = {
       // `'card'` is the width alone, for a component that lives inside a screen.
       return (
         <I18nextProvider i18n={i18n}>
-          <CunninghamProvider theme={cunninghamTheme}>
+          <CunninghamProvider theme={cunninghamTheme} currentLocale={locale === 'fr' ? 'fr-FR' : 'en-US'}>
             <div
               style={{
                 background: hostModal
@@ -194,14 +209,16 @@ const preview: Preview = {
               {hostModal ? (
                 <div
                   style={{
-                    width: hostModal === 'medium' ? 600 : 350,
+                    position: 'relative',
+                    width: hostModal === 'medium' ? 450 : 350,
                     maxWidth: '100%',
                     boxSizing: 'border-box',
-                    padding: 24,
-                    borderRadius: 8,
-                    background: 'var(--c--contextuals--background--surface--secondary, #fff)',
-                    border: '1px solid var(--c--contextuals--border--surface--primary, #dfe2ea)',
-                    boxShadow: '0 6px 20px rgba(0, 0, 18, 0.1)',
+                    padding: 'var(--c--components--modal--padding)',
+                    borderRadius: 'var(--c--components--modal--border-radius)',
+                    background: 'var(--c--components--modal--background-color)',
+                    border: '1px solid var(--c--components--modal--border-color)',
+                    boxShadow: 'var(--c--components--modal--box-shadow)',
+                    fontFamily: 'var(--c--globals--font--families--base)',
                   }}
                 >
                   {hostModal === 'card' ? (

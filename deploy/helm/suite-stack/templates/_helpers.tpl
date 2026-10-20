@@ -40,8 +40,29 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-%s" (required "shared.fullnameOverride is required: the bootstrap Job reaches Keycloak by that fixed name" .Values.shared.fullnameOverride) .Values.shared.keycloak.name | trunc 52 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "suite-stack.issuer" -}}
+{{- define "suite-stack.keycloakIssuer" -}}
 {{- printf "https://%s/realms/%s" .Values.shared.keycloak.hostname .Values.shared.keycloak.realm.name }}
+{{- end }}
+
+{{/* Where django-oauth-toolkit answers in Accounts, on its public host. */}}
+{{- define "suite-stack.accountsIssuer" -}}
+{{- printf "https://%s/api/v1.0/o" .Values.accounts.ingress.host }}
+{{- end }}
+
+{{/* The provider the products sign in with: Accounts when it is deployed, else the realm. */}}
+{{- define "suite-stack.issuer" -}}
+{{- if .Values.accounts.enabled }}
+{{- include "suite-stack.accountsIssuer" . }}
+{{- else }}
+{{- include "suite-stack.keycloakIssuer" . }}
+{{- end }}
+{{- end }}
+
+{{/* The image of Accounts' backend, the way its own chart builds the reference. */}}
+{{- define "suite-stack.accountsImage" -}}
+{{- $a := .Values.accounts }}
+{{- $backend := $a.backend.image | default dict }}
+{{- printf "%s:%s" ($backend.repository | default $a.image.repository) (toString ($backend.tag | default $a.image.tag)) }}
 {{- end }}
 
 {{- define "suite-stack.encryptionDatabaseUrl" -}}

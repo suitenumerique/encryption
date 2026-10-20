@@ -1,6 +1,7 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useTranslation } from 'react-i18next';
 
+import { Notice } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
 interface SessionExpiredAlertProps {
@@ -21,16 +22,16 @@ interface SessionExpiredAlertProps {
 export function SessionExpiredAlert({ onReconnect, isAuthenticating = false }: SessionExpiredAlertProps) {
   const { t } = useTranslation('common');
   return (
-    <Alert type={VariantType.ERROR}>
+    <Notice type={VariantType.ERROR}>
       <div className={styles.alertStack}>
         <span>{t('errors.vault.session_expired')}</span>
         <div>
-          <Button size="small" onClick={onReconnect} disabled={isAuthenticating}>
+          <Button size="nano" onClick={onReconnect} disabled={isAuthenticating}>
             {isAuthenticating ? t('auth.signing_in') : t('auth.reconnect')}
           </Button>
         </div>
         {isAuthenticating && <span className={styles.hint}>{t('auth.finish_in_tab')}</span>}
       </div>
-    </Alert>
+    </Notice>
   );
 }

@@ -449,6 +449,59 @@ spec:
 
 ---
 
+# Source: suite-stack/templates/accounts-applications.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "stack-suite-stack-accounts-applications-1"
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: accounts-applications
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+type: Opaque
+stringData:
+  applications.json: "[{\\"clientId\\":\\"docs\\",\\"postLogoutRedirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"drive\\",\\"postLogoutRedirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"encryption\\",\\"postLogoutRedirectUris\\":[],\\"redirectUris\\":[\\"https://encryption.suite.example.org/auth/callback\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"}]"
+  # Run by \`manage.py shell\`, so with Accounts' settings and its database.
+  applications.py: |
+    import json
+
+    from oauth2_provider.models import get_application_model
+
+    Application = get_application_model()
+
+    with open("/scripts/applications.json", encoding="utf-8") as file:
+        specs = json.load(file)
+
+    for spec in specs:
+        application = Application.objects.filter(client_id=spec["clientId"]).first()
+        created = application is None
+        if created:
+            application = Application(client_id=spec["clientId"])
+        application.name = spec["clientId"]
+        application.client_type = Application.CLIENT_CONFIDENTIAL
+        application.authorization_grant_type = Application.GRANT_AUTHORIZATION_CODE
+        # Stored hashed, like any secret typed in the admin.
+        application.client_secret = spec["secret"]
+        application.hash_client_secret = True
+        application.redirect_uris = " ".join(spec["redirectUris"])
+        application.post_logout_redirect_uris = " ".join(spec.get("postLogoutRedirectUris") or [])
+        application.algorithm = Application.RS256_ALGORITHM
+        application.skip_authorization = True
+        application.clean()
+        application.save()
+        print(("created" if created else "updated") + " application " + spec["clientId"])
+
+---
+
 # Source: suite-stack/templates/bootstrap.yaml
 apiVersion: v1
 kind: Secret
@@ -534,6 +587,10 @@ stringData:
       psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "encryption"'
       echo "created database encryption"
     fi
+    if ! exists "SELECT 1 FROM pg_database WHERE datname = 'accounts'"; then
+      psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "accounts"'
+      echo "created database accounts"
+    fi
     # The encryption service's two roles, in its database, from deploy/postgres/.
     if ! exists "SELECT 1 FROM pg_roles WHERE rolname = 'encryption_migrator'"; then
       psql -d "encryption" -v ON_ERROR_STOP=1 -v password="'\${ENCRYPTION_MIGRATOR_PASSWORD}'" -f /scripts/create-migrator-role.sql
@@ -552,6 +609,8 @@ stringData:
     mc version enable "local/docs-media-storage"
     mc mb --ignore-existing "local/drive-media-storage"
     mc version enable "local/drive-media-storage"
+    mc mb --ignore-existing "local/accounts-media-storage"
+    mc version enable "local/accounts-media-storage"
   # The terms text as a file: kcadm posts JSON, and the text carries apostrophes the shell
   # quoting of the script below could not (the header travels as a variable instead).
   notice.json: "{\\"termsText\\":\\"Cet environnement sert à essayer LaSuite. Tout le monde peut y créer un compte, la console d'administration et la boîte mail sont publiques : un compte peut être lu ou repris par n'importe qui. N'y mettez aucune donnée réelle, ni document, ni mot de passe utilisé ailleurs. Tout peut être effacé à tout moment.\\",\\"termsTitle\\":\\"Environnement de test\\"}"
@@ -571,17 +630,39 @@ stringData:
     kc create "realms/\${REALM}/localization/fr" -f /scripts/notice.json
     TERMS=$(kc get authentication/required-actions -r "$REALM" --fields alias --format csv --noquotes | grep -i '^terms_and_conditions$')
     kc update "authentication/required-actions/\${TERMS}" -r "$REALM" -s enabled=true -s defaultAction=true
-    # Creates the client, or updates it in place so the URIs follow the values.
+    scope_id() {
+      kc get client-scopes -r "$REALM" --fields id,name --format csv --noquotes | awk -F, -v name="$1" '$2 == name { print $1 }'
+    }
+    # Creates the client scope if missing. Never updated: a scope's mappers live apart
+    # from it, and an update of the scope leaves them as they were.
+    ensure_client_scope() {
+      local name=$1 definition=$2
+      if [ -z "$(scope_id "$name")" ]; then
+        echo "$definition" | kc create client-scopes -r "$REALM" -f -
+        echo "created client scope \${name}"
+      fi
+    }
+    # Creates the client, or updates it in place so the URIs follow the values. Leaves
+    # its id in CLIENT for the scopes attached next.
+    CLIENT=
     ensure_client() {
-      local client_id=$1 definition=$2 id
-      id=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
-      if [ -z "$id" ]; then
+      local client_id=$1 definition=$2
+      CLIENT=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
+      if [ -z "$CLIENT" ]; then
         echo "$definition" | kc create clients -r "$REALM" -f -
+        CLIENT=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
         echo "created client \${client_id}"
       else
-        echo "$definition" | kc update "clients/\${id}" -r "$REALM" -f -
+        echo "$definition" | kc update "clients/\${CLIENT}" -r "$REALM" -f -
         echo "updated client \${client_id}"
       fi
+    }
+    # Attaches an optional scope to the client last ensured (a PUT, idempotent).
+    add_optional_scope() {
+      local id
+      id=$(scope_id "$1")
+      if [ -z "$id" ]; then echo "no client scope $1 in the realm" >&2; exit 1; fi
+      kc update "clients/\${CLIENT}/optional-client-scopes/\${id}" -r "$REALM" -n
     }
     # Creates the user if missing, with the terms to accept at first sign-in; the password
     # is set every run, so the values win.
@@ -594,12 +675,162 @@ stringData:
       fi
       kc set-password -r "$REALM" --username "$username" --new-password "$password"
     }
-    ensure_client 'docs' '{"attributes":{"post.logout.redirect.uris":"+"},"clientId":"docs","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":false,"redirectUris":["https://docs.suite.example.org/*"],"secret":"ThisIsAnExampleKeyForDevPurposeOnly","standardFlowEnabled":true,"webOrigins":["https://docs.suite.example.org"]}'
-    ensure_client 'drive' '{"attributes":{"post.logout.redirect.uris":"+"},"clientId":"drive","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":false,"redirectUris":["https://drive.suite.example.org/*"],"secret":"ThisIsAnExampleKeyForDevPurposeOnly","standardFlowEnabled":true,"webOrigins":["https://drive.suite.example.org"]}'
-    ensure_client 'encryption' '{"attributes":{"access.token.lifespan":"3600","pkce.code.challenge.method":"S256","post.logout.redirect.uris":"+"},"clientId":"encryption","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":false,"redirectUris":["https://encryption.suite.example.org/auth/callback"],"secret":"ThisIsAnExampleKeyForDevPurposeOnly","standardFlowEnabled":true,"webOrigins":[]}'
+    ensure_client_scope 'given_name' '{"attributes":{"display.on.consent.screen":"false","include.in.token.scope":"true"},"name":"given_name","protocol":"openid-connect","protocolMappers":[{"config":{"access.token.claim":"true","claim.name":"given_name","id.token.claim":"true","jsonType.label":"String","user.attribute":"firstName","userinfo.token.claim":"true"},"name":"given_name","protocol":"openid-connect","protocolMapper":"oidc-usermodel-property-mapper"}]}'
+    ensure_client_scope 'usual_name' '{"attributes":{"display.on.consent.screen":"false","include.in.token.scope":"true"},"name":"usual_name","protocol":"openid-connect","protocolMappers":[{"config":{"access.token.claim":"true","claim.name":"usual_name","id.token.claim":"true","jsonType.label":"String","user.attribute":"lastName","userinfo.token.claim":"true"},"name":"usual_name","protocol":"openid-connect","protocolMapper":"oidc-usermodel-property-mapper"}]}'
+    ensure_client_scope 'siret' '{"attributes":{"display.on.consent.screen":"false","include.in.token.scope":"true"},"name":"siret","protocol":"openid-connect","protocolMappers":[]}'
+    ensure_client 'accounts' '{"attributes":{"post.logout.redirect.uris":"+","user.info.response.signature.alg":"RS256"},"clientId":"accounts","directAccessGrantsEnabled":false,"enabled":true,"protocol":"openid-connect","publicClient":false,"redirectUris":["https://accounts.suite.example.org/*"],"secret":"ThisIsAnExampleKeyForDevPurposeOnly","standardFlowEnabled":true,"webOrigins":[]}'
+    add_optional_scope 'given_name'
+    add_optional_scope 'usual_name'
+    add_optional_scope 'siret'
     ensure_user 'alice.martin' 'alice.martin@example.org' 'Alice' 'Martin' 'alice.martin'
     ensure_user 'bob.dupont' 'bob.dupont@example.org' 'Bob' 'Dupont' 'bob.dupont'
   ENCRYPTION_MIGRATION_DATABASE_URL: "postgresql://encryption_migrator:migrator@postgres:5432/encryption?schema=encryption"
+
+---
+
+# Source: suite-stack/templates/accounts-applications.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "stack-suite-stack-accounts-applications-1"
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: accounts-applications
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: suite-stack
+        app.kubernetes.io/instance: stack
+        app.kubernetes.io/component: accounts-applications
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: applications
+          image: "lasuite/accounts-backend:main"
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python manage.py migrate --check > /dev/null 2>&1; do
+                echo "waiting for Accounts' migration"; sleep 3
+              done
+              python manage.py shell --command "exec(open('/scripts/applications.py').read())"
+          env:
+            - name: HOME
+              value: /tmp
+            - name: "AWS_S3_ACCESS_KEY_ID"
+              value: "dinum"
+            - name: "AWS_S3_ENDPOINT_URL"
+              value: "http://minio:9000"
+            - name: "AWS_S3_SECRET_ACCESS_KEY"
+              value: "password"
+            - name: "AWS_STORAGE_BUCKET_NAME"
+              value: "accounts-media-storage"
+            - name: "DB_HOST"
+              value: "postgres"
+            - name: "DB_NAME"
+              value: "accounts"
+            - name: "DB_PASSWORD"
+              value: "pass"
+            - name: "DB_PORT"
+              value: "5432"
+            - name: "DB_USER"
+              value: "dinum"
+            - name: "DJANGO_ALLOWED_HOSTS"
+              value: "accounts.suite.example.org"
+            - name: "DJANGO_CONFIGURATION"
+              value: "Feature"
+            - name: "DJANGO_CSRF_TRUSTED_ORIGINS"
+              value: "https://accounts.suite.example.org"
+            - name: "DJANGO_EMAIL_FROM"
+              value: "noreply@suite.example.org"
+            - name: "DJANGO_EMAIL_HOST"
+              value: "mailpit"
+            - name: "DJANGO_EMAIL_PORT"
+              value: "1025"
+            - name: "DJANGO_SALT_KEY"
+              value: "ThisIsAnExampleSaltForDevPurposeOnly"
+            - name: "DJANGO_SECRET_KEY"
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            - name: "DJANGO_SETTINGS_MODULE"
+              value: "accounts.settings"
+            - name: "DJANGO_SUPERUSER_EMAIL"
+              value: "admin@example.org"
+            - name: "DJANGO_SUPERUSER_PASSWORD"
+              value: "admin"
+            - name: "ENCRYPTION_FEATURE_ENABLED"
+              value: "True"
+            - name: "ENCRYPTION_INTERFACE_URL"
+              value: "https://encryption.suite.example.org"
+            - name: "ENCRYPTION_VAULT_URL"
+              value: "https://data.encryption.suite.example.org"
+            - name: "FRONTEND_LOGOUT_URL"
+              value: "https://accounts.suite.example.org/logout"
+            - name: "LOGGING_LEVEL_LOGGERS_APP"
+              value: "INFO"
+            - name: "LOGGING_LEVEL_LOGGERS_ROOT"
+              value: "INFO"
+            - name: "LOGIN_REDIRECT_URL"
+              value: "https://accounts.suite.example.org"
+            - name: "LOGOUT_REDIRECT_URL"
+              value: "https://accounts.suite.example.org"
+            - name: "MEDIA_BASE_URL"
+              value: "https://accounts.suite.example.org"
+            - name: "OAUTH2_PROVIDER_OIDC_ISS_ENDPOINT"
+              value: "https://accounts.suite.example.org/api/v1.0/o"
+            - name: "OAUTH2_PROVIDER_OIDC_RSA_PRIVATE_KEY"
+              value: "-----BEGIN RSA PRIVATE KEY-----\\nMIIEowIBAAKCAQEAt4ydm/exBkhPRkNF3fVsTttcvtGwgjmP8p8gqMr8Iv3u+fPm\\nJ+EXHsi0fy0OwmC+Klf5K4XFIJKFK2Pk5uAYVMIVLcpcJylI7C2ie4xX0RUoC9EC\\nXwgSc3IZ4op+CgLMraUJTyarbfZoUHHueLNZHf5rCW0v1FZGcsRPr0S2kg5l2U8P\\nZHhubayWXSVvtSiMvgEiN85vpZ8eiJ901l7S5SjFzEWxYrN22DN+H/ppqr2O0RYL\\nJX7DkAZOOyu0v0U0DVGLE6GilEFQUEEQMHADlnxQh86aGtE1GPVtdpdIk8a/WMo5\\nuu8ZEGSITYgoYcMy9bbpIk+IgnOrgtwyE5a8iQIDAQABAoIBACBETvy5KVyiX5VJ\\nhEHFwDmIpKBC+pWaCu0q/jHOJU79dwJn1wERt9/IhrqIsDyJh0SoXHxDMulL+K8t\\nC3Nu17gmulRna5XS0yf5ycOQY2u1HWoeXx1XrO6wk05Y7FlULqkkByPr910IYUQr\\nEzISzUrRi/2HPU5FsHLCggOcv7+jDdq1lZVvqD7cUYcNC5nc3fgrTpEfkW6nC1Oa\\nOAveqx+tMRJfCspf71ZRAlrSa1Ia7RKRQMd5NwYSi1jnWyp+gMCoqxz7ih7fCwpK\\nfBkn8avbbSrZBXgI9gQkVMFS49Y48qIR8pyVWdfSL2N43yUB/yKzqi+By3bKX5fo\\n5/HM+RECgYEA6zHjV3G69K/Cb9RXttT42RYLLjTr3eAfEwFyTTPgRe/G7yCvPrk+\\n+FTbs4XuUTfywBvbAVCQ/RJ01MYdWV0D8aIQ5EYiQ/H7ELB8gTVhy0LvVwCxw6yX\\nDhvo31J4jqX0ipGojmXFUH+1LcfvjECy/eTcsKjkdc6oVekRkwWApW0CgYEAx8kv\\nlXvsQZ/Fenl1eIzOLj6hY3sdtR57W2VHP872psVVu+0/AegqtP3bobhcWh60hDyc\\nk+or6hpuUAdWv8dGljr1X9EPfPpJDN2SsAIN0urYs3Ba2PCx9oYS6ZuEfd1zFZSF\\n484K3ZTtrUchDQ4sRLGCc/RGUkL2lrjd2Fhv7g0CgYAUtejqC1bGMy/w/wbWT7y2\\nCQ3k/L4EZLb3ynnROI84OVwQNJWZ9WAJKBfMoC+TMVUL+6f2XqzVzClDj0qIUvuE\\n7JuGLnLX/tf36UKdciDxcCx5QdNlgq4ujOCdwbph/VUiWp84ItgUNZqztFZwyEW6\\nu8t/NvAfO5pxLjvg8WwZpQKBgGKfjj3czuQWWwX6r2KzH5T0lfbl7+RZB8w2UtXM\\n9TWedJQwqcnnMi3mo2VR/UT/o10kDqd2Efee1JXtCYXieZXvxPFn4p1vcGBJgQAi\\nA3D7Pb5W2IH/T9rClNN9UgpQJ1+f0fiC3hpESpAfbNFlDbVba2qSS6SQKep9mAYU\\noiyBAoGBAOjt//J98/OabjFiyLJj/mRslFv7aiblKplNMnUsFOP4e4diOjSbslj3\\nBCupHLN6P82PRKUQGhyDcLhkpzYmftmnnmvSWqf56hF9fAJT1h6FQvHTQA6TH2XA\\n8HRIxwc/CfAiSz61D8UXtYFBlclcP17EDUXuh/LPDXnLuO9yt+oF\\n-----END RSA PRIVATE KEY-----"
+            - name: "REDIS_URL"
+              value: "redis://user:pass@redis:6379/3"
+            - name: "SOCIAL_AUTH_ALLOWED_REDIRECT_HOSTS"
+              value: "accounts.suite.example.org"
+            - name: "SOCIAL_AUTH_PRO_CONNECT_KEY"
+              value: "accounts"
+            - name: "SOCIAL_AUTH_PRO_CONNECT_OIDC_ENDPOINT"
+              value: "https://auth.suite.example.org/realms/suite"
+            - name: "SOCIAL_AUTH_PRO_CONNECT_SECRET"
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            - name: "STORAGES_STATICFILES_BACKEND"
+              value: "django.contrib.staticfiles.storage.StaticFilesStorage"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scripts
+          secret:
+            secretName: "stack-suite-stack-accounts-applications-1"
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
 
 ---
 

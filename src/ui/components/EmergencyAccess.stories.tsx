@@ -16,6 +16,13 @@ import type { GetApiEmergencyAccessGrantedResponses, GetApiEmergencyAccessTruste
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
 import { sampleEmergencyEscrowRecord } from '@encryption/src/ui/testing/fixtures';
 
+// A row's secondary actions live in its "⋯" menu, rendered in a popover outside the canvas.
+async function playFindRowMenuItem(canvasElement: HTMLElement, email: string, item: string): Promise<HTMLElement> {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('emergency.row_menu', { email })));
+
+  return await within(document.body).findByRole('menuitem', { name: item });
+}
+
 type TrustedContact = GetApiEmergencyAccessTrustedResponses[200]['contacts'][number];
 type GrantedVault = GetApiEmergencyAccessGrantedResponses[200]['grantors'][number];
 
@@ -170,8 +177,8 @@ GrantedRecoveryRequestedStory.parameters = {
   msw: lists([], [{ ...grantedVault, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 20 * DAY }]),
 };
 GrantedRecoveryRequestedStory.play = async ({ canvasElement }) => {
-  await within(canvasElement).findByText(/requested emergency access/i);
-  await playFindButton(canvasElement, i18n.t('emergency.btn_cancel_request'));
+  await within(canvasElement).findByText(i18n.t('emergency.status_requested'));
+  await playFindRowMenuItem(canvasElement, grantedVault.grantor_email, i18n.t('emergency.btn_cancel_request'));
 };
 
 export const GrantedRecoveryRequested = prepareStory(GrantedRecoveryRequestedStory);
@@ -260,7 +267,7 @@ InvitedContactStory.args = { ...baseArgs };
 InvitedContactStory.parameters = { msw: lists([{ ...trustedContact, status: 'invited' }], []) };
 InvitedContactStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('emergency.status_invited'));
-  await playFindButton(canvasElement, i18n.t('emergency.btn_revoke'));
+  await playFindRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
 };
 
 export const InvitedContact = prepareStory(InvitedContactStory);

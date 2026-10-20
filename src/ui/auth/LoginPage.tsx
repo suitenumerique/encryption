@@ -2,7 +2,7 @@
  * Login page — opened in a new tab by the iframe.
  * Immediately redirects to the identity provider, through the server.
  */
-import { Loader } from '@gouvfr-lasuite/cunningham-react';
+import { Loader } from '@gouvfr-lasuite/ui-components';
 import { useEffect, useRef, useState } from 'react';
 
 import { isLocale } from '@encryption/src/shared/locale';

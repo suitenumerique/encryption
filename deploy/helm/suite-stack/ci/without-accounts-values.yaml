@@ -1,0 +1,69 @@
+# The stack without Accounts: Docs, Drive and the encryption service sign in at the
+# shared Keycloak's realm directly, as they did before Accounts joined. Every block that
+# names the provider changes with it (the coherence checks follow `accounts.enabled`).
+# Rendered by the chart test; a starting point for whoever needs the stack this way.
+accounts:
+  enabled: false
+
+bootstrap:
+  keycloak:
+    clients:
+      - clientId: docs
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://docs.suite.example.org/*
+        webOrigins:
+          - https://docs.suite.example.org
+      - clientId: drive
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://drive.suite.example.org/*
+        webOrigins:
+          - https://drive.suite.example.org
+      # The interface's session lasts as long as the ID token, which Keycloak gives the
+      # access token's lifespan (5 minutes in the realm).
+      - clientId: encryption
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        pkce: true
+        idTokenLifespanSeconds: 3600
+        redirectUris:
+          - https://encryption.suite.example.org/auth/callback
+        webOrigins: []
+
+encryption:
+  config:
+    allowedFrameAncestors:
+      - https://docs.suite.example.org
+      - https://drive.suite.example.org
+    oidc:
+      issuer: https://auth.suite.example.org/realms/suite
+      # Keycloak honours the `claims` parameter: the names stay out of the ID token.
+      scopes: openid
+      # The dev-backend realm maps the names to `first_name` and `last_name`.
+      claims:
+        firstName: [first_name]
+        lastName: [last_name]
+      # Keycloak asks for the password again on `prompt=login`: the default max age holds.
+      stepUp:
+        maxAgeSeconds: 300
+
+docs:
+  backend:
+    envVars:
+      OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
+      OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
+      OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
+      OIDC_OP_USER_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/userinfo
+      OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
+      OIDC_USERINFO_SHORTNAME_FIELD: first_name
+
+drive:
+  backend:
+    envVars:
+      OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
+      OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
+      OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
+      OIDC_OP_USER_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/userinfo
+      OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
+      OIDC_USERINFO_SHORTNAME_FIELD: first_name
+      OIDC_USERINFO_FULLNAME_FIELDS: first_name,last_name

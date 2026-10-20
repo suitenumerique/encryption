@@ -1,6 +1,6 @@
 import '@fontsource-variable/inter';
-import '@gouvfr-lasuite/cunningham-react/icons';
-import '@gouvfr-lasuite/cunningham-react/style';
+import '@gouvfr-lasuite/ui-components/fonts/marianne';
+import '@gouvfr-lasuite/ui-components/style';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -9,7 +9,7 @@ import { App } from '@encryption/src/ui/App';
 import { applyBrandFont } from '@encryption/src/ui/brand-font';
 import { installErrorReporting } from '@encryption/src/ui/monitoring';
 
-// Point Cunningham at the deployment's brand font (if any) before the first paint.
+// Point the design system at the deployment's brand font (if any) before the first paint.
 applyBrandFont();
 
 // Before anything else can throw. Posts to our own backend only; see the module.

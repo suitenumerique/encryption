@@ -1,4 +1,4 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,7 +13,7 @@ import { SessionExpiredError } from '@encryption/src/ui/auth/session-expired';
 import { TrustRefuseButtons, recipientLabel } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
-import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
@@ -137,7 +137,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
       banner={
         <>
           {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
-          {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+          {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
         </>
       }
       actions={
@@ -170,11 +170,11 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
           tone={decision === 'trusted' ? 'success' : decision === 'refused' ? 'error' : decision === 'changed' ? 'warning' : 'default'}
           aside={
             decision === 'trusted' ? (
-              <Chip tone="success" icon="check_circle">
+              <Chip tone="success" icon="trusted">
                 {t('profile.decision_trusted')}
               </Chip>
             ) : decision === 'refused' ? (
-              <Chip tone="error" icon="block">
+              <Chip tone="error" icon="refused">
                 {t('profile.decision_refused')}
               </Chip>
             ) : decision === 'changed' ? (
