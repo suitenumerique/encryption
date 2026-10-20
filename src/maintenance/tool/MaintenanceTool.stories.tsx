@@ -3,7 +3,6 @@ import { expect, spyOn, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import {
-  exportMaintenancePublicKey,
   generateMaintenancePhrase,
   importMaintenancePublicKey,
   maintenanceKeyIdToFingerprint,
@@ -11,7 +10,12 @@ import {
   parseMaintenancePublicKey,
 } from '@encryption/src/crypto/maintenance-escrow';
 import i18n from '@encryption/src/i18n';
-import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
+import {
+  DEV_MAINTENANCE_PHRASE,
+  DEV_MAINTENANCE_PUBLIC_KEY,
+  DEV_NEXT_MAINTENANCE_PHRASE,
+  DEV_NEXT_MAINTENANCE_PUBLIC_KEY,
+} from '@encryption/src/maintenance/dev-maintenance-key';
 import {
   SAMPLE_FILES,
   SAMPLE_IDS,
@@ -295,7 +299,7 @@ export const GeneratedKey = prepareStory(GeneratedKeyStory);
 const RotatedStory = Template.bind({});
 RotatedStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  const newKey = await maintenanceKeyPairFromPhrase(await generateMaintenancePhrase('english', new Uint8Array(32).fill(7)));
+  const newKey = await maintenanceKeyPairFromPhrase(DEV_NEXT_MAINTENANCE_PHRASE);
 
   await userEvent.click(canvas.getByRole('tab', { name: i18n.t('maintenanceTool.tabs.rotate') }));
   await pickSampleExport(canvasElement, { panel: 'rotate' });
@@ -313,7 +317,7 @@ RotatedStory.play = async ({ canvasElement }) => {
   expect(runDownload).toBeDisabled();
 
   await userEvent.clear(newKeyInput);
-  await userEvent.paste(exportMaintenancePublicKey(newKey.publicKey));
+  await userEvent.paste(DEV_NEXT_MAINTENANCE_PUBLIC_KEY);
   await canvas.findByText(formatDecimalFingerprint(maintenanceKeyIdToFingerprint(newKey.keyId)));
   await waitFor(() => expect(runDownload).toBeEnabled());
 

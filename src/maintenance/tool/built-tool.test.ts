@@ -23,7 +23,12 @@ import {
   maintenanceKeyPairFromPhrase,
   parseMaintenancePublicKey,
 } from '@encryption/src/crypto/maintenance-escrow';
-import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
+import {
+  DEV_MAINTENANCE_PHRASE,
+  DEV_MAINTENANCE_PUBLIC_KEY,
+  DEV_NEXT_MAINTENANCE_PHRASE,
+  DEV_NEXT_MAINTENANCE_PUBLIC_KEY,
+} from '@encryption/src/maintenance/dev-maintenance-key';
 import { MANIFEST_FILE } from '@encryption/src/maintenance/export-format';
 import {
   SAMPLE_FILES,
@@ -36,9 +41,6 @@ import {
 } from '@encryption/src/maintenance/testing';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
-// Any valid phrase other than the development one: the key the copies move to.
-const ROTATION_PHRASE =
-  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
 const TOOL = resolve(import.meta.dirname, '../../../dist/maintenance/maintenance-tool.html');
 const SAMPLE_EXPORT = resolve(import.meta.dirname, '../sample-export');
 const ENGINES = { chromium, firefox, webkit };
@@ -300,13 +302,13 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
 
   it('wraps the copies of an export again for a new key, handing back no secret', async () => {
     const oldKey = await maintenanceKeyPairFromPhrase(DEV_MAINTENANCE_PHRASE);
-    const newKey = await maintenanceKeyPairFromPhrase(ROTATION_PHRASE);
+    const newKey = await maintenanceKeyPairFromPhrase(DEV_NEXT_MAINTENANCE_PHRASE);
 
     await page.getByRole('tab', { name: 'Rotate the maintenance key' }).click();
     await page.setInputFiles('#mt-tabpanel-rotate input[type="file"]', SAMPLE_EXPORT);
     await expect.poll(() => page.getByText('sample-export: 4 copies').count()).toBe(1);
     await page.locator('#mt-rotate-word-0').fill(DEV_MAINTENANCE_PHRASE);
-    await page.getByRole('textbox', { name: '3. The new public key' }).fill(exportMaintenancePublicKey(newKey.publicKey));
+    await page.getByRole('textbox', { name: '3. The new public key' }).fill(DEV_NEXT_MAINTENANCE_PUBLIC_KEY);
     await page.getByRole('button', { name: 'Rotate and download manifest.ndjson' }).click();
     await expect.poll(() => page.getByText('2 copies rotated, 1 failed.').count()).toBe(1);
 

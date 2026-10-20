@@ -10,14 +10,11 @@ import {
   wrapKeyForMaintenance,
 } from '@encryption/src/crypto';
 import { maintenanceKeyIdToFingerprint, maintenanceKeyPairFromPhrase, readMaintenanceCopyKeyId } from '@encryption/src/crypto/maintenance-escrow';
-import { DEV_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PHRASE, DEV_NEXT_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
 import { MANIFEST_FILE, parseManifest } from '@encryption/src/maintenance/export-format';
 import { rotateCopies, writeRotatedExport } from '@encryption/src/maintenance/rotate';
 import { SAMPLE_OTHER_ORGANIZATION_PHRASE, mapSink } from '@encryption/src/maintenance/testing';
 import { DOMAIN_CONTENT, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
-
-const NEW_PHRASE =
-  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
 
 let oldKey: MaintenanceKeyPair;
 let newKey: MaintenanceKeyPair;
@@ -26,7 +23,7 @@ let otherOrganization: MaintenanceKeyPair;
 beforeAll(async () => {
   [oldKey, newKey, otherOrganization] = await Promise.all([
     maintenanceKeyPairFromPhrase(DEV_MAINTENANCE_PHRASE),
-    maintenanceKeyPairFromPhrase(NEW_PHRASE),
+    maintenanceKeyPairFromPhrase(DEV_NEXT_MAINTENANCE_PHRASE),
     maintenanceKeyPairFromPhrase(SAMPLE_OTHER_ORGANIZATION_PHRASE),
   ]);
 });

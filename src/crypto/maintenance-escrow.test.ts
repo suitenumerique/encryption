@@ -25,7 +25,12 @@ import {
   unwrapMaintenanceKey,
   wrapKeyForMaintenance,
 } from '@encryption/src/crypto/maintenance-escrow';
-import { DEV_MAINTENANCE_PHRASE, DEV_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-key';
+import {
+  DEV_MAINTENANCE_PHRASE,
+  DEV_MAINTENANCE_PUBLIC_KEY,
+  DEV_NEXT_MAINTENANCE_PHRASE,
+  DEV_NEXT_MAINTENANCE_PUBLIC_KEY,
+} from '@encryption/src/maintenance/dev-maintenance-key';
 import { DOMAIN_KEM_DOCUMENT_KEY } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
@@ -157,6 +162,13 @@ describe('maintenance escrow primitives', () => {
     const pair = await maintenanceKeyPairFromPhrase(DEV_MAINTENANCE_PHRASE);
 
     expect(exportMaintenancePublicKey(pair.publicKey)).toBe(DEV_MAINTENANCE_PUBLIC_KEY);
+  });
+
+  it('keeps the second development phrase and its public key together, a key distinct from the first', async () => {
+    const pair = await maintenanceKeyPairFromPhrase(DEV_NEXT_MAINTENANCE_PHRASE);
+
+    expect(exportMaintenancePublicKey(pair.publicKey)).toBe(DEV_NEXT_MAINTENANCE_PUBLIC_KEY);
+    expect(DEV_NEXT_MAINTENANCE_PUBLIC_KEY).not.toBe(DEV_MAINTENANCE_PUBLIC_KEY);
   });
 
   it('fingerprints the configured value as 40 digits, distinct from an identity fingerprint of the same bytes', async () => {
