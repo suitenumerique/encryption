@@ -169,21 +169,21 @@ export const states: PatternState[] = [
   {
     id: 'DocsPendingEncryption',
     name: 'Docs: pending members, action needed',
-    source: `${DOCS}/doc-share/components/PendingEncryptionSection.tsx, DocShareMember.tsx, hooks/useAutoAcceptPendingMembers.tsx`,
+    source: `${DOCS}/doc-share/components/PendingEncryptionSection.tsx, hooks/useAutoAcceptPendingMembers.tsx`,
     description:
-      'Members added before they had encryption. Above the list, "Action needed": one has enabled encryption since and can be accepted (Accept wraps the key for them, api/useAcceptEncryptionAccess.tsx); one has not, so a "Waiting for encryption" chip and one explanation line. In the member list, both carry "Waiting for encryption" next to their name. When a manager opens the document, useAutoAcceptPendingMembers accepts the ready ones by itself, so this list is mostly seen for those still waiting.',
+      'Members added before they had encryption, seen by a member manager. Above the list, "Action needed": one has enabled encryption since and can be accepted (Accept wraps the key for them, api/useAcceptEncryptionAccess.tsx); one has not, so a "Waiting for encryption" chip and one explanation line. The member list itself says nothing about them, as in Drive. When a manager opens the document, useAutoAcceptPendingMembers accepts the ready ones by itself, so this list is mostly seen for those still waiting.',
     render: () => (
       <DocsShareDialog
         encrypted
         members={[
           { user: me, role: 'owner' },
           { user: withKeys, role: 'editor' },
-          { user: pendingNowReady, role: 'editor', pendingEncryption: true },
-          { user: pendingStillWaiting, role: 'reader', pendingEncryption: true },
+          { user: pendingNowReady, role: 'editor' },
+          { user: pendingStillWaiting, role: 'reader' },
         ]}
         pending={[
-          { user: pendingNowReady, status: 'ready' },
-          { user: pendingStillWaiting, status: 'waiting' },
+          { user: pendingNowReady, hasPublicKey: true },
+          { user: pendingStillWaiting, hasPublicKey: false },
         ]}
       />
     ),
@@ -194,7 +194,40 @@ export const states: PatternState[] = [
       await expect(section.getByText(t('docsWaitingHint'))).toBeInTheDocument();
       await expect(await findButtonByText(section, t('docsAccept'))).toBeEnabled();
       await expect(section.getByTitle(t('docsWaitingChipTitle'))).toBeInTheDocument();
-      await expect(scope.getAllByLabelText(`${t('docsWaitingForEncryption')}. ${t('docsWaitingMemberHint')}`)).toHaveLength(2);
+      await expect(section.queryByText(t('docsEncryptionEnabled'))).toBeNull();
+      // Only the chip says it: no label next to the names in the member list.
+      await expect(scope.getAllByText(t('docsWaitingForEncryption'))).toHaveLength(1);
+    },
+  },
+  {
+    id: 'DocsPendingReadOnly',
+    name: 'Docs: pending members, viewer who cannot accept',
+    source: `${DOCS}/doc-share/components/PendingEncryptionSection.tsx (canAccept), DocShareModal.tsx`,
+    description:
+      'The same list for a viewer who can see the members but not manage them: no search field, read-only roles, no Accept. The member who is ready shows "Encryption enabled", the other the "Waiting for encryption" chip. Same as Drive.',
+    render: () => (
+      <DocsShareDialog
+        encrypted
+        canManage={false}
+        members={[
+          { user: withKeys, role: 'owner' },
+          { user: me, role: 'reader' },
+          { user: pendingNowReady, role: 'editor' },
+          { user: pendingStillWaiting, role: 'reader' },
+        ]}
+        pending={[
+          { user: pendingNowReady, hasPublicKey: true },
+          { user: pendingStillWaiting, hasPublicKey: false },
+        ]}
+      />
+    ),
+    check: async (scope, t) => {
+      const section = within(await scope.findByTestId('docs-pending-encryption'));
+
+      await expect(section.getByText(t('docsEncryptionEnabled'))).toBeInTheDocument();
+      await expect(section.getByTitle(t('docsWaitingChipTitle'))).toBeInTheDocument();
+      await expect(section.queryByText(t('docsAccept'))).toBeNull();
+      await expect(scope.queryByPlaceholderText(t('docsSearchPlaceholder'))).toBeNull();
     },
   },
   {
@@ -202,20 +235,20 @@ export const states: PatternState[] = [
     name: 'Docs: pending members, accepting and failures',
     source: `${DOCS}/doc-share/components/PendingEncryptionSection.tsx`,
     description:
-      'The same section while Accept runs ("Accepting…", disabled) and after it failed: the member turned out not to have finished their encryption setup (back to waiting, with the error under the name), or the key could not be wrapped. Docs has no French text for either error.',
+      'The same section while Accept runs ("Accepting…", disabled) and after it failed: the member turned out not to have finished their encryption setup (back to waiting, with the error under the name), or the key could not be wrapped.',
     render: () => (
       <DocsShareDialog
         encrypted
         members={[
           { user: me, role: 'owner' },
-          { user: pendingNowReady, role: 'editor', pendingEncryption: true },
-          { user: pendingStillWaiting, role: 'reader', pendingEncryption: true },
-          { user: pendingWrapFailed, role: 'reader', pendingEncryption: true },
+          { user: pendingNowReady, role: 'editor' },
+          { user: pendingStillWaiting, role: 'reader' },
+          { user: pendingWrapFailed, role: 'reader' },
         ]}
         pending={[
-          { user: pendingNowReady, status: 'accepting' },
-          { user: pendingStillWaiting, status: 'waiting', error: 'not-onboarded' },
-          { user: pendingWrapFailed, status: 'ready', error: 'wrap-failed' },
+          { user: pendingNowReady, hasPublicKey: true, accepting: true },
+          { user: pendingStillWaiting, hasPublicKey: false, error: 'not-onboarded' },
+          { user: pendingWrapFailed, hasPublicKey: true, error: 'wrap-failed' },
         ]}
       />
     ),
@@ -232,11 +265,12 @@ export const states: PatternState[] = [
     name: 'Docs: viewer without encryption',
     source: `${DOCS}/doc-share/components/DocShareModal.tsx, doc-management/hooks/useEncryptionAccessCopy.tsx`,
     description:
-      'The viewer has not enabled encryption and opens the share dialog of an encrypted document: the dialog shows only this state instead of members and search.',
+      'The viewer has not enabled encryption and opens the share dialog of an encrypted document: the dialog shows only this state instead of members and search, with "Enable encryption" (ButtonEnableEncryption), which opens the encryption onboarding.',
     render: () => <DocsShareDialog encrypted accessError="needs-setup" />,
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsEncryptedDocument'))).toBeInTheDocument();
       await expect(scope.getByText(t('docsNeedsSetup'))).toBeInTheDocument();
+      await expect(await findButtonByText(scope, t('docsEnableEncryption'))).toBeEnabled();
       await expect(scope.queryByText(t('docsSearchPlaceholder'))).toBeNull();
     },
   },
@@ -249,6 +283,7 @@ export const states: PatternState[] = [
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsEncryptedDocument'))).toBeInTheDocument();
       await expect(scope.getByText(t('docsNoKeyForYou'))).toBeInTheDocument();
+      await expect(scope.queryByText(t('docsEnableEncryption'))).toBeNull();
     },
   },
   {
@@ -256,11 +291,12 @@ export const states: PatternState[] = [
     name: 'Docs: viewer pending, encryption not enabled',
     source: `${DOCS}/doc-management/hooks/useEncryptionAccessCopy.tsx`,
     description:
-      'The viewer is a pending member (`is_pending_encryption_for_user`) and has still not enabled encryption: they are asked to, and will get access when the owner next opens the document.',
+      'The viewer is a pending member (`is_pending_encryption_for_user`) and has still not enabled encryption: they are asked to ("Enable encryption" opens the onboarding), and will get access when the owner next opens the document.',
     render: () => <DocsShareDialog encrypted accessError="pending-needs-setup" />,
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsWaitingForAccess'))).toBeInTheDocument();
       await expect(scope.getByText(t('docsPendingNeedsSetup'))).toBeInTheDocument();
+      await expect(await findButtonByText(scope, t('docsEnableEncryption'))).toBeEnabled();
     },
   },
   {
@@ -272,6 +308,7 @@ export const states: PatternState[] = [
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsWaitingForAccess'))).toBeInTheDocument();
       await expect(scope.getByText(t('docsPendingSetUp'))).toBeInTheDocument();
+      await expect(scope.queryByText(t('docsEnableEncryption'))).toBeNull();
     },
   },
   {
@@ -279,11 +316,23 @@ export const states: PatternState[] = [
     name: 'Docs: encrypt document, blocked',
     source: `${DOCS}/doc-management/components/ModalEncryptDoc.tsx`,
     description:
-      'The entry to encryption ("Encrypt document" in the document menu, DocToolBox.tsx). It lists what blocks it: the viewer has no encryption keys, and the link is not private (an encrypted document must stay restricted, which is why its share dialog has no link settings). Files still in antivirus analysis also block it.',
+      'The entry to encryption ("Encrypt document" in the document menu, DocToolBox.tsx). It lists what blocks it in a red notice: the viewer has no encryption keys, and the link is not private (an encrypted document must stay restricted, which is why its share dialog has no link settings). Files still in antivirus analysis also block it. Without keys, the primary action is "Enable encryption" (ButtonEnableEncryption): the onboarding opens over the modal, which can encrypt once it is done.',
     render: () => <DocsEncryptDocModal hasKeys={false} linkReach="public" />,
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsBlockerNoKeys'))).toBeInTheDocument();
       await expect(scope.getByText(t('docsBlockerNotPrivate', { reach: t('docsReachLowerPublic') }))).toBeInTheDocument();
+      await expect(await findButtonByText(scope, t('docsEnableEncryption'))).toBeEnabled();
+      await expect(scope.queryByText(t('docsEncrypt'))).toBeNull();
+    },
+  },
+  {
+    id: 'DocsEncryptBlockedWithKeys',
+    name: 'Docs: encrypt document, link not private',
+    source: `${DOCS}/doc-management/components/ModalEncryptDoc.tsx`,
+    description: 'The viewer has keys but the link is connected: "Encrypt" stays disabled until the document is private.',
+    render: () => <DocsEncryptDocModal hasKeys linkReach="authenticated" />,
+    check: async (scope, t) => {
+      await expect(await scope.findByText(t('docsBlockerNotPrivate', { reach: t('docsReachLowerConnected') }))).toBeInTheDocument();
       await expect(await findButtonByText(scope, t('docsEncrypt'))).toBeDisabled();
     },
   },
@@ -339,7 +388,7 @@ export const states: PatternState[] = [
     name: 'Drive: encrypted item, verify identity',
     source: `${DRIVE}/explorer/components/modals/share/ItemShareModal.tsx (withIdentity)`,
     description:
-      'An encrypted item. ShareModal draws the member rows itself, so Drive puts "Verify identity" at the top of each other member\'s role menu (the play opens Alice\'s): it opens their encryption identity through the SDK. The link settings stay visible, but the backend refuses any reach other than private for an encrypted item.',
+      'An encrypted item. ShareModal draws the member rows itself, so Drive puts "Verify identity" at the top of each other member\'s role menu (the play opens Alice\'s): it opens their encryption identity through the SDK. No link settings: an encrypted item stays private, so its members are the only way in.',
     render: () => (
       <DriveShareModal
         itemTitle={DRIVE_ITEM}
@@ -350,9 +399,10 @@ export const states: PatternState[] = [
         ]}
       />
     ),
-    check: async (scope) => {
+    check: async (scope, t) => {
       await expect(await scope.findByText(withKeys.full_name)).toBeInTheDocument();
       await expect(scope.queryByTestId('drive-pending-encryption')).toBeNull();
+      await expect(scope.queryByText(t('driveReachRestricted'))).toBeNull();
     },
     interact: async (body, t) => {
       const row = (await body.findByText(withKeys.full_name)).closest('.c__share-member-item');

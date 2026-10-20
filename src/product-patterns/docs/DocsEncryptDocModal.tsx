@@ -15,7 +15,10 @@ export interface DocsEncryptDocModalProps {
 
 // ModalEncryptDoc.tsx, opened by "Encrypt document" in the document menu
 // (DocToolBox.tsx). It is where encryption meets sharing: the link must be
-// private first, and members without encryption are announced as pending.
+// private first, and members without encryption are announced as pending. A
+// viewer without keys gets "Enable encryption" (ButtonEnableEncryption) in
+// place of "Encrypt": the onboarding opens over the modal, which is ready to
+// encrypt once it is done.
 export function DocsEncryptDocModal({ hasKeys, linkReach, analyzingUploads = 0, pendingCount = 0 }: DocsEncryptDocModalProps) {
   const t = usePatternTranslate();
   const blockers: string[] = [];
@@ -63,9 +66,13 @@ export function DocsEncryptDocModal({ hasKeys, linkReach, analyzingUploads = 0, 
           </Alert>
         )}
         <div className="pp-docs-encrypt__actions">
-          <Button fullWidth disabled={!canEncrypt}>
-            {t('docsEncrypt')}
-          </Button>
+          {hasKeys ? (
+            <Button fullWidth disabled={!canEncrypt}>
+              {t('docsEncrypt')}
+            </Button>
+          ) : (
+            <Button fullWidth>{t('docsEnableEncryption')}</Button>
+          )}
           <Button fullWidth variant="bordered" color="neutral">
             {t('docsCancel')}
           </Button>

@@ -174,14 +174,14 @@ describe('VaultClient encryption status', () => {
   const otherIdentity = new Uint8Array([5, 6, 7, 8]).buffer;
 
   // The vault answers by message type: has-keys, fetch-public-keys, get-public-key.
-  async function statusWith({ hasKeys, registered }: { hasKeys: boolean; registered: ArrayBuffer | null }) {
+  async function statusWith({ hasKeys, registered, verified = true }: { hasKeys: boolean; registered: ArrayBuffer | null; verified?: boolean }) {
     const { client, internal } = makeClient();
     const registeredFingerprint = registered ? await client.computeKeyFingerprint(registered) : null;
 
     internal.vaultRequest = vi.fn(async (type: unknown) => {
       if (type === MSG_VAULT_HAS_KEYS) return { hasKeys };
       if (type === MSG_VAULT_FETCH_PUBLIC_KEYS) {
-        return { users: registered ? { sub1: { verified: true, identityFingerprint: registeredFingerprint } } : {} };
+        return { users: registered ? { sub1: { verified, identityFingerprint: registeredFingerprint } } : {} };
       }
       if (type === MSG_VAULT_GET_PUBLIC_KEY) return { publicKey: new ArrayBuffer(4), signaturePublicKey: identity };
       throw new Error(`unexpected ${String(type)}`);
@@ -197,6 +197,13 @@ describe('VaultClient encryption status', () => {
 
   it('needs attention when this device holds another identity than the registered one', async () => {
     await expect(statusWith({ hasKeys: true, registered: otherIdentity })).resolves.toEqual({ state: 'needs-attention', registered: true });
+  });
+
+  it('needs attention when the registered record fails its binding check, even for the same identity', async () => {
+    await expect(statusWith({ hasKeys: true, registered: identity, verified: false })).resolves.toEqual({
+      state: 'needs-attention',
+      registered: true,
+    });
   });
 
   it('is disabled for the account when this device holds keys the account no longer registers', async () => {

@@ -123,7 +123,7 @@ export function RecoveryPhraseInput({ wordCount = 24, invalid = false, onChange 
     <div className={styles.section}>
       <div className={invalid ? `${styles.wordInputs} ${styles.wordInputsInvalid}` : styles.wordInputs}>
         {indices.map((i) => {
-          const invalid = touched[i] && words[i].length > 0 && !isKnownWord(words[i]);
+          const wordInvalid = touched[i] && words[i].length > 0 && !isKnownWord(words[i]);
 
           return (
             <div key={i} className={styles.wordInputsCell}>
@@ -134,6 +134,7 @@ export function RecoveryPhraseInput({ wordCount = 24, invalid = false, onChange 
                 }}
                 type={revealed ? 'text' : 'password'}
                 inputMode="text"
+                autoComplete="off"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -141,8 +142,8 @@ export function RecoveryPhraseInput({ wordCount = 24, invalid = false, onChange 
                 onChange={(e) => handleChange(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(i, e)}
                 onBlur={() => markTouched(i)}
-                aria-label={`word ${i + 1}`}
-                className={invalid ? `${styles.input} ${styles.inputInvalid}` : styles.input}
+                aria-label={t('onboarding.word_label', { number: i + 1 })}
+                className={wordInvalid ? `${styles.input} ${styles.inputInvalid}` : styles.input}
               />
             </div>
           );

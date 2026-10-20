@@ -96,8 +96,9 @@ spec:
             - /bin/sh
             - -c
             - |
-              until python manage.py migrate --check > /dev/null 2>&1; do
-                echo "waiting for Accounts' migration"; sleep 3
+              # The last line says why: a pending migration, or a database or settings error.
+              until out="$(python manage.py migrate --check 2>&1)"; do
+                echo "waiting for Accounts' migration: $(printf '%s' "$out" | tail -n 1)"; sleep 3
               done
               python manage.py shell --command "exec(open('/scripts/applications.py').read())"
           env:

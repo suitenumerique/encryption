@@ -5,27 +5,28 @@ import type { PatternUser } from '@encryption/src/product-patterns/fixtures';
 
 export interface DocsPendingRow {
   user: PatternUser;
-  /**
-   * `ready`: they have enabled encryption since, Accept wraps the key for them.
-   * `waiting`: they still have no key, so there is nothing to accept yet.
-   * `accepting`: the Accept click is in flight.
-   */
-  status: 'ready' | 'waiting' | 'accepting';
+  /** The directory has a public key for them now: they enabled encryption since. */
+  hasPublicKey: boolean;
+  /** The Accept click is in flight. */
+  accepting?: boolean;
   error?: 'not-onboarded' | 'wrap-failed';
 }
 
 // PendingEncryptionSection.tsx (Docs): members added to the encrypted document
-// before they had encryption, above the member list, for whoever manages
-// members. useAutoAcceptPendingMembers.tsx accepts the ready ones by itself when
-// such a person opens the document, so this list is the manual fallback.
-export function DocsPendingEncryptionSection({ rows }: { rows: DocsPendingRow[] }) {
+// before they had encryption, above the member list, for anyone who can view
+// the members (the member list itself says nothing about them). A manager
+// (`canAccept`) gets Accept for the ones who are ready; anyone else sees
+// "Encryption enabled" for them. useAutoAcceptPendingMembers.tsx accepts the
+// ready ones by itself when a manager opens the document, so this list is
+// mostly the manual fallback.
+export function DocsPendingEncryptionSection({ rows, canAccept }: { rows: DocsPendingRow[]; canAccept: boolean }) {
   const t = usePatternTranslate();
 
   if (rows.length === 0) {
     return null;
   }
 
-  const someoneWaiting = rows.some((row) => row.status === 'waiting');
+  const someoneWaiting = rows.some((row) => !row.hasPublicKey);
 
   return (
     <section className="pp-docs-pending" data-testid="docs-pending-encryption" aria-label={t('docsActionNeeded')}>
@@ -36,6 +37,7 @@ export function DocsPendingEncryptionSection({ rows }: { rows: DocsPendingRow[] 
       <ul className="pp-docs-pending__rows">
         {rows.map((row) => {
           const name = row.user.full_name || row.user.email;
+          const showAccept = canAccept && row.hasPublicKey;
 
           return (
             <li key={row.user.id} className="pp-docs-pending__row">
@@ -44,6 +46,12 @@ export function DocsPendingEncryptionSection({ rows }: { rows: DocsPendingRow[] 
                 <div className="pp-docs-pending__text">
                   <span className="pp-docs-pending__name">{name}</span>
                   {row.user.full_name && <span className="pp-docs-pending__email">{row.user.email}</span>}
+                  {row.hasPublicKey && !showAccept && (
+                    <span className="pp-docs-pending__enabled">
+                      <Icon name="verified_user" size={16} />
+                      {t('docsEncryptionEnabled')}
+                    </span>
+                  )}
                   {row.error && (
                     <span className="pp-docs-pending__error">
                       {row.error === 'not-onboarded' ? t('docsNotOnboardedError') : t('docsWrapFailedError')}
@@ -51,15 +59,16 @@ export function DocsPendingEncryptionSection({ rows }: { rows: DocsPendingRow[] 
                   )}
                 </div>
               </div>
-              {row.status === 'waiting' ? (
+              {showAccept && (
+                <Button size="small" variant="bordered" disabled={row.accepting}>
+                  {row.accepting ? t('docsAccepting') : t('docsAccept')}
+                </Button>
+              )}
+              {!row.hasPublicKey && (
                 <span className="pp-docs-pending__chip" title={t('docsWaitingChipTitle')}>
                   <Icon name="schedule" size={16} />
                   {t('docsWaitingForEncryption')}
                 </span>
-              ) : (
-                <Button size="small" variant="bordered" disabled={row.status === 'accepting'}>
-                  {row.status === 'accepting' ? t('docsAccepting') : t('docsAccept')}
-                </Button>
               )}
             </li>
           );

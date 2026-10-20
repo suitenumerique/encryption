@@ -125,7 +125,8 @@ export function DriveShareModal({
           isDisabled: !access.set_role_to.includes(role) && access.role !== role,
         }))
       }
-      linkSettings
+      // An encrypted item stays restricted: its members are the only way in.
+      linkSettings={!encrypted}
       showLinkRole
       linkReach={linkReach}
       linkReachChoices={[

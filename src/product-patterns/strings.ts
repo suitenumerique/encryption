@@ -1,9 +1,7 @@
 // The products' own strings, copied from their i18n files so the patterns read
 // exactly like the products: Docs keys its translations by the English text
 // (src/frontend/apps/impress/src/i18n/translations.json), Drive by nested keys
-// (src/frontend/apps/drive/src/features/i18n/translations.json). Where a product
-// has no French entry, the French value is the English one, as the product
-// itself falls back to it.
+// (src/frontend/apps/drive/src/features/i18n/translations.json).
 
 export type PatternLocale = 'en' | 'fr';
 
@@ -44,7 +42,6 @@ const en = {
   docsEncryptedInviteHint:
     'Invited people get access once they have signed up and enabled encryption, the next time the document owner opens the document.',
   docsWaitingForEncryption: 'Waiting for encryption',
-  docsWaitingMemberHint: 'Added before they enabled encryption. They get access once they have, the next time the document owner opens it.',
   docsActionNeeded: 'Action needed',
   docsWaitingHint: 'Members who have not enabled encryption yet get access once they do.',
   docsAccept: 'Accept',
@@ -52,6 +49,8 @@ const en = {
   docsWaitingChipTitle: 'Waiting for them to enable encryption',
   docsNotOnboardedError: "This user still hasn't completed their encryption onboarding.",
   docsWrapFailedError: 'Failed to wrap the document key for this user.',
+  docsEncryptionEnabled: 'Encryption enabled',
+  docsEnableEncryption: 'Enable encryption',
   docsInvite: 'Invite',
   docsInviteName: 'Invite {{name}}',
   docsInviteCount: 'Invite {{count}} members',
@@ -70,7 +69,7 @@ const en = {
     'The document and its attachments will be encrypted end-to-end. Only people you share it with will be able to access its contents.',
   docsEncrypt: 'Encrypt',
   docsCancel: 'Cancel',
-  docsBlockerNoKeys: 'You must enable encryption from your account menu first',
+  docsBlockerNoKeys: 'Enable encryption on your account to encrypt this document.',
   docsBlockerAntivirus: 'Some files are still being analyzed by the antivirus: wait for the analysis to finish',
   docsBlockerNotPrivate: 'Document must be set to private (currently {{reach}})',
   docsReachLowerPublic: 'public',
@@ -143,16 +142,15 @@ const fr: Record<PatternStringKey, string> = {
   docsEncryptedInviteHint:
     "Les personnes invitées auront accès une fois inscrites et leur chiffrement activé, la prochaine fois que le propriétaire du document l'ouvrira.",
   docsWaitingForEncryption: 'En attente de chiffrement',
-  docsWaitingMemberHint:
-    "Ajouté avant d'avoir activé le chiffrement. Cette personne aura accès une fois le chiffrement activé, la prochaine fois que le propriétaire du document l'ouvrira.",
   docsActionNeeded: 'Action requise',
   docsWaitingHint: "Les membres qui n'ont pas encore activé le chiffrement auront accès dès qu'ils l'auront fait.",
   docsAccept: 'Accepter',
   docsAccepting: 'Acceptation…',
   docsWaitingChipTitle: "En attente de l'activation du chiffrement par cette personne",
-  // Docs has no French entry for these two: the product shows the English text.
-  docsNotOnboardedError: en.docsNotOnboardedError,
-  docsWrapFailedError: en.docsWrapFailedError,
+  docsNotOnboardedError: "Cette personne n'a pas encore terminé l'activation du chiffrement.",
+  docsWrapFailedError: 'Impossible de chiffrer la clé du document pour cette personne.',
+  docsEncryptionEnabled: 'Chiffrement activé',
+  docsEnableEncryption: 'Activer le chiffrement',
   docsInvite: 'Inviter',
   docsInviteName: 'Inviter {{name}}',
   docsInviteCount: 'Inviter {{count}} membres',
@@ -170,12 +168,11 @@ const fr: Record<PatternStringKey, string> = {
     'Le document et ses pièces jointes seront chiffrés de bout en bout. Seules les personnes avec qui vous le partagez pourront y accéder.',
   docsEncrypt: 'Chiffrer',
   docsCancel: 'Annuler',
-  docsBlockerNoKeys: "Vous devez d'abord activer le chiffrement depuis le menu de votre compte",
+  docsBlockerNoKeys: 'Activez le chiffrement sur votre compte pour chiffrer ce document.',
   docsBlockerAntivirus: "Des fichiers sont encore en cours d'analyse par l'antivirus : attendez la fin de l'analyse",
   docsBlockerNotPrivate: 'Le document doit être privé (actuellement {{reach}})',
-  // Docs has no French entry for the lowercase reach names either.
-  docsReachLowerPublic: en.docsReachLowerPublic,
-  docsReachLowerConnected: en.docsReachLowerConnected,
+  docsReachLowerPublic: 'public',
+  docsReachLowerConnected: 'connecté',
   docsPendingCollaboratorsOne:
     "{{count}} personne n'a pas encore activé le chiffrement. Elle sera ajoutée en attente et aura accès dès qu'elle l'aura activé.",
   docsPendingCollaboratorsOther:

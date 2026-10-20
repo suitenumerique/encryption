@@ -1,4 +1,4 @@
-import { appendFileSync } from 'fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import sbom from 'rollup-plugin-sbom';
 import { defineConfig } from 'vite';
@@ -48,8 +48,13 @@ export default defineConfig({
       // api-extractor strips `declare global` / UMD globals, so append the UMD
       // namespace declaration that types the <script>-tag `EncryptionClient`
       // global (products loading client.js get `EncryptionClient.VaultClient`).
+      // api-extractor also writes Windows line endings in places: products vendor
+      // this file verbatim, so it is normalized to LF.
       afterBuild: () => {
-        appendFileSync(resolve(configDir, '../../dist/client/client.d.mts'), '\nexport as namespace EncryptionClient;\n');
+        const declaration = resolve(configDir, '../../dist/client/client.d.mts');
+
+        writeFileSync(declaration, readFileSync(declaration, 'utf8').replace(/\r\n/g, '\n'));
+        appendFileSync(declaration, '\nexport as namespace EncryptionClient;\n');
       },
     }),
   ],

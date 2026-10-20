@@ -39,7 +39,8 @@ export type { SettingsSection } from '@encryption/src/shared/settings-section';
  * own account page:
  * - `active`: this device holds the user's keys and they are the ones registered for the account;
  * - `disabled-for-account`: this device holds keys, but encryption was turned off for the account;
- * - `needs-attention`: this device holds keys of another identity than the one registered (replaced elsewhere);
+ * - `needs-attention`: this device holds keys of another identity than the one registered (replaced elsewhere),
+ *   or the registered record fails its binding check;
  * - `not-set-up`: this device holds no keys. `registered` then tells whether the account set
  *   encryption up on another device (the onboarding offers to restore it rather than start over).
  */
@@ -371,6 +372,8 @@ export class VaultClient {
 
     if (!hasKeys) return { state: 'not-set-up', registered: registeredUser !== undefined };
     if (!registeredUser) return { state: 'disabled-for-account', registered: false };
+    // A record whose binding signature does not verify cannot vouch for this device.
+    if (!registeredUser.verified) return { state: 'needs-attention', registered: true };
 
     const local = (await this.vaultRequest(MSG_VAULT_GET_PUBLIC_KEY)) as { signaturePublicKey?: ArrayBuffer };
     const localFingerprint = local.signaturePublicKey ? await this.computeKeyFingerprint(local.signaturePublicKey) : null;

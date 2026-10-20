@@ -1,5 +1,5 @@
 import { Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
@@ -24,8 +24,6 @@ import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEn
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
-import { TechnicalDocsPage } from '@encryption/src/ui/docs/TechnicalDocsPage';
-import { UserDocsPage } from '@encryption/src/ui/docs/UserDocsPage';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
 import { ModalSizeProvider } from '@encryption/src/ui/hooks/useModalSize';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
@@ -36,6 +34,11 @@ import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 import { resolveThemeName } from '@encryption/src/ui/theme';
 
 const DOCS_ENABLED = runtimeConfig.docsEnabled ?? true;
+
+// The documentation (MDX pages, syntax highlighting) is its own chunk: no modal
+// a product opens should download it.
+const TechnicalDocsPage = lazy(() => import('@encryption/src/ui/docs/TechnicalDocsPage').then((m) => ({ default: m.TechnicalDocsPage })));
+const UserDocsPage = lazy(() => import('@encryption/src/ui/docs/UserDocsPage').then((m) => ({ default: m.UserDocsPage })));
 
 function getHashParams(): URLSearchParams {
   return new URLSearchParams(window.location.hash.slice(1));
@@ -730,7 +733,7 @@ export function App() {
 
     return (
       <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
-        {route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}
+        <Suspense fallback={<LoadingScreen />}>{route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}</Suspense>
       </CunninghamProvider>
     );
   }

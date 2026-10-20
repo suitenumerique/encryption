@@ -56,6 +56,14 @@ const config: StorybookConfig = {
 
     config.plugins = [...(config.plugins ?? []), vendorMarianneFonts()];
 
+    // Imported on demand by the interface (the QR code and its scanner): left to
+    // be discovered at that moment, the dev server would re-bundle its
+    // dependencies and reload the page under a running story.
+    config.optimizeDeps = {
+      ...(config.optimizeDeps || {}),
+      include: [...(config.optimizeDeps?.include ?? []), 'qrcode', 'jsqr'],
+    };
+
     // Must mirror src/ui/vite.config.ts: the typed keys of the CSS modules are camelCased.
     config.css = { ...(config.css ?? {}), modules: { ...(config.css?.modules ?? {}), localsConvention: 'camelCaseOnly' } };
 

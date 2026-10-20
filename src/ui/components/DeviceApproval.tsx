@@ -1,8 +1,6 @@
 import { Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
 import { Checkmark, Copy } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
-import jsQR from 'jsqr';
-import QRCode from 'qrcode';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -45,6 +43,9 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
+    // The decoder is only needed while the camera runs: its own chunk.
+    let decode: ((data: Uint8ClampedArray, width: number, height: number) => { data: string } | null) | null = null;
+
     const tick = () => {
       if (cancelled) return;
       const video = videoRef.current;
@@ -55,7 +56,7 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const found = jsQR(img.data, img.width, img.height);
+        const found = decode?.(img.data, img.width, img.height);
 
         if (found?.data) {
           onDecode(found.data);
@@ -69,6 +70,7 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
 
     (async () => {
       try {
+        decode = (await import('jsqr')).default;
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         if (cancelled) {
           stream.getTracks().forEach((tr) => tr.stop());
@@ -203,6 +205,7 @@ function NewDeviceSide({
 }) {
   const backLink = onBack ? { label: t('onboarding.btn_back'), onClick: onBack } : undefined;
   const [started, setStarted] = useState(false);
+  const [startFailed, setStartFailed] = useState(false);
   const startRequested = useRef(false);
   const [qr, setQr] = useState<string | null>(null);
   const [decimalFingerprint, setDecimalFingerprint] = useState<string | null>(null);
@@ -232,10 +235,15 @@ function NewDeviceSide({
       // from the server and refuses to wrap unless its fingerprint matches.
       // Inline SVG markup rather than a `data:` PNG: the interface CSP keeps
       // `img-src 'self'`, which blocks data URIs.
+      const { default: QRCode } = await import('qrcode');
+
       setQr(await QRCode.toString(dfp, { type: 'svg', width: 220, margin: 2 }));
       setDecimalFingerprint(dfp);
       setStarted(true);
     } catch (err) {
+      // The banner explains the failure (a lapsed session offers Reconnect); the
+      // retry below starts again once the cause is dealt with.
+      setStartFailed(true);
       onError(err);
     }
   }, [getIdToken, startDeviceApproval, onError]);
@@ -340,7 +348,16 @@ function NewDeviceSide({
       banner={banner}
     >
       <div className={styles.codeCard}>
-        {!started ? (
+        {!started && startFailed ? (
+          <Button
+            onClick={() => {
+              setStartFailed(false);
+              void start();
+            }}
+          >
+            {t('auth.retry')}
+          </Button>
+        ) : !started ? (
           <LoadingScreen />
         ) : revealCode && decimalFingerprint ? (
           // No-camera fallback: the same code, in digits to type by hand.
@@ -383,10 +400,12 @@ function NewDeviceSide({
         )}
       </div>
 
-      <div className={styles.waiting}>
-        <Loader size="small" />
-        <span>{t('device_approval.new_waiting')}</span>
-      </div>
+      {started && (
+        <div className={styles.waiting}>
+          <Loader size="small" />
+          <span>{t('device_approval.new_waiting')}</span>
+        </div>
+      )}
     </Screen>
   );
 }

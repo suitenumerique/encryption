@@ -33,8 +33,6 @@ const MIN_QUERY_LENGTH = 5;
 export interface DocsMember {
   user: PatternUser;
   role: 'reader' | 'editor' | 'administrator' | 'owner';
-  /** `is_pending_encryption` on the access: added before they had encryption. */
-  pendingEncryption?: boolean;
 }
 
 export interface DocsSearchResult {
@@ -54,6 +52,8 @@ export interface DocsShareDialogProps {
   search?: { query: string; results: DocsSearchResult[] };
   selected?: PatternUser[];
   accessError?: DocsAccessError;
+  /** `accesses_manage`: without it, no search, read-only roles, no Accept. */
+  canManage?: boolean;
 }
 
 function docsRoles(t: PatternTranslate): DropdownMenuOption[] {
@@ -181,8 +181,12 @@ function DocsVisibility() {
 }
 
 // EncryptionLayout.tsx `EncryptionEmptyState`, with the copy of useEncryptionAccessCopy.tsx.
+// The viewer who has not enabled encryption gets ButtonEnableEncryption
+// (features/auth/components/ButtonEnableEncryption.tsx), which opens the
+// encryption onboarding over the dialog.
 export function DocsEncryptionEmptyState({ reason }: { reason: DocsAccessError }) {
   const t = usePatternTranslate();
+  const needsSetup = reason === 'needs-setup' || reason === 'pending-needs-setup';
   const isPending = reason === 'pending' || reason === 'pending-needs-setup';
   const title = isPending ? t('docsWaitingForAccess') : t('docsEncryptedDocument');
   const description = {
@@ -197,6 +201,13 @@ export function DocsEncryptionEmptyState({ reason }: { reason: DocsAccessError }
       <img src={illustrationDocumentEncrypted} alt="" width={102} height={72} />
       <p className="pp-docs-empty-state__title">{title}</p>
       <p className="pp-docs-empty-state__description">{description}</p>
+      {needsSetup && (
+        <div className="pp-docs-empty-state__actions">
+          <Button size="small" icon={<Icon name="verified_user" />}>
+            {t('docsEnableEncryption')}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -229,6 +240,7 @@ export function DocsShareDialog({
   search,
   selected = [],
   accessError,
+  canManage = true,
 }: DocsShareDialogProps) {
   const t = usePatternTranslate();
   const roles = docsRoles(t);
@@ -272,13 +284,13 @@ export function DocsShareDialog({
             </div>
           )}
 
-          {encrypted && <DocsPendingEncryptionSection rows={pending} />}
+          {encrypted && <DocsPendingEncryptionSection rows={pending} canAccept={canManage} />}
 
           <QuickSearch
             label={t('docsSearchResults')}
             onFilter={setInputValue}
             inputValue={inputValue}
-            showInput
+            showInput={canManage}
             placeholder={t('docsSearchPlaceholder')}
           >
             {showMemberSection && (
@@ -292,7 +304,7 @@ export function DocsShareDialog({
                           isInvitation
                           alwaysShowRight
                           user={{ id: invitation.email, full_name: invitation.email, email: invitation.email }}
-                          right={<RoleDropdown roles={roles} selectedRole={invitation.role} />}
+                          right={<RoleDropdown roles={roles} selectedRole={invitation.role} canUpdate={canManage} />}
                         />
                       )}
                     />
@@ -309,12 +321,7 @@ export function DocsShareDialog({
                       alwaysShowRight
                       user={member.user}
                       verifiable={encrypted && member.user.id !== me.id}
-                      suffix={
-                        encrypted && member.pendingEncryption
-                          ? { label: t('docsWaitingForEncryption'), hint: t('docsWaitingMemberHint'), icon: 'schedule' }
-                          : undefined
-                      }
-                      right={<RoleDropdown roles={roles} selectedRole={member.role} canUpdate={member.user.id !== me.id} />}
+                      right={<RoleDropdown roles={roles} selectedRole={member.role} canUpdate={canManage && member.user.id !== me.id} />}
                     />
                   )}
                 />

@@ -179,6 +179,13 @@ allowed). Accounts itself always signs in at Keycloak.
 {{- if not (has $origin $e.config.allowedFrameAncestors) }}
 {{- fail (printf "encryption.config.allowedFrameAncestors must contain %q, or the vault refuses to be embedded by %s" $origin $product) }}
 {{- end }}
+{{- /* The products' encryption menu leads to the Accounts Encryption page; without Accounts it opens the interface's own home. */}}
+{{- if ne $product "accounts" }}
+{{- $settings := ternary (printf "https://%s/?section=encryption" $v.accounts.ingress.host) "" $viaAccounts }}
+{{- if ne (toString ($env.ENCRYPTION_SETTINGS_URL | default "")) $settings }}
+{{- fail (printf "%s.backend.envVars.ENCRYPTION_SETTINGS_URL must be %q (got %q)" $product $settings (toString ($env.ENCRYPTION_SETTINGS_URL | default ""))) }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -769,6 +769,10 @@ export function ModalEncryptionOnboarding({
 
   // The 24 word boxes need the wide modal.
   useModalSize('medium', step === 'restore');
+  // The screen the restore was entered from, not `hasExistingBackendKey`: the server
+  // check can lead to existing-key-choice while that prop is still a stale false.
+  // Only with an active identity does the reset ("Lost phrase?") apply.
+  const [restoreFrom, setRestoreFrom] = useState<'existing-key-choice' | 'previous-identity'>('previous-identity');
 
   const banner = (
     <>
@@ -878,7 +882,10 @@ export function ModalEncryptionOnboarding({
             <Button
               onClick={() => {
                 if (restoreMethod === 'device' && onUseAnotherDevice) onUseAnotherDevice();
-                else setStep('restore');
+                else {
+                  setRestoreFrom('existing-key-choice');
+                  setStep('restore');
+                }
               }}
             >
               {t('onboarding.btn_continue')}
@@ -924,7 +931,13 @@ export function ModalEncryptionOnboarding({
           }
           actions={
             <>
-              <Button onClick={() => setStep('restore')} icon={<Key aria-hidden />}>
+              <Button
+                onClick={() => {
+                  setRestoreFrom('previous-identity');
+                  setStep('restore');
+                }}
+                icon={<Key aria-hidden />}
+              >
                 {t('onboarding.btn_restore_from_backup')}
               </Button>
               {anotherDeviceButton}
@@ -963,7 +976,7 @@ export function ModalEncryptionOnboarding({
         <Screen
           back={{
             label: t('onboarding.btn_back'),
-            onClick: () => setStep(hasExistingBackendKey ? 'existing-key-choice' : 'previous-identity'),
+            onClick: () => setStep(restoreFrom),
             disabled: isPending,
           }}
           title={t('onboarding.title_restore')}
@@ -974,7 +987,7 @@ export function ModalEncryptionOnboarding({
               <Button onClick={handleRestoreKeys} disabled={isPending || !restoreComplete || phraseRejected}>
                 {isPending ? t('onboarding.btn_restoring') : t('onboarding.btn_restore')}
               </Button>
-              {hasExistingBackendKey && (
+              {restoreFrom === 'existing-key-choice' && (
                 <Button variant="bordered" color="neutral" onClick={() => setStep('last-resort')} disabled={isPending}>
                   {t('onboarding.btn_last_resort')}
                 </Button>
@@ -1117,20 +1130,17 @@ function RestoreOption({
   title: string;
   description: string;
 }) {
+  // A native radio inside its card: arrow keys move between the options and the
+  // group is a single tab stop, as screen reader users expect.
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      className={selected ? `${styles.option} ${styles.optionSelected}` : styles.option}
-      onClick={onSelect}
-    >
+    <label className={selected ? `${styles.option} ${styles.optionSelected}` : styles.option}>
+      <input type="radio" name="restore-method" className={styles.optionInput} checked={selected} onChange={onSelect} />
       <span className={styles.optionIcon}>{icon}</span>
       <span className={styles.optionText}>
         <span className={styles.optionTitle}>{title}</span>
         <span className={styles.optionDescription}>{description}</span>
       </span>
-    </button>
+    </label>
   );
 }
 

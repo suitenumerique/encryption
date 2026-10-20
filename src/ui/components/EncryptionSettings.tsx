@@ -519,9 +519,19 @@ export function EncryptionSettings({
   // ---------------------------------------------------------------------------
   // Turn off encryption ("Manage encryption"): this device only, or the account.
   // ---------------------------------------------------------------------------
+  // The "I understand" tick is the only confirmation: leaving the screen or changing
+  // the scope must never carry it over.
   const turnOffScreen = (back?: { label: string; onClick: () => void; disabled?: boolean }, onCancel?: () => void) => (
     <Screen
-      back={back}
+      back={
+        back && {
+          ...back,
+          onClick: () => {
+            resetTurnOff();
+            back.onClick();
+          },
+        }
+      }
       title={t('settings.manage_title')}
       banner={
         <>
@@ -532,7 +542,15 @@ export function EncryptionSettings({
       actionsLayout="row"
       actions={
         <>
-          <Button variant="bordered" color="neutral" onClick={onCancel ?? leaveView} disabled={isPending}>
+          <Button
+            variant="bordered"
+            color="neutral"
+            onClick={() => {
+              resetTurnOff();
+              (onCancel ?? leaveView)();
+            }}
+            disabled={isPending}
+          >
             {t('settings.change_phrase_cancel')}
           </Button>
           <Button color="error" onClick={handleTurnOff} disabled={isPending || !confirmDataLoss}>
@@ -547,7 +565,10 @@ export function EncryptionSettings({
           label={t('settings.delete_scope_device')}
           text={t('settings.delete_scope_device_hint')}
           checked={!disableServer}
-          onChange={() => setAlsoDisableServer(false)}
+          onChange={() => {
+            setAlsoDisableServer(false);
+            setConfirmDataLoss(false);
+          }}
         />
         {accountScopeAvailable && (
           <Radio
@@ -555,7 +576,10 @@ export function EncryptionSettings({
             label={t('settings.delete_scope_account')}
             text={t('settings.delete_scope_account_hint')}
             checked={disableServer}
-            onChange={() => setAlsoDisableServer(true)}
+            onChange={() => {
+              setAlsoDisableServer(true);
+              setConfirmDataLoss(false);
+            }}
           />
         )}
       </RadioGroup>
@@ -770,7 +794,8 @@ export function EncryptionSettings({
                     onClick={() => {
                       setCancelPrompt(false);
                       handleCancelPhrase();
-                      onClose();
+                      // A flow opened on its own is already closed by handleCancelPhrase.
+                      if (!section) onClose();
                     }}
                   >
                     {t('settings.cancel_change_confirm')}

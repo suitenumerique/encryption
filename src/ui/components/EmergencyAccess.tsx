@@ -1092,7 +1092,17 @@ export function EmergencyAccess({
                   let bandTone: 'neutral' | 'warning' | 'error' = 'neutral';
 
                   if (rowAudit === 'tampered') {
-                    band = <span>{t('emergency.audit_tampered')}</span>;
+                    // A recovery running on a tampered escrow must still be stoppable.
+                    band = (
+                      <>
+                        <span>{t('emergency.audit_tampered')}</span>
+                        {(phase === 'requested' || phase === 'approved') && (
+                          <Button size="nano" color="error" disabled={busy} onClick={() => handleReject(entry)}>
+                            {phase === 'approved' ? t('emergency.btn_relock') : t('emergency.btn_refuse_request')}
+                          </Button>
+                        )}
+                      </>
+                    );
                     bandTone = 'error';
                   } else if (recoveryRunning) {
                     bandTone = 'error';

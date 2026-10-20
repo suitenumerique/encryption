@@ -37,13 +37,13 @@ AccentedWordsStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   const words = ['bénéfice', 'cérébral', 'désobéir', 'éléphant', 'énumérer', 'bénéfise'];
   for (const [i, word] of words.entries()) {
-    const box = canvas.getByLabelText(`word ${i + 1}`);
+    const box = canvas.getByLabelText(`Word ${i + 1}`);
     await userEvent.type(box, word);
     await userEvent.tab();
     expect((box as HTMLInputElement).scrollWidth).toBeLessThanOrEqual((box as HTMLInputElement).clientWidth);
   }
   expect(canvasElement.querySelectorAll(`.${styles.inputInvalid}`)).toHaveLength(1);
-  expect(canvas.getByLabelText('word 6')).toHaveClass(styles.inputInvalid);
+  expect(canvas.getByLabelText('Word 6')).toHaveClass(styles.inputInvalid);
 };
 
 export const AccentedWords = prepareStory(AccentedWordsStory);

@@ -797,6 +797,7 @@
 }
 
 .option {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--c--globals--spacings--xs);
@@ -816,9 +817,20 @@
   background: var(--c--contextuals--background--semantic--contextual--primary);
 }
 
-.option:focus-visible {
+.option:has(.option__input:focus-visible) {
   outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
   outline-offset: 1px;
+}
+
+/* A native radio, kept for the keyboard (arrow keys) and screen readers: the card is its label. */
+.option__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .option--selected,

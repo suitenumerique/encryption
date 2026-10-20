@@ -57,6 +57,7 @@ declare const styles: {
   readonly option: string;
   readonly optionDescription: string;
   readonly optionIcon: string;
+  readonly optionInput: string;
   readonly optionSelected: string;
   readonly optionText: string;
   readonly optionTitle: string;

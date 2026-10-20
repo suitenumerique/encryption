@@ -158,6 +158,9 @@ ManageStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('settings.disable_server_warning'));
   await userEvent.click(await canvas.findByText(i18n.t('onboarding.i_understand')));
   await expect(await playFindButton(canvasElement, i18n.t('settings.turn_off_button'))).toBeEnabled();
+  // The acknowledgement covers the warning it was given for, not another scope.
+  await userEvent.click(await canvas.findByText(i18n.t('settings.delete_scope_device')));
+  await expect(await playFindButton(canvasElement, i18n.t('settings.turn_off_button'))).toBeDisabled();
 };
 
 export const Manage = prepareStory(ManageStory);

@@ -267,6 +267,7 @@ export function DemoApp() {
       // Close any open interface iframe before switching users
       client.closeInterface();
       setInterfaceOpen(false);
+      setInterfaceReady(false);
 
       setCurrentUser(user);
       setState('loading');

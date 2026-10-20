@@ -1,3 +1,5 @@
+// The demo's share modal uses QuickSearch, whose input draws a Material Icons ligature.
+import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import '@gouvfr-lasuite/ui-components/style';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

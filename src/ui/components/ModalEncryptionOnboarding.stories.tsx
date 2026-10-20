@@ -87,8 +87,14 @@ ExistingUserStory.parameters = {
 ExistingUserStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
   // Two ways back, as selectable cards: another device first, then the phrase.
-  await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_use_another_device')) });
-  await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) });
+  const device = await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_use_another_device')) });
+  const phrase = await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) });
+  await expect(device).toBeChecked();
+  // One tab stop, arrow keys between the cards.
+  device.focus();
+  await userEvent.keyboard('{ArrowDown}');
+  await expect(phrase).toBeChecked();
+  await expect(phrase).toHaveFocus();
   await playFindButton(canvasElement, i18n.t('onboarding.btn_continue'));
 };
 
@@ -230,7 +236,7 @@ const PASTED_PHRASE = Array.from({ length: 24 }, () => 'abandon').join(' ');
 async function playSubmitPhrase(canvasElement: HTMLElement) {
   await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
   await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
-  await userEvent.click(await within(canvasElement).findByLabelText('word 1'));
+  await userEvent.click(await within(canvasElement).findByLabelText('Word 1'));
   await userEvent.paste(PASTED_PHRASE);
   await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_restore')));
 }

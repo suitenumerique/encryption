@@ -136,6 +136,7 @@ docs:
       LOGOUT_REDIRECT_URL: https://{{ $docs }}
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+      ENCRYPTION_SETTINGS_URL: https://{{ $accounts }}/?section=encryption
   frontend:
     image:
       repository: {{ $i.docsFrontend.repository }}
@@ -193,6 +194,7 @@ drive:
       MEDIA_BASE_URL: https://{{ $drive }}
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+      ENCRYPTION_SETTINGS_URL: https://{{ $accounts }}/?section=encryption
       WOPI_SRC_BASE_URL: https://{{ $drive }}
   frontend:
     image:

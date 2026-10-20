@@ -493,7 +493,7 @@ describe('the stack chart', () => {
     expect(Number(bootstrap.metadata.annotations?.['helm.sh/hook-weight'])).toBeLessThan(Number(job.metadata.annotations?.['helm.sh/hook-weight']));
 
     expect(container.image).toBe(backend.image);
-    expect(container.command?.join(' ')).toMatch(/until python manage\.py migrate --check[\s\S]+python manage\.py shell --command/);
+    expect(container.command?.join(' ')).toMatch(/until out="\$\(python manage\.py migrate --check[\s\S]+python manage\.py shell --command/);
 
     // The backend's settings, all of them: the database, the issuer, the signing key.
     const env = containerEnv(container);
@@ -596,6 +596,10 @@ describe('the stack chart', () => {
       ['docs.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False', /ENCRYPTION_FEATURE_ENABLED must be "True"/],
       ['drive.backend.envVars.ENCRYPTION_VAULT_URL=https://other', /ENCRYPTION_VAULT_URL must be "https:\/\/data\.encryption\.suite\.example\.org"/],
       ['docs.backend.envVars.ENCRYPTION_INTERFACE_URL=https://other', /ENCRYPTION_INTERFACE_URL must be "https:\/\/encryption\.suite\.example\.org"/],
+      [
+        'drive.backend.envVars.ENCRYPTION_SETTINGS_URL=https://other',
+        /drive\.backend\.envVars\.ENCRYPTION_SETTINGS_URL must be "https:\/\/accounts\.suite\.example\.org\/\?section=encryption"/,
+      ],
       [
         'encryption.config.allowedFrameAncestors={https://docs.suite.example.org,https://accounts.suite.example.org}',
         /allowedFrameAncestors must contain "https:\/\/drive\.suite\.example\.org"/,

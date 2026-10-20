@@ -206,6 +206,14 @@
   white-space: nowrap;
 }
 
+.pp-docs-pending__enabled {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--c--globals--font--sizes--xs, 12px);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
 .pp-docs-pending__error {
   font-size: var(--c--globals--font--sizes--xs, 12px);
   color: var(--c--contextuals--content--semantic--error--primary);
@@ -247,6 +255,12 @@
   margin: 0;
   font-size: var(--c--globals--font--sizes--xs, 12px);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.pp-docs-empty-state__actions {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--c--globals--spacings--sm, 12px);
 }
 
 /* Docs: EncryptionLayout.tsx `EncryptionModalContent`, in ModalEncryptDoc.tsx */

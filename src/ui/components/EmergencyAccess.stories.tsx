@@ -99,6 +99,10 @@ RecoveryPendingStory.parameters = {
   msw: lists([{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
 };
 
+RecoveryPendingStory.play = async ({ canvasElement }) => {
+  await playFindButton(canvasElement, i18n.t('emergency.btn_refuse_request'));
+};
+
 export const RecoveryPending = prepareStory(RecoveryPendingStory);
 
 // The other side: a vault someone entrusted to me, which I can ask to recover.
@@ -308,3 +312,18 @@ AuditFailuresStory.play = async ({ canvasElement }) => {
 };
 
 export const AuditFailures = prepareStory(AuditFailuresStory);
+
+// A recovery running on an escrow that failed its audit: the warning comes first,
+// and the grantor can still refuse.
+const AuditTamperedRecoveryRunningStory = Template.bind({});
+AuditTamperedRecoveryRunningStory.args = { ...baseArgs };
+AuditTamperedRecoveryRunningStory.parameters = {
+  encryption: { verifyEscrows: async () => ({ results: [{ id: auditTampered.id, status: 'tampered' as const }] }) },
+  msw: lists([{ ...auditTampered, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
+};
+AuditTamperedRecoveryRunningStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText(/does not match what you signed/i);
+  await playFindButton(canvasElement, i18n.t('emergency.btn_refuse_request'));
+};
+
+export const AuditTamperedRecoveryRunning = prepareStory(AuditTamperedRecoveryRunningStory);
