@@ -24,13 +24,15 @@ Status: **exploration, nothing decided**. This document proposes a third recover
 
 ## 1. Why a third route
 
-Three mechanisms exist or are planned, and none covers "one person, locked out, today":
+Three mechanisms exist, and none covers "one person, locked out, today":
 
 | Route | Who can act | Delay | Weakness for this case |
 | --- | --- | --- | --- |
 | **Recovery Kit** ([architecture.md §7.2](architecture.md#s7-2)) | The user | None | Lost with the device and the paper, which is exactly the case to cover. |
 | **Trusted contact** ([architecture.md §8](architecture.md#s8)) | One chosen colleague | 1 to 90 days, by design | The colleague can leave the organization, lose their own keys, or be unreachable. The wait is the whole protection, so it cannot be shortened, and a week without one's documents is not acceptable for some roles. |
-| **Maintenance escrow** (branch `maintenance-extra`) | The operator, with the offline maintenance key | None | Batch tool: it reads **document keys** of every user, never a vault. It cannot restore a person's identity, contacts or ability to keep working; using it for one person means taking out the key that opens everything. |
+| **Maintenance escrow** ([architecture.md Appendix E](architecture.md#appendix-e)) | An organization's custodians, with its offline maintenance phrase | None | Built for a **massive** loss: a technical failure on our side (a broken encryption in a product, a support rollback), where many users must be recovered at once. It is temporary by design, and it opens **resource keys** in batch with an offline tool, never a vault. It cannot restore a person's identity, contacts or ability to keep working; using it for one person means taking out the phrase that opens the whole organization's content. |
+
+The two are complementary rather than competing: the maintenance escrow answers "we broke something for everyone", the council answers "this person is locked out". Appendix E already points to a recovery council for the single-user case. They share their configuration shape and its code ([§4.1](#config-shared)), and probably their people ([question 8](#open)).
 
 The new route keeps the structure of trusted contacts (a dormant second credential of the same vault, [architecture.md §8.1](architecture.md#s8-1)) and changes two things: the escrow is **split** between several people instead of given to one, and the protection is **human verification by a quorum** instead of a wait.
 
@@ -67,19 +69,24 @@ Not final, but the discussion converged on these, and the rest of the document b
 7. **Membership changes never reconstruct `E`**: users' vaults re-arm silently on their next visit, and custodians can reshare for the users who do not come back ([§11](#lifecycle)).
 8. **Custodians must use MFA**, checked from the token claims, with a fresh authentication before every custodian action ([§12](#mfa)).
 9. **The frontend never receives the list of custodians' user ids**: a user learns "you are a custodian of these councils", nothing about the others unless they are one ([§8](#visibility)).
+10. **The configuration mirrors `MAINTENANCE_ESCROW_KEYS`** (proposed): a list of entries, each with the email `domains` it covers and what is assigned to them, matched by the same code ([§4.1](#config-shared)).
 
 <a id="config"></a>
 
 ## 4. Configuration
 
-Councils are proposed by deployment configuration, like `MAINTENANCE_ESCROW_PUBLIC_KEY`: an environment variable holding JSON, validated by Zod in `src/server/env-schema.ts`.
+Councils are proposed by deployment configuration, the way maintenance keys are: an environment variable holding a JSON list, validated by Zod in `src/server/env-schema.ts`, with the **same shape** as `MAINTENANCE_ESCROW_KEYS` (a list of entries, each covering email `domains`, with what is assigned to those users behind).
 
 ```json
+MAINTENANCE_ESCROW_KEYS='[
+  { "domains": ["numerique.gouv.fr"], "publicKey": "AUJC…" }
+]'
+
 RECOVERY_COUNCILS='[
   {
     "id": "dinum",
     "label": "Équipe sécurité DINUM",
-    "emailDomains": ["numerique.gouv.fr", "*.numerique.gouv.fr"],
+    "domains": ["numerique.gouv.fr"],
     "custodians": [
       { "userId": "0b7e5f0c-6a0e-4a0f-9d5e-2f1c8e3a9b11", "email": "rssi@numerique.gouv.fr" },
       { "userId": "6f2d4c1a-3b5e-4e7f-8a9b-0c1d2e3f4a5b", "email": "dpo@numerique.gouv.fr" },
@@ -88,14 +95,39 @@ RECOVERY_COUNCILS='[
     ],
     "threshold": 2,
     "cooldownMinutes": 0,
+    "requestTtlDays": 7,
     "requiredAcr": "eidas2",
     "requiredAmr": ["mfa"]
   }
 ]'
 ```
 
-- **An array of objects, not a map keyed by pattern.** A council usually covers several domains (a ministry and its directorates), and it needs a stable `id`: escrows reference it, and the roster chain of [§9](#roster) is keyed by it.
-- **Match on the email domain, not a glob on the whole address.** `example.org` matches `alice@example.org`; `*.example.org` matches subdomains only (`alice@dgfip.example.org`), never `example.org` itself, which avoids the classic `*.example.org` surprise. Only a verified email is matched (the same rule as `OIDC_ACCEPT_UNVERIFIED_EMAIL`). The boot check refuses two councils declaring the same domain, so order never matters. The match only decides **what is proposed** at onboarding: the escrow then records the council id and roster version, so a later email change does not move it.
+- **An array of objects, not a map keyed by pattern**, as for maintenance keys. A council usually covers several domains (a ministry and its directorates), and it needs a stable `id`: escrows reference it, and the roster chain of [§9](#roster) is keyed by it.
+- **Domains match exactly as for maintenance keys** ([architecture.md Appendix E](architecture.md#appendix-e)): a listed domain covers itself and its subdomains on a label boundary (`monequipe.numerique.gouv.fr` belongs to `numerique.gouv.fr`, `fauxnumerique.gouv.fr` does not), the longest listed domain wins, `*` covers every other email, and an email no entry covers gets no council proposed. A domain listed twice is refused at boot. Only a verified email is matched (the same rule as `OIDC_ACCEPT_UNVERIFIED_EMAIL`). Most deployments serve one organization and will write `["*"]`, as they do for maintenance keys. The match only decides **what is proposed** at onboarding: the escrow then records the council id and roster version, so a later email change does not move it.
+
+<a id="config-shared"></a>
+
+### 4.1 Shared with the maintenance escrow
+
+Both variables answer the same question, "which group of the organization does this email belong to, and what is attached to that group", so they should share one implementation rather than two copies drifting apart:
+
+```
+src/server/email-domain-groups.ts          (new, extracted from maintenance-escrow.ts)
+├── emailDomainSchema                      lowercase punycode labels, or "*"
+├── refineDomainGroups(entries, ctx)       a domain listed twice → boot error
+├── domainGroupForEmail(entries, email)    longest label-boundary match, else "*", else null
+└── jsonEnv(schema, hint)                  the JSON.parse preprocess of env-schema.ts
+
+maintenance-escrow.ts   entries: { domains, publicKey }               → a public key
+recovery-councils.ts    entries: { id, label, domains, custodians, … } → a council
+```
+
+`maintenanceEscrowKeyForEmail` becomes `domainGroupForEmail(entries, email)?.publicKey`, with its tests moved to the shared module, so the matching rules of [Appendix E](architecture.md#appendix-e) are written and tested once. Other parts can follow the same pattern:
+
+- **Boot log.** The server already logs each maintenance key's fingerprint with its domains; it logs each council's fingerprint ([§9](#roster)) with its domains the same way, so an organization checks both in one place.
+- **Operator documentation.** One README section on "email domain groups", with each variable describing only what it attaches.
+
+**Two variables, not one.** A single `ORGANIZATIONS` variable holding `{ domains, maintenanceKey, council }` reads well but couples two lifecycles: the maintenance escrow is temporary and meant to be turned off ([Appendix E](architecture.md#appendix-e)), while a council is permanent and its membership evolves under signatures ([§10](#governance)); the groupings may also differ (one key per ministry, one council per directorate). Two variables with the same shape and the same code give the consistency without the coupling. The endpoints stay separate too: `/api/maintenance-escrow/assignment` answers a key fingerprint for **any owner** the vault names, unauthenticated, on every encryption, while the council lookup of [§8](#visibility) answers the **signed-in user's own** council at onboarding, with its roster and keys.
 
 **Identifying custodians: `{ userId, email }`.** The candidates compare as follows:
 
@@ -109,7 +141,7 @@ The internal user id ([architecture.md §2.3](architecture.md#s2-3)) is what sur
 
 **Threshold, as an absolute number.** Validated at boot: `2 <= threshold` and `threshold + 1 <= custodians.length`, otherwise the server refuses to start. A threshold of 1 is a trusted contact without the wait, weaker than what this feature claims. A percentage reads well but rounds silently (`50%` of 3 is 1 or 2?) and changes meaning when the roster grows, while every existing escrow keeps the threshold it was split with. The `+ 1` is the minimum margin: one departure never blocks recoveries. A margin of 2 or more is recommended and the boot logs a warning below it.
 
-**Other fields.** `cooldownMinutes` (default 0): minimum time between the start of a recovery and its release, for organizations that want a window in which the user can refuse from their mailbox. `requiredAcr` / `requiredAmr`: the MFA policy for this council's custodians ([§12](#mfa)).
+**Other fields.** `cooldownMinutes` (default 0): minimum time between the start of a recovery and its release, for organizations that want a window in which the user can refuse from their mailbox. `requestTtlDays` (default 7): how long a user's recovery request stays open ([§14](#impl)). `requiredAcr` / `requiredAmr`: the MFA policy for this council's custodians ([§12](#mfa)).
 
 <a id="split"></a>
 
@@ -225,7 +257,7 @@ Same principle without an ephemeral key or a server relay: each custodian, in pe
 
 ### P4. One council key pair, split once (rejected)
 
-The council is a principal with one X-Wing key pair whose private key is Shamir-split between custodians once; each user wraps `E` to the **council public key** (one capsule, nothing to re-arm when a custodian leaves). This is 1Password's Recovery group, or the maintenance key held "ideally Shamir-split".
+The council is a principal with one X-Wing key pair whose private key is Shamir-split between custodians once; each user wraps `E` to the **council public key** (one capsule, nothing to re-arm when a custodian leaves). This is 1Password's Recovery group, or the maintenance phrase split between custodians as [architecture.md Appendix E](architecture.md#appendix-e) recommends.
 
 ```mermaid
 %%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
@@ -272,8 +304,8 @@ stateDiagram-v2
   collecting --> awaiting_meeting: k - 1 shares received
   awaiting_meeting --> released: last share from a custodian<br/>who checked the screen in person<br/>and cooldown elapsed (lazy arithmetic)
   released --> completed: user unlocks with E<br/>+ forced phrase change<br/>(credential burned, escrow re-armed)
-  collecting --> aborted: user refuses, a custodian aborts,<br/>or 72 h expiry
-  awaiting_meeting --> aborted: user refuses, a custodian aborts,<br/>or 72 h expiry
+  collecting --> aborted: user refuses, a custodian aborts,<br/>or expiry (7 days)
+  awaiting_meeting --> aborted: user refuses, a custodian aborts,<br/>or expiry (7 days)
   released --> aborted: user refuses or expiry<br/>(credential re-dormant)
   completed --> [*]
   aborted --> [*]
@@ -402,7 +434,7 @@ The authority on membership is the **roster chain** in the database. The environ
 - **A difference between the variable and the chain head is a pending change.** Custodians see "add G, remove D, proposed by the configuration" in their interface and sign it, `k` of them, each after a fresh MFA login. A new custodian must appear in the variable first, then the others "promote" them by signing.
 - **The newcomer accepts too.** Their interface shows "you are named custodian of council X"; they accept (or refuse, which surfaces a configuration mistake). The signers check the newcomer's identity fingerprint like any out-of-band verification; they are colleagues, a call is enough.
 - **Replacement is one step.** A single edit of the variable replaces D by G, and a single roster version says "G replaces D". No 6, then 7, then 6 again. The `k` signers can be any custodians of the previous version, D included if still around.
-- **Bootstrap.** The very first roster version cannot be signed by a previous one: it is signed by **all** its custodians (each accepting and signing the same roster), and its fingerprint is what the organization publishes.
+- **Bootstrap (not decided).** The very first roster version cannot be signed by a previous one. Options: signed by **all** its custodians (strict, but one absent person delays the council's creation), or active once `k + 1` have accepted and signed, the others joining later as ordinary promotions. Either way its fingerprint is what the organization publishes ([question 10](#open)).
 
 ```mermaid
 %%{init: {'theme':'base','look':'classic','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
@@ -503,13 +535,14 @@ The locked-out **user** is not required to use MFA to open a request: the reques
 
 ## 14. Implementation notes
 
+- **Configuration code shared with the maintenance escrow** ([§4.1](#config-shared)): extract the domain schema, duplicate check, matching and JSON parsing from `src/server/maintenance-escrow.ts` first, as a refactor on its own with the existing tests, then build `RECOVERY_COUNCILS` on it.
 - **Shamir library.** Shamir over GF(2^8) is about 100 lines, but subtle (constant-time field arithmetic, unique non-zero x-coordinates). The candidate is [`shamir-secret-sharing`](https://github.com/privy-io/shamir-secret-sharing) by Privy: TypeScript, no dependency, audited by Cure53 and Zellic, Web Crypto randomness. Pinned like every dependency, vault bundle only. Feldman verifiable secret sharing is unnecessary for the initial split (the signed per-share hashes say which share is bad, and the dealer is the user's own vault); it becomes useful only for resharing ([§11.2](#reshare)).
 - **Share format.** `x (1 byte) || y (32 bytes)`, wrapped with the existing `wrap(K, pk)` ([architecture.md §4.3](architecture.md#s4-3)). The commitment is `SHA-256("lasuite-encryption/council-share-hash/v1" || councilId || share)`, domain-separated, harmless to publish since each share is 256 bits of uniform randomness.
 - **New signed messages**, framed like the others: `council-escrow/v1` (user identity key: user id, council id, roster version and hash, `k`, SHA-256 of the credential auth key, capsule and share hashes in slot order), `council-share/v1` (custodian identity key, [§7.4](#flow)), `council-roster/v1` (custodians' identity keys, [§9](#roster)).
 - **Tables.** `council_rosters` (council id, version, `k`, slots with identity id, signatures), `council_escrows` (user, council, roster version, credential id, escrow signature), `council_capsules` (escrow, slot, capsule, key version), `council_requests` (user, ephemeral public key, status, timestamps), `council_contributions` (request, slot, wrapped share, in-person flag, signature).
 - **Routes and tiers** ([architecture.md §6.4](architecture.md#s6-4)): contribute, abort, accept the role and sign a roster version are **identity-signed with fresh MFA**; open a request, fetch the wrapped shares and refuse are **JWT only** for the user (they have no vault left), and safe because nothing they reach releases key material without a meeting. Admitting the council credential in the unlock proof recomputes "`k` valid contributions, at least one in person, cooldown elapsed" at release time, like the lazy wait arithmetic of trusted contacts.
 - **Ephemeral private key** lives in the vault's IndexedDB, never in the interface, and is deleted when the request ends. A reloaded tab keeps the request; another browser does not, which is acceptable (refuse and ask again).
-- **Expiry**: 72 hours for an open request, so a meeting can happen the next working day; refused or expired requests delete their contributions.
+- **Expiry of a user's recovery request**: 7 days by default, configurable per council (`requestTtlDays`), so holidays do not kill a request: any `k - 1` custodians can approve remotely, and the meeting needs only one of the approvers' remaining colleagues. A long-open request costs little, since `k - 1` shares open nothing without the meeting. Refused or expired requests delete their contributions. A **proposed roster version** ([§10](#governance)) has no expiry: it waits for its signatures until signed or superseded by a newer proposal.
 - **Onboarding UI.** When a council matches, the trusted-contact step proposes it first: "Your organization has a recovery council (2 of 4). Compare its fingerprint with the one published by your organization." A trusted contact stays available as an addition, not a replacement.
 - **Custodian UI.** One inbox across councils, one card per council ([§8](#visibility)), the QR scanner or digit entry for the meeting step.
 
@@ -524,4 +557,6 @@ The locked-out **user** is not required to use MFA to open a request: the reques
 5. **Video call for the last share**: accepted as "in person" (recognizing a colleague on camera), or a physical meeting only?
 6. **Cooldown default**: 0 (the meeting is the protection) or a short value so the email to the user always arrives before release.
 7. **Resharing in the first version** ([§11.2](#reshare)), or only silent re-arm plus the health alert?
-8. **Relation with the maintenance key**: keep it fully separate (recommended: one is a per-person routine, the other a sealed batch tool), or let a council also hold the maintenance key's shares as an offline procedure.
+8. **Relation with the maintenance escrow**: the configuration and its code are shared ([§4.1](#config-shared)); the keys stay fully separate (one is a per-person routine, the other a sealed, temporary batch tool). The open part is the people: Appendix E recommends splitting the maintenance phrase between the security officer, the DPO and a service owner, who are likely the council's custodians. Should the maintenance tool offer to split its phrase (SLIP-39 style, offline) and document the council as its natural holders, or keep the two groups unrelated on paper?
+9. **Domains optional?** Every entry lists `domains` (with `*` for "everyone"), as maintenance keys do. Another way would be a council attached to users explicitly (a list, or a group of the identity provider) instead of by email domain; not needed while organizations map to domains, and the same question would then apply to maintenance keys.
+10. **First roster**: signed by all its custodians, or active from `k + 1` acceptances ([§10](#governance))?
