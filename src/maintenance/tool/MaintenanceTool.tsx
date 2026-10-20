@@ -4,15 +4,17 @@ import { useTranslation } from 'react-i18next';
 import { DecryptPanel } from '@encryption/src/maintenance/tool/DecryptPanel';
 import { GeneratePanel } from '@encryption/src/maintenance/tool/GeneratePanel';
 import { PublicKeyPanel } from '@encryption/src/maintenance/tool/PublicKeyPanel';
+import { RotatePanel } from '@encryption/src/maintenance/tool/RotatePanel';
 import '@encryption/src/maintenance/tool/tool.css';
 import { SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 
-type Tab = 'decrypt' | 'generate' | 'publicKey';
+type Tab = 'decrypt' | 'generate' | 'publicKey' | 'rotate';
 
 /**
  * The maintenance tool: one page, opened from a file on an isolated computer, that
- * decrypts a product's export with a maintenance phrase, generates that phrase, or
- * gives back the public key of one already held
+ * decrypts a product's export with a maintenance phrase, generates that phrase,
+ * gives back the public key of one already held, or wraps an organization's
+ * copies again for its new maintenance key
  * (architecture.md, Appendix E). Plain markup and a small stylesheet rather than the
  * interface's design system, so the single file stays small and readable.
  */
@@ -41,7 +43,7 @@ export function MaintenanceTool({ seed }: { seed?: Uint8Array }) {
       <p className="mt-intro">{t('maintenanceTool.intro')}</p>
 
       <div className="mt-tabs" role="tablist">
-        {(['decrypt', 'generate', 'publicKey'] as const).map((name) => (
+        {(['decrypt', 'generate', 'publicKey', 'rotate'] as const).map((name) => (
           <button
             key={name}
             type="button"
@@ -56,7 +58,7 @@ export function MaintenanceTool({ seed }: { seed?: Uint8Array }) {
         ))}
       </div>
 
-      {/* Both panels stay mounted, so switching tabs never loses a picked folder or a typed phrase. */}
+      {/* Every panel stays mounted, so switching tabs never loses a picked folder or a typed phrase. */}
       <div role="tabpanel" id="mt-tabpanel-decrypt" aria-labelledby="mt-tab-decrypt" hidden={tab !== 'decrypt'}>
         <DecryptPanel />
       </div>
@@ -65,6 +67,9 @@ export function MaintenanceTool({ seed }: { seed?: Uint8Array }) {
       </div>
       <div role="tabpanel" id="mt-tabpanel-publicKey" aria-labelledby="mt-tab-publicKey" hidden={tab !== 'publicKey'}>
         <PublicKeyPanel />
+      </div>
+      <div role="tabpanel" id="mt-tabpanel-rotate" aria-labelledby="mt-tab-rotate" hidden={tab !== 'rotate'}>
+        <RotatePanel />
       </div>
     </main>
   );

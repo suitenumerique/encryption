@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Fingerprint, KeyId } from '@encryption/src/maintenance/tool/Fingerprint';
+import { Fingerprint } from '@encryption/src/maintenance/tool/Fingerprint';
 
 /** A maintenance public key as the deployment's team needs it: to read, copy or download, with its fingerprint. */
 export function PublicKeyView({ title, publicKey, fingerprint }: { title: string; publicKey: string; fingerprint: string }) {
@@ -28,7 +28,6 @@ export function PublicKeyView({ title, publicKey, fingerprint }: { title: string
         {t('maintenanceTool.generate.downloadPublicKey')}
       </a>
       <Fingerprint fingerprint={fingerprint} help={t('maintenanceTool.generate.fingerprint')} />
-      <KeyId fingerprint={fingerprint} />
     </section>
   );
 }

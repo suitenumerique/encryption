@@ -1,5 +1,5 @@
 /**
- * Writes the decrypted export as the recovery goes, item after item, so that only
+ * Writes the decrypted copy as the recovery goes, item after item, so that only
  * the item being handled is ever in memory: its plaintext is written, then let go.
  * Where it goes is the sink's business: a folder the custodians picked, a ZIP
  * archive streamed into a temporary file, or, as a last resort, memory.

@@ -99,15 +99,6 @@ export function maintenanceKeyIdToFingerprint(keyId: Uint8Array): string {
   return fingerprintBytesToDecimal(keyId);
 }
 
-/**
- * The key id in hexadecimal, from the 40-digit fingerprint: what a product team
- * matches bytes 2 to 17 of the stored copies against to export one key's resources
- * (`substring(copy from 2 for 16) = decode('<hex>', 'hex')`).
- */
-export function maintenanceFingerprintToKeyIdHex(fingerprint: string): string {
-  return BigInt(fingerprint.slice(1)).toString(16).padStart(32, '0');
-}
-
 export async function importMaintenancePublicKey(base64: string): Promise<MaintenancePublicKey> {
   const publicKey = parseMaintenancePublicKey(base64);
 

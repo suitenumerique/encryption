@@ -3,9 +3,11 @@ import { expect, spyOn, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import {
+  exportMaintenancePublicKey,
   generateMaintenancePhrase,
   importMaintenancePublicKey,
   maintenanceKeyIdToFingerprint,
+  maintenanceKeyPairFromPhrase,
   parseMaintenancePublicKey,
 } from '@encryption/src/crypto/maintenance-escrow';
 import i18n from '@encryption/src/i18n';
@@ -40,7 +42,11 @@ const Template: StoryFn<ComponentType> = (args) => <MaintenanceTool {...args} />
 // What a folder picker hands over: each file named by its path under the picked folder.
 async function pickSampleExport(
   canvasElement: HTMLElement,
-  { leaveOut = [], build = buildSampleExport }: { leaveOut?: string[]; build?: typeof buildSampleExport } = {}
+  {
+    leaveOut = [],
+    build = buildSampleExport,
+    panel = 'decrypt',
+  }: { leaveOut?: string[]; build?: typeof buildSampleExport; panel?: 'decrypt' | 'rotate' } = {}
 ): Promise<void> {
   const files = Object.entries(await build(await importMaintenancePublicKey(DEV_MAINTENANCE_PUBLIC_KEY)))
     .filter(([path]) => !leaveOut.includes(path))
@@ -52,7 +58,7 @@ async function pickSampleExport(
       return file;
     });
 
-  await userEvent.upload(canvasElement.querySelector('input[type="file"]') as HTMLInputElement, files);
+  await userEvent.upload(canvasElement.querySelector(`#mt-tabpanel-${panel} input[type="file"]`) as HTMLInputElement, files);
 }
 
 // The whole phrase pasted into the first box, as from a downloaded file: it spreads over the 24.
@@ -285,3 +291,38 @@ GeneratedKeyStory.play = async ({ canvasElement }) => {
 };
 
 export const GeneratedKey = prepareStory(GeneratedKeyStory);
+
+const RotatedStory = Template.bind({});
+RotatedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  const newKey = await maintenanceKeyPairFromPhrase(await generateMaintenancePhrase('english', new Uint8Array(32).fill(7)));
+
+  await userEvent.click(canvas.getByRole('tab', { name: i18n.t('maintenanceTool.tabs.rotate') }));
+  await pickSampleExport(canvasElement, { panel: 'rotate' });
+  await canvas.findByText(i18n.t('maintenanceTool.rotate.folderSummary', { folder: 'export-2026-10', count: 4 }));
+  await typePhrase(canvasElement, DEV_MAINTENANCE_PHRASE, 'mt-rotate');
+  await canvas.findByText(i18n.t('maintenanceTool.rotate.coverageSome', { ours: 3, roots: 4 }));
+
+  const runDownload = canvas.getByRole('button', { name: i18n.t('maintenanceTool.rotate.runDownload') });
+  const newKeyInput = canvas.getByRole('textbox', { name: i18n.t('maintenanceTool.rotate.newKeyTitle') });
+
+  // The current key pasted by mistake: refused, nothing to rotate to.
+  await userEvent.click(newKeyInput);
+  await userEvent.paste(DEV_MAINTENANCE_PUBLIC_KEY);
+  await canvas.findByText(i18n.t('maintenanceTool.rotate.sameKey'));
+  expect(runDownload).toBeDisabled();
+
+  await userEvent.clear(newKeyInput);
+  await userEvent.paste(exportMaintenancePublicKey(newKey.publicKey));
+  await canvas.findByText(formatDecimalFingerprint(maintenanceKeyIdToFingerprint(newKey.keyId)));
+  await waitFor(() => expect(runDownload).toBeEnabled());
+
+  await userEvent.click(runDownload);
+  // Two copies rotated, the damaged one reported, another organization's left alone.
+  await canvas.findByText(i18n.t('maintenanceTool.rotate.summary', { ok: 2, failed: 1 }));
+  expect(canvas.getByText(i18n.t('maintenanceTool.rotate.otherKeys', { count: 1 }))).toBeVisible();
+  expect(canvas.getByRole('link', { name: i18n.t('maintenanceTool.rotate.download') })).toHaveAttribute('download', 'manifest.ndjson');
+  expect(canvas.getByText(i18n.t('maintenanceTool.rotate.noSecret'))).toBeVisible();
+};
+
+export const Rotated = prepareStory(RotatedStory);

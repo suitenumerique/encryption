@@ -154,8 +154,9 @@ const manifestOf = (folder: Map<string, Uint8Array>) =>
 //      ciphertext stays readable until the switch is committed;
 //   2. one short transaction switches the document, its attachments and comments to
 //      plaintext, only if the document was not edited since the export (`updatedAt`);
-//   3. after the commit, the old ciphertext objects are deleted; after a rollback,
-//      the new plaintext objects are.
+//   3. after a rollback, the new plaintext objects are deleted; after the commit,
+//      the old ciphertext objects are KEPT, for an investigation should something
+//      look wrong, until `deleteOrphanObjects` deletes them once the batch is checked.
 //
 // A document goes whole or not at all: if any of its items failed (a missing file,
 // a damaged row), it stays encrypted with its escrow copy, to be exported again. Per
@@ -179,20 +180,14 @@ async function writeBack(output: Map<string, Uint8Array>): Promise<{ skipped: st
     for (const line of attachments) objectStorage.set(uploaded.get(line.id) as string, output.get(line.file) as Uint8Array);
 
     try {
-      const replaced = await testPrisma.$transaction(async (tx) => {
+      await testPrisma.$transaction(async (tx) => {
         const updated = await tx.$executeRaw`
           UPDATE product.documents SET content = decode(${document.content}, 'base64'), encrypted_content = NULL, maintenance_key = NULL
           WHERE id = ${document.id}::uuid AND updated_at = ${document.updatedAt}::timestamptz`;
 
         if (updated === 0) throw new EditedSinceExport();
 
-        const previous: string[] = [];
-
         for (const line of attachments) {
-          const [{ object_key: objectKey }] = await tx.$queryRaw<{ object_key: string }[]>`
-            SELECT object_key FROM product.attachments WHERE id = ${line.id}::uuid FOR UPDATE`;
-
-          previous.push(objectKey);
           await tx.$executeRaw`
             UPDATE product.attachments SET object_key = ${uploaded.get(line.id)}, wrapped_key = NULL WHERE id = ${line.id}::uuid`;
         }
@@ -202,11 +197,7 @@ async function writeBack(output: Map<string, Uint8Array>): Promise<{ skipped: st
             UPDATE product.comments SET body = convert_from(decode(${line.content}, 'base64'), 'UTF8'), encrypted_body = NULL
             WHERE id = ${line.id}::uuid`;
         }
-
-        return previous;
       });
-
-      for (const objectKey of replaced) objectStorage.delete(objectKey);
     } catch (error) {
       for (const objectKey of uploaded.values()) objectStorage.delete(objectKey);
 
@@ -220,6 +211,20 @@ async function writeBack(output: Map<string, Uint8Array>): Promise<{ skipped: st
 }
 
 class EditedSinceExport extends Error {}
+
+// The separate clean-up, once the batch is checked: every object no row points to,
+// the ciphertext the write-back kept and the plaintext of a run killed before its
+// commit alike. A real bucket also needs a delay (leave alone what is being
+// uploaded right now) and, when versioned, the deletion of every version.
+async function deleteOrphanObjects(): Promise<string[]> {
+  const rows = await testPrisma.$queryRaw<{ object_key: string }[]>`SELECT object_key FROM product.attachments`;
+  const referenced = new Set(rows.map((row) => row.object_key));
+  const orphans = [...objectStorage.keys()].filter((objectKey) => !referenced.has(objectKey));
+
+  for (const objectKey of orphans) objectStorage.delete(objectKey);
+
+  return orphans;
+}
 
 // ----- The devices: real vault operations, routed to one person's key pair ------
 
@@ -364,7 +369,7 @@ describe('batch recovery, end to end', () => {
 
     const output = await runTool(phrase, await exportFolder());
 
-    // The decrypted export mirrors the input: same ids and paths, no key material left.
+    // The decrypted copy mirrors the input: same ids and paths, no key material left.
     expect(manifestOf(output)).toEqual(
       expect.arrayContaining([
         { id: notes, type: 'document', title: 'notes', updatedAt: expect.any(String), content: expect.any(String) },
@@ -383,10 +388,15 @@ describe('batch recovery, end to end', () => {
       [plan]: ['le plan de bob', null],
     });
     expect(await testPrisma.$queryRaw`SELECT body FROM product.comments`).toEqual([{ body: 'une remarque de bob' }]);
-    // The plaintext under a new object key, the row pointing at it, the ciphertext object gone.
+    // The plaintext under a new object key, the row pointing at it, the ciphertext object kept.
     const [{ object_key: objectKey }] = await testPrisma.$queryRaw<{ object_key: string }[]>`SELECT object_key FROM product.attachments`;
 
     expect(objectKey).not.toBe(`${notes}/attachments/${attachment}`);
+    expect(objectStorage.get(objectKey)).toEqual(photo);
+    expect(objectStorage.has(`${notes}/attachments/${attachment}`)).toBe(true);
+
+    // Once the batch is checked, the separate clean-up deletes it.
+    expect(await deleteOrphanObjects()).toEqual([`${notes}/attachments/${attachment}`]);
     expect([...objectStorage]).toEqual([[objectKey, photo]]);
   });
 

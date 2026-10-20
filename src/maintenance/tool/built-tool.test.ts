@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { type Browser, type Page, chromium, firefox, webkit } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { base64ToUint8, unwrapMaintenanceKey } from '@encryption/src/crypto';
 import {
   computeMaintenanceKeyFingerprint,
   exportMaintenancePublicKey,
@@ -35,6 +36,9 @@ import {
 } from '@encryption/src/maintenance/testing';
 import { formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 
+// Any valid phrase other than the development one: the key the copies move to.
+const ROTATION_PHRASE =
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
 const TOOL = resolve(import.meta.dirname, '../../../dist/maintenance/maintenance-tool.html');
 const SAMPLE_EXPORT = resolve(import.meta.dirname, '../sample-export');
 const ENGINES = { chromium, firefox, webkit };
@@ -171,7 +175,7 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
   });
 
   it('decrypts an export folder picked from disk, previews it and hands back the archive', async () => {
-    await page.setInputFiles('input[type="file"]', SAMPLE_EXPORT);
+    await page.setInputFiles('#mt-tabpanel-decrypt input[type="file"]', SAMPLE_EXPORT);
     await expect.poll(() => page.getByRole('status').first().textContent()).toBe('sample-export: 10 items, 4 files');
 
     // Pasted whole into the first box, as from the downloaded phrase: it spreads over the 24.
@@ -217,7 +221,7 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('link', { name: 'Download the decrypted export (.zip)' }).click(),
+      page.getByRole('link', { name: 'Download the decrypted copy (.zip)' }).click(),
     ]);
 
     expect(download.suggestedFilename()).toBe('sample-export-decrypted.zip');
@@ -243,9 +247,9 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
     }
   });
 
-  it.runIf(name === 'chromium')('writes the decrypted export file by file into a new folder where the browser can', async () => {
+  it.runIf(name === 'chromium')('writes the decrypted copy file by file into a new folder where the browser can', async () => {
     await page.getByRole('button', { name: 'Decrypt into a folder…' }).click();
-    await expect.poll(() => page.getByText('Written to picked/sample-export-decrypted.').count()).toBe(1);
+    await expect.poll(() => page.getByText('Decrypted copy written to picked/sample-export-decrypted.').count()).toBe(1);
 
     const written = await page.evaluate(() =>
       Object.fromEntries(
@@ -292,6 +296,52 @@ describe.each(browsers)('the built maintenance tool in %s', (name) => {
     expect(await page.locator('h1').evaluate((heading) => getComputedStyle(heading).visibility)).toBe('hidden');
     expect(await page.locator('.mt-printable .mt-print-only').first().isVisible()).toBe(true);
     await page.emulateMedia({ media: 'screen' });
+  });
+
+  it('wraps the copies of an export again for a new key, handing back no secret', async () => {
+    const oldKey = await maintenanceKeyPairFromPhrase(DEV_MAINTENANCE_PHRASE);
+    const newKey = await maintenanceKeyPairFromPhrase(ROTATION_PHRASE);
+
+    await page.getByRole('tab', { name: 'Rotate the maintenance key' }).click();
+    await page.setInputFiles('#mt-tabpanel-rotate input[type="file"]', SAMPLE_EXPORT);
+    await expect.poll(() => page.getByText('sample-export: 4 copies').count()).toBe(1);
+    await page.locator('#mt-rotate-word-0').fill(DEV_MAINTENANCE_PHRASE);
+    await page.getByRole('textbox', { name: '3. The new public key' }).fill(exportMaintenancePublicKey(newKey.publicKey));
+    await page.getByRole('button', { name: 'Rotate and download manifest.ndjson' }).click();
+    await expect.poll(() => page.getByText('2 copies rotated, 1 failed.').count()).toBe(1);
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('link', { name: 'Download the rotated copies (manifest.ndjson)' }).click(),
+    ]);
+    const exported = new Map(
+      readFileSync(resolve(SAMPLE_EXPORT, MANIFEST_FILE), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, string>)
+        .map((line) => [line.id, line])
+    );
+    const lines = readFileSync(await download.path(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, string>);
+
+    expect(download.suggestedFilename()).toBe('manifest.ndjson');
+    expect(lines.map((line) => [line.id, line.error === undefined])).toEqual([
+      [SAMPLE_IDS.report, true],
+      [SAMPLE_IDS.budget, true],
+      [SAMPLE_IDS.elsewhere, false],
+      [SAMPLE_IDS.damaged, false],
+    ]);
+
+    for (const line of lines.filter((rotated) => rotated.error === undefined)) {
+      // The copy it replaces, exactly as exported, for the product's compare-and-swap;
+      // the new one opens with the new phrase to the same key.
+      expect(line.previousMaintenanceKey).toBe(exported.get(line.id)?.maintenanceKey);
+      expect(await unwrapMaintenanceKey(newKey, base64ToUint8(line.maintenanceKey))).toEqual(
+        await unwrapMaintenanceKey(oldKey, base64ToUint8(line.previousMaintenanceKey))
+      );
+    }
   });
 
   it('made no request and logged no error, policy violations included', () => {

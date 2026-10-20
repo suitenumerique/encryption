@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
-import { maintenanceKeyIdToFingerprint, readMaintenanceCopyKeyId } from '@encryption/src/crypto/maintenance-escrow';
+import { uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { type ExportItem, ManifestError, parseManifest } from '@encryption/src/maintenance/export-format';
 import { type ExportSink, type ItemOutcome, writeDecryptedExport } from '@encryption/src/maintenance/export-writer';
-import { type ItemResult, createRecovery, recoverItems } from '@encryption/src/maintenance/recover';
-import { Fingerprint, KeyId } from '@encryption/src/maintenance/tool/Fingerprint';
+import { type ItemResult, copyCoverage, createRecovery, recoverItems } from '@encryption/src/maintenance/recover';
+import { ExportFolderButton } from '@encryption/src/maintenance/tool/ExportFolderButton';
+import { Fingerprint } from '@encryption/src/maintenance/tool/Fingerprint';
 import { PhraseInput, type PhraseKey } from '@encryption/src/maintenance/tool/PhraseInput';
-import { type ExportFolder, SeveralExportsError, openExportFolder } from '@encryption/src/maintenance/tool/export-folder';
+import { type ExportFolder, type PickedFile, SeveralExportsError, openExportFolder } from '@encryption/src/maintenance/tool/export-folder';
+import { formatDuration } from '@encryption/src/maintenance/tool/format-duration';
 import { formatSize } from '@encryption/src/maintenance/tool/format-size';
 import {
   OutputExistsError,
@@ -25,16 +26,6 @@ type Written = { kind: 'folder'; label: string } | { kind: 'zip'; url: string; n
 
 // The progress shown is refreshed at most this often: often enough to move, rarely enough not to slow the work.
 const PROGRESS_INTERVAL_MS = 100;
-
-/** `1:05`, `12:30`, `1:02:03`: the same in every language. */
-export function formatDuration(milliseconds: number): string {
-  const seconds = Math.floor(milliseconds / 1000);
-  const pad = (value: number) => String(value).padStart(2, '0');
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor(seconds / 60) % 60;
-
-  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}` : `${minutes}:${pad(seconds % 60)}`;
-}
 const MISSING_FILE_EXAMPLES = 3;
 // A preview decrypts the item again, whole: past this size, open it from the output instead.
 const PREVIEW_LIMIT = 50_000_000;
@@ -107,16 +98,11 @@ export function DecryptPanel() {
     recovery.current = null;
   };
 
-  const pickFolder = async (fileList: FileList | null) => {
+  const pickFolder = async (files: PickedFile[]) => {
     reset();
     setOpened(null);
     setFolderError(null);
 
-    // Read when needed, one file at a time: picking the folder loads nothing.
-    const files = Array.from(fileList ?? []).map((file) => ({
-      path: file.webkitRelativePath || file.name,
-      read: async () => new Uint8Array(await file.arrayBuffer()),
-    }));
     try {
       const folder = await openExportFolder(files);
 
@@ -248,45 +234,14 @@ export function DecryptPanel() {
   const decrypted = (outcomes?.length ?? 0) - failed - otherCount;
   const ready = opened !== null && key !== null && progress === null;
 
-  // Before anything is decrypted, the copies' headers say which key each root is
-  // escrowed for: a phrase that opens none of them is said at once, not after the run.
-  const coverage = useMemo(() => {
-    if (!opened || !key) return null;
-
-    let roots = 0;
-    let ours = 0;
-
-    for (const item of opened.items) {
-      if (item.maintenanceKey === undefined) continue;
-
-      roots++;
-
-      try {
-        if (maintenanceKeyIdToFingerprint(readMaintenanceCopyKeyId(base64ToUint8(item.maintenanceKey))) === key.fingerprint) ours++;
-      } catch {
-        // A damaged copy is reported by the run itself.
-      }
-    }
-
-    return roots === 0 ? null : { roots, ours };
-  }, [opened, key]);
+  const coverage = useMemo(() => (opened && key ? copyCoverage(opened.items, key.fingerprint) : null), [opened, key]);
 
   return (
     <div className="mt-panel">
       <section className="mt-step">
         <h2>{t('maintenanceTool.decrypt.folderTitle')}</h2>
         <p className="mt-help">{t('maintenanceTool.decrypt.folderHelp')}</p>
-        <label className="mt-button mt-file">
-          {t('maintenanceTool.decrypt.folderButton')}
-          <input
-            type="file"
-            multiple
-            ref={(input) => {
-              if (input) input.webkitdirectory = true;
-            }}
-            onChange={(event) => void pickFolder(event.target.files)}
-          />
-        </label>
+        <ExportFolderButton label={t('maintenanceTool.decrypt.folderButton')} onPick={(files) => void pickFolder(files)} />
         {opened && (
           <p className="mt-status" role="status">
             {t('maintenanceTool.decrypt.folderSummary', { folder: opened.folder.name, items: opened.items.length, files: opened.folder.fileCount })}
@@ -312,7 +267,6 @@ export function DecryptPanel() {
         <p className="mt-help">{t('maintenanceTool.decrypt.phraseHelp')}</p>
         <PhraseInput idPrefix="mt-decrypt" onKey={setKey} />
         {key && <Fingerprint fingerprint={key.fingerprint} help={t('maintenanceTool.decrypt.fingerprint')} />}
-        {key && <KeyId fingerprint={key.fingerprint} />}
       </section>
 
       <section className="mt-step">
@@ -343,8 +297,9 @@ export function DecryptPanel() {
             {t('maintenanceTool.decrypt.runZip')}
           </button>
         </div>
+        {/* Not a live region: it changes ten times a second, a screen reader would read nothing else. The summary that replaces it is one. */}
         {progress && (
-          <div className="mt-progress" role="status">
+          <div className="mt-progress">
             <progress max={progress.total} value={progress.done} aria-label={t('maintenanceTool.decrypt.runTitle')} />
             <span>
               {t('maintenanceTool.decrypt.running', {

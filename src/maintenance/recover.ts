@@ -41,10 +41,54 @@ export function describeError(error: unknown): string {
 
 class ParentError extends Error {}
 
-class OtherKeyError extends Error {
+/** A root escrowed for another maintenance key than the custodians': `fingerprint` names it. */
+export class OtherKeyError extends Error {
   constructor(readonly fingerprint: string) {
     super(`escrowed for another maintenance key, ${formatDecimalFingerprint(fingerprint)}`);
   }
+}
+
+/** A root's key, out of its escrow copy; a copy made for another key throws OtherKeyError. */
+export async function openRootCopy(key: { secretKey: HybridSecretKey; keyId: Uint8Array }, maintenanceKey: string): Promise<Uint8Array> {
+  const copy = base64ToUint8(maintenanceKey);
+
+  try {
+    return await unwrapMaintenanceKey(key, copy);
+  } catch (error) {
+    if (error instanceof VaultError && error.code === VaultErrorCode.OTHER_MAINTENANCE_KEY) {
+      throw new OtherKeyError(maintenanceKeyIdToFingerprint(readMaintenanceCopyKeyId(copy)));
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * How many roots of an export a key's copies cover, read from the copies' headers
+ * without opening any: a phrase that opens none of them is said before the run.
+ * Null when no root has a readable header.
+ */
+export function copyCoverage(items: ExportItem[], fingerprint: string): { roots: number; ours: number } | null {
+  let roots = 0;
+  let ours = 0;
+
+  for (const item of items) {
+    if (item.maintenanceKey === undefined) continue;
+
+    let itemFingerprint: string;
+
+    try {
+      itemFingerprint = maintenanceKeyIdToFingerprint(readMaintenanceCopyKeyId(base64ToUint8(item.maintenanceKey)));
+    } catch {
+      // A copy without a readable header is neither ours nor another key's: the run reports it as damaged.
+      continue;
+    }
+
+    roots++;
+    if (itemFingerprint === fingerprint) ours++;
+  }
+
+  return roots === 0 ? null : { roots, ours };
 }
 
 /**
@@ -63,19 +107,7 @@ export function createRecovery(key: { secretKey: HybridSecretKey; keyId: Uint8Ar
 
     if (!itemKey) {
       itemKey = (async () => {
-        if (item.maintenanceKey !== undefined) {
-          const copy = base64ToUint8(item.maintenanceKey);
-
-          try {
-            return await unwrapMaintenanceKey(key, copy);
-          } catch (error) {
-            if (error instanceof VaultError && error.code === VaultErrorCode.OTHER_MAINTENANCE_KEY) {
-              throw new OtherKeyError(maintenanceKeyIdToFingerprint(readMaintenanceCopyKeyId(copy)));
-            }
-
-            throw error;
-          }
-        }
+        if (item.maintenanceKey !== undefined) return openRootCopy(key, item.maintenanceKey);
 
         const parentId = idKey(item.parent as string | number);
         const parent = byId.get(parentId);

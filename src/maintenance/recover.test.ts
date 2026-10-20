@@ -128,7 +128,7 @@ describe("another organization's items", () => {
   });
 });
 
-describe('the decrypted export', () => {
+describe('the decrypted copy', () => {
   it('mirrors each line without key material, the plaintext where the ciphertext was', () => {
     const item = { id: 'd', type: 'document', title: 'Notes', maintenanceKey: 'AAAA', content: 'BBBB' } as ExportItem;
     const child = { id: 'f', parent: 'd', wrappedKey: 'CCCC', file: 'att/f' } as ExportItem;

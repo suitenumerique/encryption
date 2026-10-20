@@ -54,8 +54,8 @@ const ids = SAMPLE_IDS;
 export const SAMPLE_FILES = {
   logo: `${ids.report}/attachments/${ids.logo}.png`,
   chart: `${ids.report}/attachments/${ids.chart}.png`,
-  // Drive's own layout: `item/<id>/<file name>`.
-  invoice: `item/${ids.invoice}/facture.png`,
+  // As Drive's export names a file: its item id, never its object key, which ends with the user's file name.
+  invoice: `files/${ids.invoice}`,
   elsewherePhoto: `${ids.elsewhere}/attachments/${ids.elsewherePhoto}.png`,
 };
 

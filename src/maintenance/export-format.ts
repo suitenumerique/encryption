@@ -29,7 +29,7 @@ import '@encryption/src/shared/zod-jitless';
 
 export const MANIFEST_FILE = 'manifest.ndjson';
 
-/** Where the decrypted export puts the items of other keys: `other-keys/<fingerprint>/`, an export folder each. */
+/** Where the decrypted copy puts the items of other keys: `other-keys/<fingerprint>/`, an export folder each. */
 export const OTHER_KEYS_FOLDER = 'other-keys';
 
 // PostgreSQL's encode(..., 'base64') breaks lines every 76 characters; decoding
@@ -57,7 +57,7 @@ const relativePath = z
   .refine((path) => path !== MANIFEST_FILE, `the manifest itself (${MANIFEST_FILE}) cannot be an item's file`)
   .refine(
     (path) => path.split('/')[0].toLowerCase() !== OTHER_KEYS_FOLDER,
-    `${OTHER_KEYS_FOLDER}/ is where the decrypted export sets aside other keys' items`
+    `${OTHER_KEYS_FOLDER}/ is where the decrypted copy sets aside other keys' items`
   );
 
 export const exportItemSchema = z

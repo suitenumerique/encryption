@@ -1,5 +1,5 @@
 /**
- * Where the decrypted export goes, from the best the browser offers to the least:
+ * Where the decrypted copy goes, from the best the browser offers to the least:
  *
  *   - a FOLDER the custodians pick (File System Access API: Chrome, Edge), written
  *     file by file: nothing to unzip, no limit but the disk's;
@@ -155,5 +155,24 @@ export async function zipOutput(): Promise<ZipOutput> {
     archive: async () => new Blob(parts as BlobPart[], { type: 'application/zip' }),
     discard: async () => void parts.splice(0),
     inBrowserStorage: false,
+  };
+}
+
+/**
+ * A manifest alone, in memory, to download: the output of a rotation, which holds
+ * no file and no secret (only copies wrapped for a maintenance key).
+ */
+export function manifestInMemory(): { sink: ExportSink; file(): Blob } {
+  const parts: Uint8Array[] = [];
+
+  return {
+    sink: {
+      writeFile: async (path) => {
+        throw new Error(`a manifest alone has no file: ${path}`);
+      },
+      openManifest: async () => ({ append: async (line) => void parts.push(new TextEncoder().encode(`${line}\n`)), close: async () => undefined }),
+      close: async () => undefined,
+    },
+    file: () => new Blob(parts as BlobPart[], { type: 'application/x-ndjson' }),
   };
 }

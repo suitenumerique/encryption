@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -28,6 +28,12 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
   const [generated, setGenerated] = useState<Generated | null>(null);
   const [copy, setCopy] = useState<CopyState>('idle');
   const [confirming, setConfirming] = useState(false);
+  // The question takes the focus, on its safe answer: a keyboard user hears it, and Enter does not generate by accident.
+  const cancelButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (confirming) cancelButton.current?.focus();
+  }, [confirming]);
 
   useEffect(
     () => () => {
@@ -110,7 +116,7 @@ export function GeneratePanel({ seed }: { seed?: Uint8Array }) {
             >
               {t('maintenanceTool.generate.confirm')}
             </button>
-            <button type="button" className="mt-button" onClick={() => setConfirming(false)}>
+            <button type="button" className="mt-button" ref={cancelButton} onClick={() => setConfirming(false)}>
               {t('maintenanceTool.generate.cancel')}
             </button>
           </div>
