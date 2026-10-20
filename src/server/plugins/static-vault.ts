@@ -15,6 +15,7 @@ function buildVaultConfigBlock(): string {
     allowedOrigins: parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS),
     interfaceOrigin: env.UI_URL,
     deviceInactivityDays: env.VAULT_DEVICE_INACTIVITY_DAYS,
+    ...(env.MAINTENANCE_ESCROW_KEYS?.length ? { maintenanceEscrowPublicKeys: env.MAINTENANCE_ESCROW_KEYS.map((entry) => entry.publicKey) } : {}),
   };
 
   return buildRuntimeConfigBlock(config);

@@ -1,4 +1,11 @@
-import { encryptSymmetricKeyForUsers, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
+import {
+  type HybridPublicKey,
+  type MaintenancePublicKey,
+  encryptSymmetricKeyForUsers,
+  importPublicKeyFromBase64,
+  uint8ToBase64,
+  wrapKeyForMaintenance,
+} from '@encryption/src/crypto';
 import { DOMAIN_KEM_DOCUMENT_KEY } from '@encryption/src/shared/crypto-domains';
 import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/operations/symmetric-key-utils';
 
@@ -20,6 +27,13 @@ import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/oper
  * when provided, resolves the chain from the user's entry-point key down
  * to the target item's key before re-encrypting for the target users.
  *
+ * With a `maintenanceEscrowKey` (the deployment's escrow key covering the
+ * resource's owner, chosen by the message boundary), the resolved key is also
+ * wrapped for it and returned as `maintenanceKey`. An EMPTY recipient list is
+ * valid and yields only that copy: it is how a product backfills the escrow of a
+ * resource created before the deployment enabled it, or before its owner's
+ * domain was covered, at the cost of one unwrap by any current holder.
+ *
  * The raw symmetric key never leaves the vault iframe.
  */
 export async function handleShareKeys(
@@ -28,8 +42,9 @@ export async function handleShareKeys(
     encryptedSymmetricKey: ArrayBuffer;
     userPublicKeys: Record<string, ArrayBuffer>;
     encryptedKeyChain?: ArrayBuffer[];
+    maintenanceEscrowKey?: MaintenancePublicKey | null;
   }
-): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
+): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
   const encryptedKey = new Uint8Array(payload.encryptedSymmetricKey);
 
   let symmetricKey: Uint8Array;
@@ -44,7 +59,7 @@ export async function handleShareKeys(
   }
 
   // Convert ArrayBuffer public keys to internal format
-  const usersPublicKeys: Record<string, import('@encryption/src/crypto').HybridPublicKey> = {};
+  const usersPublicKeys: Record<string, HybridPublicKey> = {};
 
   for (const [uid, keyBuffer] of Object.entries(payload.userPublicKeys)) {
     const base64Key = uint8ToBase64(new Uint8Array(keyBuffer as ArrayBuffer));
@@ -57,6 +72,12 @@ export async function handleShareKeys(
 
   for (const [uid, encKey] of Object.entries(encryptedKeysRaw)) {
     encryptedKeys[uid] = encKey.buffer as ArrayBuffer;
+  }
+
+  if (payload.maintenanceEscrowKey) {
+    const maintenanceKey = await wrapKeyForMaintenance(symmetricKey, payload.maintenanceEscrowKey);
+
+    return { encryptedKeys, maintenanceKey: maintenanceKey.buffer as ArrayBuffer };
   }
 
   return { encryptedKeys };

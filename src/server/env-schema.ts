@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { maintenanceEscrowKeysSchema } from '@encryption/src/server/maintenance-escrow';
 import { parseDeviceInactivityDays } from '@encryption/src/shared/device-inactivity';
 import { isValidOriginEntry, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 
@@ -157,6 +158,22 @@ const envFields = z.object({
         return z.NEVER;
       }
     }),
+  // Optional maintenance escrow (architecture.md, Appendix E): a JSON list of the
+  // operators' X-Wing public keys, each with the email domains whose owners'
+  // resources it escrows (src/server/maintenance-escrow.ts). Validated in full at
+  // boot: a malformed key would otherwise fail every document creation in the
+  // browser, and a domain listed twice would make the choice of key ambiguous.
+  MAINTENANCE_ESCROW_KEYS: z.preprocess((value, ctx) => {
+    if (value === undefined || value === '') return undefined;
+
+    try {
+      return JSON.parse(value as string);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'must be a JSON list of { "domains": [...], "publicKey": "..." }' });
+
+      return z.NEVER;
+    }
+  }, maintenanceEscrowKeysSchema.optional()),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.

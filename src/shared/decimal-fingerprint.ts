@@ -8,27 +8,33 @@
 // the truncation or the encoding below ever changes.
 export const FINGERPRINT_SCHEME = '1';
 
-const FINGERPRINT_BYTES = 16;
+export const FINGERPRINT_BYTES = 16;
 const FINGERPRINT_VALUE_DIGITS = 39;
 
-/**
- * `scheme digit` + the first 128 bits of SHA-256(domain label | 0x00 | key),
- * read big-endian as 39 zero-padded decimal digits: 40 digits in all, groupable
- * in 8 blocks of 5. The domain keeps fingerprints of different kinds of key from
- * ever matching each other.
- */
-export async function computeDecimalFingerprint(domain: string, key: Uint8Array): Promise<string> {
+/** The first 128 bits of SHA-256(domain label | 0x00 | key): the value a fingerprint writes in digits. */
+export async function computeFingerprintBytes(domain: string, key: Uint8Array): Promise<Uint8Array> {
   const label = new TextEncoder().encode(domain);
   const input = new Uint8Array(label.length + 1 + key.length);
   input.set(label, 0);
   input.set(key, label.length + 1);
 
-  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', input)).slice(0, FINGERPRINT_BYTES);
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', input)).slice(0, FINGERPRINT_BYTES);
+}
 
+/** `scheme digit` + the 128 bits read big-endian as 39 zero-padded decimal digits. */
+export function fingerprintBytesToDecimal(bytes: Uint8Array): string {
   let n = 0n;
-  for (const b of hash) n = (n << 8n) | BigInt(b);
+  for (const b of bytes) n = (n << 8n) | BigInt(b);
 
   return `${FINGERPRINT_SCHEME}${n.toString().padStart(FINGERPRINT_VALUE_DIGITS, '0')}`;
+}
+
+/**
+ * 40 digits in all, groupable in 8 blocks of 5. The domain keeps fingerprints of
+ * different kinds of key from ever matching each other.
+ */
+export async function computeDecimalFingerprint(domain: string, key: Uint8Array): Promise<string> {
+  return fingerprintBytesToDecimal(await computeFingerprintBytes(domain, key));
 }
 
 // Group the decimal fingerprint in blocks of five for readable display.

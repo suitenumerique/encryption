@@ -42,6 +42,8 @@ export const DOMAIN_KEY_POSSESSION_KEY = 'lasuite-encryption/key-possession-key/
 // match an identity, and the other way round.
 export const DOMAIN_IDENTITY_FINGERPRINT = 'lasuite-encryption/identity-fingerprint/v1';
 export const DOMAIN_DEVICE_PAIRING_FINGERPRINT = 'lasuite-encryption/device-pairing-fingerprint/v1';
+// The maintenance escrow key, compared by its custodians against the server's boot log.
+export const DOMAIN_MAINTENANCE_KEY_FINGERPRINT = 'lasuite-encryption/maintenance-key-fingerprint/v1';
 
 // Associated data of AEAD ciphertexts. All but the device cache (WebCrypto
 // AES-GCM) go through `encryptContent`, which only takes an `AeadDomain`.
@@ -50,6 +52,9 @@ export const DOMAIN_WRAPPED_KEY = 'lasuite-encryption/wrapped-key/v1';
 export const DOMAIN_KEM_DOCUMENT_KEY = 'lasuite-encryption/kem-document-key/v1';
 export const DOMAIN_KEM_DEVICE_BOOTSTRAP = 'lasuite-encryption/kem-device-bootstrap/v1';
 export const DOMAIN_KEM_EMERGENCY_CAPSULE = 'lasuite-encryption/kem-emergency-capsule/v1';
+// A resource key wrapped for the deployment's maintenance escrow key, apart from a
+// user's copy so that neither can ever be accepted as the other.
+export const DOMAIN_KEM_MAINTENANCE_KEY = 'lasuite-encryption/kem-maintenance-key/v1';
 export const DOMAIN_VAULT_ITEM = 'lasuite-encryption/vault-item/v1';
 export const DOMAIN_VRK_WRAP = 'lasuite-encryption/vrk-wrap/v1';
 export const DOMAIN_DEVICE_VRK = 'lasuite-encryption/device-vrk/v1';
@@ -63,10 +68,15 @@ export type AeadDomain =
   | typeof DOMAIN_VRK_WRAP
   | typeof DOMAIN_KEM_DOCUMENT_KEY
   | typeof DOMAIN_KEM_DEVICE_BOOTSTRAP
-  | typeof DOMAIN_KEM_EMERGENCY_CAPSULE;
+  | typeof DOMAIN_KEM_EMERGENCY_CAPSULE
+  | typeof DOMAIN_KEM_MAINTENANCE_KEY;
 
 // The subset that names what an X-Wing wrap carries.
-export type KemWrapDomain = typeof DOMAIN_KEM_DOCUMENT_KEY | typeof DOMAIN_KEM_DEVICE_BOOTSTRAP | typeof DOMAIN_KEM_EMERGENCY_CAPSULE;
+export type KemWrapDomain =
+  | typeof DOMAIN_KEM_DOCUMENT_KEY
+  | typeof DOMAIN_KEM_DEVICE_BOOTSTRAP
+  | typeof DOMAIN_KEM_EMERGENCY_CAPSULE
+  | typeof DOMAIN_KEM_MAINTENANCE_KEY;
 
 // The labels `deriveSubkey` accepts.
 export type SubkeyDomain = typeof DOMAIN_VAULT_AUTH_SEED | typeof DOMAIN_VRK_WRAP_KEY | typeof DOMAIN_KEM_WRAP_KEY | typeof DOMAIN_KEY_POSSESSION_KEY;

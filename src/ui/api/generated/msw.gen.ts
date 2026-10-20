@@ -9,6 +9,7 @@ import type {
   GetApiEmergencyAccessPendingResponses,
   GetApiEmergencyAccessSearchResponses,
   GetApiEmergencyAccessTrustedResponses,
+  GetApiMaintenanceEscrowAssignmentResponses,
   GetApiPublicKeysByUserIdContinuityResponses,
   GetApiPublicKeysByUserIdResponses,
   GetApiPublicKeysNextResponses,
@@ -368,6 +369,40 @@ export function handlePostApiPublicKeysRegisterComplete(
 ): HttpHandler {
   return http.post<never, PostApiPublicKeysRegisterCompleteData['body']>(
     `${options?.baseUrl ?? '*'}/api/public-keys/register/complete`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiMaintenanceEscrowAssignmentResponse = {
+  body: GetApiMaintenanceEscrowAssignmentResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/maintenance-escrow/assignment` operation.
+ */
+export function handleGetApiMaintenanceEscrowAssignment(
+  response?: HandleGetApiMaintenanceEscrowAssignmentResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/maintenance-escrow/assignment`,
     (info) => {
       if (typeof response === 'function') {
         return response(info);
@@ -1442,6 +1477,10 @@ export type MswHandlerFactories = {
    */
   postApiPublicKeysRegisterComplete: typeof handlePostApiPublicKeysRegisterComplete;
   /**
+   * Handler for the `GET /api/maintenance-escrow/assignment` operation.
+   */
+  getApiMaintenanceEscrowAssignment: typeof handleGetApiMaintenanceEscrowAssignment;
+  /**
    * Handler for the `GET /api/vault/meta` operation.
    */
   getApiVaultMeta: typeof handleGetApiVaultMeta;
@@ -1571,6 +1610,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     getApiPublicKeysNext: wrap(handleGetApiPublicKeysNext),
     postApiPublicKeysRegisterInit: wrap(handlePostApiPublicKeysRegisterInit),
     postApiPublicKeysRegisterComplete: wrap(handlePostApiPublicKeysRegisterComplete),
+    getApiMaintenanceEscrowAssignment: wrap(handleGetApiMaintenanceEscrowAssignment),
     getApiVaultMeta: wrap(handleGetApiVaultMeta),
     getApiVaultRevision: wrap(handleGetApiVaultRevision),
     getApiVaultItems: wrap(handleGetApiVaultItems),
@@ -1621,6 +1661,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
       invoke(pick.postApiAuthToken, overrides.postApiAuthToken),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),
+      invoke(pick.getApiMaintenanceEscrowAssignment, overrides.getApiMaintenanceEscrowAssignment),
       invoke(pick.getApiVaultMeta, overrides.getApiVaultMeta),
       invoke(pick.getApiVaultRevision, overrides.getApiVaultRevision),
       invoke(pick.getApiVaultItems, overrides.getApiVaultItems),

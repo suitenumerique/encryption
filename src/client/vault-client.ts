@@ -352,13 +352,21 @@ export class VaultClient {
    * Use this for standalone encrypted files (no parent) and for the root
    * folder of an encrypted subtree.
    *
-   * @returns encryptedContent and encryptedKeys (userId → wrappedKey)
+   * When the deployment runs the maintenance escrow, the result also carries
+   * `maintenanceKey`: the same key wrapped for the maintenance key covering the
+   * current user's email domain (the creator owns the resource). Persist it on the
+   * resource whenever it is present (a nullable column next to the ciphertext);
+   * never treat it as a recipient. It is absent otherwise, including for a user
+   * no configured key covers.
+   *
+   * @returns encryptedContent, encryptedKeys (userId → wrappedKey) and, when
+   *   configured, maintenanceKey
    */
   async encryptWithoutKey(
     data: ArrayBuffer,
     recipients: Record<string, RecipientLabel>,
     options?: { optimizeMemory?: boolean }
-  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     return this.withRecipientVerification(recipients, (isFinalAttempt) =>
       this.encryptWithoutKeyRequest(data, Object.keys(recipients), options, isFinalAttempt)
     );
@@ -369,7 +377,7 @@ export class VaultClient {
     recipientSubs: string[],
     options: { optimizeMemory?: boolean } | undefined,
     allowTransfer: boolean
-  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     const optimize = options?.optimizeMemory === true;
     // Transferring `data` detaches it, so only do it on the FINAL attempt: an
     // auto-verify retry needs the buffer intact if the first attempt is refused
@@ -379,6 +387,7 @@ export class VaultClient {
     return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientSubs, optimizeMemory: optimize }, transferables)) as {
       encryptedContent: ArrayBuffer;
       encryptedKeys: Record<string, ArrayBuffer>;
+      maintenanceKey?: ArrayBuffer;
     };
   }
 
@@ -593,29 +602,48 @@ export class VaultClient {
    * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
    *   When provided, resolves the chain from entry point to the target item's key
    *   before re-encrypting for the target users.
-   * @returns encryptedKeys - Record of userId → ArrayBuffer encrypted symmetric key for each user
+   * @param ownerSub - the OIDC sub of the resource's owner (its creator, say), whose
+   *   email domain decides the maintenance key; the current user when omitted.
+   *   Pass it whenever the sharer may not be the owner, or the copy would follow
+   *   the sharer's organization.
+   * @returns encryptedKeys - Record of userId → ArrayBuffer encrypted symmetric key for each user,
+   *   plus `maintenanceKey` when the deployment runs the maintenance escrow and a
+   *   configured key covers the owner (persist it on the resource, replacing any
+   *   previous value: the bytes differ on every wrap, the key behind them only when
+   *   the owner's coverage changed). An empty `recipients` map is valid and returns
+   *   only that copy: use it to backfill a resource that predates the escrow, or the
+   *   coverage of its owner's domain, from any current holder.
    */
   async shareKeys(
     encryptedSymmetricKey: ArrayBuffer,
     recipients: Record<string, RecipientLabel>,
-    encryptedKeyChain?: ArrayBuffer[]
-  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
-    return this.withRecipientVerification(recipients, () => this.shareKeysRequest(encryptedSymmetricKey, Object.keys(recipients), encryptedKeyChain));
+    encryptedKeyChain?: ArrayBuffer[],
+    ownerSub?: string
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
+    return this.withRecipientVerification(recipients, () =>
+      this.shareKeysRequest(encryptedSymmetricKey, Object.keys(recipients), encryptedKeyChain, ownerSub)
+    );
   }
 
   private async shareKeysRequest(
     encryptedSymmetricKey: ArrayBuffer,
     recipientSubs: string[],
-    encryptedKeyChain?: ArrayBuffer[]
-  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer> }> {
+    encryptedKeyChain?: ArrayBuffer[],
+    ownerSub?: string
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
     const payload: Record<string, unknown> = { encryptedSymmetricKey, recipientSubs };
 
     if (encryptedKeyChain) {
       payload.encryptedKeyChain = encryptedKeyChain;
     }
 
+    if (ownerSub) {
+      payload.ownerSub = ownerSub;
+    }
+
     return (await this.vaultRequest(MSG_VAULT_SHARE_KEYS, payload)) as {
       encryptedKeys: Record<string, ArrayBuffer>;
+      maintenanceKey?: ArrayBuffer;
     };
   }
 

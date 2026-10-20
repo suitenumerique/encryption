@@ -36,6 +36,7 @@ interface DemoDocument {
   encryptedContent: string; // base64 ciphertext
   encryptedKeys: Record<string, string>; // userId -> base64 wrapped symmetric key
   keyVersions: Record<string, number>; // userId -> encryption-key version their copy is wrapped to
+  maintenanceKey?: string; // base64 copy for the deployment's maintenance escrow key, when configured
   createdBy: string; // demo username of the author
   createdAtMillis: number;
   sharedWith: SharedAccess[];
@@ -115,7 +116,7 @@ export async function demoRoute(app: FastifyInstance) {
   // and sends the merged access list + wrapped-key map.
   app.put<{
     Params: { id: string };
-    Body: { sharedWith: SharedAccess[]; encryptedKeys: Record<string, string>; keyVersions: Record<string, number> };
+    Body: { sharedWith: SharedAccess[]; encryptedKeys: Record<string, string>; keyVersions: Record<string, number>; maintenanceKey?: string };
   }>('/api/demo/documents/:id', async (request, reply) => {
     const existing = documents.get(request.params.id);
 
@@ -128,6 +129,7 @@ export async function demoRoute(app: FastifyInstance) {
     existing.sharedWith = request.body.sharedWith;
     existing.encryptedKeys = request.body.encryptedKeys;
     existing.keyVersions = request.body.keyVersions;
+    if (request.body.maintenanceKey) existing.maintenanceKey = request.body.maintenanceKey;
     broadcast(existing.product);
 
     return existing;

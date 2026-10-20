@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
+import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
 import { envSchema } from '@encryption/src/server/env-schema';
 
 describe('ALLOWED_FRAME_ANCESTORS', () => {
@@ -77,5 +78,33 @@ describe('OIDC name claims', () => {
 
   it('refuses a configuration that leaves no way to a last name', () => {
     expect(issuesFor({ OIDC_CLAIMS_LAST_NAME: '', OIDC_CLAIMS_FULL_NAME: '' })).toEqual(['OIDC_CLAIMS_LAST_NAME']);
+  });
+});
+
+describe('MAINTENANCE_ESCROW_KEYS', () => {
+  const parse = (value: string | undefined) => envSchema.shape.MAINTENANCE_ESCROW_KEYS.safeParse(value);
+
+  it('is unset when absent or empty', () => {
+    expect(parse(undefined).data).toBeUndefined();
+    expect(parse('').data).toBeUndefined();
+  });
+
+  it('reads the JSON list, domains lowercased, and refuses at boot a malformed key, domain or document', async () => {
+    const key = exportPublicKeyAsBase64((await generateUserKeyPair()).publicKey);
+
+    expect(parse(JSON.stringify([{ domains: ['Agriculture.GOUV.fr', '*'], publicKey: key }])).data).toEqual([
+      { domains: ['agriculture.gouv.fr', '*'], publicKey: key },
+    ]);
+
+    for (const value of [
+      'not json',
+      JSON.stringify({ domains: ['*'], publicKey: key }),
+      JSON.stringify([{ domains: ['*'], publicKey: 'AAAA' }]),
+      JSON.stringify([{ domains: [], publicKey: key }]),
+      JSON.stringify([{ domains: ['user@agriculture.gouv.fr'], publicKey: key }]),
+      JSON.stringify([{ domains: ['monéquipe.gouv.fr'], publicKey: key }]),
+    ]) {
+      expect(parse(value).success, value).toBe(false);
+    }
   });
 });

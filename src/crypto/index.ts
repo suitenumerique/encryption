@@ -49,3 +49,21 @@ export {
   verifyKeyRegistration,
   verifyIdentityContinuity,
 } from '@encryption/src/crypto/key-registration';
+
+export {
+  MAINTENANCE_PUBLIC_KEY_WIRE_BYTES,
+  type MaintenanceKeyPair,
+  type MaintenancePublicKey,
+  parseMaintenancePublicKey,
+  importMaintenancePublicKey,
+  computeMaintenanceKeyId,
+  maintenanceKeyIdToFingerprint,
+  readMaintenanceCopyKeyId,
+  wrapKeyForMaintenance,
+  unwrapMaintenanceKey,
+  maintenanceKeyPairFromSeed,
+  generateMaintenancePhrase,
+  maintenanceKeyPairFromPhrase,
+  exportMaintenancePublicKey,
+  computeMaintenanceKeyFingerprint,
+} from '@encryption/src/crypto/maintenance-escrow';

@@ -1,4 +1,13 @@
-import { encryptContent, encryptSymmetricKeyForUsers, generateSymmetricKey, importPublicKeyFromBase64, uint8ToBase64 } from '@encryption/src/crypto';
+import {
+  type HybridPublicKey,
+  type MaintenancePublicKey,
+  encryptContent,
+  encryptSymmetricKeyForUsers,
+  generateSymmetricKey,
+  importPublicKeyFromBase64,
+  uint8ToBase64,
+  wrapKeyForMaintenance,
+} from '@encryption/src/crypto';
 import { DOMAIN_CONTENT, DOMAIN_KEM_DOCUMENT_KEY, DOMAIN_WRAPPED_KEY } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getStoredKeyPair } from '@encryption/src/vault/operations/key-management';
@@ -68,11 +77,16 @@ export async function handleEncryptWithKey(
  * Used for standalone encrypted files (no parent) and for the root folder
  * of an encrypted subtree. Callers persist each returned wrapped key on the
  * matching user's access row.
+ *
+ * With a `maintenanceEscrowKey` (the deployment's escrow key covering the
+ * creator, chosen by the message boundary, never by a product), K_new is also
+ * wrapped for it and returned as `maintenanceKey`, which the caller persists on
+ * the resource.
  */
 export async function handleEncryptWithoutKey(
   userId: string,
-  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer> }
-): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer> }> {
+  payload: { data: ArrayBuffer; userPublicKeys: Record<string, ArrayBuffer>; maintenanceEscrowKey?: MaintenancePublicKey | null }
+): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
   const pair = await getStoredKeyPair(userId);
 
   if (!pair) {
@@ -81,7 +95,7 @@ export async function handleEncryptWithoutKey(
 
   const { newKey, encryptedContent } = await mintKeyAndEncrypt(payload.data);
 
-  const usersPublicKeys: Record<string, import('@encryption/src/crypto').HybridPublicKey> = {};
+  const usersPublicKeys: Record<string, HybridPublicKey> = {};
 
   for (const [uid, keyBuffer] of Object.entries(payload.userPublicKeys)) {
     const base64Key = uint8ToBase64(new Uint8Array(keyBuffer));
@@ -93,6 +107,12 @@ export async function handleEncryptWithoutKey(
 
   for (const [uid, encKey] of Object.entries(encryptedKeysRaw)) {
     encryptedKeys[uid] = encKey.buffer as ArrayBuffer;
+  }
+
+  if (payload.maintenanceEscrowKey) {
+    const maintenanceKey = await wrapKeyForMaintenance(newKey, payload.maintenanceEscrowKey);
+
+    return { encryptedContent, encryptedKeys, maintenanceKey: maintenanceKey.buffer as ArrayBuffer };
   }
 
   return { encryptedContent, encryptedKeys };

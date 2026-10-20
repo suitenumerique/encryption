@@ -22,7 +22,16 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+          exclude: ['src/maintenance/tool/built-tool.test.ts'], // Opens the built file in a real browser: its own project, run after a build.
           globalSetup: ['./vitest.global-setup.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'maintenance-tool',
+          include: ['src/maintenance/tool/built-tool.test.ts'],
+          testTimeout: 60_000,
         },
       },
       {

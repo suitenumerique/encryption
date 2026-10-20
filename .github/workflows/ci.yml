@@ -176,6 +176,9 @@ jobs:
       - name: Test end-to-end
         run: npm run test:e2e:headless -- --max-workers $(nproc)
 
+      - name: Test the maintenance tool
+        run: npm run test:maintenance-tool
+
   chromatic:
     name: Publish Storybook
     # Pull requests to review visual changes, and the CI branch whose builds are the baselines

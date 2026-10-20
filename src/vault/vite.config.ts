@@ -23,6 +23,13 @@ function injectRuntimeConfig(): Plugin {
           .filter(Boolean),
         interfaceOrigin: process.env.UI_URL ?? '',
         deviceInactivityDays: parseDeviceInactivityDays(process.env.VAULT_DEVICE_INACTIVITY_DAYS),
+        ...(process.env.MAINTENANCE_ESCROW_KEYS
+          ? {
+              maintenanceEscrowPublicKeys: (JSON.parse(process.env.MAINTENANCE_ESCROW_KEYS) as { publicKey: string }[]).map(
+                (entry) => entry.publicKey
+              ),
+            }
+          : {}),
       };
       const block = buildRuntimeConfigBlock(config);
 
