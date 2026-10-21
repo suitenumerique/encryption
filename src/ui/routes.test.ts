@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PATH_FOR_ROUTE, getRouteFromPath } from '@encryption/src/ui/routes';
+import { PATH_FOR_ROUTE, getRouteFromPath, getSettingsSectionFromPath } from '@encryption/src/ui/routes';
 
 describe('interface routes', () => {
   it('maps /verify-recipients to the verify-recipients route', () => {
@@ -35,5 +35,17 @@ describe('interface routes', () => {
 
   it('exposes a navigable path for emergency-access', () => {
     expect(PATH_FOR_ROUTE['emergency-access']).toBe('/emergency-access');
+  });
+
+  it('maps a settings section to the settings route and its section', () => {
+    expect(getRouteFromPath('/settings/manage')).toBe('settings');
+    expect(getSettingsSectionFromPath('/settings/manage')).toBe('manage');
+    expect(getSettingsSectionFromPath('/settings/trusted-contacts')).toBe('trusted-contacts');
+    expect(getSettingsSectionFromPath('/settings')).toBeNull();
+  });
+
+  it('refuses an unknown settings section', () => {
+    expect(getRouteFromPath('/settings/nope')).toBeNull();
+    expect(getSettingsSectionFromPath('/settings/nope')).toBeNull();
   });
 });

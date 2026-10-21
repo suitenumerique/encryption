@@ -2,7 +2,7 @@ import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
-import { playFindButton, playFindDialog } from '@encryption/.storybook/testing';
+import { playFindButton, playFindDialog, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import {
@@ -47,9 +47,11 @@ export default {
 
 const Template: StoryFn<ComponentType> = (args) => <EmergencyAccess {...args} />;
 
+// Opened on its own, as a product's account page does (settings section
+// "trusted-contacts"): no way back. `FromSettingsHome` is the screen reached from
+// the interface's own encryption home.
 const baseArgs = {
   getIdToken: async () => 'mock-jwt-token',
-  onBack: () => console.log('onBack'),
   onClose: () => console.log('onClose'),
 };
 
@@ -109,10 +111,23 @@ WithContactsStory.play = async ({ canvasElement }) => {
   expect(canvas.queryByText(i18n.t('emergency.trusted_empty'))).toBeNull();
   expect(canvas.queryByText(i18n.t('emergency.status_invited'))).toBeNull();
   canvas.getByText(i18n.t('emergency.granted_empty'));
+  expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
   await playExpectRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
 };
 
 export const WithContacts = prepareStory(WithContactsStory);
+
+// Reached from the interface's own encryption home: a way back to it.
+const WithContactsFromSettingsHomeStory = Template.bind({});
+WithContactsFromSettingsHomeStory.args = { ...baseArgs, onBack: () => console.log('onBack') };
+WithContactsFromSettingsHomeStory.parameters = WithContactsStory.parameters;
+WithContactsFromSettingsHomeStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('emergency.title'));
+  await within(canvasElement).findByText(trustedContact.grantee_email);
+  await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
+};
+
+export const WithContactsFromSettingsHome = prepareStory(WithContactsFromSettingsHomeStory);
 
 // A contact whose running request will auto-approve once the wait elapses: a
 // live countdown, and the grantor's chance to refuse.

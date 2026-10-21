@@ -31,7 +31,7 @@ import { ModalSizeProvider } from '@encryption/src/ui/hooks/useModalSize';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
 import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
-import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
+import { PATH_FOR_ROUTE, type Route, getRouteFromPath, getSettingsSectionFromPath } from '@encryption/src/ui/routes';
 import { runtimeConfig } from '@encryption/src/ui/runtime-config';
 import { resolveThemeName } from '@encryption/src/ui/theme';
 
@@ -371,6 +371,7 @@ function InterfaceScreens({
   // Lets a screen (e.g. settings) push into device-approval in place without a
   // real navigation, then return to where it was.
   const activeRoute = routeOverride ?? route;
+  const settingsSection = route === 'settings' ? getSettingsSectionFromPath(window.location.pathname) : null;
 
   // Who the ID token is for, as the provider described them at sign-in.
   const userInfo = useMemo<UserInfo | null>(
@@ -472,6 +473,46 @@ function InterfaceScreens({
     return frameGate(<LoadingScreen />);
   }
 
+  // Opened over another screen (settings home, onboarding), a flow comes back to
+  // it; opened on its own (its route, or a product's settings section), it closes
+  // the interface when done.
+  const overlaid = routeOverride !== null;
+
+  function emergencyAccess(direct: boolean) {
+    return (
+      <EmergencyAccess
+        getIdToken={getValidIdToken}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+        onReconnect={oidcAuth.requestAuth}
+        isAuthenticating={oidcAuth.isAuthenticating}
+        currentIdToken={oidcAuth.idToken}
+        emergencyPending={parentContext.emergencyPending}
+      />
+    );
+  }
+
+  function deviceApproval(direct: boolean) {
+    return (
+      <DeviceApproval
+        getIdToken={getValidIdToken}
+        onReconnect={oidcAuth.requestAuth}
+        isAuthenticating={oidcAuth.isAuthenticating}
+        currentIdToken={oidcAuth.idToken}
+        onAdopted={() => {
+          notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
+
+          // Real navigation: the vault now has keys here, so the base route is
+          // settings from now on (URL included, so a refresh stays put). The
+          // approval overlay stays until the user dismisses its success screen.
+          if (!direct) navigate('settings');
+        }}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+      />
+    );
+  }
+
   switch (activeRoute) {
     case 'onboarding':
       return (
@@ -536,12 +577,18 @@ function InterfaceScreens({
         />
       );
 
-    case 'settings':
+    case 'settings': {
+      // A product's account page opens one flow at a time; the trusted contacts and
+      // the device pairing are screens of their own, the rest belongs to settings.
+      if (settingsSection === 'add-device') return deviceApproval(true);
+      if (settingsSection === 'trusted-contacts') return emergencyAccess(true);
+
       return (
         <EncryptionSettings
           userInfo={userInfo}
           userId={internalUserId}
           getIdToken={getValidIdToken}
+          section={settingsSection}
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
           onSetUp={() => navigate('onboarding')}
@@ -552,39 +599,13 @@ function InterfaceScreens({
           currentIdToken={oidcAuth.idToken}
         />
       );
+    }
 
     case 'emergency-access':
-      return (
-        <EmergencyAccess
-          getIdToken={getValidIdToken}
-          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
-          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
-          onReconnect={oidcAuth.requestAuth}
-          isAuthenticating={oidcAuth.isAuthenticating}
-          currentIdToken={oidcAuth.idToken}
-          emergencyPending={parentContext.emergencyPending}
-        />
-      );
+      return emergencyAccess(false);
 
     case 'device-approval':
-      return (
-        <DeviceApproval
-          getIdToken={getValidIdToken}
-          onReconnect={oidcAuth.requestAuth}
-          isAuthenticating={oidcAuth.isAuthenticating}
-          currentIdToken={oidcAuth.idToken}
-          onAdopted={() => {
-            notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
-
-            // Real navigation: the vault now has keys here, so the base route is
-            // settings from now on (URL included, so a refresh stays put). The
-            // approval overlay stays until the user dismisses its success screen.
-            navigate('settings');
-          }}
-          onBack={routeOverride ? () => setRouteOverride(null) : undefined}
-          onClose={routeOverride ? () => setRouteOverride(null) : handleClose}
-        />
-      );
+      return deviceApproval(false);
 
     case 'verify-recipients':
       return (

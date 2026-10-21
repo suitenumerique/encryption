@@ -31,7 +31,7 @@ import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
-/** The flows of this screen that can be opened on their own, without the home. */
+/** The flows of this screen a product can open on their own (see SettingsSection). */
 export type EncryptionSettingsSection = 'manage' | 'verification-code' | 'recovery-phrase';
 
 type View = 'home' | EncryptionSettingsSection;
@@ -42,7 +42,10 @@ interface EncryptionSettingsProps {
   userInfo?: UserInfo | null;
   userId?: string | null;
   getIdToken: () => Promise<string | null>;
-  /** Opened for one flow: that flow is shown alone, without the home, and closes the interface once it ends. */
+  /**
+   * Opened for one flow from a product's own account page: that flow is shown
+   * alone, without the home, and closes the interface once it ends.
+   */
   section?: EncryptionSettingsSection | null;
   onClose: () => void;
   onKeysDestroyed: () => void;

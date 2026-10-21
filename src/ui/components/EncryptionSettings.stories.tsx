@@ -156,6 +156,8 @@ ManageStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
 
   await playFindHeading(canvasElement, i18n.t('settings.manage_title'));
+  // Opened on its own: no way back to a home that was never shown.
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
   await expect(await playFindButton(canvasElement, i18n.t('settings.turn_off_button'))).toBeDisabled();
   await userEvent.click(await canvas.findByText(i18n.t('onboarding.i_understand')));
   await expect(await playFindButton(canvasElement, i18n.t('settings.turn_off_button'))).toBeEnabled();
@@ -244,6 +246,8 @@ RecoveryPhraseStory.parameters = { msw: { handlers: [directoryInSync] } };
 RecoveryPhraseStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('settings.change_phrase'));
   await within(canvasElement).findByText(i18n.t('settings.change_phrase_warning'));
+  // Opened on its own: no way back to a home that was never shown.
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
 };
 
 export const RecoveryPhrase = prepareStory(RecoveryPhraseStory);

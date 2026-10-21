@@ -31,11 +31,15 @@ export default {
 
 const Template: StoryFn<ComponentType> = (args) => <DeviceApproval {...args} />;
 
+// The approving side opens on its own, as a product's account page does (settings
+// section "add-device"): no way back. The new device is reached from the
+// onboarding ("Use another device"), and goes back to it.
 const baseArgs = {
   getIdToken: async () => 'mock-jwt-token',
-  onBack: () => console.log('onBack'),
   onClose: () => console.log('onClose'),
 };
+
+const fromOnboardingArgs = { ...baseArgs, onBack: () => console.log('onBack') };
 
 // A failing `getUserMedia` silently drops the component to the manual screen, so
 // the camera is pinned rather than left to the machine opening Storybook.
@@ -111,7 +115,7 @@ async function fillPairingCode(canvasElement: HTMLElement, digits: string) {
 }
 
 const NewDeviceStory = Template.bind({});
-NewDeviceStory.args = { ...baseArgs };
+NewDeviceStory.args = { ...fromOnboardingArgs };
 NewDeviceStory.parameters = {
   encryption: {
     hasKeys: async () => ({ hasKeys: false }),
@@ -135,7 +139,7 @@ NewDeviceStory.play = async ({ canvasElement }) => {
 export const NewDevice = prepareStory(NewDeviceStory);
 
 const NewDeviceCodeRevealedStory = Template.bind({});
-NewDeviceCodeRevealedStory.args = { ...baseArgs };
+NewDeviceCodeRevealedStory.args = { ...fromOnboardingArgs };
 NewDeviceCodeRevealedStory.parameters = NewDeviceStory.parameters;
 NewDeviceCodeRevealedStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.show_code')));
@@ -148,7 +152,7 @@ NewDeviceCodeRevealedStory.play = async ({ canvasElement }) => {
 export const NewDeviceCodeRevealed = prepareStory(NewDeviceCodeRevealedStory);
 
 const NewDeviceAdoptedStory = Template.bind({});
-NewDeviceAdoptedStory.args = { ...baseArgs };
+NewDeviceAdoptedStory.args = { ...fromOnboardingArgs };
 NewDeviceAdoptedStory.parameters = {
   encryption: {
     hasKeys: async () => ({ hasKeys: false }),
@@ -170,7 +174,7 @@ NewDeviceAdoptedStory.play = async ({ canvasElement }) => {
 export const NewDeviceAdopted = prepareStory(NewDeviceAdoptedStory);
 
 const ErroredStory = Template.bind({});
-ErroredStory.args = { ...baseArgs };
+ErroredStory.args = { ...fromOnboardingArgs };
 ErroredStory.parameters = {
   encryption: {
     hasKeys: async () => ({ hasKeys: false }),
@@ -201,9 +205,22 @@ EnrolledDeviceStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead'));
   expect(canvas.queryByLabelText('code group 1')).toBeNull();
   expect(canvas.queryByRole('button', { name: i18n.t('device_approval.btn_approve') })).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
 };
 
 export const EnrolledDevice = prepareStory(EnrolledDeviceStory);
+
+// Reached from the interface's own encryption home: a way back to it.
+const EnrolledDeviceFromSettingsHomeStory = Template.bind({});
+EnrolledDeviceFromSettingsHomeStory.args = { ...baseArgs, onBack: () => console.log('onBack') };
+EnrolledDeviceFromSettingsHomeStory.decorators = [withCamera(true)];
+EnrolledDeviceFromSettingsHomeStory.parameters = EnrolledDeviceStory.parameters;
+EnrolledDeviceFromSettingsHomeStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_title'));
+  await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
+};
+
+export const EnrolledDeviceFromSettingsHome = prepareStory(EnrolledDeviceFromSettingsHomeStory);
 
 const EnrolledDeviceManualEntryStory = Template.bind({});
 EnrolledDeviceManualEntryStory.args = { ...baseArgs };

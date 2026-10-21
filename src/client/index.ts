@@ -10,7 +10,9 @@ export type {
   AuthContext,
   EncryptionClientEventMap,
   EncryptionClientOptions,
+  EncryptionStatus,
   RecipientLabel,
   RegisteredUser,
+  SettingsSection,
 } from '@encryption/src/client/vault-client';
 export type { DeEnrollment, HasKeysResult } from '@encryption/src/shared/has-keys';
