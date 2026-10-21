@@ -1,4 +1,4 @@
-import { Alert, Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,7 +13,7 @@ import { SessionExpiredError } from '@encryption/src/ui/auth/session-expired';
 import { TrustRefuseButtons, recipientLabel } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
-import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import {
   type FingerprintCheckResult,
@@ -244,7 +244,7 @@ export function VerifyRecipients({
           banner={
             <>
               {banner}
-              {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+              {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
             </>
           }
           actions={

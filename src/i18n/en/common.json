@@ -540,7 +540,7 @@
     "explanation_many": "The encryption identity of these people changed, or you refused it before. Verify each one before sharing."
   },
   "profile": {
-    "title": "Encryption Identity",
+    "title": "Encryption identity",
     "decision_trusted": "Trusted",
     "decision_refused": "Refused",
     "decision_changed": "Identity changed",

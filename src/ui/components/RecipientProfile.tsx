@@ -1,4 +1,4 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,7 +13,7 @@ import { SessionExpiredError } from '@encryption/src/ui/auth/session-expired';
 import { TrustRefuseButtons, recipientLabel } from '@encryption/src/ui/components/RecipientFingerprintControls';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
-import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
@@ -35,7 +35,7 @@ type Decision = 'unknown' | 'trusted' | 'refused';
 type Standing = Decision | 'changed';
 
 /**
- * Per-recipient "Encryption Identity" card, opened explicitly by the product
+ * Per-recipient "Encryption identity" card, opened explicitly by the product
  * (e.g. clicking a person in its share UI). Shows who the recipient is
  * (avatar + product-supplied name/email), their 40-digit identity fingerprint
  * from the registry for out-of-band comparison, and Trust / Don't trust
@@ -137,7 +137,7 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
       banner={
         <>
           {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
-          {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+          {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
         </>
       }
       actions={
@@ -186,7 +186,8 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
         />
       ) : (
         <>
-          <IdentityCard name={primary} secondary={secondary} />
+          {/* No one to describe when the product passed no recipient. */}
+          {userId && <IdentityCard name={primary} secondary={secondary} />}
           <p className={styles.hint}>{t('profile.no_key')}</p>
         </>
       )}
