@@ -1,6 +1,8 @@
 import { Meta, StoryFn } from '@storybook/react';
+import { expect, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
+import { playFindHeading } from '@encryption/.storybook/testing';
 import { DocsLayout } from '@encryption/src/ui/docs/DocsLayout';
 
 type ComponentType = typeof DocsLayout;
@@ -31,6 +33,14 @@ NormalStory.args = {
       </ul>
     </>
   ),
+};
+// The children sit inside the styled container, so the documentation rules apply to them.
+NormalStory.play = async ({ canvasElement }) => {
+  const title = await playFindHeading(canvasElement, 'Page title');
+  expect(title.tagName).toBe('H1');
+  expect(title.closest('.docs-content')).not.toBeNull();
+  await playFindHeading(canvasElement, 'Section title');
+  expect(within(canvasElement).getAllByRole('listitem')).toHaveLength(2);
 };
 
 export const Normal = prepareStory(NormalStory);
