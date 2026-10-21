@@ -1,4 +1,6 @@
 import '@fontsource-variable/inter';
+import '@fontsource-variable/roboto-flex';
+import '@gouvfr-lasuite/ui-components/fonts/marianne';
 import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import '@gouvfr-lasuite/ui-components/style';
 import { StrictMode } from 'react';
@@ -9,7 +11,7 @@ import { App } from '@encryption/src/ui/App';
 import { applyBrandFont } from '@encryption/src/ui/brand-font';
 import { installErrorReporting } from '@encryption/src/ui/monitoring';
 
-// Point Cunningham at the deployment's brand font (if any) before the first paint.
+// Point the design system at the deployment's brand font (if any) before the first paint.
 applyBrandFont();
 
 // Before anything else can throw. Posts to our own backend only; see the module.

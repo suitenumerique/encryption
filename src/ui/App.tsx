@@ -32,6 +32,7 @@ import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/
 import { EncryptionProvider, useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 import { PATH_FOR_ROUTE, type Route, getRouteFromPath } from '@encryption/src/ui/routes';
 import { runtimeConfig } from '@encryption/src/ui/runtime-config';
+import { resolveThemeName } from '@encryption/src/ui/theme';
 
 const DOCS_ENABLED = runtimeConfig.docsEnabled ?? true;
 
@@ -40,12 +41,11 @@ function getHashParams(): URLSearchParams {
 }
 
 /**
- * Get the Cunningham theme name from the URL hash.
- * The parent passes it via the hash: /onboarding#theme=dsfr
- * Default: "default" (white label light theme).
+ * The design system theme from the URL hash: the parent passes it as
+ * /onboarding#theme=dsfr. Default: "default" (white label light theme).
  */
 function getThemeFromHash(): string {
-  return getHashParams().get('theme') || 'default';
+  return resolveThemeName(getHashParams().get('theme'));
 }
 
 function getLangFromHash(): string | null {
@@ -654,7 +654,7 @@ export function App() {
       const data = event.data as { type?: string; theme?: string } | null;
 
       if (data?.type === MSG_INTERFACE_SET_THEME && typeof data.theme === 'string') {
-        setCunninghamTheme(data.theme);
+        setCunninghamTheme(resolveThemeName(data.theme));
       }
     };
 

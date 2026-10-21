@@ -1,4 +1,6 @@
+import '@fontsource-variable/roboto-flex';
 import { Button, CunninghamProvider, Icon } from '@gouvfr-lasuite/ui-components';
+import '@gouvfr-lasuite/ui-components/fonts/marianne';
 import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import '@gouvfr-lasuite/ui-components/style';
 import type { Preview } from '@storybook/react';
@@ -17,6 +19,7 @@ import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
 import type { EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import { defaultHandlers } from '@encryption/src/ui/testing/default-handlers';
 import { MockEncryptionProvider } from '@encryption/src/ui/testing/mock-encryption';
+import { resolveThemeName } from '@encryption/src/ui/theme';
 
 const DARK_MODE_EVENT_NAME = 'DARK_MODE';
 
@@ -98,6 +101,20 @@ const preview: Preview = {
   // `parameters.date` pins "now" for a story that displays a date derived from it.
   beforeEach: ({ parameters }) => (parameters.date instanceof Date ? installClock(parameters.date) : undefined),
   globalTypes: {
+    theme: {
+      description: 'Design system theme the product passes',
+      defaultValue: 'dsfr',
+      toolbar: {
+        icon: 'paintbrush',
+        items: [
+          { value: 'dsfr', title: 'DSFR' },
+          { value: 'anct', title: 'ANCT' },
+          // The design system's unbranded theme.
+          { value: 'default', title: 'White label' },
+        ],
+        dynamicTitle: true,
+      },
+    },
     locale: {
       description: 'Interface language',
       defaultValue: DEFAULT_LOCALE,
@@ -149,7 +166,8 @@ const preview: Preview = {
       }
 
       const isDark = useStorybookDarkMode();
-      const cunninghamTheme = isDark ? 'dark' : 'default';
+      const brand = (context.globals.theme as string | undefined) ?? 'dsfr';
+      const cunninghamTheme = resolveThemeName(brand === 'default' ? (isDark ? 'dark' : 'default') : `${brand}-${isDark ? 'dark' : 'light'}`);
 
       const hostModal = context.parameters.hostModal as boolean | 'medium' | 'card' | undefined;
 
@@ -158,12 +176,13 @@ const preview: Preview = {
       // box, and what shows around it is the preview document, which knows
       // nothing of the theme otherwise.
       useEffect(() => {
-        document.documentElement.classList.toggle('cunningham-theme--dark', isDark);
-        document.documentElement.classList.toggle('cunningham-theme--default', !isDark);
+        const root = document.documentElement;
+        root.classList.remove(...[...root.classList].filter((name) => name.startsWith('cunningham-theme--')));
+        root.classList.add(`cunningham-theme--${cunninghamTheme}`);
         document.body.style.backgroundColor = hostModal
           ? 'var(--c--contextuals--background--surface--tertiary)'
           : 'var(--c--contextuals--background--surface--primary)';
-      }, [isDark, hostModal]);
+      }, [cunninghamTheme, hostModal]);
 
       // Fullscreen stories (a printable document, an email, a docs page) only drop
       // the padding to go edge-to-edge; minHeight (not a fixed height) lets taller

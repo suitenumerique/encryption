@@ -40,8 +40,8 @@ export interface EncryptionClientOptions {
   /** Timeout in ms for vault operations (default: 30000) */
   timeout?: number;
   /**
-   * Cunningham theme name for the interface iframe.
-   * Standard names: "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark".
+   * Design system theme for the interface iframe.
+   * Standard names: "default", "dark", "dsfr" (or "dsfr-light"), "dsfr-dark", "anct" (or "anct-light"), "anct-dark".
    * Default: "default"
    */
   theme?: string;
