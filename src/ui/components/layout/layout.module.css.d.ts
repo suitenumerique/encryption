@@ -74,6 +74,14 @@ declare const styles: {
   readonly sectionHeader: string;
   readonly sectionSubtitle: string;
   readonly sectionTitle: string;
+  readonly settingsRow: string;
+  readonly settingsRowDescription: string;
+  readonly settingsRowText: string;
+  readonly settingsRowTitle: string;
+  readonly status: string;
+  readonly statusLabel: string;
+  readonly statusSuccess: string;
+  readonly statusWarning: string;
   readonly textLink: string;
   readonly textLinks: string;
   readonly waiting: string;

@@ -1,12 +1,13 @@
 import { type ReactNode, createContext, useContext, useLayoutEffect, useState } from 'react';
 
-export type InterfaceModalSize = 'small' | 'medium';
+export type InterfaceModalSize = 'small' | 'medium' | 'large';
 
 const ModalSizeContext = createContext<((size: InterfaceModalSize | null) => void) | null>(null);
 
 /**
  * The width of the modal App.tsx draws around the screens: 350px by default,
- * 450px while a mounted screen asks for it (a list, the 24-word phrase). Asked
+ * 450px or 526px while a mounted screen asks for it (a list, the 24-word phrase;
+ * the settings home). Asked
  * from the screen itself, so a flow that moves between steps inside one route
  * gets the right width at every step.
  */

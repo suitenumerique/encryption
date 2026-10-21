@@ -147,7 +147,7 @@ function InterfaceRoutes({ route, navigate }: { route: Route; navigate: (to: Rou
               isOpen
               onClose={requestClose}
               closeOnClickOutside={false}
-              size={size === 'medium' ? ModalSize.MEDIUM : ModalSize.SMALL}
+              size={size === 'large' ? ModalSize.LARGE : size === 'medium' ? ModalSize.MEDIUM : ModalSize.SMALL}
               aria-label={t('interface.title')}
             >
               {screens}
@@ -544,6 +544,7 @@ function InterfaceScreens({
           getIdToken={getValidIdToken}
           onClose={handleClose}
           onKeysDestroyed={() => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED)}
+          onSetUp={() => navigate('onboarding')}
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
           onReconnect={oidcAuth.requestAuth}

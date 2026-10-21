@@ -8,11 +8,26 @@
  * follow the design's text styles (12/16, 14/18, 16/22, 18/24).
  */
 
-/* The interface's two modal widths, as designed: 350px for every flow, 450px for
-   the lists (trusted contacts) and the 24-word phrase. */
+/* The interface's modal widths, as designed: 350px for every flow, 450px for the
+   lists (trusted contacts) and the 24-word phrase, 526px for the settings home
+   (the 478px column of an account page). */
 :global(:root) {
   --c--components--modal--width-small: 350px;
   --c--components--modal--width-medium: 450px;
+  --c--components--modal--width-large: 526px;
+}
+
+/* The design system widens a large modal to the window on narrower screens:
+   ours is narrower than that, so it only shrinks, like the other two. */
+:global(.c__modal.c__modal--large) {
+  width: min(var(--c--components--modal--width-large), calc(100vw - var(--c--globals--spacings--base)));
+}
+
+/* The design's mini buttons with an icon ("< Back", "Add a device", "Copy code"):
+   4px before the icon and 8px after the label. The design system pads them like
+   its larger buttons (8px and 16px). */
+:global(.c__button--nano.c__button--with-icon--left) {
+  padding: 0 var(--c--globals--spacings--xs) 0 var(--c--globals--spacings--xxxs);
 }
 
 /* The design system fades the backdrop in over 200ms. The product already
@@ -475,8 +490,12 @@
   gap: var(--c--globals--spacings--xs);
 }
 
+/* The acknowledgement starts at the alert's edge, under the icon, as designed:
+   back by the icon (16px) and its gap, and by the checkbox's own padding and
+   border, which stay for its focus ring. */
 .alert-stack :global(.c__checkbox) {
-  margin: 0;
+  margin: calc(-1 * (var(--c--globals--spacings--xxxs) + 1px)) 0 calc(-1 * (var(--c--globals--spacings--xxxs) + 1px))
+    calc(-1 * (var(--c--globals--spacings--base) + var(--c--globals--spacings--xs) + var(--c--globals--spacings--xxxs) + 1px));
 }
 
 /* A Notice follows the design wherever it is shown: its message in the variant's
@@ -499,6 +518,7 @@
 
 .notice :global(.c__alert__content__left) {
   align-items: flex-start;
+  line-height: 16px;
 }
 
 /* The icon beside the message (the design system drops any wrapper): a long
@@ -510,6 +530,16 @@
 /* The design's radios and checkboxes are 16px, beside a 14px label. */
 .screen {
   --c--components--forms-checkbox--size: var(--c--globals--spacings--base);
+}
+
+/* Options 8px apart and flush with the content, as designed: each label keeps its
+   padding and border, where its focus ring is drawn, cancelled by a margin. */
+.screen :global(.c__radio__group .c__checkbox__group__list) {
+  gap: var(--c--globals--spacings--xs);
+}
+
+.screen :global(.c__radio) {
+  margin: calc(-1 * (var(--c--globals--spacings--xxxs) + 1px));
 }
 
 .screen :global(.c__radio input::before) {
@@ -525,6 +555,14 @@
 .screen :global(.c__checkbox__wrapper) {
   display: flex;
   padding-top: 1px;
+}
+
+/* The check mark is drawn for the design system's 24px box: fit it to ours, under
+   the same 1px. */
+.screen :global(.c__checkbox__wrapper svg) {
+  top: 1px;
+  width: var(--c--components--forms-checkbox--size);
+  height: var(--c--components--forms-checkbox--size);
 }
 
 /* A section inside a longer screen (the settings home, the contact lists). */
@@ -885,6 +923,82 @@
   font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* The encryption home (the interface's own, for a product without an account
+   page): a status banner, then groups of settings rows with their action. */
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxxs);
+  /* The design draws the border inside its 8px padding. */
+  padding: calc(var(--c--globals--spacings--xs) - 1px);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: var(--c--globals--spacings--xs);
+  background: var(--c--contextuals--background--semantic--neutral--tertiary);
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.status > svg {
+  flex-shrink: 0;
+}
+
+/* The home's blocks (heading, status, each group of rows) stand apart. */
+.screen:has(> .screen__body > .status),
+.screen__body:has(> .status) {
+  gap: var(--c--globals--spacings--md);
+}
+
+.status__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.status--success {
+  border-color: var(--c--contextuals--border--semantic--success--tertiary);
+  background: var(--c--contextuals--background--semantic--success--tertiary);
+  color: var(--c--contextuals--content--semantic--success--tertiary);
+}
+
+.status--warning {
+  border-color: var(--c--contextuals--border--semantic--warning--tertiary);
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.settings-row__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings-row__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.settings-row__description {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.settings-row > :global(.c__button) {
+  flex-shrink: 0;
 }
 
 /* The camera preview of the QR scanner, framed like the design's viewfinder. */

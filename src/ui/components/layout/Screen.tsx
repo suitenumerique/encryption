@@ -1,5 +1,5 @@
 import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
-import { ChevronLeft, CircleCheckFilled, Info, WarningFilled } from '@gouvfr-lasuite/ui-components/icons';
+import { ChevronLeft } from '@gouvfr-lasuite/ui-components/icons';
 import type { ReactNode } from 'react';
 
 import shieldCheck from '@encryption/src/ui/assets/illustrations/shield-check.svg';
@@ -25,22 +25,14 @@ export function Illustration({ name }: { name: IllustrationName }) {
   );
 }
 
-// As designed: the filled warning triangle for errors as well.
-const NOTICE_ICONS: Record<VariantType, ReactNode> = {
-  [VariantType.ERROR]: <WarningFilled aria-hidden size={16} />,
-  [VariantType.WARNING]: <WarningFilled aria-hidden size={16} />,
-  [VariantType.SUCCESS]: <CircleCheckFilled aria-hidden size={16} />,
-  [VariantType.INFO]: <Info aria-hidden size={16} />,
-  [VariantType.NEUTRAL]: <Info aria-hidden size={16} />,
-};
-
 /**
- * The design system's alert with the design system's SVG icons: left to itself it
- * draws a Material Icons ligature, a font the interface does not load.
+ * The design system's alert, laid out as designed wherever it is shown (see
+ * `.notice`). Its icon is the design system's own for the type: the exported
+ * Alert replaces any icon it is given.
  */
 export function Notice({ type, children }: { type: VariantType; children: ReactNode }) {
   return (
-    <Alert type={type} icon={NOTICE_ICONS[type]} className={styles.notice}>
+    <Alert type={type} className={styles.notice}>
       {children}
     </Alert>
   );

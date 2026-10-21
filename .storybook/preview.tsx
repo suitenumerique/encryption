@@ -195,8 +195,9 @@ const preview: Preview = {
       // Interface screens are the content of the modal the interface draws over
       // the product (App.tsx). `hostModal` stands in for that chrome so a story
       // shows the screen at the width it really gets: the design system's small
-      // modal (350px) or the medium one, which a screen asks for itself with
-      // useModalSize as in the product, or a story with `'medium'`. The cross
+      // modal (350px) or a wider one, which a screen asks for itself with
+      // useModalSize as in the product (450px or 526px), or a story with
+      // `'medium'` (450px). The cross
       // raises the same close request the modal's does, so a screen holding a
       // guard reacts like it does in the product, and an unguarded one only logs.
       // `'card'` is the width alone, for a component that lives inside a screen.
@@ -219,7 +220,7 @@ const preview: Preview = {
                     <div
                       style={{
                         position: 'relative',
-                        width: hostModal === 'medium' || size === 'medium' ? 450 : 350,
+                        width: size === 'large' ? 526 : hostModal === 'medium' || size === 'medium' ? 450 : 350,
                         maxWidth: '100%',
                         boxSizing: 'border-box',
                         padding: 'var(--c--components--modal--padding)',
