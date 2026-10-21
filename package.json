@@ -128,6 +128,7 @@
     "@eslint/js": "10.0.1",
     "@fastify/swagger": "9.8.1",
     "@gouvfr-lasuite/ui-components": "1.3.0",
+    "@gouvfr-lasuite/ui-tokens": "3.2.0",
     "@hey-api/openapi-ts": "0.99.0",
     "@lavamoat/preinstall-always-fail": "3.0.0",
     "@mdx-js/rollup": "3.1.1",

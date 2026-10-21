@@ -2,6 +2,7 @@ import { renderToMjml } from '@faire/mjml-react/utils/renderToMjml';
 import mjml2html from 'mjml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import paletteModel from '@encryption/src/server/email/email-palette.model.json';
 import { StandardLayout } from '@encryption/src/server/email/layout';
 import { EmailPalette, applyEmailPaletteOverride, emailPalette } from '@encryption/src/server/email/palette';
 
@@ -48,5 +49,20 @@ describe('applyEmailPaletteOverride', () => {
 
     expect(emailPalette.brandPrimary).toBe(defaults.brandPrimary);
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('emailPalette defaults', () => {
+  it('resolves every colour from the design system tokens to a literal a mail client accepts', () => {
+    const { fontFamily, ...colours } = emailPalette;
+
+    expect(fontFamily).toBeTruthy();
+    for (const [key, value] of Object.entries(colours)) {
+      expect(value, key).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('keeps the sample override file in step with the palette keys', () => {
+    expect(Object.keys(paletteModel).sort()).toEqual(Object.keys(emailPalette).sort());
   });
 });
