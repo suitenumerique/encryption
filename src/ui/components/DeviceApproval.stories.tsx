@@ -126,9 +126,9 @@ NewDeviceStory.parameters = {
   },
 };
 
+// The pairing request is made on arrival: the QR code shows without a click.
 NewDeviceStory.play = async ({ canvasElement }) => {
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_start')));
-  const qr = await within(canvasElement).findByRole('img', { name: 'pairing QR code' });
+  const qr = await within(canvasElement).findByRole('img', { name: i18n.t('device_approval.qr_label') });
   await expect(await decodeQr(qr)).toBe(sampleFingerprint);
 };
 
@@ -138,16 +138,11 @@ const NewDeviceCodeRevealedStory = Template.bind({});
 NewDeviceCodeRevealedStory.args = { ...baseArgs };
 NewDeviceCodeRevealedStory.parameters = NewDeviceStory.parameters;
 NewDeviceCodeRevealedStory.play = async ({ canvasElement }) => {
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_start')));
-  // The label carries a line break, which the accessible name may keep or collapse.
-  const revealLabel = new RegExp(
-    i18n
-      .t('device_approval.new_reveal_code')
-      .split(/\s+/)
-      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join('\\s+')
-  );
-  await userEvent.click(await playFindButton(canvasElement, revealLabel));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.show_code')));
+  // The same code in digits, with the way back to the QR code.
+  const groups = sampleFingerprint.match(/\d{5}/g) ?? [];
+  await within(canvasElement).findByLabelText(groups.join(' '));
+  await playFindButton(canvasElement, i18n.t('device_approval.show_qr'));
 };
 
 export const NewDeviceCodeRevealed = prepareStory(NewDeviceCodeRevealedStory);
@@ -169,7 +164,6 @@ NewDeviceAdoptedStory.parameters = {
 };
 // Reached by the 3s poll, so the default 1s wait would give up before the first tick.
 NewDeviceAdoptedStory.play = async ({ canvasElement }) => {
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_start')));
   await playFindHeading(canvasElement, i18n.t('device_approval.new_success_title'), { timeout: 10000 });
 };
 
@@ -186,7 +180,6 @@ ErroredStory.parameters = {
   },
 };
 ErroredStory.play = async ({ canvasElement }) => {
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_start')));
   await playFindAlert(canvasElement, 'The vault is unavailable.');
 };
 
@@ -199,6 +192,15 @@ EnrolledDeviceStory.parameters = {
   encryption: {
     hasKeys: async () => ({ hasKeys: true }),
   },
+};
+// The camera opens on arrival: the scanner, with the manual entry one click away.
+EnrolledDeviceStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_title'));
+  expect((await canvas.findByLabelText(i18n.t('device_approval.scan_hint'))).tagName).toBe('VIDEO');
+  await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead'));
+  expect(canvas.queryByLabelText('code group 1')).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('device_approval.btn_approve') })).toBeNull();
 };
 
 export const EnrolledDevice = prepareStory(EnrolledDeviceStory);

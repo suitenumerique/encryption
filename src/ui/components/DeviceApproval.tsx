@@ -1,4 +1,5 @@
-import { Alert, Button, Icon, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, Spinner, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Checkmark2, Copy } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
 import jsQR from 'jsqr';
 import QRCode from 'qrcode';
@@ -12,7 +13,7 @@ import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/s
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
-import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
@@ -92,17 +93,7 @@ function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) =>
     };
   }, [onDecode, onUnavailable]);
 
-  return (
-    <div className={styles.center}>
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        style={{ width: '100%', maxWidth: 302, borderRadius: 8, background: '#000', aspectRatio: '1 / 1', objectFit: 'cover' }}
-      />
-      <p className={`${styles.hint} ${styles.hintCenter}`}>{t('device_approval.scan_hint')}</p>
-    </div>
-  );
+  return <video ref={videoRef} muted playsInline className={styles.scanner} aria-label={t('device_approval.scan_hint')} />;
 }
 
 export function DeviceApproval({
@@ -158,7 +149,7 @@ export function DeviceApproval({
   const banner = (
     <>
       {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
-      {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+      {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
     </>
   );
 
@@ -212,6 +203,8 @@ function NewDeviceSide({
 }) {
   const backLink = onBack ? { label: t('onboarding.btn_back'), onClick: onBack } : undefined;
   const [started, setStarted] = useState(false);
+  const [startFailed, setStartFailed] = useState(false);
+  const startRequested = useRef(false);
   const [qr, setQr] = useState<string | null>(null);
   const [decimalFingerprint, setDecimalFingerprint] = useState<string | null>(null);
   const [revealCode, setRevealCode] = useState(false);
@@ -240,13 +233,24 @@ function NewDeviceSide({
       // from the server and refuses to wrap unless its fingerprint matches.
       // Inline SVG markup rather than a `data:` PNG: the interface CSP keeps
       // `img-src 'self'`, which blocks data URIs.
-      setQr(await QRCode.toString(dfp, { type: 'svg', width: 220, margin: 2 }));
+      setQr(await QRCode.toString(dfp, { type: 'svg', width: 202, margin: 0 }));
       setDecimalFingerprint(dfp);
       setStarted(true);
     } catch (err) {
+      // The banner explains the failure (a lapsed session offers Reconnect); the
+      // retry below starts again once the cause is dealt with.
+      setStartFailed(true);
       onError(err);
     }
   }, [getIdToken, startDeviceApproval, onError]);
+
+  // The pairing request is made at once: the screen exists to show its code.
+  useEffect(() => {
+    if (startRequested.current) return;
+
+    startRequested.current = true;
+    void start();
+  }, [start]);
 
   // Poll for the forwarded VRK once the request is registered. Polling consumes
   // the one-shot server row, so a completion failure must NOT drop the payload:
@@ -332,49 +336,35 @@ function NewDeviceSide({
     );
   }
 
-  if (!started) {
-    return (
-      <Screen
-        back={backLink}
-        title={t('device_approval.new_title')}
-        description={t('device_approval.new_intro')}
-        banner={banner}
-        actions={
-          <Button onClick={start} icon={<Icon aria-hidden name="qr_code_2" />}>
-            {t('device_approval.btn_start')}
-          </Button>
-        }
-      />
-    );
-  }
-
   return (
-    <Screen back={backLink} title={t('device_approval.new_title')} description={t('device_approval.new_code_hint')} banner={banner}>
-      <div className={styles.center}>
-        {qr && (
-          <div
-            role="img"
-            aria-label="pairing QR code"
-            style={{ lineHeight: 0, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--c--contextuals--border--surface--primary)' }}
-            dangerouslySetInnerHTML={{ __html: toTrustedMarkup(qr) }}
-          />
-        )}
-
-        {/* No-camera fallback: reveal the long decimal code to type by hand. */}
-        {decimalFingerprint &&
-          (!revealCode ? (
-            <Button size="small" variant="tertiary" className={styles.linkButton} onClick={() => setRevealCode(true)}>
-              {t('device_approval.new_reveal_code')}
-            </Button>
-          ) : (
-            <>
-              <p className={`${styles.hint} ${styles.hintCenter}`}>{t('device_approval.new_manual_hint')}</p>
-              <FingerprintBoxes fingerprint={decimalFingerprint} />
+    <Screen
+      back={backLink}
+      title={t('device_approval.new_title')}
+      description={revealCode ? t('device_approval.new_code_intro') : t('device_approval.new_qr_intro')}
+      banner={banner}
+    >
+      <div className={styles.codeCard}>
+        {!started && startFailed ? (
+          <Button
+            onClick={() => {
+              setStartFailed(false);
+              void start();
+            }}
+          >
+            {t('auth.retry')}
+          </Button>
+        ) : !started ? (
+          <LoadingScreen />
+        ) : revealCode && decimalFingerprint ? (
+          // No-camera fallback: the same code, in digits to type by hand.
+          <>
+            <FingerprintBoxes fingerprint={decimalFingerprint} />
+            <div className={styles.textLinks}>
               <Button
-                size="small"
+                size="nano"
                 variant="tertiary"
                 color={copied ? 'success' : 'neutral'}
-                icon={<Icon aria-hidden name={copied ? 'check' : 'content_copy'} size={16} />}
+                icon={copied ? <Checkmark2 aria-hidden size={16} /> : <Copy aria-hidden size={16} />}
                 onClick={() => {
                   void navigator.clipboard.writeText(decimalFingerprint).then(() => {
                     setCopied(true);
@@ -384,14 +374,34 @@ function NewDeviceSide({
               >
                 {copied ? t('device_approval.copied') : t('device_approval.copy_code')}
               </Button>
-            </>
-          ))}
+              <Button size="nano" variant="tertiary" color="neutral" onClick={() => setRevealCode(false)}>
+                {t('device_approval.show_qr')}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            {qr && (
+              <div
+                role="img"
+                aria-label={t('device_approval.qr_label')}
+                className={styles.qr}
+                dangerouslySetInnerHTML={{ __html: toTrustedMarkup(qr) }}
+              />
+            )}
+            <Button size="nano" variant="tertiary" color="neutral" onClick={() => setRevealCode(true)}>
+              {t('device_approval.show_code')}
+            </Button>
+          </>
+        )}
+      </div>
 
+      {started && (
         <div className={styles.waiting}>
-          <Loader />
+          <Spinner size="lg" />
           <span>{t('device_approval.new_waiting')}</span>
         </div>
-      </div>
+      )}
     </Screen>
   );
 }
@@ -503,11 +513,12 @@ function EnrolledDeviceSide({
     <Screen
       back={backLink}
       title={t('device_approval.approve_title')}
-      description={mode === 'manual' ? t('device_approval.manual_intro') : t('device_approval.approve_intro')}
+      description={t('device_approval.approve_intro')}
+      descriptionSize="xs"
       banner={banner}
       actions={
         mode === 'manual' ? (
-          <Button onClick={() => submitCode(codeInput)} disabled={isPending || !codeComplete}>
+          <Button onClick={() => submitCode(codeInput)} disabled={isPending || !codeComplete || noMatch}>
             {isPending ? t('device_approval.approving') : t('device_approval.btn_approve')}
           </Button>
         ) : undefined
@@ -523,39 +534,42 @@ function EnrolledDeviceSide({
             }}
             t={t}
           />
-          <div style={{ textAlign: 'center' }}>
-            <Button size="small" variant="tertiary" color="neutral" onClick={enterManualEntry}>
-              {t('device_approval.enter_code_instead')}
-            </Button>
-          </div>
+          <Button className={styles.textLink} size="nano" variant="tertiary" color="neutral" onClick={enterManualEntry}>
+            {t('device_approval.enter_code_instead')}
+          </Button>
         </>
       )}
+
+      {mode === 'scan' && isPending && <LoadingScreen label={t('device_approval.approving')} />}
 
       {mode === 'manual' && (
         <>
           <DecimalCodeInput
+            invalid={noMatch}
             onChange={(digits, complete) => {
               setCodeInput(digits);
               setCodeComplete(complete);
               setNoMatch(false);
             }}
           />
-          {noMatch && <Alert type={VariantType.ERROR}>{t('device_approval.code_no_match')}</Alert>}
+          {noMatch && (
+            <p className={styles.errorText} role="alert">
+              {t('device_approval.code_no_match')}
+            </p>
+          )}
           {cameraAvailable && (
-            <div style={{ textAlign: 'center' }}>
-              <Button
-                size="small"
-                variant="tertiary"
-                color="neutral"
-                icon={<Icon aria-hidden name="qr_code_scanner" size={16} />}
-                onClick={() => {
-                  setNoMatch(false);
-                  setMode('scan');
-                }}
-              >
-                {t('device_approval.scan_instead')}
-              </Button>
-            </div>
+            <Button
+              className={styles.textLink}
+              size="nano"
+              variant="tertiary"
+              color="neutral"
+              onClick={() => {
+                setNoMatch(false);
+                setMode('scan');
+              }}
+            >
+              {t('device_approval.scan_instead')}
+            </Button>
           )}
         </>
       )}

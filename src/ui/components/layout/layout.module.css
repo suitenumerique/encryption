@@ -238,7 +238,15 @@
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
-  gap: var(--c--globals--spacings--xs);
+  gap: var(--c--globals--spacings--xxs);
+}
+
+/* Pairing a device: the link and the error sit close under the camera or the code
+   boxes they belong to (6px, against the body's 12px). */
+.scanner ~ .text-link,
+.fingerprint-wrap ~ .text-link,
+.fingerprint-wrap ~ .error-text {
+  margin-top: calc(var(--c--globals--spacings--xxs) - var(--c--globals--spacings--sm));
 }
 
 /* A bordered card (an identity, a contact row). */
@@ -425,6 +433,40 @@
   outline-offset: 1px;
 }
 
+.fingerprint--invalid .fingerprint__group--input {
+  border-color: var(--c--contextuals--border--semantic--error--primary);
+}
+
+/* A group of boxes shown in a card of its own, with its controls under it (the
+   pairing code and QR code of the new device). */
+.code-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxs);
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: var(--c--globals--spacings--xs);
+}
+
+/* The QR code's card hugs it, centered; the digits take the full width. */
+.code-card:has(> .qr) {
+  align-self: center;
+}
+
+.qr {
+  line-height: 0;
+  /* The code reaches the card's padding, as designed; scanners still need light
+     around it, which a dark theme's card is not. */
+  box-shadow: 0 0 0 var(--c--globals--spacings--xxs) var(--c--globals--colors--gray-000);
+}
+
+.qr svg {
+  display: block;
+  width: 202px;
+  height: 202px;
+}
+
 /* Cunningham's Alert content is a flex row; a checkbox under the message needs
    the column. */
 .alert-stack {
@@ -437,29 +479,31 @@
   margin: 0;
 }
 
-/* Alerts follow the design: their message in the variant's own colour. */
-.screen :global(.c__alert--error .c__alert__content) {
+/* A Notice follows the design wherever it is shown: its message in the variant's
+   own colour. */
+.notice:global(.c__alert--error) :global(.c__alert__content) {
   color: var(--c--contextuals--content--semantic--error--secondary);
 }
 
-.screen :global(.c__alert--warning .c__alert__content) {
+.notice:global(.c__alert--warning) :global(.c__alert__content) {
   color: var(--c--contextuals--content--semantic--warning--secondary);
 }
 
-.screen :global(.c__alert--success .c__alert__content) {
+.notice:global(.c__alert--success) :global(.c__alert__content) {
   color: var(--c--contextuals--content--semantic--success--secondary);
 }
 
-.screen :global(.c__alert--info .c__alert__content) {
+.notice:global(.c__alert--info) :global(.c__alert__content) {
   color: var(--c--contextuals--content--semantic--info--secondary);
 }
 
-.screen :global(.c__alert__content__left) {
+.notice :global(.c__alert__content__left) {
   align-items: flex-start;
 }
 
-/* The icon beside an alert's message (the design system drops any wrapper). */
-.screen :global(.c__alert__content__left > svg) {
+/* The icon beside the message (the design system drops any wrapper): a long
+   message would otherwise squeeze it to nothing. */
+.notice :global(.c__alert__content__left > svg) {
   flex-shrink: 0;
 }
 
@@ -606,35 +650,24 @@
   font-weight: var(--c--globals--font--weights--medium);
 }
 
-/* A centered "waiting" pill (device pairing). */
+/* "Waiting for approval from your other device...": a spinner beside the text,
+   set apart from the code above it. */
 .waiting {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  align-self: center;
-  padding: var(--c--globals--spacings--t) var(--c--globals--spacings--base);
-  border-radius: 999px;
-  background: var(--c--contextuals--background--surface--secondary);
-  font-size: 13px;
-  color: var(--c--contextuals--content--semantic--neutral--secondary);
-}
-
-/* A secondary action written as a sentence ("No camera on the other device?
-   Show a code to type"): a design-system button never wraps, so it would run
-   past the 350px card. This one wraps and reads as a link. */
-.link-button {
-  max-width: 100%;
-  height: auto;
-  min-height: 32px;
-  padding: 6px 12px;
-  white-space: pre-line;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--4xs);
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
-  text-align: center;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
 
 /* The spinner is a flex item next to text: without this it gives up width and turns oval. */
-.waiting :global(.c__loader),
+.code-card + .waiting {
+  margin-top: calc(var(--c--globals--spacings--md) - var(--c--globals--spacings--sm));
+}
+
+.waiting :global(.c__spinner),
 .loading :global(.c__loader) {
   flex-shrink: 0;
 }
@@ -852,6 +885,17 @@
   font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* The camera preview of the QR scanner, framed like the design's viewfinder. */
+.scanner {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  border-radius: var(--c--globals--spacings--xs);
+  background: var(--c--contextuals--background--semantic--neutral--secondary);
+  box-sizing: border-box;
 }
 
 /* The design system's provider mounts a toast container fixed to the bottom edge

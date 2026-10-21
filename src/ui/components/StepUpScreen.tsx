@@ -1,7 +1,7 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useTranslation } from 'react-i18next';
 
-import { Screen } from '@encryption/src/ui/components/layout/Screen';
+import { Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
 interface StepUpScreenProps {
@@ -32,7 +32,7 @@ export function StepUpScreen({ state, onStepUp, isAuthenticating = false, note }
           {note && <p>{note}</p>}
         </>
       }
-      banner={state === 'no_second_factor' && <Alert type={VariantType.ERROR}>{t('auth.step_up_no_second_factor')}</Alert>}
+      banner={state === 'no_second_factor' && <Notice type={VariantType.ERROR}>{t('auth.step_up_no_second_factor')}</Notice>}
       actions={
         <>
           <Button onClick={onStepUp} disabled={isAuthenticating} fullWidth>

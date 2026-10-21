@@ -40,7 +40,7 @@ const NOTICE_ICONS: Record<VariantType, ReactNode> = {
  */
 export function Notice({ type, children }: { type: VariantType; children: ReactNode }) {
   return (
-    <Alert type={type} icon={NOTICE_ICONS[type]}>
+    <Alert type={type} icon={NOTICE_ICONS[type]} className={styles.notice}>
       {children}
     </Alert>
   );

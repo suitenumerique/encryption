@@ -5,6 +5,8 @@ import styles from '@encryption/src/ui/components/layout/layout.module.css';
 interface DecimalCodeInputProps {
   groupCount?: number;
   groupSize?: number;
+  /** The code was refused (no device waits with it): every box turns red. */
+  invalid?: boolean;
   // Emits the concatenated digits plus whether every group is full, so the caller
   // can keep its submit button disabled until the whole code is entered.
   onChange: (digits: string, complete: boolean) => void;
@@ -17,7 +19,7 @@ interface DecimalCodeInputProps {
  * distributes it across the boxes. `inputMode="numeric"` asks phones/keyboards for
  * a number pad and non-digits are dropped, so the code is always well-formed.
  */
-export function DecimalCodeInput({ groupCount = 8, groupSize = 5, onChange }: DecimalCodeInputProps) {
+export function DecimalCodeInput({ groupCount = 8, groupSize = 5, invalid = false, onChange }: DecimalCodeInputProps) {
   const [groups, setGroups] = useState<string[]>(() => Array(groupCount).fill(''));
   const refs = useRef<Array<HTMLInputElement | null>>([]);
 
@@ -100,7 +102,7 @@ export function DecimalCodeInput({ groupCount = 8, groupSize = 5, onChange }: De
   // of 4) regardless of the iframe width, instead of wrapping unevenly.
   return (
     <div className={styles.fingerprintWrap}>
-      <div className={styles.fingerprint}>
+      <div className={invalid ? `${styles.fingerprint} ${styles.fingerprintInvalid}` : styles.fingerprint}>
         {indices.map((i) => (
           <input
             key={i}

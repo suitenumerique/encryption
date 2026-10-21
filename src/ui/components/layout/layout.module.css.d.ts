@@ -17,6 +17,7 @@ declare const styles: {
   readonly chipNeutral: string;
   readonly chipSuccess: string;
   readonly chipWarning: string;
+  readonly codeCard: string;
   readonly contacts: string;
   readonly deadline: string;
   readonly deadlineTime: string;
@@ -27,6 +28,7 @@ declare const styles: {
   readonly fingerprintError: string;
   readonly fingerprintGroup: string;
   readonly fingerprintGroupInput: string;
+  readonly fingerprintInvalid: string;
   readonly fingerprintSuccess: string;
   readonly fingerprintWarning: string;
   readonly fingerprintWrap: string;
@@ -43,10 +45,10 @@ declare const styles: {
   readonly inputMono: string;
   readonly inputValid: string;
   readonly label: string;
-  readonly linkButton: string;
   readonly list: string;
   readonly loading: string;
   readonly loadingLabel: string;
+  readonly notice: string;
   readonly option: string;
   readonly optionDescription: string;
   readonly optionIcon: string;
@@ -55,6 +57,8 @@ declare const styles: {
   readonly optionText: string;
   readonly optionTitle: string;
   readonly options: string;
+  readonly qr: string;
+  readonly scanner: string;
   readonly screen: string;
   readonly screenBack: string;
   readonly screenBody: string;
