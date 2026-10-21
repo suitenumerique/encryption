@@ -18,6 +18,11 @@ declare const styles: {
   readonly chipSuccess: string;
   readonly chipWarning: string;
   readonly codeCard: string;
+  readonly contact: string;
+  readonly contactBand: string;
+  readonly contactBandError: string;
+  readonly contactBandWarning: string;
+  readonly contactMain: string;
   readonly contacts: string;
   readonly deadline: string;
   readonly deadlineTime: string;

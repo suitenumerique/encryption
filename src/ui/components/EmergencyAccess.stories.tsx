@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { userEvent, within } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindDialog } from '@encryption/.storybook/testing';
@@ -15,6 +15,20 @@ import {
 import type { GetApiEmergencyAccessGrantedResponses, GetApiEmergencyAccessTrustedResponses } from '@encryption/src/ui/api/generated/types.gen';
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
 import { sampleEmergencyEscrowRecord } from '@encryption/src/ui/testing/fixtures';
+
+// A row's secondary actions live in its "⋯" menu, rendered in a popover outside the
+// canvas: open it, find the item, and close it again so the story ends on the list.
+async function playExpectRowMenuItem(canvasElement: HTMLElement, email: string, item: string): Promise<void> {
+  const trigger = await playFindButton(canvasElement, i18n.t('emergency.row_menu', { email }));
+  await userEvent.click(trigger);
+  await within(document.body).findByRole('menuitem', { name: item });
+  await userEvent.keyboard('{Escape}');
+  // The menu leaves once its closing animation ends, and hands the focus back to
+  // the "⋯" then; the story lets it go after that.
+  await waitFor(() => expect(document.body.querySelector('[role="menu"]')).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  trigger.blur();
+}
 
 type TrustedContact = GetApiEmergencyAccessTrustedResponses[200]['contacts'][number];
 type GrantedVault = GetApiEmergencyAccessGrantedResponses[200]['grantors'][number];
@@ -75,12 +89,28 @@ function lists(contacts: TrustedContact[], grantors: GrantedVault[]) {
 const EmptyStory = Template.bind({});
 EmptyStory.args = { ...baseArgs };
 EmptyStory.parameters = { msw: lists([], []) };
+EmptyStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('emergency.trusted_empty'));
+  await canvas.findByText(i18n.t('emergency.granted_empty'));
+  await playFindButton(canvasElement, i18n.t('emergency.btn_designate'));
+};
 
 export const Empty = prepareStory(EmptyStory);
 
 const WithContactsStory = Template.bind({});
 WithContactsStory.args = { ...baseArgs };
 WithContactsStory.parameters = { msw: lists([trustedContact], []) };
+// A confirmed contact: listed with its wait and its menu, no status chip.
+WithContactsStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(trustedContact.grantee_email);
+  canvas.getByText(i18n.t('emergency.wait_label', { count: trustedContact.wait_time_days }));
+  expect(canvas.queryByText(i18n.t('emergency.trusted_empty'))).toBeNull();
+  expect(canvas.queryByText(i18n.t('emergency.status_invited'))).toBeNull();
+  canvas.getByText(i18n.t('emergency.granted_empty'));
+  await playExpectRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
+};
 
 export const WithContacts = prepareStory(WithContactsStory);
 
@@ -92,12 +122,23 @@ RecoveryPendingStory.parameters = {
   msw: lists([{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
 };
 
+RecoveryPendingStory.play = async ({ canvasElement }) => {
+  await playFindButton(canvasElement, i18n.t('emergency.btn_refuse_request'));
+};
+
 export const RecoveryPending = prepareStory(RecoveryPendingStory);
 
 // The other side: a vault someone entrusted to me, which I can ask to recover.
 const EntrustedToMeStory = Template.bind({});
 EntrustedToMeStory.args = { ...baseArgs };
 EntrustedToMeStory.parameters = { msw: lists([], [grantedVault]) };
+EntrustedToMeStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(grantedVault.grantor_email);
+  canvas.getByText(i18n.t('emergency.trusted_empty'));
+  expect(canvas.queryByText(i18n.t('emergency.granted_empty'))).toBeNull();
+  await playExpectRowMenuItem(canvasElement, grantedVault.grantor_email, i18n.t('emergency.btn_request_access'));
+};
 
 export const EntrustedToMe = prepareStory(EntrustedToMeStory);
 
@@ -170,8 +211,8 @@ GrantedRecoveryRequestedStory.parameters = {
   msw: lists([], [{ ...grantedVault, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 20 * DAY }]),
 };
 GrantedRecoveryRequestedStory.play = async ({ canvasElement }) => {
-  await within(canvasElement).findByText(/requested emergency access/i);
-  await playFindButton(canvasElement, i18n.t('emergency.btn_cancel_request'));
+  await within(canvasElement).findByText(i18n.t('emergency.status_requested'));
+  await playExpectRowMenuItem(canvasElement, grantedVault.grantor_email, i18n.t('emergency.btn_cancel_request'));
 };
 
 export const GrantedRecoveryRequested = prepareStory(GrantedRecoveryRequestedStory);
@@ -260,7 +301,7 @@ InvitedContactStory.args = { ...baseArgs };
 InvitedContactStory.parameters = { msw: lists([{ ...trustedContact, status: 'invited' }], []) };
 InvitedContactStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('emergency.status_invited'));
-  await playFindButton(canvasElement, i18n.t('emergency.btn_revoke'));
+  await playExpectRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
 };
 
 export const InvitedContact = prepareStory(InvitedContactStory);
@@ -301,3 +342,18 @@ AuditFailuresStory.play = async ({ canvasElement }) => {
 };
 
 export const AuditFailures = prepareStory(AuditFailuresStory);
+
+// A recovery running on an escrow that failed its audit: the warning comes first,
+// and the grantor can still refuse.
+const AuditTamperedRecoveryRunningStory = Template.bind({});
+AuditTamperedRecoveryRunningStory.args = { ...baseArgs };
+AuditTamperedRecoveryRunningStory.parameters = {
+  encryption: { verifyEscrows: async () => ({ results: [{ id: auditTampered.id, status: 'tampered' as const }] }) },
+  msw: lists([{ ...auditTampered, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
+};
+AuditTamperedRecoveryRunningStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText(/does not match what you signed/i);
+  await playFindButton(canvasElement, i18n.t('emergency.btn_refuse_request'));
+};
+
+export const AuditTamperedRecoveryRunning = prepareStory(AuditTamperedRecoveryRunningStory);

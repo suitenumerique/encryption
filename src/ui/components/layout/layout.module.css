@@ -1001,6 +1001,63 @@
   flex-shrink: 0;
 }
 
+/* A contact row of the trusted contacts lists: identity, status, a menu, and a
+   tinted band under it for what needs an answer (a running recovery). */
+.contact {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--surface--primary);
+  overflow: hidden;
+}
+
+.contact__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
+}
+
+.contact__band {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs);
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  background: var(--c--contextuals--background--surface--tertiary);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* The message takes the room left by the button, and breaks a long email address
+   rather than running under it. */
+.contact__band > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact__band--error {
+  background: var(--c--contextuals--background--semantic--error--tertiary);
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.contact__band--warning {
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+/* The two lists of the trusted contacts stand 16px apart, as designed. */
+.screen__body:has(> .section > :is(.contact, .empty)) {
+  gap: var(--c--globals--spacings--base);
+}
+
+.contact__band :global(.c__button) {
+  flex-shrink: 0;
+}
+
 /* The camera preview of the QR scanner, framed like the design's viewfinder. */
 .scanner {
   width: 100%;
