@@ -1,7 +1,6 @@
 import '@fontsource-variable/roboto-flex';
 import { Button, CunninghamProvider } from '@gouvfr-lasuite/ui-components';
 import '@gouvfr-lasuite/ui-components/fonts/marianne';
-import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import { XMark } from '@gouvfr-lasuite/ui-components/icons';
 import '@gouvfr-lasuite/ui-components/style';
 import type { Preview } from '@storybook/react';

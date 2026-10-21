@@ -1,7 +1,6 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/roboto-flex';
 import '@gouvfr-lasuite/ui-components/fonts/marianne';
-import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import '@gouvfr-lasuite/ui-components/style';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

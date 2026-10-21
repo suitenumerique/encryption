@@ -1,4 +1,5 @@
-import { Button, Icon, Modal, ModalSize } from '@gouvfr-lasuite/ui-components';
+import { Button, Modal, ModalSize } from '@gouvfr-lasuite/ui-components';
+import { ShieldLockFilled } from '@gouvfr-lasuite/ui-components/icons';
 
 interface ModalNoKeyProps {
   userName: string;
@@ -19,7 +20,7 @@ export function ModalNoKey({ userName, onClose }: ModalNoKeyProps) {
       rightActions={<Button onClick={onClose}>Understood</Button>}
       title={
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, fontWeight: 700 }}>
-          <Icon aria-hidden name="lock" color={'var(--c--globals--colors--warning-500)'} />
+          <ShieldLockFilled aria-hidden color="var(--c--contextuals--content--semantic--warning--tertiary)" />
           Encryption not enabled
         </span>
       }

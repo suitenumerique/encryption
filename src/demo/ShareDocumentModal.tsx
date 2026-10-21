@@ -14,14 +14,15 @@
  */
 import {
   Button,
-  Icon,
   Modal,
   ModalSize,
   QuickSearch,
   QuickSearchData,
   QuickSearchGroup,
   QuickSearchItemTemplate,
+  Spinner,
 } from '@gouvfr-lasuite/ui-components';
+import { Plus, ShieldCheck, Trash, Zoom } from '@gouvfr-lasuite/ui-components/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RegisteredUser, VaultClient } from '@encryption/src/client/vault-client';
@@ -88,7 +89,7 @@ function VerifyButton({ onClick }: { onClick: () => void }) {
         whiteSpace: 'nowrap',
       }}
     >
-      <Icon aria-hidden name="verified_user" size={16} />
+      <ShieldCheck aria-hidden size={16} />
       Verify
     </button>
   );
@@ -193,7 +194,7 @@ function InviteUserRow({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {onViewProfile && user.encryption_public_key && <VerifyButton onClick={() => onViewProfile(user.id)} />}
           <span style={{ display: 'flex', alignItems: 'center', gap: 2, color: 'var(--c--globals--colors--brand-400)', fontSize: 13 }}>
-            Add <Icon aria-hidden name="add" size={18} />
+            Add <Plus aria-hidden size={18} />
           </span>
         </div>
       }
@@ -258,7 +259,7 @@ function MemberRow({
               lineHeight: 1,
             }}
           >
-            <Icon aria-hidden name="delete" size={18} />
+            <Trash aria-hidden size={18} />
           </button>
         </div>
       }
@@ -583,7 +584,7 @@ export function ShareDocumentModal({
                           display: 'inline-flex',
                         }}
                       >
-                        <Icon aria-hidden name="verified_user" size={16} />
+                        <ShieldCheck aria-hidden size={16} />
                       </button>
                     )}
                     <button
@@ -638,6 +639,23 @@ export function ShareDocumentModal({
             showInput
             loading={loading}
             placeholder="Search users by name or email..."
+            // The design system's own field draws its magnifier as a Material Icons
+            // ligature: the same field with the SVG icon, so the demo loads no icon font.
+            inputContent={
+              <div className="quick-search-input-container">
+                {loading ? <Spinner size="md" /> : <Zoom aria-hidden color="var(--c--contextuals--content--semantic--neutral--tertiary)" />}
+                <input
+                  className="quick-search-input"
+                  role="combobox"
+                  aria-label="Search users"
+                  autoFocus
+                  value={inputValue}
+                  placeholder="Search users by name or email..."
+                  onChange={(e) => onFilter(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+            }
           >
             {/* Members list — shown when NOT searching (like Docs' showMemberSection) */}
             {showMemberSection && (
