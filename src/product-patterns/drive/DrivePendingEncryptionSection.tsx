@@ -1,4 +1,5 @@
-import { Button, Icon, UserAvatar } from '@gouvfr-lasuite/ui-components';
+import { Button, UserAvatar } from '@gouvfr-lasuite/ui-components';
+import { Clock, ShieldCheck } from '@gouvfr-lasuite/ui-components/icons';
 
 import { usePatternTranslate } from '@encryption/src/product-patterns/PatternProvider';
 import type { PatternUser } from '@encryption/src/product-patterns/fixtures';
@@ -50,7 +51,7 @@ export function DrivePendingEncryptionSection({ rows, canAccept }: { rows: Drive
                   )}
                   {row.hasPublicKey && !showAccept && (
                     <p className="pp-drive-pending__enabled">
-                      <Icon aria-hidden name="verified_user" size={14} />
+                      <ShieldCheck aria-hidden size={14} />
                       {t('drivePendingEncryptionEnabled')}
                     </p>
                   )}
@@ -63,7 +64,7 @@ export function DrivePendingEncryptionSection({ rows, canAccept }: { rows: Drive
                 </Button>
               ) : row.hasPublicKey ? null : (
                 <span className="pp-drive-pending__chip" title={t('drivePendingWaitingChipHint')}>
-                  <Icon aria-hidden name="schedule" size={16} />
+                  <Clock aria-hidden size={16} />
                   {t('drivePendingWaitingChip')}
                 </span>
               )}

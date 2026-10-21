@@ -3,7 +3,6 @@ import {
   DropdownMenu,
   type DropdownMenuOption,
   HorizontalSeparator,
-  Icon,
   InvitationUserSelectorList,
   Modal,
   ModalSize,
@@ -13,6 +12,7 @@ import {
   Tooltip,
   UserAvatar,
 } from '@gouvfr-lasuite/ui-components';
+import { Link, Lock, Plus, ShieldCheck, ShieldX, XMark } from '@gouvfr-lasuite/ui-components/icons';
 import { type ReactNode, useState } from 'react';
 
 import { usePatternTranslate } from '@encryption/src/product-patterns/PatternProvider';
@@ -68,7 +68,6 @@ function docsRoles(t: PatternTranslate): DropdownMenuOption[] {
 interface UserRowStatus {
   label: string;
   hint: string;
-  icon?: string;
 }
 
 // SearchUserRow.tsx: avatar (a button opening the person's encryption identity
@@ -119,7 +118,7 @@ function DocsUserRow({
               {suffix && (
                 <Tooltip content={suffix.hint} placement="top">
                   <span className="pp-docs-status" aria-label={`${suffix.label}. ${suffix.hint}`}>
-                    <Icon name={suffix.icon ?? 'gpp_bad'} size={14} />
+                    <ShieldX aria-hidden size={14} />
                     <span>{suffix.label}</span>
                   </span>
                 </Tooltip>
@@ -139,7 +138,7 @@ function AddAction() {
   return (
     <span className="c__search-user-item-right pp-docs-add">
       <span>{t('docsAdd')}</span>
-      <Icon name="add" />
+      <Plus aria-hidden size={24} />
     </span>
   );
 }
@@ -167,7 +166,7 @@ function DocsVisibility() {
           <Button
             variant="tertiary"
             size="small"
-            icon={<Icon name="lock" />}
+            icon={<Lock aria-hidden size={16} />}
             aria-label={t('docsDocumentVisibility')}
             onClick={() => setIsOpen(!isOpen)}
           >
@@ -203,7 +202,7 @@ export function DocsEncryptionEmptyState({ reason }: { reason: DocsAccessError }
       <p className="pp-docs-empty-state__description">{description}</p>
       {needsSetup && (
         <div className="pp-docs-empty-state__actions">
-          <Button size="small" icon={<Icon name="verified_user" />}>
+          <Button size="small" icon={<ShieldCheck aria-hidden size={16} />}>
             {t('docsEnableEncryption')}
           </Button>
         </div>
@@ -262,7 +261,7 @@ export function DocsShareDialog({
       title={
         <div className="pp-docs-title">
           <h1 className="pp-docs-title__text">{t('docsShareTitle')}</h1>
-          <Button variant="tertiary" color="neutral" size="small" aria-label={t('docsCloseShare')} icon={<Icon name="close" />} />
+          <Button variant="tertiary" color="neutral" size="small" aria-label={t('docsCloseShare')} icon={<XMark aria-hidden size={16} />} />
         </div>
       }
     >
@@ -369,7 +368,7 @@ export function DocsShareDialog({
                 </>
               )}
               <div className="pp-docs-footer__actions">
-                <Button variant="secondary" icon={<Icon name="add_link" />}>
+                <Button variant="secondary" icon={<Link aria-hidden size={24} />}>
                   {t('docsCopyLink')}
                 </Button>
                 <Button>{t('docsOk')}</Button>

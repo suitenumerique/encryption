@@ -1,4 +1,5 @@
 import { type AccessData, Button, HorizontalSeparator, ShareModal, ShareModalCopyLinkFooter } from '@gouvfr-lasuite/ui-components';
+import { ShieldCheck } from '@gouvfr-lasuite/ui-components/icons';
 
 import { usePatternTranslate } from '@encryption/src/product-patterns/PatternProvider';
 import { DrivePendingEncryptionSection, type DrivePendingRow } from '@encryption/src/product-patterns/drive/DrivePendingEncryptionSection';
@@ -24,20 +25,11 @@ export interface DriveShareModalProps {
   invitations?: { email: string; role: DriveRole }[];
   pending?: DrivePendingRow[];
   canManage?: boolean;
-  linkReach?: 'restricted' | 'authenticated' | 'public';
 }
 
 type DriveAccess = AccessData<object, { max_role: DriveRole; set_role_to: DriveRole[] }>;
 
-export function DriveShareModal({
-  itemTitle,
-  encrypted,
-  members,
-  invitations = [],
-  pending = [],
-  canManage = true,
-  linkReach = 'restricted',
-}: DriveShareModalProps) {
+export function DriveShareModal({ itemTitle, encrypted, members, invitations = [], pending = [], canManage = true }: DriveShareModalProps) {
   const t = usePatternTranslate();
   const roleLabels: Record<DriveRole, string> = {
     reader: t('driveRoleReader'),
@@ -78,15 +70,7 @@ export function DriveShareModal({
       <>
         {message}
         <div className="pp-drive-verify-identity">
-          <Button
-            size="small"
-            variant="tertiary"
-            icon={
-              <span className="material-icons" aria-hidden="true">
-                verified_user
-              </span>
-            }
-          >
+          <Button size="small" variant="tertiary" icon={<ShieldCheck aria-hidden size={16} />}>
             {t('driveVerifyIdentity')}
           </Button>
         </div>
@@ -128,7 +112,7 @@ export function DriveShareModal({
       // An encrypted item stays restricted: its members are the only way in.
       linkSettings={!encrypted}
       showLinkRole
-      linkReach={linkReach}
+      linkReach="restricted"
       linkReachChoices={[
         { value: 'restricted', label: t('driveReachRestricted'), isDisabled: false },
         { value: 'authenticated', label: t('driveReachAuthenticated'), isDisabled: false },

@@ -2,6 +2,7 @@ import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
+import i18n from '@encryption/src/i18n';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
@@ -24,6 +25,19 @@ const Template: StoryFn<ComponentType> = (args) => <RecoveryPhraseInput {...args
 const DefaultStory = Template.bind({});
 DefaultStory.args = {
   wordCount: 24,
+};
+// 24 empty boxes, masked until the toggle reveals them, with no word flagged yet.
+DefaultStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  for (let i = 1; i <= 24; i++) {
+    const box = canvas.getByLabelText(i18n.t('onboarding.word_label', { number: i }));
+    expect(box).toHaveValue('');
+    expect(box).toHaveAttribute('type', 'password');
+  }
+  expect(canvas.queryByLabelText(i18n.t('onboarding.word_label', { number: 25 }))).toBeNull();
+  expect(canvas.getByRole('button', { name: i18n.t('onboarding.reveal_words') })).toHaveAttribute('aria-pressed', 'false');
+  expect(canvasElement.querySelector(`.${styles.inputInvalid}`)).toBeNull();
+  expect(canvas.queryByText(i18n.t('onboarding.invalid_word_hint'))).toBeNull();
 };
 
 export const Default = prepareStory(DefaultStory);

@@ -1,8 +1,10 @@
 import { Button, Checkbox, VariantType } from '@gouvfr-lasuite/ui-components';
 import { Key, PhoneDesktop } from '@gouvfr-lasuite/ui-components/icons';
 import { Meta, StoryFn } from '@storybook/react';
+import { expect, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
+import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import { Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
@@ -22,6 +24,9 @@ export default {
 
 const Template: StoryFn<ComponentType> = (args) => <Screen {...args} />;
 
+const illustrationOf = (canvasElement: HTMLElement) => canvasElement.querySelector(`.${styles.screenIllustration} img`);
+const actionsOf = (canvasElement: HTMLElement) => canvasElement.querySelector(`.${styles.actions}`);
+
 // The canonical modal: illustration, title, description, one primary action.
 const IllustratedStory = Template.bind({});
 IllustratedStory.args = {
@@ -35,6 +40,13 @@ IllustratedStory.args = {
   ),
   actions: <Button>Continue</Button>,
 };
+IllustratedStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, 'Enable encryption');
+  expect(illustrationOf(canvasElement)).not.toBeNull();
+  await within(canvasElement).findByText('recovery phrase');
+  expect(await playFindButton(canvasElement, 'Continue')).toBeEnabled();
+  expect(within(canvasElement).queryByRole('button', { name: 'Back' })).toBeNull();
+};
 
 export const Illustrated = prepareStory(IllustratedStory);
 
@@ -46,6 +58,14 @@ WithBackStory.args = {
   title: 'Add a trusted contact',
   description: 'Search a contact by email address.',
   actions: <Button>Search</Button>,
+};
+WithBackStory.play = async ({ canvasElement }) => {
+  const back = await playFindButton(canvasElement, 'Back');
+  const heading = await playFindHeading(canvasElement, 'Add a trusted contact');
+  // The link sits above the title.
+  expect(back.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(illustrationOf(canvasElement)).toBeNull();
+  await playFindButton(canvasElement, 'Search');
 };
 
 export const WithBack = prepareStory(WithBackStory);
@@ -69,6 +89,14 @@ ChoicesStory.args = {
       </Button>
     </>
   ),
+};
+ChoicesStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, 'Restore your encryption');
+  const actions = actionsOf(canvasElement) as HTMLElement;
+  expect(actions).not.toHaveClass(styles.actionsRow);
+  for (const name of ['Use another device', 'Use my recovery phrase', 'I lost my keys']) {
+    expect(actions).toContainElement(await playFindButton(canvasElement, name));
+  }
 };
 
 export const Choices = prepareStory(ChoicesStory);
@@ -100,6 +128,15 @@ DestructiveStory.args = {
     </>
   ),
 };
+// Nothing acknowledged yet: the destructive action stays locked, Cancel does not.
+DestructiveStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, 'Reset encryption');
+  expect(canvasElement.querySelector('.c__alert')).not.toBeNull();
+  expect(within(canvasElement).getByRole('checkbox', { name: 'I understand.' })).not.toBeChecked();
+  expect(actionsOf(canvasElement)).toHaveClass(styles.actionsRow);
+  expect(await playFindButton(canvasElement, 'Cancel')).toBeEnabled();
+  expect(await playFindButton(canvasElement, 'Reset encryption')).toBeDisabled();
+};
 
 export const Destructive = prepareStory(DestructiveStory);
 
@@ -118,6 +155,12 @@ DisabledStory.args = {
       </Button>
     </>
   ),
+};
+DisabledStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, 'Encryption disabled on your account');
+  expect(illustrationOf(canvasElement)).toHaveClass(styles.screenIllustrationRaster);
+  await playFindButton(canvasElement, 'Re-enable encryption');
+  await playFindButton(canvasElement, 'Remove encryption from this device');
 };
 
 export const Disabled = prepareStory(DisabledStory);

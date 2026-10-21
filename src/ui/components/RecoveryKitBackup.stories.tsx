@@ -2,7 +2,7 @@ import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
-import { playFindButton } from '@encryption/.storybook/testing';
+import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
@@ -90,6 +90,11 @@ export const Printed = prepareStory(PrintedStory);
 
 const BusyStory = Template.bind({});
 BusyStory.args = { ...baseArgs, isBusy: true };
+// The confirmation shows its busy label, locked.
+BusyStory.play = async ({ canvasElement }) => {
+  expect(await playFindButton(canvasElement, i18n.t('onboarding.finalizing'))).toBeDisabled();
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('onboarding.btn_backup_done') })).toBeNull();
+};
 
 export const Busy = prepareStory(BusyStory);
 
@@ -119,6 +124,22 @@ HandoverStory.args = {
   back: { label: i18n.t('emergency.btn_back_to_list'), onClick: () => console.log('back') },
   title: i18n.t('emergency.reveal_title'),
   confirmLabel: i18n.t('emergency.reveal_done'),
+};
+// The phrase is shown straight away (no reveal, no file or print), and the confirmation is open.
+HandoverStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('emergency.reveal_title'));
+  await playFindButton(canvasElement, i18n.t('emergency.btn_back_to_list'));
+  const grid = canvasElement.querySelector(`.${styles.words}`) as HTMLElement;
+  expect(
+    within(grid)
+      .getAllByRole('listitem')
+      .map((item) => item.textContent)
+  ).toEqual(sampleRecoveryPhrase.split(' '));
+  await playFindButton(canvasElement, i18n.t('emergency.reveal_copy_to_send'));
+  expect(await playFindButton(canvasElement, i18n.t('emergency.reveal_done'))).toBeEnabled();
+  expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_reveal') })).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_print') })).toBeNull();
 };
 
 export const Handover = prepareStory(HandoverStory);

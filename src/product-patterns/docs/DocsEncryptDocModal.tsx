@@ -8,6 +8,7 @@ export interface DocsEncryptDocModalProps {
   hasKeys: boolean;
   /** The link reach; encrypting requires `restricted` (private). */
   linkReach: 'restricted' | 'authenticated' | 'public';
+  /** Attachments the antivirus is still analyzing (`countAnalyzingUploads`). */
   analyzingUploads?: number;
   /** Members without a key plus pending email invitations. */
   pendingCount?: number;

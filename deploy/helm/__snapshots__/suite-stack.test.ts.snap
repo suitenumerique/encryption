@@ -735,6 +735,9 @@ spec:
                 echo "waiting for Accounts' migration: $(printf '%s' "$out" | tail -n 1)"; sleep 3
               done
               python manage.py shell --command "exec(open('/scripts/applications.py').read())"
+          # The same environment as the Accounts backend Deployment: backend.envVars then
+          # backend.django.envVars, and both envFrom lists, so settings an operator moved
+          # into a Secret reach this Job too.
           env:
             - name: HOME
               value: /tmp

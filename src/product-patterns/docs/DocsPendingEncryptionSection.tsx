@@ -1,4 +1,5 @@
-import { Button, Icon, UserAvatar } from '@gouvfr-lasuite/ui-components';
+import { Button, UserAvatar } from '@gouvfr-lasuite/ui-components';
+import { Clock, ShieldCheck } from '@gouvfr-lasuite/ui-components/icons';
 
 import { usePatternTranslate } from '@encryption/src/product-patterns/PatternProvider';
 import type { PatternUser } from '@encryption/src/product-patterns/fixtures';
@@ -48,7 +49,7 @@ export function DocsPendingEncryptionSection({ rows, canAccept }: { rows: DocsPe
                   {row.user.full_name && <span className="pp-docs-pending__email">{row.user.email}</span>}
                   {row.hasPublicKey && !showAccept && (
                     <span className="pp-docs-pending__enabled">
-                      <Icon name="verified_user" size={16} />
+                      <ShieldCheck aria-hidden size={16} />
                       {t('docsEncryptionEnabled')}
                     </span>
                   )}
@@ -66,7 +67,7 @@ export function DocsPendingEncryptionSection({ rows, canAccept }: { rows: DocsPe
               )}
               {!row.hasPublicKey && (
                 <span className="pp-docs-pending__chip" title={t('docsWaitingChipTitle')}>
-                  <Icon name="schedule" size={16} />
+                  <Clock aria-hidden size={16} />
                   {t('docsWaitingForEncryption')}
                 </span>
               )}

@@ -186,7 +186,8 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
         />
       ) : (
         <>
-          <IdentityCard name={primary} secondary={secondary} />
+          {/* No one to describe when the product passed no recipient. */}
+          {userId && <IdentityCard name={primary} secondary={secondary} />}
           <p className={styles.hint}>{t('profile.no_key')}</p>
         </>
       )}

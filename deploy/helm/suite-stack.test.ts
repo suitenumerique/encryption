@@ -35,6 +35,7 @@ interface Container {
   name: string;
   image: string;
   env?: EnvEntry[];
+  envFrom?: Record<string, unknown>[];
   command?: string[];
 }
 
@@ -510,6 +511,28 @@ describe('the stack chart', () => {
     expect(scripts['applications.py']).toContain('Application.CLIENT_CONFIDENTIAL');
     expect(scripts['applications.py']).toContain('Application.RS256_ALGORITHM');
     expect(scripts['applications.py']).toContain('application.skip_authorization = True');
+  });
+
+  it('gives the Accounts Job the settings an operator moved out of backend.envVars', () => {
+    const moved = render(
+      [],
+      [],
+      [
+        'accounts.backend.django.envVars={"DJANGO_EXTRA":"on"}',
+        'accounts.backend.envFrom=[{"secretRef":{"name":"accounts-db"}}]',
+        'accounts.backend.django.envFrom=[{"secretRef":{"name":"accounts-oidc-key"}}]',
+      ]
+    );
+    const container = mainContainer(find(moved.own, 'Job', 'stack-suite-stack-accounts-applications-1'));
+    const backend = mainContainer(find(moved.docs, 'Deployment', 'accounts-backend'));
+    const env = containerEnv(container);
+
+    expect(env.get('DJANGO_EXTRA')?.value).toBe('on');
+    for (const entry of containerEnv(backend).values()) {
+      expect(env.get(entry.name), entry.name).toEqual(entry);
+    }
+    expect(container.envFrom).toEqual(backend.envFrom);
+    expect(container.envFrom).toHaveLength(2);
   });
 
   it('signs the products in at Keycloak directly when Accounts is off', () => {

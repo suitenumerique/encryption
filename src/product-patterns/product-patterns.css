@@ -3,6 +3,10 @@
  * writes it with styled-components props (DocShareModal.tsx, SearchUserRow.tsx,
  * PendingEncryptionSection.tsx, EncryptionLayout.tsx), Drive in
  * features/encryption/Encryption.scss.
+ *
+ * Sizes go through the design system variables. The literals left have no
+ * variable: line heights, the 700 weight (`extrabold` is 800 in most themes),
+ * the 1px border and fixed widths and heights.
  */
 
 /* Docs: the dialog title row (DocShareModal.tsx) */
@@ -14,8 +18,8 @@
 
 .pp-docs-title__text {
   margin: 0;
-  font-size: var(--c--globals--font--sizes--sm, 14px);
-  font-weight: 600;
+  font-size: var(--c--globals--font--sizes--sm);
+  font-weight: var(--c--globals--font--weights--bold);
 }
 
 .pp-docs-share {
@@ -28,21 +32,21 @@
 }
 
 .pp-docs-share__selected {
-  padding: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) 0;
+  padding: var(--c--globals--spacings--base) var(--c--globals--spacings--base) 0;
 }
 
 .pp-docs-share__groups {
-  padding: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px);
+  padding: var(--c--globals--spacings--base) var(--c--globals--spacings--base) var(--c--globals--spacings--3xs);
 }
 
 .pp-docs-share__search {
-  padding: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--3xs, 4px);
+  padding: var(--c--globals--spacings--base) var(--c--globals--spacings--base) var(--c--globals--spacings--3xs);
 }
 
 .pp-docs-share__hint {
   margin: 0;
-  padding: var(--c--globals--spacings--3xs, 4px) var(--c--globals--spacings--xs, 8px) 0;
-  font-size: var(--c--globals--font--sizes--sm, 14px);
+  padding: var(--c--globals--spacings--3xs) var(--c--globals--spacings--xs) 0;
+  font-size: var(--c--globals--font--sizes--sm);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
@@ -50,7 +54,7 @@
 .pp-docs-user-row {
   display: flex;
   align-items: center;
-  gap: var(--c--globals--spacings--xs, 8px);
+  gap: var(--c--globals--spacings--xs);
 }
 
 .pp-docs-user-row__avatar-button {
@@ -70,18 +74,18 @@
 .pp-docs-user-row__name-line {
   display: flex;
   align-items: center;
-  gap: var(--c--globals--spacings--3xs, 4px);
+  gap: var(--c--globals--spacings--3xs);
 }
 
 .pp-docs-user-row__name {
-  font-size: var(--c--globals--font--sizes--sm, 14px);
-  font-weight: 500;
+  font-size: var(--c--globals--font--sizes--sm);
+  font-weight: var(--c--globals--font--weights--medium);
   line-break: anywhere;
 }
 
 .pp-docs-user-row__email {
-  margin-top: -2px;
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  margin-top: calc(-1 * var(--c--globals--spacings--4xs));
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
   line-break: anywhere;
 }
@@ -89,9 +93,9 @@
 .pp-docs-status {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-size: var(--c--globals--font--sizes--xs, 12px);
-  font-weight: 500;
+  gap: var(--c--globals--spacings--4xs);
+  font-size: var(--c--globals--font--sizes--xs);
+  font-weight: var(--c--globals--font--weights--medium);
   white-space: nowrap;
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
@@ -99,71 +103,71 @@
 .pp-docs-add {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--c--globals--spacings--4xs);
   color: var(--c--contextuals--content--semantic--brand--tertiary);
-  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-size: var(--c--globals--font--sizes--sm);
 }
 
 /* Docs: DocVisibility.tsx and DocShareModalFooter.tsx */
 .pp-docs-visibility {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--base, 16px);
-  padding: 0 var(--c--globals--spacings--base, 16px);
+  gap: var(--c--globals--spacings--base);
+  padding: 0 var(--c--globals--spacings--base);
 }
 
 .pp-docs-visibility__title {
   margin: 0;
-  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-size: var(--c--globals--font--sizes--sm);
   font-weight: 700;
 }
 
 .pp-docs-visibility__row {
   display: flex;
   align-items: center;
-  gap: var(--c--globals--spacings--3xs, 4px);
+  gap: var(--c--globals--spacings--3xs);
 }
 
 .pp-docs-visibility__description {
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .pp-docs-footer__actions {
   display: flex;
   justify-content: space-between;
-  padding: 0 var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px);
+  padding: 0 var(--c--globals--spacings--base) var(--c--globals--spacings--base);
 }
 
 /* Docs: PendingEncryptionSection.tsx */
 .pp-docs-pending {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--xs, 8px);
-  margin: var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--base, 16px) var(--c--globals--spacings--sm, 12px);
+  gap: var(--c--globals--spacings--xs);
+  margin: var(--c--globals--spacings--base) var(--c--globals--spacings--base) var(--c--globals--spacings--sm);
 }
 
 .pp-docs-pending__heading {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--c--globals--spacings--4xs);
 }
 
 .pp-docs-pending__title {
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-size: var(--c--globals--font--sizes--xs);
   font-weight: 700;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .pp-docs-pending__hint {
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
 
 .pp-docs-pending__rows {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--xs, 8px);
+  gap: var(--c--globals--spacings--xs);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -172,7 +176,7 @@
 .pp-docs-pending__row {
   display: flex;
   align-items: center;
-  gap: var(--c--globals--spacings--xs, 8px);
+  gap: var(--c--globals--spacings--xs);
   min-height: 42px;
 }
 
@@ -180,7 +184,7 @@
   display: flex;
   flex: 1;
   align-items: center;
-  gap: var(--c--globals--spacings--xs, 8px);
+  gap: var(--c--globals--spacings--xs);
   min-width: 0;
 }
 
@@ -192,15 +196,15 @@
 
 .pp-docs-pending__name {
   overflow: hidden;
-  font-size: var(--c--globals--font--sizes--sm, 14px);
-  font-weight: 500;
+  font-size: var(--c--globals--font--sizes--sm);
+  font-weight: var(--c--globals--font--weights--medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .pp-docs-pending__email {
   overflow: hidden;
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -209,26 +213,26 @@
 .pp-docs-pending__enabled {
   display: flex;
   align-items: center;
-  gap: 2px;
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  gap: var(--c--globals--spacings--4xs);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .pp-docs-pending__error {
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--error--primary);
 }
 
 .pp-docs-pending__chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 var(--c--globals--spacings--2xs, 6px);
-  border-radius: 4px;
+  gap: var(--c--globals--spacings--3xs);
+  height: var(--c--globals--spacings--md);
+  padding: 0 var(--c--globals--spacings--2xs);
+  border-radius: var(--c--globals--spacings--3xs);
   background: var(--c--contextuals--background--surface--tertiary);
-  font-size: var(--c--globals--font--sizes--xs, 12px);
-  font-weight: 500;
+  font-size: var(--c--globals--font--sizes--xs);
+  font-weight: var(--c--globals--font--weights--medium);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
   white-space: nowrap;
 }
@@ -238,36 +242,36 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--c--globals--spacings--3xs, 4px);
+  gap: var(--c--globals--spacings--3xs);
   max-width: 320px;
   margin: auto;
-  padding: var(--c--globals--spacings--md, 24px);
+  padding: var(--c--globals--spacings--md);
   text-align: center;
 }
 
 .pp-docs-empty-state__title {
   margin: 0;
-  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-size: var(--c--globals--font--sizes--sm);
   font-weight: 700;
 }
 
 .pp-docs-empty-state__description {
   margin: 0;
-  font-size: var(--c--globals--font--sizes--xs, 12px);
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .pp-docs-empty-state__actions {
   display: flex;
   justify-content: center;
-  margin-top: var(--c--globals--spacings--sm, 12px);
+  margin-top: var(--c--globals--spacings--sm);
 }
 
 /* Docs: EncryptionLayout.tsx `EncryptionModalContent`, in ModalEncryptDoc.tsx */
 .pp-docs-encrypt {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--base, 16px);
+  gap: var(--c--globals--spacings--base);
 }
 
 .pp-docs-encrypt__illustration {
@@ -279,20 +283,20 @@
 .pp-docs-encrypt__heading {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--3xs, 4px);
-  padding-right: var(--c--globals--spacings--base, 16px);
+  gap: var(--c--globals--spacings--3xs);
+  padding-right: var(--c--globals--spacings--base);
 }
 
 .pp-docs-encrypt__title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--c--globals--font--sizes--lg);
   font-weight: 700;
   line-height: 24px;
 }
 
 .pp-docs-encrypt__description {
   margin: 0;
-  font-size: var(--c--globals--font--sizes--sm, 14px);
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
@@ -305,7 +309,7 @@
 .pp-docs-encrypt__actions {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--xs, 8px);
+  gap: var(--c--globals--spacings--xs);
 }
 
 /* Drive: Encryption.scss `.drive__encryption-pending` */
@@ -320,12 +324,12 @@
 .pp-drive-pending__heading {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--c--globals--spacings--4xs);
 }
 
 .pp-drive-pending__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
@@ -333,9 +337,9 @@
 .pp-drive-pending__enabled {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--c--globals--spacings--3xs);
   margin: 0;
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   font-weight: var(--c--globals--font--weights--medium);
   color: var(--c--contextuals--content--semantic--success--primary);
@@ -382,7 +386,7 @@
 
 .pp-drive-pending__error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   color: var(--c--contextuals--content--semantic--error--tertiary);
 }
@@ -390,12 +394,12 @@
 .pp-drive-pending__chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 6px;
-  border-radius: 4px;
+  gap: var(--c--globals--spacings--3xs);
+  height: var(--c--globals--spacings--md);
+  padding: 0 var(--c--globals--spacings--2xs);
+  border-radius: var(--c--globals--spacings--3xs);
   background: var(--c--contextuals--background--surface--tertiary);
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   font-weight: var(--c--globals--font--weights--medium);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
@@ -417,7 +421,7 @@
 .pp-overview {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
-  gap: 32px;
+  gap: var(--c--globals--spacings--lg);
 }
 
 /* An open modal locks the page scroll, which the overview needs. */
@@ -428,27 +432,27 @@ body.c__noscroll:has(.pp-overview) {
 .pp-overview__cell {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--c--globals--spacings--xs);
   min-width: 0;
 }
 
 .pp-overview__label {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
   font-weight: 700;
 }
 
 .pp-overview__source {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .pp-overview__cell .c__modal__backdrop {
   position: relative;
   inset: auto;
-  padding: 16px;
-  border-radius: 8px;
+  padding: var(--c--globals--spacings--base);
+  border-radius: var(--c--globals--spacings--xs);
   opacity: 1;
   animation: none;
 }

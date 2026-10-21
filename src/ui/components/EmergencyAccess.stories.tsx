@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { userEvent, within } from 'storybook/test';
+import { expect, userEvent, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindDialog } from '@encryption/.storybook/testing';
@@ -82,12 +82,28 @@ function lists(contacts: TrustedContact[], grantors: GrantedVault[]) {
 const EmptyStory = Template.bind({});
 EmptyStory.args = { ...baseArgs };
 EmptyStory.parameters = { msw: lists([], []) };
+EmptyStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('emergency.trusted_empty'));
+  await canvas.findByText(i18n.t('emergency.granted_empty'));
+  await playFindButton(canvasElement, i18n.t('emergency.btn_designate'));
+};
 
 export const Empty = prepareStory(EmptyStory);
 
 const WithContactsStory = Template.bind({});
 WithContactsStory.args = { ...baseArgs };
 WithContactsStory.parameters = { msw: lists([trustedContact], []) };
+// A confirmed contact: listed with its wait and its menu, no status chip.
+WithContactsStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(trustedContact.grantee_email);
+  canvas.getByText(i18n.t('emergency.wait_label', { count: trustedContact.wait_time_days }));
+  expect(canvas.queryByText(i18n.t('emergency.trusted_empty'))).toBeNull();
+  expect(canvas.queryByText(i18n.t('emergency.status_invited'))).toBeNull();
+  canvas.getByText(i18n.t('emergency.granted_empty'));
+  await playFindRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
+};
 
 export const WithContacts = prepareStory(WithContactsStory);
 
@@ -109,6 +125,13 @@ export const RecoveryPending = prepareStory(RecoveryPendingStory);
 const EntrustedToMeStory = Template.bind({});
 EntrustedToMeStory.args = { ...baseArgs };
 EntrustedToMeStory.parameters = { msw: lists([], [grantedVault]) };
+EntrustedToMeStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(grantedVault.grantor_email);
+  canvas.getByText(i18n.t('emergency.trusted_empty'));
+  expect(canvas.queryByText(i18n.t('emergency.granted_empty'))).toBeNull();
+  await playFindRowMenuItem(canvasElement, grantedVault.grantor_email, i18n.t('emergency.btn_request_access'));
+};
 
 export const EntrustedToMe = prepareStory(EntrustedToMeStory);
 

@@ -1,4 +1,10 @@
 import { CunninghamProvider } from '@gouvfr-lasuite/ui-components';
+// Only for the Material Icons ligatures that design system parts draw
+// themselves and take no icon prop to replace: the QuickSearch input
+// ("search"), ShareModal's rows, link settings and "load more"
+// ("add", "arrow_drop_down", "arrow_downward"), ShareModalCopyLinkFooter
+// ("link") and InvitationUserSelectorList ("close"). The patterns' own icons
+// are the design system's SVG icons.
 import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import '@gouvfr-lasuite/ui-components/style';
 import { type ReactNode, createContext, useContext, useMemo } from 'react';

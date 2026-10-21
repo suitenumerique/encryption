@@ -95,6 +95,7 @@ export const DocsWaitingForAccessNeedsSetup = stateStory('DocsWaitingForAccessNe
 export const DocsWaitingForAccess = stateStory('DocsWaitingForAccess');
 export const DocsEncryptBlocked = stateStory('DocsEncryptBlocked');
 export const DocsEncryptBlockedWithKeys = stateStory('DocsEncryptBlockedWithKeys');
+export const DocsEncryptAnalyzingFiles = stateStory('DocsEncryptAnalyzingFiles');
 export const DocsEncryptWithPendingCollaborators = stateStory('DocsEncryptWithPendingCollaborators');
 export const DocsEncryptReady = stateStory('DocsEncryptReady');
 export const DrivePlainItem = stateStory('DrivePlainItem');

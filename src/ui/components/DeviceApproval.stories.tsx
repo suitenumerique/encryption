@@ -193,6 +193,15 @@ EnrolledDeviceStory.parameters = {
     hasKeys: async () => ({ hasKeys: true }),
   },
 };
+// The camera opens on arrival: the scanner, with the manual entry one click away.
+EnrolledDeviceStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_title'));
+  expect((await canvas.findByLabelText(i18n.t('device_approval.scan_hint'))).tagName).toBe('VIDEO');
+  await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead'));
+  expect(canvas.queryByLabelText('code group 1')).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('device_approval.btn_approve') })).toBeNull();
+};
 
 export const EnrolledDevice = prepareStory(EnrolledDeviceStory);
 

@@ -1,4 +1,5 @@
-// The demo's share modal uses QuickSearch, whose input draws a Material Icons ligature.
+// The demo's share modal uses QuickSearch, whose input draws a Material Icons
+// ligature ("search") and takes no prop to replace it with an SVG icon.
 import '@gouvfr-lasuite/ui-components/fonts/material-icons';
 import '@gouvfr-lasuite/ui-components/style';
 import { StrictMode } from 'react';

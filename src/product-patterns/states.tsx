@@ -316,7 +316,7 @@ export const states: PatternState[] = [
     name: 'Docs: encrypt document, blocked',
     source: `${DOCS}/doc-management/components/ModalEncryptDoc.tsx`,
     description:
-      'The entry to encryption ("Encrypt document" in the document menu, DocToolBox.tsx). It lists what blocks it in a red notice: the viewer has no encryption keys, and the link is not private (an encrypted document must stay restricted, which is why its share dialog has no link settings). Files still in antivirus analysis also block it. Without keys, the primary action is "Enable encryption" (ButtonEnableEncryption): the onboarding opens over the modal, which can encrypt once it is done.',
+      'The entry to encryption ("Encrypt document" in the document menu, DocToolBox.tsx). It lists what blocks it in a red notice: the viewer has no encryption keys, and the link is not private (an encrypted document must stay restricted, which is why its share dialog has no link settings). Files still in antivirus analysis block it too (see the next state). Without keys, the primary action is "Enable encryption" (ButtonEnableEncryption): the onboarding opens over the modal, which can encrypt once it is done.',
     render: () => <DocsEncryptDocModal hasKeys={false} linkReach="public" />,
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsBlockerNoKeys'))).toBeInTheDocument();
@@ -333,6 +333,19 @@ export const states: PatternState[] = [
     render: () => <DocsEncryptDocModal hasKeys linkReach="authenticated" />,
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsBlockerNotPrivate', { reach: t('docsReachLowerConnected') }))).toBeInTheDocument();
+      await expect(await findButtonByText(scope, t('docsEncrypt'))).toBeDisabled();
+    },
+  },
+  {
+    id: 'DocsEncryptAnalyzingFiles',
+    name: 'Docs: encrypt document, files in antivirus analysis',
+    source: `${DOCS}/doc-management/components/ModalEncryptDoc.tsx`,
+    description:
+      'The viewer has keys and the link is private, but attachments uploaded to the document are still being analyzed by the antivirus (countAnalyzingUploads in encryptDocContent.ts): "Encrypt" stays disabled until the analysis ends, since encrypting would miss those files and encrypted uploads are never scanned.',
+    render: () => <DocsEncryptDocModal hasKeys linkReach="restricted" analyzingUploads={2} />,
+    check: async (scope, t) => {
+      await expect(await scope.findByText(t('docsBlockerAntivirus'))).toBeInTheDocument();
+      await expect(scope.queryByText(t('docsBlockerNotPrivate', { reach: t('docsReachLowerConnected') }))).toBeNull();
       await expect(await findButtonByText(scope, t('docsEncrypt'))).toBeDisabled();
     },
   },

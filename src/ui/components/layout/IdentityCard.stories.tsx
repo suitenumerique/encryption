@@ -1,7 +1,10 @@
 import { Meta, StoryFn } from '@storybook/react';
+import { expect, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
+import i18n from '@encryption/src/i18n';
 import { Chip, CopyFingerprintButton, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { sampleFingerprint } from '@encryption/src/ui/testing/fixtures';
 
 type ComponentType = typeof IdentityCard;
@@ -20,6 +23,24 @@ export default {
 
 const Template: StoryFn<ComponentType> = (args) => <IdentityCard {...args} />;
 
+const fingerprintLabel = (sampleFingerprint.match(/\d{5}/g) ?? []).join(' ');
+
+// The card, its tone on both the border and the digit boxes, and the 8 groups of the fingerprint.
+function expectCard(canvasElement: HTMLElement, tone: { card: string; fingerprint: string } | null) {
+  const card = canvasElement.querySelector(`.${styles.card}`);
+  const fingerprint = within(canvasElement).getByLabelText(fingerprintLabel);
+  expect(fingerprint.children).toHaveLength(8);
+
+  for (const toneClass of [styles.cardWarning, styles.cardError, styles.cardSuccess]) {
+    if (toneClass === tone?.card) expect(card).toHaveClass(toneClass);
+    else expect(card).not.toHaveClass(toneClass);
+  }
+  for (const toneClass of [styles.fingerprintWarning, styles.fingerprintError, styles.fingerprintSuccess]) {
+    if (toneClass === tone?.fingerprint) expect(fingerprint).toHaveClass(toneClass);
+    else expect(fingerprint).not.toHaveClass(toneClass);
+  }
+}
+
 const baseArgs = {
   name: 'Amandine Salambo',
   secondary: 'amandine.salambo@numerique.gouv.fr',
@@ -28,6 +49,13 @@ const baseArgs = {
 
 const DefaultStory = Template.bind({});
 DefaultStory.args = { ...baseArgs };
+DefaultStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(baseArgs.name);
+  canvas.getByText(baseArgs.secondary);
+  expectCard(canvasElement, null);
+  expect(canvas.queryByRole('button')).toBeNull();
+};
 
 export const Default = prepareStory(DefaultStory);
 
@@ -35,11 +63,23 @@ export const Default = prepareStory(DefaultStory);
 // the fingerprint to a contact, so it never appears on a contact's card.
 const OwnIdentityStory = Template.bind({});
 OwnIdentityStory.args = { ...baseArgs, aside: <CopyFingerprintButton fingerprint={sampleFingerprint} /> };
+OwnIdentityStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText(baseArgs.name);
+  expectCard(canvasElement, null);
+  expect(await within(canvasElement).findByRole('button', { name: i18n.t('identity.copy_fingerprint') })).toBeEnabled();
+};
 
 export const OwnIdentity = prepareStory(OwnIdentityStory);
 
 const EmailOnlyStory = Template.bind({});
 EmailOnlyStory.args = { name: 'amandine.salambo@numerique.gouv.fr', fingerprint: sampleFingerprint };
+// The email is the only line: shown once, as the name.
+EmailOnlyStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  expect(await canvas.findAllByText(baseArgs.secondary)).toHaveLength(1);
+  expect(canvasElement.querySelector(`.${styles.identitySecondary}`)).toBeNull();
+  expectCard(canvasElement, null);
+};
 
 export const EmailOnly = prepareStory(EmailOnlyStory);
 
@@ -54,6 +94,10 @@ KeyMismatchStory.args = {
     </Chip>
   ),
 };
+KeyMismatchStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText('Key mismatch');
+  expectCard(canvasElement, { card: styles.cardWarning, fingerprint: styles.fingerprintWarning });
+};
 
 export const KeyMismatch = prepareStory(KeyMismatchStory);
 
@@ -66,6 +110,10 @@ TrustedStory.args = {
       Trusted
     </Chip>
   ),
+};
+TrustedStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText('Trusted');
+  expectCard(canvasElement, { card: styles.cardSuccess, fingerprint: styles.fingerprintSuccess });
 };
 
 export const Trusted = prepareStory(TrustedStory);
@@ -80,11 +128,21 @@ RefusedStory.args = {
     </Chip>
   ),
 };
+RefusedStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText('Refused');
+  expectCard(canvasElement, { card: styles.cardError, fingerprint: styles.fingerprintError });
+};
 
 export const Refused = prepareStory(RefusedStory);
 
 // No fingerprint (a contact who has not set up encryption yet).
 const WithoutFingerprintStory = Template.bind({});
 WithoutFingerprintStory.args = { name: 'Amandine Salambo', secondary: 'amandine.salambo@numerique.gouv.fr' };
+WithoutFingerprintStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(baseArgs.name);
+  canvas.getByText(baseArgs.secondary);
+  expect(canvasElement.querySelector(`.${styles.fingerprint}`)).toBeNull();
+};
 
 export const WithoutFingerprint = prepareStory(WithoutFingerprintStory);

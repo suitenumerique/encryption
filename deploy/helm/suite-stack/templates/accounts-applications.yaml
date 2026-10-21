@@ -101,10 +101,16 @@ spec:
                 echo "waiting for Accounts' migration: $(printf '%s' "$out" | tail -n 1)"; sleep 3
               done
               python manage.py shell --command "exec(open('/scripts/applications.py').read())"
+          # The same environment as the Accounts backend Deployment: backend.envVars then
+          # backend.django.envVars, and both envFrom lists, so settings an operator moved
+          # into a Secret reach this Job too.
+          {{- $backend := .Values.accounts.backend }}
+          {{- $django := $backend.django | default dict }}
           env:
             - name: HOME
               value: /tmp
-            {{- range $name, $value := .Values.accounts.backend.envVars }}
+            {{- range $vars := list ($backend.envVars | default dict) ($django.envVars | default dict) }}
+            {{- range $name, $value := $vars }}
             - name: {{ $name | quote }}
               {{- if kindIs "map" $value }}
               valueFrom:
@@ -113,6 +119,12 @@ spec:
               value: {{ $value | quote }}
               {{- end }}
             {{- end }}
+            {{- end }}
+          {{- $envFrom := concat ($backend.envFrom | default list) ($django.envFrom | default list) }}
+          {{- with $envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
