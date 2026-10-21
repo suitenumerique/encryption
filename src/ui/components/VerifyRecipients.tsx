@@ -270,7 +270,7 @@ export function VerifyRecipients({
                   tone={tone}
                   aside={
                     recipient.trusted ? (
-                      <Chip tone="success" icon="check_circle">
+                      <Chip tone="success" icon="trusted">
                         {t('verify.trusted')}
                       </Chip>
                     ) : recipient.status === 'mismatch' ? (
@@ -278,7 +278,7 @@ export function VerifyRecipients({
                         {t('profile.decision_changed')}
                       </Chip>
                     ) : (
-                      <Chip tone="error" icon="block">
+                      <Chip tone="error" icon="refused">
                         {t('profile.decision_refused')}
                       </Chip>
                     )

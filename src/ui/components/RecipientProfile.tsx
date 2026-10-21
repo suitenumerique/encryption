@@ -170,11 +170,11 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
           tone={decision === 'trusted' ? 'success' : decision === 'refused' ? 'error' : decision === 'changed' ? 'warning' : 'default'}
           aside={
             decision === 'trusted' ? (
-              <Chip tone="success" icon="check_circle">
+              <Chip tone="success" icon="trusted">
                 {t('profile.decision_trusted')}
               </Chip>
             ) : decision === 'refused' ? (
-              <Chip tone="error" icon="block">
+              <Chip tone="error" icon="refused">
                 {t('profile.decision_refused')}
               </Chip>
             ) : decision === 'changed' ? (

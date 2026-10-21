@@ -18,15 +18,17 @@ export async function playFindDialog(parentElement: HTMLElement, name?: string |
 }
 
 /**
- * Cunningham's <Alert> renders a plain `<div class="c__alert">` with NO
+ * The design system's <Alert> renders a plain `<div class="c__alert">` with NO
  * `role="alert"` (only its Toast carries that role), so `findByRole('alert')`
- * never matches one. The class is the reliable selector, and passing `text`
- * additionally proves WHICH message is shown rather than just "an alert exists".
+ * never matches one. The class is the reliable selector, together with the
+ * field-level errors the interface marks `role="alert"` itself (a refused code or
+ * phrase under its boxes). Passing `text` additionally proves WHICH message is
+ * shown rather than just "an alert exists".
  */
 export async function playFindAlert(parentElement: HTMLElement, text?: string | RegExp, options?: { timeout?: number }): Promise<HTMLElement> {
   if (text !== undefined) {
     const node = await within(parentElement).findByText(text, undefined, options);
-    const alert = node.closest('.c__alert');
+    const alert = node.closest('.c__alert, [role="alert"]');
 
     if (!alert) {
       throw new Error(`Found "${String(text)}" but it is not rendered inside an alert`);
@@ -36,10 +38,10 @@ export async function playFindAlert(parentElement: HTMLElement, text?: string | 
   }
 
   return await waitFor(() => {
-    const alert = parentElement.querySelector('.c__alert');
+    const alert = parentElement.querySelector('.c__alert, [role="alert"]');
 
     if (!alert) {
-      throw new Error('Unable to find an alert (.c__alert)');
+      throw new Error('Unable to find an alert (.c__alert or role="alert")');
     }
 
     return alert as HTMLElement;

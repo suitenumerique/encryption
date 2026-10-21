@@ -45,6 +45,7 @@ import { Chip, Identity, IdentityCard } from '@encryption/src/ui/components/layo
 import { Actions, LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
+import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
@@ -73,7 +74,7 @@ function countdownLabel(countdown: Countdown, locale: string): string {
 }
 
 const CHIP_TONES = { invited: 'info', confirmed: 'success', requested: 'error', approved: 'warning' } as const;
-const CHIP_ICONS = { invited: 'schedule', confirmed: 'check_circle', requested: 'error', approved: 'lock_open' } as const;
+const CHIP_ICONS = { invited: 'pending', confirmed: 'trusted', requested: 'alert', approved: 'unlocked' } as const;
 
 function StatusChip({ phase, t }: { phase: 'invited' | 'confirmed' | 'requested' | 'approved'; t: TFunction }) {
   return (
@@ -303,7 +304,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <Identity name={contact.email} />
-            <Chip tone="success" icon="check_circle">
+            <Chip tone="success" icon="trusted">
               {t('verify.trusted')}
             </Chip>
           </div>
@@ -571,6 +572,9 @@ export function EmergencyAccess({
   const { t, i18n } = useTranslation('common');
   const { isReady, request, createEmergencyEscrow, verifyEscrows } = useEncryptionContext();
   const { sessionExpired, markSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
+
+  // The lists need the wide modal, the steps of a designation or a reveal too.
+  useModalSize('medium');
 
   const [view, setView] = useState<'list' | 'designate' | 'reveal'>('list');
   const [designatePrefill, setDesignatePrefill] = useState<string | null>(null);

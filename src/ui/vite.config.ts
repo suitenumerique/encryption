@@ -99,6 +99,7 @@ export function getUiViteConfig(): UserConfig {
       outDir: resolve(configDir, '../../dist/ui'),
       emptyOutDir: true,
       sourcemap: 'hidden', // Disable `sourceMappingURL` comment since `.map` files are not served by the backend
+      assetsInlineLimit: 0, // Never inline an image as a `data:` URI: the interface CSP keeps `img-src 'self'`
       rollupOptions: {
         input: resolve(configDir, 'interface.html'),
         output: {

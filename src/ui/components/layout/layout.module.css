@@ -1,18 +1,18 @@
 /*
- * Shared layout of the interface screens. The product hosts the iframe inside
- * its own modal (chrome, padding, close control), so a screen only lays out the
- * modal's content: an optional illustration, a title/description block, a body
- * and a stack of full-width actions. Sizes follow the design system's modal
- * anatomy (24px card padding, 16px between sections, 40px buttons).
+ * Shared layout of the interface screens. App.tsx draws the design system's
+ * Modal around every screen (card, padding, close control), so a screen only
+ * lays out the modal's content: an optional illustration, a title/description
+ * block, a body and a stack of full-width actions. Every size comes from the
+ * design system's tokens, as named in the design (spacings `4xs` 2px, `xxxs`
+ * 4px, `xxs` 6px, `xs` 8px, `sm` 12px, `base` 16px, `md` 24px); line heights
+ * follow the design's text styles (12/16, 14/18, 16/22, 18/24).
  */
 
-/* The modals the interface draws over the product (every screen, and the
-   confirmations on top of one): the design system's small modal widened to 350px,
-   and its close control anchored to the box rather than sticky in the scroller,
-   so it keeps one place whether the content scrolls or not, with a halo that
-   masks what scrolls under it. */
-:global(.c__modal--small) {
-  width: 350px;
+/* The interface's two modal widths, as designed: 350px for every flow, 450px for
+   the lists (trusted contacts) and the 24-word phrase. */
+:global(:root) {
+  --c--components--modal--width-small: 350px;
+  --c--components--modal--width-medium: 450px;
 }
 
 /* The design system fades the backdrop in over 200ms. The product already
@@ -24,19 +24,30 @@
   opacity: 1;
 }
 
+/* The close control, anchored to the box rather than sticky in the scroller, so
+   it keeps one place whether the content scrolls or not (the design's 24px
+   neutral button, 5px from the corner), with a halo that masks what scrolls
+   under it. */
 :global(.c__modal .c__modal__close) {
   position: absolute;
-  top: 0.4rem;
-  right: 0.4rem;
+  top: 5px;
+  right: 5px;
   height: auto;
   z-index: 1;
 }
 
 :global(.c__modal .c__modal__close .c__button) {
-  top: 0;
-  right: 0;
+  position: static;
+  width: var(--c--globals--spacings--md) !important;
+  height: var(--c--globals--spacings--md);
+  padding: 0 !important;
   background: var(--c--components--modal--background-color);
-  box-shadow: 0 0 0 4px var(--c--components--modal--background-color);
+  box-shadow: 0 0 0 var(--c--globals--spacings--xxxs) var(--c--components--modal--background-color);
+}
+
+:global(.c__modal .c__modal__close .c__button svg) {
+  width: 12px;
+  height: 12px;
 }
 
 /* The opaque halo above outranks the design system's hover colour, so the hover
@@ -50,6 +61,7 @@
 }
 
 .screen {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--c--globals--spacings--base);
@@ -59,19 +71,25 @@
   font-family: var(--c--globals--font--families--base);
 }
 
-/* The interface draws its own card in the SDK overlays (verify recipients,
-   emergency prompt); embedded in a product modal it inherits the modal padding. */
+/* A screen shown outside a modal (a documentation fallback). */
 .screen--padded {
-  padding: var(--c--globals--spacings--base);
+  padding: var(--c--globals--spacings--md);
 }
 
 .screen__illustration {
   display: flex;
   justify-content: center;
+  align-items: center;
+  height: 100px;
 }
 
+/* The vector illustrations keep their own size (the shield and the room for
+   its shadow); the remaining raster one fills the design's 142x100 slot. */
 .screen__illustration img {
   display: block;
+}
+
+.screen__illustration-raster {
   width: 142px;
   height: 100px;
   object-fit: contain;
@@ -80,12 +98,18 @@
 .screen__header {
   display: flex;
   flex-direction: column;
-  gap: var(--c--globals--spacings--st);
+  gap: var(--c--globals--spacings--xxxs);
+  /* Clear of the close control in the top right corner. */
+  padding-right: var(--c--globals--spacings--base);
+}
+
+.screen__illustration + .screen__header {
+  padding-right: 0;
 }
 
 .screen__title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--c--globals--font--sizes--lg);
   line-height: 24px;
   font-weight: var(--c--globals--font--weights--bold);
   color: var(--c--contextuals--content--semantic--neutral--primary);
@@ -99,27 +123,50 @@
 
 .screen__description {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
   overflow-wrap: anywhere;
+}
+
+.screen__description--xs {
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
 }
 
 .screen__description > * {
   margin: 0;
 }
 
+.screen__description strong {
+  font-weight: var(--c--globals--font--weights--bold);
+}
+
 /* Paragraphs and lists alike: each block sits one step under the previous one.
    `:not(:first-child)` gives it more weight than the resets on the blocks
    themselves (the one above, and `.list`'s own margin), so no block escapes it. */
 .screen__description > :not(:first-child) {
-  margin-top: var(--c--globals--spacings--sm);
+  margin-top: var(--c--globals--spacings--xs);
 }
 
 .screen__body {
   display: flex;
   flex-direction: column;
   gap: var(--c--globals--spacings--sm);
+}
+
+/* The way back inside a flow: the design's small "< Back" in the top left
+   corner, 6px from the modal's edges while the content starts 24px in. */
+.screen__back {
+  position: absolute;
+  top: calc(var(--c--globals--spacings--xxs) - var(--c--components--modal--padding));
+  left: calc(var(--c--globals--spacings--xxs) - var(--c--components--modal--padding));
+}
+
+/* With a back link, the title starts under it, as designed (12px from the modal's
+   padding, 6px under the link). */
+.screen:has(> .screen__back) > :not(.screen__back):first-of-type {
+  margin-top: var(--c--globals--spacings--sm);
 }
 
 /* Actions stack full-width by default; `--row` right-aligns a Cancel/Confirm pair. */
@@ -139,10 +186,10 @@
 .actions:not(.actions--row) > :global(.c__button) {
   height: auto;
   min-height: var(--c--components--button--medium-height);
-  padding-top: 8px;
-  padding-bottom: 8px;
+  padding-top: var(--c--globals--spacings--xs);
+  padding-bottom: var(--c--globals--spacings--xs);
   white-space: normal;
-  line-height: 20px;
+  line-height: 22px;
 }
 
 .actions--row {
@@ -159,13 +206,34 @@
 /* Small text (12px) used for hints under a card or a form. */
 .hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .hint--center {
   text-align: center;
+}
+
+/* A field-level error under a group of boxes (a code, a phrase). */
+.error-text {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  text-align: center;
+  color: var(--c--contextuals--content--semantic--error--secondary);
+}
+
+/* A small text action centered under a block ("Show code", "Scan QR code instead"). */
+.text-link {
+  align-self: center;
+}
+
+.text-links {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--xs);
 }
 
 /* A bordered card (an identity, a contact row). */
@@ -175,7 +243,7 @@
   gap: var(--c--globals--spacings--xs);
   padding: var(--c--globals--spacings--xs);
   border: 1px solid var(--c--contextuals--border--surface--primary);
-  border-radius: 4px;
+  border-radius: var(--c--globals--spacings--xxxs);
   background: var(--c--contextuals--background--surface--primary);
   box-sizing: border-box;
   width: 100%;
@@ -183,7 +251,7 @@
 
 /* The trusted-contacts card on the previous-identity screen: body text scale. */
 .contacts {
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
 }
 
@@ -209,14 +277,21 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--c--globals--spacings--xs);
-  padding: 0 2px;
+  padding: 0 var(--c--globals--spacings--4xs);
   min-height: 34px;
+}
+
+.card__aside {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxxs);
+  flex-shrink: 0;
 }
 
 .identity {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--c--globals--spacings--xxs);
   min-width: 0;
 }
 
@@ -228,7 +303,7 @@
 
 .identity__name {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   font-weight: var(--c--globals--font--weights--medium);
   color: var(--c--contextuals--content--semantic--neutral--primary);
@@ -239,7 +314,7 @@
 
 .identity__secondary {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
   overflow: hidden;
@@ -247,44 +322,18 @@
   white-space: nowrap;
 }
 
-.avatar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--c--contextuals--background--semantic--brand--primary);
-  color: var(--c--contextuals--content--semantic--brand--on-brand);
-  font-size: 10px;
-  font-weight: var(--c--globals--font--weights--bold);
-  letter-spacing: -0.35px;
-  text-transform: uppercase;
-}
-
-.avatar--large {
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
-}
-
-/* A status chip next to an identity ("Key mismatch", "Active", ...). */
+/* A status chip next to an identity ("Recovery requested", "Key mismatch", ...). */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-size: 12px;
+  gap: var(--c--globals--spacings--xxxs);
+  height: var(--c--globals--spacings--md);
+  padding: 0 var(--c--globals--spacings--xxxs);
+  border-radius: var(--c--globals--spacings--xxxs);
+  font-size: var(--c--globals--font--sizes--xs);
   line-height: 16px;
   font-weight: var(--c--globals--font--weights--medium);
   white-space: nowrap;
-}
-
-.chip :global(.material-icons) {
-  font-size: 16px;
 }
 
 .chip--warning {
@@ -307,12 +356,11 @@
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
 
-/* The 40-digit safety fingerprint: 8 groups of 5 digits in two rows of boxes,
-   large and bold so it can be read out loud or compared at a glance. */
+/* The 40-digit safety fingerprint: 8 groups of 5 digits in two rows of boxes. */
 .fingerprint {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--c--globals--spacings--st);
+  gap: var(--c--globals--spacings--xxxs);
   width: 100%;
   /* Safari only reads the prefixed property, and the dev server serves this
      file as written (only the production build adds prefixes). */
@@ -324,26 +372,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 2px;
-  border-radius: 4px;
+  height: 44px;
+  box-sizing: border-box;
+  padding: var(--c--globals--spacings--xxs);
+  border-radius: var(--c--globals--spacings--xxxs);
   background: var(--c--contextuals--background--surface--tertiary);
   font-family: var(--c--globals--font--families--base);
-  font-size: clamp(14px, 5.2cqw, 20px);
-  line-height: 27px;
+  font-size: var(--c--globals--font--sizes--md);
+  line-height: 22px;
   font-weight: var(--c--globals--font--weights--bold);
-  letter-spacing: 0.12em;
   color: var(--c--contextuals--content--semantic--neutral--primary);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
-  /* The neutral surface alone barely separates from the card; the toned
-     variants carry their own colour. */
-  border: 1px solid var(--c--contextuals--border--surface--primary);
-}
-
-.fingerprint--warning .fingerprint__group,
-.fingerprint--error .fingerprint__group,
-.fingerprint--success .fingerprint__group {
-  border-color: transparent;
 }
 
 .fingerprint--warning .fingerprint__group {
@@ -359,8 +399,25 @@
 }
 
 .fingerprint-wrap {
-  container-type: inline-size;
   width: 100%;
+}
+
+/* The typed pairing code: the fingerprint boxes as text fields. */
+.fingerprint__group--input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  background: var(--c--contextuals--background--surface--primary);
+  text-align: center;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.fingerprint__group--input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
 }
 
 /* Cunningham's Alert content is a flex row; a checkbox under the message needs
@@ -375,11 +432,78 @@
   margin: 0;
 }
 
-/* A section title inside a longer screen (emergency access lists). */
+/* Alerts follow the design: their message in the variant's own colour. */
+.screen :global(.c__alert--error .c__alert__content) {
+  color: var(--c--contextuals--content--semantic--error--secondary);
+}
+
+.screen :global(.c__alert--warning .c__alert__content) {
+  color: var(--c--contextuals--content--semantic--warning--secondary);
+}
+
+.screen :global(.c__alert--success .c__alert__content) {
+  color: var(--c--contextuals--content--semantic--success--secondary);
+}
+
+.screen :global(.c__alert--info .c__alert__content) {
+  color: var(--c--contextuals--content--semantic--info--secondary);
+}
+
+.screen :global(.c__alert__content__left) {
+  align-items: flex-start;
+}
+
+/* The icon beside an alert's message (the design system drops any wrapper). */
+.screen :global(.c__alert__content__left > svg) {
+  flex-shrink: 0;
+}
+
+/* The design's radios and checkboxes are 16px, beside a 14px label. */
+.screen {
+  --c--components--forms-checkbox--size: var(--c--globals--spacings--base);
+}
+
+.screen :global(.c__radio input::before) {
+  width: var(--c--globals--spacings--xs);
+  height: var(--c--globals--spacings--xs);
+}
+
+.screen :global(.c__checkbox__container) {
+  align-items: flex-start;
+  gap: var(--c--globals--spacings--xxs);
+}
+
+.screen :global(.c__checkbox__wrapper) {
+  display: flex;
+  padding-top: 1px;
+}
+
+/* A section inside a longer screen (the settings home, the contact lists). */
 .section {
   display: flex;
   flex-direction: column;
   gap: var(--c--globals--spacings--xs);
+}
+
+.section__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xxxs);
+}
+
+.section__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--md);
+  line-height: 22px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.section__subtitle {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 /* The one fact a prompt must get across (a deadline): its own tinted box, the
@@ -388,22 +512,22 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--c--globals--spacings--4xs);
   padding: var(--c--globals--spacings--sm);
-  border-radius: 4px;
+  border-radius: var(--c--globals--spacings--xxxs);
   background: var(--c--contextuals--background--semantic--warning--tertiary);
   text-align: center;
 }
 
 .deadline__value {
-  font-size: 16px;
+  font-size: var(--c--globals--font--sizes--md);
   line-height: 22px;
   font-weight: var(--c--globals--font--weights--bold);
   color: var(--c--contextuals--content--semantic--neutral--primary);
 }
 
 .deadline__time {
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   font-weight: var(--c--globals--font--weights--medium);
   color: var(--c--contextuals--content--semantic--neutral--primary);
@@ -418,40 +542,25 @@
   gap: var(--c--globals--spacings--xs);
   padding: var(--c--globals--spacings--sm);
   border: 1px dashed var(--c--contextuals--border--semantic--neutral--tertiary);
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--c--globals--spacings--xxxs);
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   text-align: center;
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
 }
 
-.section__title {
-  margin: 0;
-  font-size: 14px;
-  line-height: 18px;
-  font-weight: var(--c--globals--font--weights--bold);
-  color: var(--c--contextuals--content--semantic--neutral--primary);
-}
-
-.section__subtitle {
-  margin: 0;
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--c--contextuals--content--semantic--neutral--secondary);
-}
-
-/* Native text controls, themed like Cunningham inputs. */
+/* Native text controls, themed like the design system's text fields. */
 .input {
   width: 100%;
   box-sizing: border-box;
   min-height: 40px;
-  padding: 6px var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
   border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
-  border-radius: 4px;
+  border-radius: var(--c--globals--spacings--xxxs);
   background: var(--c--contextuals--background--surface--primary);
   color: var(--c--contextuals--content--semantic--neutral--primary);
   font-family: var(--c--globals--font--families--base);
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
 }
 
@@ -461,7 +570,7 @@
 }
 
 .input--mono {
-  font-family: monospace;
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0.05em;
 }
 
@@ -470,13 +579,13 @@
 }
 
 .input--invalid {
-  border-color: var(--c--contextuals--border--semantic--error--secondary);
+  border-color: var(--c--contextuals--border--semantic--error--primary);
 }
 
 /* Caption of a group of boxes inside a card ("This device", "Registered on the server"). */
 .group-label {
-  margin: 6px 0 8px;
-  font-size: 11px;
+  margin: var(--c--globals--spacings--xxs) 0 var(--c--globals--spacings--xs);
+  font-size: var(--c--globals--font--sizes--t);
   line-height: 14px;
   font-weight: var(--c--globals--font--weights--medium);
   letter-spacing: 0.08em;
@@ -486,8 +595,8 @@
 
 .label {
   display: block;
-  margin: 0 0 8px;
-  font-size: 14px;
+  margin: 0 0 var(--c--globals--spacings--xs);
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   font-weight: var(--c--globals--font--weights--medium);
 }
@@ -529,7 +638,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--c--globals--spacings--sm);
+  gap: var(--c--globals--spacings--xs);
   text-align: center;
 }
 
@@ -540,43 +649,35 @@
   justify-content: center;
   gap: var(--c--globals--spacings--sm);
   min-height: 160px;
-  padding: var(--c--globals--spacings--md);
   color: var(--c--contextuals--content--semantic--neutral--secondary);
-  font-size: 14px;
+  font-size: var(--c--globals--font--sizes--sm);
+}
+
+.loading__label {
+  margin: 0;
 }
 
 .list {
   margin: 0;
   padding-left: 20px;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .list li + li {
-  margin-top: 2px;
-}
-
-.phrase {
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  font-family: monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  -webkit-user-select: all;
-  user-select: all;
+  margin-top: var(--c--globals--spacings--4xs);
 }
 
 /* The revealed recovery phrase: numbered words in three columns. */
 .words {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px var(--c--globals--spacings--xs);
+  gap: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
   margin: 0;
   padding: var(--c--globals--spacings--xs);
   border: 1px solid var(--c--contextuals--border--surface--primary);
-  border-radius: 4px;
+  border-radius: var(--c--globals--spacings--xxxs);
   background: var(--c--contextuals--background--surface--secondary);
   list-style: none;
   counter-reset: word;
@@ -587,21 +688,20 @@
 .words li {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--c--globals--spacings--xxxs);
   min-width: 0;
-  font-family: monospace;
-  font-size: 13px;
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   color: var(--c--contextuals--content--semantic--neutral--primary);
 }
 
 .words li::before {
   counter-increment: word;
-  content: counter(word) '.';
+  content: counter(word);
   flex-shrink: 0;
-  width: 20px;
+  width: 18px;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--c--globals--font--sizes--xs);
   color: var(--c--contextuals--content--semantic--neutral--tertiary);
   -webkit-user-select: none;
   user-select: none;
@@ -612,63 +712,62 @@
   text-overflow: ellipsis;
 }
 
-/* The typed pairing code: the fingerprint box as an input. */
-.fingerprint__group--input {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
-  text-align: center;
-  color: var(--c--contextuals--content--semantic--neutral--primary);
-}
-
-.fingerprint__group--input:focus-visible {
-  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
-  outline-offset: 1px;
-}
-
-/* The 24 word boxes of the recovery phrase input. */
+/* The 24 word boxes of the recovery phrase input: the number beside each box,
+   as designed for the 450px modal. */
 .word-inputs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--c--globals--spacings--xs);
+  gap: var(--c--globals--spacings--xxxs) var(--c--globals--spacings--xs);
 }
 
-/* Three columns in a 350px modal leave about 95px per word. The longest words
-   of the French list are 10 letters, so the index lives inside the box (top
-   left, tiny) and the box keeps the whole column for the word. */
 .word-inputs__cell {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxs);
   min-width: 0;
 }
 
 .word-inputs__index {
-  position: absolute;
-  top: 2px;
-  left: 4px;
-  font-size: 9px;
-  line-height: 1;
-  color: var(--c--contextuals--content--semantic--neutral--tertiary);
-  pointer-events: none;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: right;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 .word-inputs .input {
-  min-height: 32px;
-  padding: 4px 4px 4px 12px;
-  font-size: 13px;
-  letter-spacing: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .hint--invalid {
-  color: var(--c--contextuals--content--semantic--error--tertiary);
+  color: var(--c--contextuals--content--semantic--error--secondary);
 }
 
-/* Radio and checkbox options inside a screen follow its text scale: the design
-   system's default is sized for a form page, too small next to 14px copy. */
-.screen :global(.c__checkbox__label) {
-  font-size: 14px;
+/* Radio and checkbox options follow the design: a 14px medium label over a 12px
+   description. */
+.screen :global(.c__checkbox__label),
+.screen :global(.c__radio__label) {
+  font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
   font-weight: var(--c--globals--font--weights--medium);
+}
+
+/* The description under a radio's label, aligned with the label. */
+.screen :global(.c__checkbox .c__field__footer) {
+  padding: 0 0 0 calc(var(--c--globals--spacings--base) + var(--c--globals--spacings--xxs));
+}
+
+.screen :global(.c__checkbox .c__field__text) {
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.screen :global(.c__alert .c__checkbox__label) {
+  font-weight: var(--c--globals--font--weights--regular);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
 }
 
 /* The design system's provider mounts a toast container fixed to the bottom edge
@@ -681,19 +780,4 @@
 
 :global(.c__toast__container) {
   pointer-events: none;
-}
-
-/* The way back inside a flow, above the title: a small text link, as opposed to
-   the product's cross, which leaves the whole interface. */
-.screen__back {
-  align-self: flex-start;
-  /* The mirror of the product's cross: 6px from the modal's top and left edges,
-     while the content starts 24px under and after them. */
-  margin: -18px 0 -8px -18px;
-}
-
-/* Alerts inside a screen follow the screen's text scale. */
-.screen :global(.c__alert) {
-  font-size: 14px;
-  line-height: 18px;
 }

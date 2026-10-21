@@ -1,12 +1,13 @@
 import '@fontsource-variable/roboto-flex';
-import { Button, CunninghamProvider, Icon } from '@gouvfr-lasuite/ui-components';
+import { Button, CunninghamProvider } from '@gouvfr-lasuite/ui-components';
 import '@gouvfr-lasuite/ui-components/fonts/marianne';
 import '@gouvfr-lasuite/ui-components/fonts/material-icons';
+import { XMark } from '@gouvfr-lasuite/ui-components/icons';
 import '@gouvfr-lasuite/ui-components/style';
 import type { Preview } from '@storybook/react';
 import { mswLoader } from 'msw-storybook-addon/csf3';
 import { setupWorker } from 'msw/browser';
-import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { addons } from 'storybook/preview-api';
 import { themes } from 'storybook/theming';
@@ -58,12 +59,13 @@ function HostCloseControl({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="c__modal__close">
+      {/* Where the interface's modal puts its cross (layout.module.css). */}
+      <div style={{ position: 'absolute', top: 5, right: 5, zIndex: 1 }}>
         <Button
-          icon={<Icon aria-hidden name="close" />}
+          icon={<XMark aria-hidden size={16} />}
           variant="tertiary"
           color="neutral"
-          size="small"
+          size="nano"
           aria-label="Close"
           onClick={() => setRequests((n) => n + 1)}
         />
@@ -211,20 +213,18 @@ const preview: Preview = {
             >
               {hostModal ? (
                 <div
-                  style={
-                    {
-                      width: hostModal === 'medium' ? 600 : 350,
-                      maxWidth: '100%',
-                      boxSizing: 'border-box',
-                      // The design system offsets the close control from this variable, set only on its own modal.
-                      '--padding': 'var(--c--components--modal--padding)',
-                      padding: 'var(--padding)',
-                      borderRadius: 8,
-                      background: 'var(--c--contextuals--background--surface--secondary, #fff)',
-                      border: '1px solid var(--c--contextuals--border--surface--primary, #dfe2ea)',
-                      boxShadow: '0 6px 20px rgba(0, 0, 18, 0.1)',
-                    } as CSSProperties
-                  }
+                  style={{
+                    position: 'relative',
+                    width: hostModal === 'medium' ? 450 : 350,
+                    maxWidth: '100%',
+                    boxSizing: 'border-box',
+                    padding: 'var(--c--components--modal--padding)',
+                    borderRadius: 'var(--c--components--modal--border-radius)',
+                    background: 'var(--c--components--modal--background-color)',
+                    border: '1px solid var(--c--components--modal--border-color)',
+                    boxShadow: 'var(--c--components--modal--box-shadow)',
+                    fontFamily: 'var(--c--globals--font--families--base)',
+                  }}
                 >
                   {hostModal === 'card' ? (
                     <Story />
