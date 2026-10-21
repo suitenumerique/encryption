@@ -15,6 +15,7 @@ import {
   resolveAllDemoUserIds,
 } from '@encryption/src/demo/auth';
 import { type RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
+import { SETTINGS_SECTIONS, type SettingsSection } from '@encryption/src/shared/settings-section';
 import { VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 
 type EncryptionState = 'loading' | 'no-keys' | 'ready' | 'error' | 'not-connected';
@@ -297,11 +298,16 @@ export function DemoApp() {
     log('Opening onboarding interface...');
   }, [vaultClient, log]);
 
-  const handleOpenSettings = useCallback(() => {
-    setInterfaceOpen(true);
-    vaultClient.openSettings();
-    log('Opening settings...');
-  }, [vaultClient, log]);
+  // Without a section: the interface's own encryption home. With one: a single
+  // flow, as an account page listing them would open it.
+  const handleOpenSettings = useCallback(
+    (section?: SettingsSection) => {
+      setInterfaceOpen(true);
+      vaultClient.openSettings(section);
+      log(section ? `Opening settings section ${section}...` : 'Opening settings...');
+    },
+    [vaultClient, log]
+  );
 
   const handleCreateDocument = useCallback(async () => {
     const client = vaultClient;
@@ -543,9 +549,26 @@ export function DemoApp() {
             </button>
           )}
           {state === 'ready' && (
-            <button onClick={handleOpenSettings} style={{ marginLeft: 'auto', padding: '4px 12px', cursor: 'pointer' }}>
-              Settings
-            </button>
+            <>
+              <button onClick={() => handleOpenSettings()} style={{ marginLeft: 'auto', padding: '4px 12px', cursor: 'pointer' }}>
+                Settings
+              </button>
+              <select
+                aria-label="Open a settings section"
+                value=""
+                onChange={(e) => handleOpenSettings(e.target.value as SettingsSection)}
+                style={{ padding: '4px 8px', cursor: 'pointer' }}
+              >
+                <option value="" disabled>
+                  Section…
+                </option>
+                {SETTINGS_SECTIONS.map((section) => (
+                  <option key={section} value={section}>
+                    {section}
+                  </option>
+                ))}
+              </select>
+            </>
           )}
         </div>
 
@@ -567,7 +590,7 @@ export function DemoApp() {
           >
             <span style={{ fontSize: 18 }}>⚠️</span>
             <span style={{ fontSize: 14, flex: 1 }}>{attention}</span>
-            <button onClick={handleOpenSettings} style={{ padding: '4px 12px', cursor: 'pointer' }}>
+            <button onClick={() => handleOpenSettings()} style={{ padding: '4px 12px', cursor: 'pointer' }}>
               Open encryption
             </button>
             <button
