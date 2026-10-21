@@ -264,9 +264,12 @@ export function DemoApp() {
         }
       }
 
-      // Close any open interface iframe before switching users
+      // Close any open interface iframe before switching users. Closed from here,
+      // it emits no 'interface:closed': its ready state is reset by hand, or the
+      // next opening would skip the loader.
       client.closeInterface();
       setInterfaceOpen(false);
+      setInterfaceReady(false);
 
       setCurrentUser(user);
       setState('loading');
