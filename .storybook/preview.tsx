@@ -17,6 +17,7 @@ import { useNavigationGuard } from '@encryption/.storybook/navigation-guard';
 import i18n from '@encryption/src/i18n';
 import { DEFAULT_LOCALE } from '@encryption/src/shared/locale';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
+import { ModalSizeProvider } from '@encryption/src/ui/hooks/useModalSize';
 import type { EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import { defaultHandlers } from '@encryption/src/ui/testing/default-handlers';
 import { MockEncryptionProvider } from '@encryption/src/ui/testing/mock-encryption';
@@ -194,7 +195,8 @@ const preview: Preview = {
       // Interface screens are the content of the modal the interface draws over
       // the product (App.tsx). `hostModal` stands in for that chrome so a story
       // shows the screen at the width it really gets: the design system's small
-      // modal (350px) or, for list-heavy screens, the medium one. The cross
+      // modal (350px) or the medium one, which a screen asks for itself with
+      // useModalSize as in the product, or a story with `'medium'`. The cross
       // raises the same close request the modal's does, so a screen holding a
       // guard reacts like it does in the product, and an unguarded one only logs.
       // `'card'` is the width alone, for a component that lives inside a screen.
@@ -212,28 +214,32 @@ const preview: Preview = {
               }}
             >
               {hostModal ? (
-                <div
-                  style={{
-                    position: 'relative',
-                    width: hostModal === 'medium' ? 450 : 350,
-                    maxWidth: '100%',
-                    boxSizing: 'border-box',
-                    padding: 'var(--c--components--modal--padding)',
-                    borderRadius: 'var(--c--components--modal--border-radius)',
-                    background: 'var(--c--components--modal--background-color)',
-                    border: '1px solid var(--c--components--modal--border-color)',
-                    boxShadow: 'var(--c--components--modal--box-shadow)',
-                    fontFamily: 'var(--c--globals--font--families--base)',
-                  }}
-                >
-                  {hostModal === 'card' ? (
-                    <Story />
-                  ) : (
-                    <HostCloseControl>
-                      <Story />
-                    </HostCloseControl>
+                <ModalSizeProvider>
+                  {(size) => (
+                    <div
+                      style={{
+                        position: 'relative',
+                        width: hostModal === 'medium' || size === 'medium' ? 450 : 350,
+                        maxWidth: '100%',
+                        boxSizing: 'border-box',
+                        padding: 'var(--c--components--modal--padding)',
+                        borderRadius: 'var(--c--components--modal--border-radius)',
+                        background: 'var(--c--components--modal--background-color)',
+                        border: '1px solid var(--c--components--modal--border-color)',
+                        boxShadow: 'var(--c--components--modal--box-shadow)',
+                        fontFamily: 'var(--c--globals--font--families--base)',
+                      }}
+                    >
+                      {hostModal === 'card' ? (
+                        <Story />
+                      ) : (
+                        <HostCloseControl>
+                          <Story />
+                        </HostCloseControl>
+                      )}
+                    </div>
                   )}
-                </div>
+                </ModalSizeProvider>
               ) : (
                 <Story />
               )}

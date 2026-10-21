@@ -192,6 +192,11 @@
   line-height: 22px;
 }
 
+/* The design separates the final confirmation from the ways to save the phrase. */
+.actions--spaced {
+  margin-top: var(--c--globals--spacings--xs);
+}
+
 .actions--row {
   flex-direction: row;
   justify-content: flex-end;
@@ -741,6 +746,10 @@
   min-width: 0;
 }
 
+.word-inputs--invalid .input {
+  border-color: var(--c--contextuals--border--semantic--error--primary);
+}
+
 .hint--invalid {
   color: var(--c--contextuals--content--semantic--error--secondary);
 }
@@ -768,6 +777,81 @@
 .screen :global(.c__alert .c__checkbox__label) {
   font-weight: var(--c--globals--font--weights--regular);
   color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+/* A choice between two ways in, drawn as selectable cards ("Use another device"
+   / "Use your recovery phrase"). */
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.option {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--c--globals--spacings--xs);
+  width: 100%;
+  padding: var(--c--globals--spacings--sm);
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: transparent;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.option:hover {
+  background: var(--c--contextuals--background--semantic--contextual--primary);
+}
+
+.option:has(.option__input:focus-visible) {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+/* A native radio, kept for the keyboard (arrow keys) and screen readers: the card is its label. */
+.option__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.option--selected,
+.option--selected:hover {
+  border-color: var(--c--contextuals--border--semantic--brand--primary);
+  background: var(--c--contextuals--background--semantic--brand--tertiary);
+}
+
+.option__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--c--contextuals--content--semantic--brand--tertiary);
+}
+
+.option__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--4xs);
+}
+
+.option__title {
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--bold);
+}
+
+.option__description {
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
 }
 
 /* The design system's provider mounts a toast container fixed to the bottom edge

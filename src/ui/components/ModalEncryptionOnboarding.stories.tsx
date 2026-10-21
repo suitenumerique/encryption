@@ -5,6 +5,7 @@ import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
 import { API_ERROR_VAULT_NOT_FOUND } from '@encryption/src/shared/error-codes';
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import {
   handleGetApiEmergencyAccessTrusted,
   handleGetApiPublicKeys,
@@ -85,7 +86,16 @@ ExistingUserStory.parameters = {
 };
 ExistingUserStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
-  await playFindButton(canvasElement, i18n.t('onboarding.btn_restore_from_backup'));
+  // Two ways back, as selectable cards: another device first, then the phrase.
+  const device = await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_use_another_device')) });
+  const phrase = await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) });
+  await expect(device).toBeChecked();
+  // One tab stop, arrow keys between the cards.
+  device.focus();
+  await userEvent.keyboard('{ArrowDown}');
+  await expect(phrase).toBeChecked();
+  await expect(phrase).toHaveFocus();
+  await playFindButton(canvasElement, i18n.t('onboarding.btn_continue'));
 };
 
 export const ExistingUser = prepareStory(ExistingUserStory);
@@ -213,21 +223,63 @@ const RestoreStory = Template.bind({});
 RestoreStory.args = { ...ExistingUserStory.args };
 RestoreStory.parameters = ExistingUserStory.parameters;
 RestoreStory.play = async ({ canvasElement }) => {
-  const restore = await playFindButton(canvasElement, i18n.t('onboarding.btn_restore_from_backup'));
-
-  await userEvent.click(restore);
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
   await playFindHeading(canvasElement, i18n.t('onboarding.title_restore'));
 };
 
 export const Restore = prepareStory(RestoreStory);
 
+// 24 words of the English list, pasted at once like a saved sheet.
+const PASTED_PHRASE = Array.from({ length: 24 }, () => 'abandon').join(' ');
+
+async function playSubmitPhrase(canvasElement: HTMLElement) {
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await within(canvasElement).findByLabelText('Word 1'));
+  await userEvent.paste(PASTED_PHRASE);
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_restore')));
+}
+
+// The phrase opened nothing: every box turns red, the reason sits under them,
+// and the button waits for an edit.
+const RestoreRejectedStory = Template.bind({});
+RestoreRejectedStory.args = { ...ExistingUserStory.args };
+RestoreRejectedStory.parameters = {
+  ...ExistingUserStory.parameters,
+  encryption: {
+    restoreFromPhrase: async () => {
+      throw new VaultError(VaultErrorCode.WRONG_SECRET_KEY, 'wrong phrase');
+    },
+  },
+};
+RestoreRejectedStory.play = async ({ canvasElement }) => {
+  await playSubmitPhrase(canvasElement);
+  await within(canvasElement).findByText(i18n.t('errors.vault.wrong_recovery_phrase'));
+  await expect(await playFindButton(canvasElement, i18n.t('onboarding.btn_restore'))).toBeDisabled();
+};
+
+export const RestoreRejected = prepareStory(RestoreRejectedStory);
+
+const RestoredStory = Template.bind({});
+RestoredStory.args = { ...ExistingUserStory.args };
+RestoredStory.parameters = ExistingUserStory.parameters;
+RestoredStory.play = async ({ canvasElement }) => {
+  await playSubmitPhrase(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enabled'));
+  await within(canvasElement).findByText(i18n.t('onboarding.restored_description'));
+};
+
+export const Restored = prepareStory(RestoredStory);
+
 const LastResortStory = Template.bind({});
 LastResortStory.args = { ...ExistingUserStory.args };
 LastResortStory.parameters = ExistingUserStory.parameters;
 LastResortStory.play = async ({ canvasElement }) => {
-  const lastResort = await playFindButton(canvasElement, i18n.t('onboarding.btn_last_resort'));
-
-  await userEvent.click(lastResort);
+  // "Lost phrase?" sits under the phrase boxes.
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_last_resort')));
   await playFindHeading(canvasElement, i18n.t('onboarding.title_last_resort'));
 };
 

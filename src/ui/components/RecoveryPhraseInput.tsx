@@ -1,9 +1,11 @@
-import { Button, Icon } from '@gouvfr-lasuite/ui-components';
+import { Button } from '@gouvfr-lasuite/ui-components';
+import { Eye, Hide } from '@gouvfr-lasuite/ui-components/icons';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { englishWordlist, frenchWordlist } from '@encryption/src/crypto/mnemonic';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
+import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 
 // A word is "known" if it belongs to either supported BIP-39 wordlist, so we can
 // flag obvious typos without forcing the user to pick a language first.
@@ -14,6 +16,8 @@ const isKnownWord = (word: string) => KNOWN_WORDS.has(word.normalize('NFC').toLo
 
 interface RecoveryPhraseInputProps {
   wordCount?: number;
+  /** The whole phrase was refused (it opened nothing): every box turns red. */
+  invalid?: boolean;
   // Emits the joined, normalized phrase plus whether every box is filled, so the
   // caller can keep its submit button disabled until the phrase is complete.
   onChange: (phrase: string, complete: boolean) => void;
@@ -28,10 +32,12 @@ interface RecoveryPhraseInputProps {
  * password) by default, with a toggle to reveal them, so the phrase is not
  * shoulder-surfable while typing.
  */
-export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhraseInputProps) {
+export function RecoveryPhraseInput({ wordCount = 24, invalid = false, onChange }: RecoveryPhraseInputProps) {
   const { t } = useTranslation('common');
   const [words, setWords] = useState<string[]>(() => Array(wordCount).fill(''));
   const [revealed, setRevealed] = useState(false);
+  // Three columns of word boxes need the wide modal.
+  useModalSize('medium');
   // A box is validated (and may turn red) only once it has been left (blurred),
   // so the user is not told a word is wrong while still typing it.
   const [touched, setTouched] = useState<boolean[]>(() => Array(wordCount).fill(false));
@@ -118,22 +124,9 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
 
   return (
     <div className={styles.section}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          size="small"
-          variant="tertiary"
-          color="neutral"
-          type="button"
-          onClick={() => setRevealed((v) => !v)}
-          aria-pressed={revealed}
-          icon={<Icon aria-hidden name={revealed ? 'visibility_off' : 'visibility'} size={16} />}
-        >
-          {revealed ? t('onboarding.hide_words') : t('onboarding.reveal_words')}
-        </Button>
-      </div>
-      <div className={styles.wordInputs}>
+      <div className={invalid ? `${styles.wordInputs} ${styles.wordInputsInvalid}` : styles.wordInputs}>
         {indices.map((i) => {
-          const invalid = touched[i] && words[i].length > 0 && !isKnownWord(words[i]);
+          const wordInvalid = touched[i] && words[i].length > 0 && !isKnownWord(words[i]);
 
           return (
             <div key={i} className={styles.wordInputsCell}>
@@ -144,6 +137,7 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
                 }}
                 type={revealed ? 'text' : 'password'}
                 inputMode="text"
+                autoComplete="off"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -151,14 +145,26 @@ export function RecoveryPhraseInput({ wordCount = 24, onChange }: RecoveryPhrase
                 onChange={(e) => handleChange(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(i, e)}
                 onBlur={() => markTouched(i)}
-                aria-label={`word ${i + 1}`}
-                className={invalid ? `${styles.input} ${styles.inputInvalid}` : styles.input}
+                aria-label={t('onboarding.word_label', { number: i + 1 })}
+                className={wordInvalid ? `${styles.input} ${styles.inputInvalid}` : styles.input}
               />
             </div>
           );
         })}
       </div>
       {hasInvalidWord && <p className={`${styles.hint} ${styles.hintInvalid}`}>{t('onboarding.invalid_word_hint')}</p>}
+      <Button
+        className={styles.textLink}
+        size="nano"
+        variant="tertiary"
+        color="neutral"
+        type="button"
+        onClick={() => setRevealed((v) => !v)}
+        aria-pressed={revealed}
+        icon={revealed ? <Hide aria-hidden size={16} /> : <Eye aria-hidden size={16} />}
+      >
+        {revealed ? t('onboarding.hide_words') : t('onboarding.reveal_words')}
+      </Button>
     </div>
   );
 }

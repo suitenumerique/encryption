@@ -16,7 +16,7 @@ export function ModalSizeProvider({ children }: { children: (size: InterfaceModa
   return <ModalSizeContext.Provider value={setRequested}>{children(requested ?? 'small')}</ModalSizeContext.Provider>;
 }
 
-/** Ask for `size` while mounted (and while `active`). Outside a provider (stories) it is a no-op. */
+/** Ask for `size` while mounted (and while `active`). Outside a provider it is a no-op. */
 export function useModalSize(size: InterfaceModalSize, active = true): void {
   const setRequested = useContext(ModalSizeContext);
 

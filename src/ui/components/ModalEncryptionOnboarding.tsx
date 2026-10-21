@@ -1,4 +1,5 @@
-import { Alert, Button, Checkbox, Icon, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, Checkbox, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Key, PhoneDesktop } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -22,7 +23,7 @@ import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpire
 import { StepUpScreen } from '@encryption/src/ui/components/StepUpScreen';
 import { UntrustedRearmError } from '@encryption/src/ui/components/emergency-access-logic';
 import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
-import { LoadingScreen, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
@@ -40,6 +41,7 @@ type OnboardingStep =
   | 'last-resort'
   | 'generating'
   | 'restore'
+  | 'restored'
   | 'backup'
   | 'done'
   | 'forced-rotation'
@@ -53,12 +55,14 @@ function LastResortStep({
   existingKeyFingerprint,
   isPending,
   onConfirm,
+  onBack,
   banner,
   t,
 }: {
   existingKeyFingerprint: string | null | undefined;
   isPending: boolean;
   onConfirm: () => void;
+  onBack: () => void;
   banner?: ReactNode;
   t: TFunction;
 }) {
@@ -71,6 +75,7 @@ function LastResortStep({
 
   return (
     <Screen
+      back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: isPending }}
       title={t('onboarding.title_last_resort')}
       description={
         <>
@@ -91,21 +96,19 @@ function LastResortStep({
         </>
       }
     >
-      <Alert type={VariantType.ERROR}>
+      <Notice type={VariantType.ERROR}>
         <div className={styles.alertStack}>
           <span>{t('onboarding.last_resort_alert')}</span>
           <Checkbox label={t('onboarding.i_understand')} checked={understood} onChange={() => setUnderstood((v) => !v)} />
         </div>
-      </Alert>
+      </Notice>
 
       {hasFingerprint && (
-        <div>
+        <div className={styles.section}>
           <label className={styles.label} htmlFor="onboarding-confirm-fingerprint">
             {t('onboarding.confirm_fingerprint_to_delete')}
           </label>
-          <div style={{ marginBottom: 8 }}>
-            <FingerprintBoxes fingerprint={existingKeyFingerprint!} />
-          </div>
+          <FingerprintBoxes fingerprint={existingKeyFingerprint!} />
           <input
             id="onboarding-confirm-fingerprint"
             type="text"
@@ -250,6 +253,10 @@ export function ModalEncryptionOnboarding({
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [restoreInput, setRestoreInput] = useState('');
+  // The way back chosen on the "Restore your encryption" screen.
+  const [restoreMethod, setRestoreMethod] = useState<'device' | 'phrase'>(onUseAnotherDevice ? 'device' : 'phrase');
+  // The entered phrase opened nothing: the boxes turn red until it is edited.
+  const [phraseRejected, setPhraseRejected] = useState(false);
   // True only when every word box of the recovery phrase is filled; gates the restore button.
   const [restoreComplete, setRestoreComplete] = useState(false);
   // Set when the entered phrase unlocked a DORMANT vault: shows an in-app confirm
@@ -655,9 +662,10 @@ export function ModalEncryptionOnboarding({
       }
 
       onSuccess?.(publicKey);
-      onClose();
+      setStep('restored');
     } catch (err) {
       if (err instanceof SessionExpiredError) markSessionExpired();
+      else if (unlockErrorKey(err) === 'errors.vault.wrong_recovery_phrase') setPhraseRejected(true);
       else setError(t(unlockErrorKey(err)));
     } finally {
       setIsPending(false);
@@ -669,7 +677,6 @@ export function ModalEncryptionOnboarding({
     startForcedRotation,
     getIdToken,
     onSuccess,
-    onClose,
     t,
     i18n.language,
     markSessionExpired,
@@ -694,14 +701,14 @@ export function ModalEncryptionOnboarding({
       }
 
       onSuccess?.(reactivated.publicKey);
-      onClose();
+      setStep('restored');
     } catch (err) {
       if (err instanceof SessionExpiredError) markSessionExpired();
       else setError(t(unlockErrorKey(err)));
     } finally {
       setIsPending(false);
     }
-  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, onClose, markSessionExpired, t]);
+  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, markSessionExpired, t]);
 
   // Commit the rotated keyring: the moment the escrowed phrase (and the old
   // primary one) dies. The shared flow burns + re-arms every granted
@@ -759,19 +766,24 @@ export function ModalEncryptionOnboarding({
   // closing throws the setup away. Ask first instead of closing silently.
   useCloseGuard(step === 'backup' && !isCommitting, () => setCancelPrompt(true));
 
+  // The screen the restore was entered from, not `hasExistingBackendKey`: the server
+  // check can lead to existing-key-choice while that prop is still a stale false.
+  // Only with an active identity does the reset ("Lost phrase?") apply.
+  const [restoreFrom, setRestoreFrom] = useState<'existing-key-choice' | 'previous-identity'>('previous-identity');
+
   const banner = (
     <>
       {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
-      {error && <Alert type={VariantType.ERROR}>{error}</Alert>}
+      {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
     </>
   );
 
   const deEnrolledNotice = deEnrolledAfterDays !== null && (
-    <Alert type={VariantType.INFO}>{t('onboarding.de_enrolled_notice', { count: deEnrolledAfterDays })}</Alert>
+    <Notice type={VariantType.INFO}>{t('onboarding.de_enrolled_notice', { count: deEnrolledAfterDays })}</Notice>
   );
 
   const anotherDeviceButton = onUseAnotherDevice && (
-    <Button variant="tertiary" onClick={onUseAnotherDevice} icon={<Icon aria-hidden name="laptop" />}>
+    <Button variant="bordered" color="neutral" onClick={onUseAnotherDevice} icon={<PhoneDesktop aria-hidden />}>
       {t('onboarding.btn_use_another_device')}
     </Button>
   );
@@ -814,9 +826,9 @@ export function ModalEncryptionOnboarding({
           description={t('onboarding.cancel_setup_text')}
           actions={
             <>
-              <Button onClick={() => setCancelPrompt(false)}>{t('onboarding.btn_go_back')}</Button>
+              <Button onClick={() => setCancelPrompt(false)}>{t('onboarding.btn_continue_setup')}</Button>
               <Button variant="bordered" color="error" onClick={handleCancelBackup}>
-                {t('onboarding.btn_close_anyway')}
+                {t('onboarding.btn_cancel_setup')}
               </Button>
             </>
           }
@@ -829,7 +841,7 @@ export function ModalEncryptionOnboarding({
 
       {step === 'explanation' && (
         <Screen
-          illustration="shield-check"
+          illustration="shield-gear"
           title={t('onboarding.title_enable')}
           description={
             <p>
@@ -838,7 +850,7 @@ export function ModalEncryptionOnboarding({
           }
           banner={
             <>
-              {hasJustReset && <Alert type={VariantType.SUCCESS}>{t('onboarding.reset_success')}</Alert>}
+              {hasJustReset && <Notice type={VariantType.SUCCESS}>{t('onboarding.reset_success')}</Notice>}
               {banner}
             </>
           }
@@ -854,7 +866,7 @@ export function ModalEncryptionOnboarding({
 
       {step === 'existing-key-choice' && (
         <Screen
-          illustration="shield-check"
+          illustration="shield-restore"
           title={t('onboarding.title_existing')}
           description={t('onboarding.existing_recovery_hint')}
           banner={
@@ -864,30 +876,43 @@ export function ModalEncryptionOnboarding({
             </>
           }
           actions={
-            <>
-              {onUseAnotherDevice && (
-                <Button variant="secondary" onClick={onUseAnotherDevice} icon={<Icon aria-hidden name="laptop" />}>
-                  {t('onboarding.btn_use_another_device')}
-                </Button>
-              )}
-              <Button
-                variant={onUseAnotherDevice ? 'tertiary' : 'secondary'}
-                onClick={() => setStep('restore')}
-                icon={<Icon aria-hidden name="key" />}
-              >
-                {t('onboarding.btn_restore_from_backup')}
-              </Button>
-              <Button variant="tertiary" color="neutral" onClick={() => setStep('last-resort')}>
-                {t('onboarding.btn_last_resort')}
-              </Button>
-            </>
+            <Button
+              onClick={() => {
+                if (restoreMethod === 'device' && onUseAnotherDevice) onUseAnotherDevice();
+                else {
+                  setRestoreFrom('existing-key-choice');
+                  setStep('restore');
+                }
+              }}
+            >
+              {t('onboarding.btn_continue')}
+            </Button>
           }
-        />
+        >
+          <div className={styles.options} role="radiogroup" aria-label={t('onboarding.title_existing')}>
+            {onUseAnotherDevice && (
+              <RestoreOption
+                selected={restoreMethod === 'device'}
+                onSelect={() => setRestoreMethod('device')}
+                icon={<PhoneDesktop aria-hidden size={20} />}
+                title={t('onboarding.btn_use_another_device')}
+                description={t('onboarding.option_device_description')}
+              />
+            )}
+            <RestoreOption
+              selected={restoreMethod === 'phrase'}
+              onSelect={() => setRestoreMethod('phrase')}
+              icon={<Key aria-hidden size={20} />}
+              title={t('onboarding.btn_restore_from_backup')}
+              description={t('onboarding.option_phrase_description')}
+            />
+          </div>
+        </Screen>
       )}
 
       {step === 'previous-identity' && (
         <Screen
-          illustration="shield-check"
+          illustration="shield-restore"
           title={t('onboarding.title_previous_identity')}
           description={
             <>
@@ -903,7 +928,13 @@ export function ModalEncryptionOnboarding({
           }
           actions={
             <>
-              <Button variant="secondary" onClick={() => setStep('restore')} icon={<Icon aria-hidden name="key" />}>
+              <Button
+                onClick={() => {
+                  setRestoreFrom('previous-identity');
+                  setStep('restore');
+                }}
+                icon={<Key aria-hidden />}
+              >
                 {t('onboarding.btn_restore_from_backup')}
               </Button>
               {anotherDeviceButton}
@@ -928,29 +959,62 @@ export function ModalEncryptionOnboarding({
       )}
 
       {step === 'last-resort' && (
-        <LastResortStep existingKeyFingerprint={existingKeyFingerprint} isPending={isPending} onConfirm={handleResetFromZero} banner={banner} t={t} />
+        <LastResortStep
+          existingKeyFingerprint={existingKeyFingerprint}
+          isPending={isPending}
+          onConfirm={handleResetFromZero}
+          onBack={() => setStep('restore')}
+          banner={banner}
+          t={t}
+        />
       )}
 
       {step === 'restore' && (
         <Screen
+          back={{
+            label: t('onboarding.btn_back'),
+            onClick: () => setStep(restoreFrom),
+            disabled: isPending,
+          }}
           title={t('onboarding.title_restore')}
           description={t('onboarding.restore_description')}
           banner={banner}
           actions={
             <>
-              <Button onClick={handleRestoreKeys} disabled={isPending || !restoreComplete}>
+              <Button onClick={handleRestoreKeys} disabled={isPending || !restoreComplete || phraseRejected}>
                 {isPending ? t('onboarding.btn_restoring') : t('onboarding.btn_restore')}
               </Button>
+              {restoreFrom === 'existing-key-choice' && (
+                <Button variant="bordered" color="neutral" onClick={() => setStep('last-resort')} disabled={isPending}>
+                  {t('onboarding.btn_last_resort')}
+                </Button>
+              )}
             </>
           }
         >
           <RecoveryPhraseInput
+            invalid={phraseRejected}
             onChange={(phrase, complete) => {
               setRestoreInput(phrase);
               setRestoreComplete(complete);
+              setPhraseRejected(false);
             }}
           />
+          {phraseRejected && (
+            <p className={styles.errorText} role="alert">
+              {t('errors.vault.wrong_recovery_phrase')}
+            </p>
+          )}
         </Screen>
+      )}
+
+      {step === 'restored' && (
+        <Screen
+          illustration="shield-check"
+          title={t('onboarding.title_enabled')}
+          description={t('onboarding.restored_description')}
+          actions={<Button onClick={onClose}>{t('settings.done')}</Button>}
+        />
       )}
 
       {/* Replacing an identity: the commit waits on a step-up, and nothing else on
@@ -981,23 +1045,21 @@ export function ModalEncryptionOnboarding({
       {step === 'done' && (
         <Screen
           illustration="shield-check"
-          title={t('emergency.onboarding_done_title')}
+          title={t('onboarding.title_enabled')}
           description={
             <>
-              <p>{t('emergency.onboarding_done_text')}</p>
-              <p>{t('emergency.nudge_text')}</p>
+              <p>{t('onboarding.enabled_description')}</p>
+              {onOpenEmergencyAccess && <p>{t('emergency.nudge_text')}</p>}
             </>
           }
           actions={
             <>
+              <Button onClick={onClose}>{t('settings.done')}</Button>
               {onOpenEmergencyAccess && (
-                <Button variant="secondary" onClick={onOpenEmergencyAccess} icon={<Icon aria-hidden name="group" />}>
+                <Button variant="bordered" color="neutral" onClick={onOpenEmergencyAccess}>
                   {t('emergency.nudge_button')}
                 </Button>
               )}
-              <Button variant={onOpenEmergencyAccess ? 'tertiary' : 'primary'} color={onOpenEmergencyAccess ? 'neutral' : 'brand'} onClick={onClose}>
-                {t('settings.close')}
-              </Button>
             </>
           }
         />
@@ -1017,7 +1079,7 @@ export function ModalEncryptionOnboarding({
             <>
               {banner}
               {rotationBlocked && (
-                <Alert type={VariantType.WARNING}>
+                <Notice type={VariantType.WARNING}>
                   <div className={styles.alertStack}>
                     <span>{t('emergency.rearm_blocked', { emails: rotationBlocked.map((contact) => contact.email).join(', ') })}</span>
                     <div>
@@ -1026,7 +1088,7 @@ export function ModalEncryptionOnboarding({
                       </Button>
                     </div>
                   </div>
-                </Alert>
+                </Notice>
               )}
             </>
           }
@@ -1045,10 +1107,37 @@ export function ModalEncryptionOnboarding({
           illustration="shield-check"
           title={t('emergency.rotation_title')}
           description={t('emergency.rotation_done')}
-          actions={<Button onClick={onClose}>{t('settings.close')}</Button>}
+          actions={<Button onClick={onClose}>{t('settings.done')}</Button>}
         />
       )}
     </>
+  );
+}
+
+function RestoreOption({
+  selected,
+  onSelect,
+  icon,
+  title,
+  description,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  icon: ReactNode;
+  title: string;
+  description: string;
+}) {
+  // A native radio inside its card: arrow keys move between the options and the
+  // group is a single tab stop, as screen reader users expect.
+  return (
+    <label className={selected ? `${styles.option} ${styles.optionSelected}` : styles.option}>
+      <input type="radio" name="restore-method" className={styles.optionInput} checked={selected} onChange={onSelect} />
+      <span className={styles.optionIcon}>{icon}</span>
+      <span className={styles.optionText}>
+        <span className={styles.optionTitle}>{title}</span>
+        <span className={styles.optionDescription}>{description}</span>
+      </span>
+    </label>
   );
 }
 
@@ -1058,5 +1147,5 @@ export function ModalEncryptionOnboarding({
  * that browser extensions can potentially access page content.
  */
 function SecurityNotice({ t }: { t: TFunction }) {
-  return <Alert type={VariantType.INFO}>{t('onboarding.extensions_warning')}</Alert>;
+  return <Notice type={VariantType.INFO}>{t('onboarding.extensions_warning')}</Notice>;
 }

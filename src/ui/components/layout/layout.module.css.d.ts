@@ -2,6 +2,7 @@
 declare const styles: {
   readonly actions: string;
   readonly actionsRow: string;
+  readonly actionsSpaced: string;
   readonly alertStack: string;
   readonly card: string;
   readonly cardAside: string;
@@ -46,6 +47,14 @@ declare const styles: {
   readonly list: string;
   readonly loading: string;
   readonly loadingLabel: string;
+  readonly option: string;
+  readonly optionDescription: string;
+  readonly optionIcon: string;
+  readonly optionInput: string;
+  readonly optionSelected: string;
+  readonly optionText: string;
+  readonly optionTitle: string;
+  readonly options: string;
   readonly screen: string;
   readonly screenBack: string;
   readonly screenBody: string;
@@ -67,6 +76,7 @@ declare const styles: {
   readonly wordInputs: string;
   readonly wordInputsCell: string;
   readonly wordInputsIndex: string;
+  readonly wordInputsInvalid: string;
   readonly words: string;
 };
 

@@ -1,5 +1,5 @@
 import { Button, UserAvatar } from '@gouvfr-lasuite/ui-components';
-import { Ban, Checkmark, CircleCheck, Clock, Copy, ShieldAlert, Unlock, Warning } from '@gouvfr-lasuite/ui-components/icons';
+import { Ban, Checkmark2, CircleCheck, Clock, Copy, ShieldAlert, Unlock, Warning } from '@gouvfr-lasuite/ui-components/icons';
 import { type ReactNode, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -110,7 +110,7 @@ export function CopyFingerprintButton({ fingerprint, label }: { fingerprint: str
       color={copied ? 'success' : 'neutral'}
       aria-label={label ? undefined : accessibleLabel}
       title={accessibleLabel}
-      icon={copied ? <Checkmark aria-hidden size={16} /> : <Copy aria-hidden size={16} />}
+      icon={copied ? <Checkmark2 aria-hidden size={16} /> : <Copy aria-hidden size={16} />}
       onClick={copy}
     >
       {label && (copied ? t('identity.copied') : label)}
