@@ -48,6 +48,11 @@ function getThemeFromHash(): string {
   return resolveThemeName(getHashParams().get('theme'));
 }
 
+/** The design system's built-in strings (alert controls, form helpers) follow the interface language. */
+function designSystemLocale(language: string): string {
+  return language.startsWith('fr') ? 'fr-FR' : 'en-US';
+}
+
 function getLangFromHash(): string | null {
   return getHashParams().get('lang');
 }
@@ -677,7 +682,7 @@ export function App() {
   // OIDC auth routes — opened in a new tab, not inside an iframe
   if (route === 'login') {
     return (
-      <CunninghamProvider theme={cunninghamTheme}>
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
         <LoginPage />
       </CunninghamProvider>
     );
@@ -685,7 +690,7 @@ export function App() {
 
   if (route === 'auth-callback') {
     return (
-      <CunninghamProvider theme={cunninghamTheme}>
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
         <CallbackPage />
       </CunninghamProvider>
     );
@@ -695,19 +700,23 @@ export function App() {
   if (route === 'docs-user' || route === 'docs-technical') {
     if (!DOCS_ENABLED) {
       return (
-        <CunninghamProvider theme={cunninghamTheme}>
+        <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
           <Screen padded description={t('docs.disabled')} />
         </CunninghamProvider>
       );
     }
 
-    return <CunninghamProvider theme={cunninghamTheme}>{route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}</CunninghamProvider>;
+    return (
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
+        {route === 'docs-technical' ? <TechnicalDocsPage /> : <UserDocsPage />}
+      </CunninghamProvider>
+    );
   }
 
   // Encryption interface routes
   if (route) {
     return (
-      <CunninghamProvider theme={cunninghamTheme}>
+      <CunninghamProvider theme={cunninghamTheme} currentLocale={designSystemLocale(i18n.language)}>
         {!browserCheck.supported && (
           <div
             role="alert"

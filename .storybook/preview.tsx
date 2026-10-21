@@ -198,7 +198,7 @@ const preview: Preview = {
       // `'card'` is the width alone, for a component that lives inside a screen.
       return (
         <I18nextProvider i18n={i18n}>
-          <CunninghamProvider theme={cunninghamTheme}>
+          <CunninghamProvider theme={cunninghamTheme} currentLocale={locale === 'fr' ? 'fr-FR' : 'en-US'}>
             <div
               style={{
                 background: hostModal
