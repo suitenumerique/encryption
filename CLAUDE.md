@@ -5,7 +5,7 @@
 A centralized end-to-end encryption service for a collaborative suite (Docs, Drive, Fichier, Visio). It provides encryption capabilities via isolated iframes on two domains served by a single server:
 
 - **`data.encryption`** (vault) — invisible iframe loaded by products. Stores private keys in IndexedDB, performs all crypto operations via libsodium WASM. Communicates only via postMessage. Minimal attack surface.
-- **`encryption`** (UI) — visible iframe for onboarding, backup, restore, device transfer, settings, and documentation. Uses React + Cunningham (French gov design system).
+- **`encryption`** (UI) — visible iframe for onboarding, backup, restore, device transfer, settings, and documentation. Uses React + `@gouvfr-lasuite/ui-components` (LaSuite's design system, successor of UI Kit + Cunningham, the one Docs and Drive use).
 
 Products load a client SDK (`client.js`) from `data.encryption` via a `<script>` tag. The SDK orchestrates both iframes.
 
@@ -16,7 +16,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 - `src/crypto/` — libsodium encryption, hybrid X25519 key pairs, BIP-39 mnemonics, fingerprints
 - `src/vault/` — vault entry point, postMessage handler, operations, Service Worker, origin guard
 - `src/client/` — VaultClient SDK (framework-agnostic, served as IIFE + ESM)
-- `src/ui/` — React app (Cunningham, i18next, MDX docs, browser check)
+- `src/ui/` — React app (`@gouvfr-lasuite/ui-components`, i18next, MDX docs, browser check)
 - `src/server/` — Fastify server, Host-based routing, API routes, security headers
 - `src/shared/` — constants, Zod schemas, error codes (shared between server and client)
 - `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; the PostgreSQL schema comes from the `?schema=` parameter of `DATABASE_URL` (read by both the migration tooling and the runtime adapter): deployments use a dedicated `encryption` schema, never `public` (see README), while the local `.env.test*` files leave it out and use `public`
@@ -31,7 +31,7 @@ Single `package.json`, no workspaces. Source in `src/` with clear module separat
 
 - **Crypto**: libsodium-wrappers-sumo (WASM), hybrid X25519 + post-quantum placeholder, XChaCha20-Poly1305
 - **Server**: Fastify (plain), Prisma 7 + PostgreSQL, esbuild bundle (single .mjs, zero node_modules in production)
-- **Frontend**: React, Cunningham + UI Kit, i18next, MDX docs
+- **Frontend**: React, `@gouvfr-lasuite/ui-components`, i18next, MDX docs
 - **Build**: Vite (vault, UI, client SDK, demo), esbuild (server), vite-plugin-sri-gen
 - **Tests**: Vitest (unit, Node) + Vitest browser mode via `@storybook/addon-vitest` (stories, Chromium/Playwright)
 - **Auth**: Keycloak (local dev), any OIDC provider (production). The **server** runs the login as a confidential client (`OIDC_CLIENT_SECRET`, PKCE on top): `GET /api/auth/authorize`, then `/auth/callback` posts the code to `POST /api/auth/token` (`src/server/routes/auth.ts`), which answers the provider's **ID token**. The interface keeps it per suite user (`src/ui/auth/id-token-storage.ts`) and sends it as the Bearer of every call, verified locally by `src/server/plugins/id-token-auth.ts`; the access token never leaves the server. No refresh: at expiry (about 1 h) or on a 401 it becomes `SessionExpiredError` and the Reconnect banner. Replacing an identity needs a **step-up** (RFC 9470, `src/server/auth/step-up.ts`), surfaced as `StepUpRequiredError`. Claims, scopes and step-up variables: README "Identity provider"; design: architecture.md §2.1. The local realm is imported only once, so a Keycloak created before a change to `config/development/realm-export.json` keeps its old clients until its volume is recreated or the client updated through the admin API.

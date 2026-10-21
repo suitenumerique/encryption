@@ -1,4 +1,4 @@
-import { CunninghamProvider, Loader, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
+import { CunninghamProvider, Loader, Modal, ModalSize } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { VaultClient } from '@encryption/src/client/vault-client';

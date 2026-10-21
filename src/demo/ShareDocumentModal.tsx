@@ -1,7 +1,7 @@
 /**
  * Share document modal — adapted from docs/DocShareModal.tsx
  *
- * Uses QuickSearch + QuickSearchGroup from ui-kit with custom renderElement
+ * Uses QuickSearch + QuickSearchGroup from ui-components with custom renderElement
  * for suffix warnings.
  * Stripped of Docs-specific dependencies (Box, Text, useDocAccesses, etc.)
  *
@@ -12,8 +12,16 @@
  * DEMO LIMITATIONS:
  * - Documents and accesses are in-memory only (local to the tab).
  */
-import { Button, Modal, ModalSize } from '@gouvfr-lasuite/cunningham-react';
-import { Icon, QuickSearch, QuickSearchData, QuickSearchGroup, QuickSearchItemTemplate } from '@gouvfr-lasuite/ui-kit';
+import {
+  Button,
+  Icon,
+  Modal,
+  ModalSize,
+  QuickSearch,
+  QuickSearchData,
+  QuickSearchGroup,
+  QuickSearchItemTemplate,
+} from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RegisteredUser, VaultClient } from '@encryption/src/client/vault-client';

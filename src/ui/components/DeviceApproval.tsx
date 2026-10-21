@@ -1,5 +1,4 @@
-import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Alert, Button, Icon, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
 import type { TFunction } from 'i18next';
 import jsQR from 'jsqr';
 import QRCode from 'qrcode';

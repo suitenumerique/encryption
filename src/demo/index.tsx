@@ -1,6 +1,5 @@
-import '@gouvfr-lasuite/cunningham-react/icons';
-import '@gouvfr-lasuite/cunningham-react/style';
-import '@gouvfr-lasuite/ui-kit/style';
+import '@gouvfr-lasuite/ui-components/fonts/material-icons';
+import '@gouvfr-lasuite/ui-components/style';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 

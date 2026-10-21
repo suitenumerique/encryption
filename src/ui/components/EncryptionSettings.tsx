@@ -1,5 +1,4 @@
-import { Alert, Button, Checkbox, Modal, ModalSize, Radio, RadioGroup, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Alert, Button, Checkbox, Icon, Modal, ModalSize, Radio, RadioGroup, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

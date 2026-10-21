@@ -1,5 +1,4 @@
-import { Button } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, Icon } from '@gouvfr-lasuite/ui-components';
 import { type ReactNode, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

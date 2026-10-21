@@ -1,5 +1,4 @@
-import { Button, Loader } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, Icon, Loader } from '@gouvfr-lasuite/ui-components';
 import type { ReactNode } from 'react';
 
 import shieldCheck from '@encryption/src/ui/assets/illustrations/shield-check.png';

@@ -1,5 +1,4 @@
-import { Alert, Button, Checkbox, VariantType } from '@gouvfr-lasuite/cunningham-react';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Alert, Button, Checkbox, Icon, VariantType } from '@gouvfr-lasuite/ui-components';
 import { Meta, StoryFn } from '@storybook/react';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';

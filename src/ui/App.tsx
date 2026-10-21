@@ -1,4 +1,4 @@
-import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

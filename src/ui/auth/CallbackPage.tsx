@@ -7,7 +7,7 @@
  * 2. Posts the ID token to `window.opener`, which is the interface iframe
  * 3. Closes the tab
  */
-import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

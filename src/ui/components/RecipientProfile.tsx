@@ -1,4 +1,4 @@
-import { Alert, Button, VariantType } from '@gouvfr-lasuite/cunningham-react';
+import { Alert, Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

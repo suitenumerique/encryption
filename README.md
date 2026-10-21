@@ -123,7 +123,7 @@ The CI publishes the Storybook to [Chromatic](https://www.chromatic.com/), which
 
 - **Crypto**: libsodium-wrappers-sumo (WASM), hybrid X25519 + post-quantum placeholder, XChaCha20-Poly1305
 - **Server**: Fastify, Prisma 7 + PostgreSQL, esbuild (single .mjs bundle in production)
-- **Frontend**: React, Cunningham (French gov design system) + UI Kit, i18next, MDX docs
+- **Frontend**: React, `@gouvfr-lasuite/ui-components` (LaSuite's design system), i18next, MDX docs
 - **Build**: Vite (vault, UI, client SDK, demo), esbuild (server)
 - **Tests**: Vitest (unit, Node) + Vitest browser mode via `@storybook/addon-vitest` (stories, Chromium/Playwright)
 - **Auth**: OIDC authorization code flow run by the server as a confidential client (PKCE on top), then the provider's ID token as the interface's Bearer credential, verified locally on every call; step-up (RFC 9470) for replacing an identity; any OIDC provider (production), Keycloak (local dev)

@@ -1,11 +1,10 @@
-import { Button, CunninghamProvider } from '@gouvfr-lasuite/cunningham-react';
-import '@gouvfr-lasuite/cunningham-react/icons';
-import '@gouvfr-lasuite/cunningham-react/style';
-import { Icon } from '@gouvfr-lasuite/ui-kit';
+import { Button, CunninghamProvider, Icon } from '@gouvfr-lasuite/ui-components';
+import '@gouvfr-lasuite/ui-components/fonts/material-icons';
+import '@gouvfr-lasuite/ui-components/style';
 import type { Preview } from '@storybook/react';
 import { mswLoader } from 'msw-storybook-addon/csf3';
 import { setupWorker } from 'msw/browser';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { addons } from 'storybook/preview-api';
 import { themes } from 'storybook/theming';
@@ -193,16 +192,20 @@ const preview: Preview = {
             >
               {hostModal ? (
                 <div
-                  style={{
-                    width: hostModal === 'medium' ? 600 : 350,
-                    maxWidth: '100%',
-                    boxSizing: 'border-box',
-                    padding: 24,
-                    borderRadius: 8,
-                    background: 'var(--c--contextuals--background--surface--secondary, #fff)',
-                    border: '1px solid var(--c--contextuals--border--surface--primary, #dfe2ea)',
-                    boxShadow: '0 6px 20px rgba(0, 0, 18, 0.1)',
-                  }}
+                  style={
+                    {
+                      width: hostModal === 'medium' ? 600 : 350,
+                      maxWidth: '100%',
+                      boxSizing: 'border-box',
+                      // The design system offsets the close control from this variable, set only on its own modal.
+                      '--padding': 'var(--c--components--modal--padding)',
+                      padding: 'var(--padding)',
+                      borderRadius: 8,
+                      background: 'var(--c--contextuals--background--surface--secondary, #fff)',
+                      border: '1px solid var(--c--contextuals--border--surface--primary, #dfe2ea)',
+                      boxShadow: '0 6px 20px rgba(0, 0, 18, 0.1)',
+                    } as CSSProperties
+                  }
                 >
                   {hostModal === 'card' ? (
                     <Story />
