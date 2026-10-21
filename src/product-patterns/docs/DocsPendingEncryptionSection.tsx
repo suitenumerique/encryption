@@ -16,8 +16,9 @@ export interface DocsPendingRow {
 // PendingEncryptionSection.tsx (Docs): members added to the encrypted document
 // before they had encryption, above the member list, for anyone who can view
 // the members (the member list itself says nothing about them). A manager
-// (`canAccept`) gets Accept for the ones who are ready; anyone else sees
-// "Encryption enabled" for them. useAutoAcceptPendingMembers.tsx accepts the
+// (`canAccept`) gets Accept for the ones who are ready, under "Action needed";
+// anyone else sees "Encryption enabled" for them, under "Waiting for access",
+// as does a manager whose invitees are all still setting up. useAutoAcceptPendingMembers.tsx accepts the
 // ready ones by itself when a manager opens the document, so this list is
 // mostly the manual fallback.
 export function DocsPendingEncryptionSection({ rows, canAccept }: { rows: DocsPendingRow[]; canAccept: boolean }) {
@@ -28,11 +29,12 @@ export function DocsPendingEncryptionSection({ rows, canAccept }: { rows: DocsPe
   }
 
   const someoneWaiting = rows.some((row) => !row.hasPublicKey);
+  const title = t(canAccept && rows.some((row) => row.hasPublicKey) ? 'docsActionNeeded' : 'docsWaitingForAccess');
 
   return (
-    <section className="pp-docs-pending" data-testid="docs-pending-encryption" aria-label={t('docsActionNeeded')}>
+    <section className="pp-docs-pending" data-testid="docs-pending-encryption" aria-label={title}>
       <div className="pp-docs-pending__heading">
-        <span className="pp-docs-pending__title">{t('docsActionNeeded')}</span>
+        <span className="pp-docs-pending__title">{title}</span>
         {someoneWaiting && <span className="pp-docs-pending__hint">{t('docsWaitingHint')}</span>}
       </div>
       <ul className="pp-docs-pending__rows">

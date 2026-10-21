@@ -50,8 +50,8 @@ encryption:
 docs:
   backend:
     envVars:
-      # No Accounts page to lead to: the encryption menu opens the interface's own home.
-      ENCRYPTION_SETTINGS_URL: null
+      # No Accounts to lead to: the product offers the interface's own encryption home.
+      ACCOUNT_SETTINGS_URL: null
       OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
       OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
       OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token
@@ -62,8 +62,8 @@ docs:
 drive:
   backend:
     envVars:
-      # No Accounts page to lead to: the encryption menu opens the interface's own home.
-      ENCRYPTION_SETTINGS_URL: null
+      # No Accounts to lead to: the product offers the interface's own encryption home.
+      ACCOUNT_SETTINGS_URL: null
       OIDC_OP_JWKS_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/certs
       OIDC_OP_AUTHORIZATION_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/auth
       OIDC_OP_TOKEN_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/token

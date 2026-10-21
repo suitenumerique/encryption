@@ -620,8 +620,8 @@ describe('the stack chart', () => {
       ['drive.backend.envVars.ENCRYPTION_VAULT_URL=https://other', /ENCRYPTION_VAULT_URL must be "https:\/\/data\.encryption\.suite\.example\.org"/],
       ['docs.backend.envVars.ENCRYPTION_INTERFACE_URL=https://other', /ENCRYPTION_INTERFACE_URL must be "https:\/\/encryption\.suite\.example\.org"/],
       [
-        'drive.backend.envVars.ENCRYPTION_SETTINGS_URL=https://other',
-        /drive\.backend\.envVars\.ENCRYPTION_SETTINGS_URL must be "https:\/\/accounts\.suite\.example\.org\/\?section=encryption"/,
+        'drive.backend.envVars.ACCOUNT_SETTINGS_URL=https://other',
+        /drive\.backend\.envVars\.ACCOUNT_SETTINGS_URL must be "https:\/\/accounts\.suite\.example\.org\/"/,
       ],
       [
         'encryption.config.allowedFrameAncestors={https://docs.suite.example.org,https://accounts.suite.example.org}',

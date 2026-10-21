@@ -1,23 +1,23 @@
 // The single source for every colour used in notification emails, and the one
 // place a self-hosted instance re-themes them.
 //
-// Every value below is the resolved value of a Cunningham design token (named per
-// line). Ideally they would be read live from the token values Cunningham exports
-// in JS (`defaultTokens` in `@gouvfr-lasuite/ui-components`), but that entry
-// point is not meant for the server: it is the same bundle as the React
-// components (and the package has no tokens-only subpath export). And email
-// clients cannot read CSS custom properties anyway, so a colour must reach the
-// mail as a literal.
-// Hence literals here, mirroring the tokens by hand.
+// Every default is read from the design system's resolved token values
+// (`@gouvfr-lasuite/ui-tokens`, the tokens-only package without React, safe to
+// bundle into the server), so an upgrade of the design system reaches the emails
+// too. They are copied as literals because email clients cannot read CSS custom
+// properties: a colour must reach the mail as a value. Lowercased so the rendered
+// HTML keeps the notation the templates and overrides use.
 //
-// These are the DEFAULTS. esbuild bundles and minifies this file into the server
-// executable, so they cannot be edited in a built image. Instead a self-hosted
-// instance re-themes without rebuilding by providing a small JSON override file
+// These are the DEFAULTS. esbuild bundles this file into the server executable,
+// so they cannot be edited in a built image. Instead a self-hosted instance
+// re-themes without rebuilding by providing a small JSON override file
 // (EMAIL_PALETTE_PATH), read at startup and applied over these values via
 // `applyEmailPaletteOverride` (see the server-side loader in `mailer.ts`). This
 // module stays browser-safe (no fs) so Storybook can import it and keep the
 // defaults. Every consumer reads `emailPalette.*` (or the lazy style getters) at
 // render time, so an override applied before the first email render takes effect.
+import { defaultThemes } from '@gouvfr-lasuite/ui-tokens';
+
 export type EmailPalette = {
   brandPrimary: string;
   onBrand: string;
@@ -35,29 +35,36 @@ export type EmailPalette = {
   fontFamily: string;
 };
 
+const light = defaultThemes.default;
+const dark = defaultThemes.dark;
+const gray = light.globals.colors;
+
 export const emailPalette: EmailPalette = {
   // Brand.
-  brandPrimary: '#1167d4', // colors.brand-550 = background--semantic--brand--primary
-  onBrand: '#eaf1fb', // colors.brand-050 = content--semantic--brand--on-brand
-  brandPrimaryDark: '#5693e0', // colors.brand-400 — a lighter blue used for LINKS on the dark body (not the button)
+  brandPrimary: light.contextuals.background.semantic.brand.primary.toLowerCase(),
+  onBrand: light.contextuals.content.semantic.brand['on-brand'].toLowerCase(),
+  // A lighter blue for LINKS on the dark body (not the button).
+  brandPrimaryDark: gray['brand-400'].toLowerCase(),
 
   // The surrounding body and the content card, per theme. The card stays one shade
   // lighter than the body in both, so the layout reads the same way light or dark.
-  lightBody: '#f7f8f8', // colors.gray-025 (background.surface.tertiary, light)
-  lightCard: '#ffffff', // colors.gray-000 (background.surface.primary, light)
-  darkBody: '#1b1c1d', // colors.gray-900
-  darkCard: '#252627', // colors.gray-850 (background.surface.secondary, dark)
+  lightBody: light.contextuals.background.surface.tertiary.toLowerCase(),
+  lightCard: light.contextuals.background.surface.primary.toLowerCase(),
+  darkBody: dark.contextuals.background.surface.tertiary.toLowerCase(),
+  darkCard: dark.contextuals.background.surface.secondary.toLowerCase(),
 
   // Text.
-  bodyTextLight: '#3a3b3e', // colors.gray-750
-  bodyTextDark: '#d2d4d8', // colors.gray-150
-  headingDark: '#ffffff', // colors.gray-000
-  footerText: '#686b6f', // colors.gray-550 (content.semantic.neutral.secondary)
+  bodyTextLight: gray['gray-750'].toLowerCase(),
+  bodyTextDark: gray['gray-150'].toLowerCase(),
+  headingDark: gray['gray-000'].toLowerCase(),
+  footerText: gray['gray-550'].toLowerCase(),
 
   // Lines (divider / hr).
-  dividerLight: '#e1e2e5', // colors.gray-100
-  dividerDark: '#3a3b3e', // colors.gray-750
+  dividerLight: light.contextuals.border.surface.primary.toLowerCase(),
+  dividerDark: dark.contextuals.border.surface.primary.toLowerCase(),
 
+  // Web-safe on purpose: an email client loads no web font, and the design
+  // system's own families (Roboto Flex, Marianne) are not installed on readers' machines.
   fontFamily: 'Inter, Helvetica, Arial, sans-serif',
 };
 

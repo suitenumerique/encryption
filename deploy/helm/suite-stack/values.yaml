@@ -466,8 +466,8 @@ docs:
       ENCRYPTION_FEATURE_ENABLED: 'True'
       ENCRYPTION_VAULT_URL: https://data.encryption.suite.example.org
       ENCRYPTION_INTERFACE_URL: https://encryption.suite.example.org
-      # The product's encryption menu leads to the Accounts Encryption page.
-      ENCRYPTION_SETTINGS_URL: https://accounts.suite.example.org/?section=encryption
+      # "Manage account" in the product's user menu, where encryption is managed too.
+      ACCOUNT_SETTINGS_URL: https://accounts.suite.example.org/
     # The migration Job is not a hook: it starts with the rest of the release, so it
     # waits for the shared PostgreSQL (and for the bootstrap Job's database) itself.
     migrate:
@@ -621,8 +621,8 @@ drive:
       ENCRYPTION_FEATURE_ENABLED: 'True'
       ENCRYPTION_VAULT_URL: https://data.encryption.suite.example.org
       ENCRYPTION_INTERFACE_URL: https://encryption.suite.example.org
-      # The product's encryption menu leads to the Accounts Encryption page.
-      ENCRYPTION_SETTINGS_URL: https://accounts.suite.example.org/?section=encryption
+      # "Manage account" in the product's user menu, where encryption is managed too.
+      ACCOUNT_SETTINGS_URL: https://accounts.suite.example.org/
       # The document server (onlyoffice below): discovered and called over its Service,
       # while it fetches the files from Drive's public origin.
       WOPI_CLIENTS: onlyoffice

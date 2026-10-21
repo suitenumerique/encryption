@@ -13,9 +13,10 @@ export interface DrivePendingRow {
 }
 
 // encryption/sharing/PendingEncryptionSection.tsx (Drive), rendered in the
-// share modal's `outsideSearchContent`, above the copy-link footer. Unlike
-// Docs, a viewer who may not accept still sees the list, with "Encryption
-// enabled" for the members who are ready.
+// share modal's `outsideSearchContent`, above the copy-link footer. A viewer
+// who may not accept still sees the list, under "Waiting for access", with
+// "Encryption enabled" for the members who are ready; "Action needed" is for
+// a manager with someone to accept.
 export function DrivePendingEncryptionSection({ rows, canAccept }: { rows: DrivePendingRow[]; canAccept: boolean }) {
   const t = usePatternTranslate();
 
@@ -24,11 +25,12 @@ export function DrivePendingEncryptionSection({ rows, canAccept }: { rows: Drive
   }
 
   const someoneWaiting = rows.some((row) => !row.hasPublicKey);
+  const title = t(canAccept && rows.some((row) => row.hasPublicKey) ? 'drivePendingTitle' : 'drivePendingWaitingTitle');
 
   return (
     <div className="c__share-modal__link-settings pp-drive-pending" data-testid="drive-pending-encryption">
       <div className="pp-drive-pending__heading">
-        <p className="c__share-modal__link-settings__title pp-drive-pending__title">{t('drivePendingTitle')}</p>
+        <p className="c__share-modal__link-settings__title pp-drive-pending__title">{title}</p>
         {someoneWaiting && <p className="pp-drive-pending__hint">{t('drivePendingWaitingHint')}</p>}
       </div>
       <ul className="pp-drive-pending__rows">

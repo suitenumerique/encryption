@@ -204,7 +204,7 @@ export const states: PatternState[] = [
     name: 'Docs: pending members, viewer who cannot accept',
     source: `${DOCS}/doc-share/components/PendingEncryptionSection.tsx (canAccept), DocShareModal.tsx`,
     description:
-      'The same list for a viewer who can see the members but not manage them: no search field, read-only roles, no Accept. The member who is ready shows "Encryption enabled", the other the "Waiting for encryption" chip. Same as Drive.',
+      'The same list for a viewer who can see the members but not manage them: no search field, read-only roles, no Accept, and the heading reads "Waiting for access" instead of "Action needed". The member who is ready shows "Encryption enabled", the other the "Waiting for encryption" chip. Same as Drive.',
     render: () => (
       <DocsShareDialog
         encrypted
@@ -224,6 +224,8 @@ export const states: PatternState[] = [
     check: async (scope, t) => {
       const section = within(await scope.findByTestId('docs-pending-encryption'));
 
+      await expect(section.getByText(t('docsWaitingForAccess'))).toBeInTheDocument();
+      await expect(section.queryByText(t('docsActionNeeded'))).toBeNull();
       await expect(section.getByText(t('docsEncryptionEnabled'))).toBeInTheDocument();
       await expect(section.getByTitle(t('docsWaitingChipTitle'))).toBeInTheDocument();
       await expect(section.queryByText(t('docsAccept'))).toBeNull();
@@ -354,7 +356,7 @@ export const states: PatternState[] = [
     name: 'Docs: encrypt document, collaborators without encryption',
     source: `${DOCS}/doc-management/components/ModalEncryptDoc.tsx`,
     description:
-      'Encryption is possible, but some members (and every pending email invitation) have no encryption yet: they will become pending members, the "Action needed" section of the share dialog.',
+      'Encryption is possible, but some members (and every pending email invitation) have no encryption yet: they will become pending members, listed in their own section of the share dialog.',
     render: () => <DocsEncryptDocModal hasKeys linkReach="restricted" pendingCount={2} />,
     check: async (scope, t) => {
       await expect(await scope.findByText(t('docsPendingCollaboratorsOther', { count: 2 }))).toBeInTheDocument();
@@ -460,7 +462,7 @@ export const states: PatternState[] = [
     name: 'Drive: pending members, viewer who cannot accept',
     source: `${DRIVE}/encryption/sharing/PendingEncryptionSection.tsx (canAccept)`,
     description:
-      'The same list for a viewer who may not manage members: no Accept, "Encryption enabled" for the member who is ready, the chip for the other. Docs shows no such list to this viewer.',
+      'The same list for a viewer who may not manage members: "Waiting for access" instead of "Action needed", no Accept, "Encryption enabled" for the member who is ready, the chip for the other. Same as Docs.',
     render: () => (
       <DriveShareModal
         itemTitle={DRIVE_ITEM}
@@ -481,6 +483,8 @@ export const states: PatternState[] = [
     check: async (scope, t) => {
       const section = within(await scope.findByTestId('drive-pending-encryption'));
 
+      await expect(section.getByText(t('drivePendingWaitingTitle'))).toBeInTheDocument();
+      await expect(section.queryByText(t('drivePendingTitle'))).toBeNull();
       await expect(section.getByText(t('drivePendingEncryptionEnabled'))).toBeInTheDocument();
       await expect(section.queryByText(t('drivePendingAccept'))).toBeNull();
     },
