@@ -210,7 +210,6 @@
     "last_resort_consequence_1": "Documents encrypted with the old key will remain inaccessible until you recover its old recovery phrase (they are not deleted).",
     "last_resort_consequence_2": "Other members of those documents will need to remove you and re-share access after your new keys are created.",
     "last_resort_consequence_3": "A new key pair will be generated and you will need to back it up.",
-    "confirm_fingerprint_to_delete": "To confirm, type your current safety fingerprint:",
     "reactivate_title": "Reactivate a previous vault?",
     "reactivate_confirm": "This recovery phrase belongs to a previous vault (created {{date}}). Reactivating it will disable your current vault, which stays recoverable with its own phrase. Continue?",
     "reactivate_confirm_button": "Reactivate this vault",

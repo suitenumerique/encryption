@@ -700,15 +700,6 @@
   outline-offset: 1px;
 }
 
-.input--mono {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.05em;
-}
-
-.input--valid {
-  border-color: var(--c--contextuals--border--semantic--success--secondary);
-}
-
 .input--invalid {
   border-color: var(--c--contextuals--border--semantic--error--primary);
 }

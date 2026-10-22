@@ -214,7 +214,6 @@
     "last_resort_consequence_1": "Les documents chiffrés avec l'ancienne clé resteront inaccessibles tant que vous n'aurez pas retrouvé son ancienne phrase de récupération (ils ne sont pas supprimés).",
     "last_resort_consequence_2": "Les autres membres de ces documents devront vous retirer puis vous repartager l'accès après la création de vos nouvelles clés.",
     "last_resort_consequence_3": "Une nouvelle paire de clés sera générée et vous devrez la sauvegarder.",
-    "confirm_fingerprint_to_delete": "Pour confirmer, saisissez votre empreinte de sécurité actuelle :",
     "reveal_words": "Afficher les mots",
     "hide_words": "Masquer les mots",
     "btn_restore": "Restaurer l'accès",

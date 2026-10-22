@@ -48,8 +48,6 @@ declare const styles: {
   readonly identityTooltip: string;
   readonly input: string;
   readonly inputInvalid: string;
-  readonly inputMono: string;
-  readonly inputValid: string;
   readonly label: string;
   readonly list: string;
   readonly loading: string;

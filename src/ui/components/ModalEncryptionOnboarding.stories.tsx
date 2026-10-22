@@ -72,7 +72,6 @@ ExistingUserStory.args = {
   onOpenEmergencyAccess: () => console.log('onOpenEmergencyAccess'),
   onStepUp: () => console.log('onStepUp'),
   hasExistingBackendKey: true,
-  existingKeyFingerprint: '1031712345678901234567890123456789012345',
   userInfo: { name: 'Alice Martin', email: 'alice.martin@numerique.gouv.fr' },
 };
 ExistingUserStory.parameters = {
@@ -291,6 +290,12 @@ LastResortStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
   await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_last_resort')));
   await playFindHeading(canvasElement, i18n.t('onboarding.title_last_resort'));
+  // Confirmed like turning encryption off: the "I understand" tick alone unlocks it.
+  const reset = await playFindButton(canvasElement, i18n.t('onboarding.btn_confirm_reset'));
+  await expect(reset).toBeDisabled();
+  await playFindButton(canvasElement, i18n.t('onboarding.btn_cancel'));
+  await userEvent.click(within(canvasElement).getByRole('checkbox', { name: i18n.t('onboarding.i_understand') }));
+  await expect(reset).toBeEnabled();
 };
 
 export const LastResort = prepareStory(LastResortStory);

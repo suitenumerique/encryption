@@ -4,7 +4,6 @@ import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
-import { formatFingerprint } from '@encryption/src/crypto/fingerprint';
 import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import { API_ERROR_CONCURRENT_REGISTRATION, API_ERROR_KEY_VERSION_CONFLICT } from '@encryption/src/shared/error-codes';
@@ -22,7 +21,7 @@ import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhras
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { StepUpScreen } from '@encryption/src/ui/components/StepUpScreen';
 import { type BlockedContact, UntrustedRearmError, granteeName, personNameWithEmail } from '@encryption/src/ui/components/emergency-access-logic';
-import { FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
+import { Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
@@ -48,30 +47,24 @@ type OnboardingStep =
   | 'forced-rotation-done';
 
 /**
- * "Reset encryption" confirmation step. The user acknowledges the data loss and
- * types their current fingerprint before the old key can be disabled.
+ * "Reset encryption" confirmation step, laid out like the design's turn-off
+ * confirmation: the user acknowledges the data loss before the old key is disabled.
  */
 function LastResortStep({
-  existingKeyFingerprint,
   isPending,
   onConfirm,
   onBack,
   banner,
   t,
 }: {
-  existingKeyFingerprint: string | null | undefined;
   isPending: boolean;
   onConfirm: () => void;
   onBack: () => void;
   banner?: ReactNode;
   t: TFunction;
 }) {
-  const [confirmInput, setConfirmInput] = useState('');
+  // The "I understand" tick is the only confirmation, as when turning encryption off.
   const [understood, setUnderstood] = useState(false);
-  const hasFingerprint = !!existingKeyFingerprint;
-  const inputNormalized = confirmInput.replace(/\s/g, '');
-  const fingerprintMatch = hasFingerprint && inputNormalized === existingKeyFingerprint;
-  const canDelete = understood && (hasFingerprint ? fingerprintMatch : true); // if no fingerprint available, allow (shouldn't happen)
 
   return (
     <Screen
@@ -88,9 +81,13 @@ function LastResortStep({
         </>
       }
       banner={banner}
+      actionsLayout="row"
       actions={
         <>
-          <Button color="error" onClick={onConfirm} disabled={isPending || !canDelete}>
+          <Button variant="bordered" color="neutral" onClick={onBack} disabled={isPending}>
+            {t('onboarding.btn_cancel')}
+          </Button>
+          <Button color="error" onClick={onConfirm} disabled={isPending || !understood}>
             {isPending ? t('onboarding.btn_generating') : t('onboarding.btn_confirm_reset')}
           </Button>
         </>
@@ -102,24 +99,6 @@ function LastResortStep({
           <Checkbox label={t('onboarding.i_understand')} checked={understood} onChange={() => setUnderstood((v) => !v)} />
         </div>
       </Notice>
-
-      {hasFingerprint && (
-        <div className={styles.section}>
-          <label className={styles.label} htmlFor="onboarding-confirm-fingerprint">
-            {t('onboarding.confirm_fingerprint_to_delete')}
-          </label>
-          <FingerprintBoxes fingerprint={existingKeyFingerprint!} />
-          <input
-            id="onboarding-confirm-fingerprint"
-            type="text"
-            inputMode="numeric"
-            value={confirmInput}
-            onChange={(e) => setConfirmInput(e.target.value)}
-            placeholder={formatFingerprint(existingKeyFingerprint!)}
-            className={fingerprintMatch ? `${styles.input} ${styles.inputMono} ${styles.inputValid}` : `${styles.input} ${styles.inputMono}`}
-          />
-        </div>
-      )}
     </Screen>
   );
 }
@@ -129,7 +108,6 @@ interface ModalEncryptionOnboardingProps {
   userId: string | null;
   parentOrigin?: string | null;
   hasExistingBackendKey?: boolean;
-  existingKeyFingerprint?: string | null;
   /** Accepted for parity with the settings screen; the onboarding screens do not show it. */
   userInfo?: UserInfo | null;
   onSuccess?: (publicKey: string) => void;
@@ -190,7 +168,6 @@ export function ModalEncryptionOnboarding({
   userId,
   hasExistingBackendKey = false,
   parentOrigin = null,
-  existingKeyFingerprint = null,
   onSuccess,
   onClose,
   onUseAnotherDevice,
@@ -1015,14 +992,7 @@ export function ModalEncryptionOnboarding({
       )}
 
       {step === 'last-resort' && (
-        <LastResortStep
-          existingKeyFingerprint={existingKeyFingerprint}
-          isPending={isPending}
-          onConfirm={handleResetFromZero}
-          onBack={() => setStep('restore')}
-          banner={banner}
-          t={t}
-        />
+        <LastResortStep isPending={isPending} onConfirm={handleResetFromZero} onBack={() => setStep('restore')} banner={banner} t={t} />
       )}
 
       {step === 'restore' && (

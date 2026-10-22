@@ -2,7 +2,6 @@ import { Button, CunninghamProvider, Modal, ModalSize, VariantType } from '@gouv
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import {
   MSG_INTERFACE_CLOSED,
   MSG_INTERFACE_ONBOARDING_COMPLETE,
@@ -369,7 +368,6 @@ function InterfaceScreens({
   }, [internalUserId, isReady, resolveInternalUser]);
 
   const [hasExistingBackendKey, setHasExistingBackendKey] = useState(false);
-  const [existingKeyFingerprint, setExistingKeyFingerprint] = useState<string | null>(null);
 
   // Lets a screen (e.g. settings) push into device-approval in place without a
   // real navigation, then return to where it was.
@@ -395,17 +393,7 @@ function InterfaceScreens({
     // Directory lookup by OIDC sub (unauthenticated, like every directory read):
     // used before the internal id is resolved.
     fetchPublicKeys({ subs: [parentContext.suiteUserId] })
-      .then(async (data) => {
-        const keys = data.keys;
-        setHasExistingBackendKey(keys.length > 0);
-
-        if (keys.length > 0) {
-          // The fingerprint users verify out-of-band is the IDENTITY
-          // (signature) key, not the encryption key.
-          const fp = await computeKeyFingerprint(keys[0].signature_public_key);
-          setExistingKeyFingerprint(fp);
-        }
-      })
+      .then((data) => setHasExistingBackendKey(data.keys.length > 0))
       .catch((err) => {
         console.warn('[encryption-ui] Failed to check for existing backend keys:', err);
       });
@@ -524,7 +512,6 @@ function InterfaceScreens({
           userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={hasExistingBackendKey}
-          existingKeyFingerprint={existingKeyFingerprint}
           userInfo={userInfo}
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
@@ -545,7 +532,6 @@ function InterfaceScreens({
           userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={true}
-          existingKeyFingerprint={existingKeyFingerprint}
           userInfo={userInfo}
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
@@ -566,7 +552,6 @@ function InterfaceScreens({
           userId={internalUserId}
           parentOrigin={parentContext.parentOrigin}
           hasExistingBackendKey={true}
-          existingKeyFingerprint={existingKeyFingerprint}
           userInfo={userInfo}
           onSuccess={handleOnboardingSuccess}
           onClose={handleClose}
