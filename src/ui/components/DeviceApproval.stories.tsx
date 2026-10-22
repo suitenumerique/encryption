@@ -255,7 +255,7 @@ export const EnrolledDeviceNoCamera = prepareStory(EnrolledDeviceNoCameraStory);
 
 const EnrolledDeviceCodeMismatchStory = Template.bind({});
 EnrolledDeviceCodeMismatchStory.args = { ...baseArgs };
-EnrolledDeviceCodeMismatchStory.decorators = [withCamera(false)];
+EnrolledDeviceCodeMismatchStory.decorators = [withCamera(true)];
 EnrolledDeviceCodeMismatchStory.parameters = {
   encryption: {
     hasKeys: async () => ({ hasKeys: true }),
@@ -273,9 +273,11 @@ EnrolledDeviceCodeMismatchStory.parameters = {
   },
 };
 EnrolledDeviceCodeMismatchStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead')));
   await fillPairingCode(canvasElement, sampleFingerprint);
   await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_approve')));
   await playFindAlert(canvasElement, i18n.t('device_approval.code_no_match'));
+  await playFindButton(canvasElement, i18n.t('device_approval.scan_instead'));
 };
 
 EnrolledDeviceCodeMismatchStory.parameters = { ...EnrolledDeviceCodeMismatchStory.parameters, design: consoleFrame('4884-28194') };
