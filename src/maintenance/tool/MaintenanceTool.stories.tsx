@@ -221,8 +221,10 @@ LongExportStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('maintenanceTool.decrypt.fingerprint'), { exact: false });
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.runZip') }));
 
-  // 250 rows, shown a hundred at a time.
-  await canvas.findByText(i18n.t('maintenanceTool.decrypt.pageRange', { from: 1, to: 100, total: 250 }));
+  // 250 rows, shown a hundred at a time. The first page waits for the whole run
+  // (250 decryptions into the archive), longer than the default second on a
+  // loaded machine.
+  await canvas.findByText(i18n.t('maintenanceTool.decrypt.pageRange', { from: 1, to: 100, total: 250 }), {}, { timeout: 15000 });
   expect(canvas.getAllByRole('row')).toHaveLength(101);
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.nextPage') }));
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('maintenanceTool.decrypt.nextPage') }));
