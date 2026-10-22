@@ -107,8 +107,10 @@ KeyMismatchStory.play = async ({ canvasElement }) => {
 
 export const KeyMismatch = prepareStory(KeyMismatchStory);
 
-// Lines the ellipsis cuts (a long address beside a chip squeezes the name too)
-// show in full on resting the pointer on them, as a `title` would.
+// Lines the ellipsis cuts show in full on resting the pointer on them, as a
+// `title` would. Both are far longer than the card, so they are cut whatever
+// font metrics the browser renders with.
+const longName = 'Amandine Salambo-de-la-Fontaine-Beauregard';
 const longEmail = 'amandine.salambo-de-la-fontaine@direction-interministerielle.numerique.gouv.fr';
 
 async function expectHoverTooltip(target: HTMLElement, text: string) {
@@ -124,19 +126,19 @@ async function expectHoverTooltip(target: HTMLElement, text: string) {
   await waitFor(() => expect(document.body.querySelector('.c__tooltip')).toBeNull());
 }
 
-const CutEmailStory = Template.bind({});
-CutEmailStory.args = { ...KeyMismatchStory.args, secondary: longEmail };
-CutEmailStory.play = async ({ canvasElement }) => {
+const CutLinesStory = Template.bind({});
+CutLinesStory.args = { ...KeyMismatchStory.args, name: longName, secondary: longEmail };
+CutLinesStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  const name = await canvas.findByText(baseArgs.name);
+  const name = await canvas.findByText(longName);
 
   // A tooltip waits for the pointer to have moved, as a real mouse does before entering.
   await userEvent.hover(canvasElement);
-  await expectHoverTooltip(name, baseArgs.name);
+  await expectHoverTooltip(name, longName);
   await expectHoverTooltip(canvas.getByText(longEmail), longEmail);
 };
 
-export const CutEmail = prepareStory(CutEmailStory);
+export const CutLines = prepareStory(CutLinesStory);
 
 const TrustedStory = Template.bind({});
 TrustedStory.args = {

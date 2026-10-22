@@ -48,10 +48,17 @@ function useCutLines(name: string, line: string | null) {
     const column = columnRef.current;
     if (!column) return;
 
+    // The text's own width against its box, both unrounded: scrollWidth and
+    // clientWidth round to whole pixels, so a text overflowing by less than one
+    // would show its ellipsis while measuring as fitting.
     const isCut = (selector: string) => {
       const element = column.querySelector<HTMLElement>(selector);
+      if (element === null) return false;
 
-      return element !== null && element.scrollWidth > element.clientWidth;
+      const text = document.createRange();
+      text.selectNodeContents(element);
+
+      return text.getBoundingClientRect().width > element.getBoundingClientRect().width;
     };
     const measure = () => setCut({ name: isCut('[data-line="name"]'), line: isCut('[data-line="secondary"]') });
     const observer = new ResizeObserver(measure);
