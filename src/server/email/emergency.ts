@@ -51,7 +51,7 @@ function send(locale: string, options: Omit<SendOptions, 'sender'>): Promise<voi
 export async function sendEmergencyDesignated(params: {
   recipient: string;
   locale: string;
-  grantorEmail: string;
+  grantor: string;
   waitTimeDays: number;
   productUrl: string;
 }): Promise<void> {
@@ -62,7 +62,7 @@ export async function sendEmergencyDesignated(params: {
   });
 }
 
-export async function sendEmergencyAccepted(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
+export async function sendEmergencyAccepted(params: { recipient: string; locale: string; grantee: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyAcceptedSubject(params.locale),
@@ -70,7 +70,7 @@ export async function sendEmergencyAccepted(params: { recipient: string; locale:
   });
 }
 
-export async function sendEmergencyDeclined(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
+export async function sendEmergencyDeclined(params: { recipient: string; locale: string; grantee: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyDeclinedSubject(params.locale),
@@ -81,7 +81,7 @@ export async function sendEmergencyDeclined(params: { recipient: string; locale:
 export async function sendEmergencyRecoveryRequested(params: {
   recipient: string;
   locale: string;
-  granteeEmail: string;
+  grantee: string;
   waitTimeDays: number;
   deadlineMillis: number;
   productUrl: string;
@@ -96,7 +96,7 @@ export async function sendEmergencyRecoveryRequested(params: {
 export async function sendEmergencyRecoveryReminder(params: {
   recipient: string;
   locale: string;
-  granteeEmail: string;
+  grantee: string;
   daysRemaining: number;
   productUrl: string;
 }): Promise<void> {
@@ -110,7 +110,7 @@ export async function sendEmergencyRecoveryReminder(params: {
 export async function sendEmergencyRecoveryApprovedGrantor(params: {
   recipient: string;
   locale: string;
-  granteeEmail: string;
+  grantee: string;
   productUrl: string;
 }): Promise<void> {
   await send(params.locale, {
@@ -123,7 +123,7 @@ export async function sendEmergencyRecoveryApprovedGrantor(params: {
 export async function sendEmergencyRecoveryApprovedContact(params: {
   recipient: string;
   locale: string;
-  grantorEmail: string;
+  grantor: string;
   productUrl: string;
 }): Promise<void> {
   await send(params.locale, {
@@ -133,7 +133,7 @@ export async function sendEmergencyRecoveryApprovedContact(params: {
   });
 }
 
-export async function sendEmergencyRecoveryRejected(params: { recipient: string; locale: string; grantorEmail: string }): Promise<void> {
+export async function sendEmergencyRecoveryRejected(params: { recipient: string; locale: string; grantor: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryRejectedSubject(params.locale),
@@ -141,7 +141,7 @@ export async function sendEmergencyRecoveryRejected(params: { recipient: string;
   });
 }
 
-export async function sendEmergencyRecoveryCancelled(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
+export async function sendEmergencyRecoveryCancelled(params: { recipient: string; locale: string; grantee: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRecoveryCancelledSubject(params.locale),
@@ -149,7 +149,7 @@ export async function sendEmergencyRecoveryCancelled(params: { recipient: string
   });
 }
 
-export async function sendEmergencyVaultRecovered(params: { recipient: string; locale: string; granteeEmail: string }): Promise<void> {
+export async function sendEmergencyVaultRecovered(params: { recipient: string; locale: string; grantee: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyVaultRecoveredSubject(params.locale),
@@ -157,7 +157,7 @@ export async function sendEmergencyVaultRecovered(params: { recipient: string; l
   });
 }
 
-export async function sendEmergencyVaultRecoveredContact(params: { recipient: string; locale: string; grantorEmail: string }): Promise<void> {
+export async function sendEmergencyVaultRecoveredContact(params: { recipient: string; locale: string; grantor: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyVaultRecoveredContactSubject(params.locale),
@@ -165,7 +165,7 @@ export async function sendEmergencyVaultRecoveredContact(params: { recipient: st
   });
 }
 
-export async function sendEmergencyRevoked(params: { recipient: string; locale: string; grantorEmail: string }): Promise<void> {
+export async function sendEmergencyRevoked(params: { recipient: string; locale: string; grantor: string }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
     subject: emergencyRevokedSubject(params.locale),

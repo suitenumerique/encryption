@@ -12,17 +12,17 @@ export function subject(locale: string): string {
 
 export interface EmergencyAcceptedEmailProps {
   locale: string;
-  granteeEmail: string;
+  grantee: string;
 }
 
-export function EmergencyAcceptedEmail({ locale, granteeEmail }: EmergencyAcceptedEmailProps) {
+export function EmergencyAcceptedEmail({ locale, grantee }: EmergencyAcceptedEmailProps) {
   return (
     <StandardLayout locale={locale} title={subject(locale)}>
       <MjmlText>
         <h1>{t(locale, `${NS}.title`)}</h1>
         <p>{t(locale, 'emails.hello')}</p>
         <p>
-          <EmailHtml html={tHtml(locale, `${NS}.body`, { granteeEmail })} />
+          <EmailHtml html={tHtml(locale, `${NS}.body`, { grantee })} />
         </p>
         <p>{t(locale, `${NS}.note`)}</p>
       </MjmlText>

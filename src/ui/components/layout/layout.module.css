@@ -283,9 +283,19 @@
   line-height: 18px;
 }
 
-.contacts p {
+.contacts > p {
   margin: 0;
   color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* People listed one per row (avatar, name, email), no bullets. */
+.people {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .card--warning {
@@ -348,6 +358,40 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The full text of an identity line on hovering it (the email hidden behind a
+   name, a name or an email cut by the ellipsis): on one line, as wide as the
+   text, rather than the narrow column it is rendered in or the design system's
+   150px (meant for sentences, which wrap; an address has no space to wrap on).
+   Only a viewport too narrow for it breaks it, anywhere. It shows once the
+   pointer has rested on the line, as a `title` does, not the instant it passes
+   over (the design system's tooltip has no delay of its own). */
+:global(.c__tooltip).identity__tooltip {
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--c--globals--spacings--base));
+  overflow-wrap: anywhere;
+  animation: identity-tooltip-rest 500ms;
+}
+
+@keyframes identity-tooltip-rest {
+  from,
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Read by screen readers, not shown (what a hover tooltip shows the others). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* A status chip next to an identity ("Recovery requested", "Key mismatch", ...). */

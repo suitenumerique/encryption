@@ -15,7 +15,7 @@ function sendOptions() {
   return {
     recipients: ['grantor@example.com'],
     subject: 'Test subject',
-    emailComponent: EmergencyAcceptedEmail({ locale: 'fr', granteeEmail: 'jean.dupont@numerique.gouv.fr' }),
+    emailComponent: EmergencyAcceptedEmail({ locale: 'fr', grantee: 'Jean Dupont' }),
   };
 }
 
@@ -34,8 +34,8 @@ describe('Mailer', () => {
     expect(parameters.from).toBe(defaultSender);
     expect(parameters.to).toBe('grantor@example.com');
     expect(parameters.subject).toBe('Test subject');
-    expect(parameters.html).toContain('jean.dupont@numerique.gouv.fr');
-    expect(parameters.text).toContain('jean.dupont@numerique.gouv.fr');
+    expect(parameters.html).toContain('Jean Dupont');
+    expect(parameters.text).toContain('Jean Dupont');
     // The plaintext version must not carry markup
     expect(parameters.text).not.toContain('<');
   });

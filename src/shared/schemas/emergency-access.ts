@@ -96,6 +96,7 @@ export const EmergencyTrustedEntrySchema = z.object({
   id: z.string().uuid(),
   grantee_user_id: z.string().uuid(),
   grantee_email: z.string(),
+  grantee_name: z.string().nullable(),
   status: EmergencyAccessStatusSchema,
   wait_time_days: z.number().int(),
   created_at_millis: z.number().int(),
@@ -114,6 +115,7 @@ export const EmergencyGrantedEntrySchema = z.object({
   id: z.string().uuid(),
   grantor_user_id: z.string().uuid(),
   grantor_email: z.string(),
+  grantor_name: z.string().nullable(),
   status: EmergencyAccessStatusSchema,
   wait_time_days: z.number().int(),
   created_at_millis: z.number().int(),
@@ -134,7 +136,7 @@ export const EmergencyRecoverResponseSchema = z.object({
 export type EmergencyRecoverResponse = z.infer<typeof EmergencyRecoverResponseSchema>;
 
 export const EmergencySearchResponseSchema = z.object({
-  user: z.object({ user_id: z.string().uuid(), email: z.string() }).nullable(),
+  user: z.object({ user_id: z.string().uuid(), email: z.string(), name: z.string().nullable() }).nullable(),
   onboarded: z.boolean(),
 });
 

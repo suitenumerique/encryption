@@ -44,10 +44,19 @@ export function emergencyPhase(entry: ApprovalFields, nowMillis: number): Emerge
   return entry.status;
 }
 
+/** How the interface names a person: their name, else their email (no name known for them yet). */
+export function personName(name: string | null | undefined, email: string): string {
+  return name?.trim() || email;
+}
+
+export const granteeName = (entry: { grantee_name: string | null; grantee_email: string }) => personName(entry.grantee_name, entry.grantee_email);
+
+export const grantorName = (entry: { grantor_name: string | null; grantor_email: string }) => personName(entry.grantor_name, entry.grantor_email);
+
 export interface RearmRow {
   emergencyAccessId: string;
   granteeUserId: string;
-  granteeEmail: string;
+  granteeName: string;
   waitTimeDays: number;
 }
 
@@ -59,7 +68,16 @@ export interface RearmRow {
  * to a previous (disabled) vault never gate the active keyring.
  */
 export function grantedRearmRows(
-  contacts: Array<ApprovalFields & { id: string; grantee_user_id: string; grantee_email: string; wait_time_days: number; vault_active?: boolean }>,
+  contacts: Array<
+    ApprovalFields & {
+      id: string;
+      grantee_user_id: string;
+      grantee_email: string;
+      grantee_name: string | null;
+      wait_time_days: number;
+      vault_active?: boolean;
+    }
+  >,
   nowMillis: number
 ): RearmRow[] {
   return contacts
@@ -67,7 +85,7 @@ export function grantedRearmRows(
     .map((contact) => ({
       emergencyAccessId: contact.id,
       granteeUserId: contact.grantee_user_id,
-      granteeEmail: contact.grantee_email,
+      granteeName: granteeName(contact),
       waitTimeDays: contact.wait_time_days,
     }));
 }
@@ -112,9 +130,9 @@ export function countdownTo(deadlineMillis: number, nowMillis: number): Countdow
  * to revoke exactly these relationships and retry.
  */
 export class UntrustedRearmError extends Error {
-  readonly contacts: Array<{ id: string; email: string }>;
+  readonly contacts: Array<{ id: string; name: string }>;
 
-  constructor(contacts: Array<{ id: string; email: string }>) {
+  constructor(contacts: Array<{ id: string; name: string }>) {
     super('Some granted contacts are no longer trusted; their escrow cannot be re-armed.');
     this.name = 'UntrustedRearmError';
     this.contacts = contacts;

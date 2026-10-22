@@ -434,6 +434,17 @@ describe('POST /:id/initiate (contact-signed)', () => {
     expect((await testPrisma.emergencyAccess.findUniqueOrThrow({ where: { id: ROW_ID } })).status).toBe('confirmed');
   });
 
+  it('names the contact to the grantor with their address in brackets once their name is known', async () => {
+    const app = buildApp(GRANTEE_ID);
+    await seedRelationship(grantorVaultId, { status: 'confirmed' });
+    await testPrisma.user.update({ where: { id: GRANTEE_ID }, data: { firstName: 'Bob', lastName: 'Dupont' } });
+
+    const url = `/api/emergency-access/${ROW_ID}/initiate`;
+    await app.inject({ method: 'POST', url, headers: await sigHeaders(granteeIdentity, GRANTEE_ID, 'POST', url) });
+
+    expect(sendEmergencyRecoveryRequested).toHaveBeenCalledWith(expect.objectContaining({ grantee: 'Bob Dupont (grantee@mail.test)' }));
+  });
+
   it('starts the wait and stamps the request when the notification email succeeds', async () => {
     const app = buildApp(GRANTEE_ID);
     await seedRelationship(grantorVaultId, { status: 'confirmed' });
@@ -443,7 +454,9 @@ describe('POST /:id/initiate (contact-signed)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe('recoveryRequested');
-    expect(sendEmergencyRecoveryRequested).toHaveBeenCalled();
+    // An email asking the grantor to decide names the contact with their address,
+    // or the address alone while no name is known.
+    expect(sendEmergencyRecoveryRequested).toHaveBeenCalledWith(expect.objectContaining({ grantee: 'grantee@mail.test' }));
 
     const stored = await testPrisma.emergencyAccess.findUniqueOrThrow({ where: { id: ROW_ID } });
 
@@ -584,6 +597,22 @@ describe('DELETE /:id', () => {
   });
 });
 
+describe('names', () => {
+  it('names each side by the first and last names stored at their last login', async () => {
+    await seedRelationship(grantorVaultId, { status: 'confirmed' });
+    await testPrisma.user.update({ where: { id: GRANTOR_ID }, data: { firstName: 'Alice', lastName: 'Martin' } });
+    await testPrisma.user.update({ where: { id: GRANTEE_ID }, data: { firstName: 'Bob', lastName: 'Dupont' } });
+
+    const trusted = await buildApp(GRANTOR_ID).inject({ method: 'GET', url: '/api/emergency-access/trusted' });
+    const granted = await buildApp(GRANTEE_ID).inject({ method: 'GET', url: '/api/emergency-access/granted' });
+    const search = await buildApp(GRANTOR_ID).inject({ method: 'GET', url: '/api/emergency-access/search?email=grantee@mail.test' });
+
+    expect(trusted.json().contacts[0].grantee_name).toBe('Bob Dupont');
+    expect(granted.json().grantors[0].grantor_name).toBe('Alice Martin');
+    expect(search.json().user).toMatchObject({ user_id: GRANTEE_ID, name: 'Bob Dupont' });
+  });
+});
+
 describe('GET /trusted', () => {
   it('maps rows with deadline and escrow record for the client-side audit', async () => {
     const app = buildApp(GRANTOR_ID);
@@ -602,6 +631,7 @@ describe('GET /trusted', () => {
 
     expect(entry.id).toBe(ROW_ID);
     expect(entry.grantee_email).toBe('grantee@mail.test');
+    expect(entry.grantee_name).toBeNull();
     expect(entry.deadline_millis).toBe(requestedAt.getTime() + 15 * DAY_MS);
     expect(entry.vault_active).toBe(true);
     expect(entry.escrow.grantee_key_version).toBe(2);

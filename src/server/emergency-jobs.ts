@@ -80,8 +80,8 @@ async function runTimeoutJob(nowMs: number): Promise<void> {
 
     const productUrl = env.EMAIL_PRODUCT_URL ?? '';
     await Promise.all([
-      sendEmergencyRecoveryApprovedGrantor({ recipient: grantor.email, locale: grantor.locale, granteeEmail: grantee.email, productUrl }),
-      sendEmergencyRecoveryApprovedContact({ recipient: grantee.email, locale: grantee.locale, grantorEmail: grantor.email, productUrl }),
+      sendEmergencyRecoveryApprovedGrantor({ recipient: grantor.email, locale: grantor.locale, grantee: grantee.labelWithEmail, productUrl }),
+      sendEmergencyRecoveryApprovedContact({ recipient: grantee.email, locale: grantee.locale, grantor: grantor.label, productUrl }),
     ]).catch((err) => console.error('emergency timeout emails failed', err));
   }
 }
@@ -102,7 +102,7 @@ async function runReminderJob(nowMs: number): Promise<void> {
       await sendEmergencyRecoveryReminder({
         recipient: grantor.email,
         locale: grantor.locale,
-        granteeEmail: grantee.email,
+        grantee: grantee.labelWithEmail,
         daysRemaining: decision.daysRemaining,
         productUrl: env.EMAIL_PRODUCT_URL ?? '',
       });

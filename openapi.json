@@ -2567,9 +2567,13 @@
                         },
                         "email": {
                           "type": "string"
+                        },
+                        "name": {
+                          "nullable": true,
+                          "type": "string"
                         }
                       },
-                      "required": ["user_id", "email"],
+                      "required": ["user_id", "email", "name"],
                       "additionalProperties": false
                     },
                     "onboarded": {
@@ -2667,6 +2671,10 @@
                           "grantee_email": {
                             "type": "string"
                           },
+                          "grantee_name": {
+                            "nullable": true,
+                            "type": "string"
+                          },
                           "status": {
                             "type": "string",
                             "enum": ["invited", "confirmed", "recoveryRequested", "recoveryApproved"]
@@ -2745,6 +2753,7 @@
                           "id",
                           "grantee_user_id",
                           "grantee_email",
+                          "grantee_name",
                           "status",
                           "wait_time_days",
                           "created_at_millis",
@@ -2794,6 +2803,10 @@
                           "grantor_email": {
                             "type": "string"
                           },
+                          "grantor_name": {
+                            "nullable": true,
+                            "type": "string"
+                          },
                           "status": {
                             "type": "string",
                             "enum": ["invited", "confirmed", "recoveryRequested", "recoveryApproved"]
@@ -2825,6 +2838,7 @@
                           "id",
                           "grantor_user_id",
                           "grantor_email",
+                          "grantor_name",
                           "status",
                           "wait_time_days",
                           "created_at_millis",

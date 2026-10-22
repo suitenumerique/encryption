@@ -9,6 +9,7 @@ import {
   emergencyPhase,
   grantedRearmRows,
   parseWaitDays,
+  personName,
   rearmBodyFromDesignation,
 } from '@encryption/src/ui/components/emergency-access-logic';
 
@@ -56,9 +57,17 @@ describe('emergencyPhase', () => {
   });
 });
 
+describe('personName', () => {
+  it('names a person by their name, else by their email', () => {
+    expect(personName('Carol Martin', 'carol@example.org')).toBe('Carol Martin');
+    expect(personName(null, 'carol@example.org')).toBe('carol@example.org');
+    expect(personName('  ', 'carol@example.org')).toBe('carol@example.org');
+  });
+});
+
 describe('grantedRearmRows', () => {
   const now = 1_000_000;
-  const base = { grantee_user_id: 'u1', grantee_email: 'contact@example.org', wait_time_days: 15 };
+  const base = { grantee_user_id: 'u1', grantee_email: 'contact@example.org', grantee_name: 'Carol Martin', wait_time_days: 15 };
 
   it('selects approved rows and elapsed requests, mapping to re-arm inputs', () => {
     const rows = grantedRearmRows(
@@ -73,8 +82,8 @@ describe('grantedRearmRows', () => {
     );
 
     expect(rows).toEqual([
-      { emergencyAccessId: 'a', granteeUserId: 'u1', granteeEmail: 'contact@example.org', waitTimeDays: 15 },
-      { emergencyAccessId: 'b', granteeUserId: 'u1', granteeEmail: 'contact@example.org', waitTimeDays: 15 },
+      { emergencyAccessId: 'a', granteeUserId: 'u1', granteeName: 'Carol Martin', waitTimeDays: 15 },
+      { emergencyAccessId: 'b', granteeUserId: 'u1', granteeName: 'Carol Martin', waitTimeDays: 15 },
     ]);
   });
 
@@ -130,10 +139,10 @@ describe('countdownTo', () => {
 
 describe('UntrustedRearmError', () => {
   it('carries the blocking contacts for the revoke-and-retry offer', () => {
-    const err = new UntrustedRearmError([{ id: 'a', email: 'contact@example.org' }]);
+    const err = new UntrustedRearmError([{ id: 'a', name: 'Carol Martin' }]);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('UntrustedRearmError');
-    expect(err.contacts).toEqual([{ id: 'a', email: 'contact@example.org' }]);
+    expect(err.contacts).toEqual([{ id: 'a', name: 'Carol Martin' }]);
   });
 });

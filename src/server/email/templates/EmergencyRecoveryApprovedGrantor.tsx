@@ -12,18 +12,18 @@ export function subject(locale: string): string {
 
 export interface EmergencyRecoveryApprovedGrantorEmailProps {
   locale: string;
-  granteeEmail: string;
+  grantee: string;
   productUrl: string;
 }
 
-export function EmergencyRecoveryApprovedGrantorEmail({ locale, granteeEmail, productUrl }: EmergencyRecoveryApprovedGrantorEmailProps) {
+export function EmergencyRecoveryApprovedGrantorEmail({ locale, grantee, productUrl }: EmergencyRecoveryApprovedGrantorEmailProps) {
   return (
     <StandardLayout locale={locale} title={subject(locale)}>
       <MjmlText>
         <h1>{t(locale, `${NS}.title`)}</h1>
         <p>{t(locale, 'emails.hello')}</p>
         <p>
-          <EmailHtml html={tHtml(locale, `${NS}.body`, { granteeEmail })} />
+          <EmailHtml html={tHtml(locale, `${NS}.body`, { grantee })} />
         </p>
         <p>{t(locale, `${NS}.meaning`)}</p>
         <p>{t(locale, `${NS}.revoke`)}</p>

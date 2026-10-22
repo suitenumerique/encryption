@@ -1122,6 +1122,7 @@ export type GetApiEmergencyAccessSearchResponses = {
     user: {
       user_id: string;
       email: string;
+      name: string | null;
     } | null;
     onboarded: boolean;
   };
@@ -1164,6 +1165,7 @@ export type GetApiEmergencyAccessTrustedResponses = {
       id: string;
       grantee_user_id: string;
       grantee_email: string;
+      grantee_name: string | null;
       status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
       wait_time_days: number;
       created_at_millis: number;
@@ -1200,6 +1202,7 @@ export type GetApiEmergencyAccessGrantedResponses = {
       id: string;
       grantor_user_id: string;
       grantor_email: string;
+      grantor_name: string | null;
       status: 'invited' | 'confirmed' | 'recoveryRequested' | 'recoveryApproved';
       wait_time_days: number;
       created_at_millis: number;

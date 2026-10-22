@@ -31,7 +31,7 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
       // mask which rows are blocking: the failures are collected and reported
       // together for a single revoke-and-retry decision.
       const rearms: EmergencyRearmEntry[] = [];
-      const untrusted: Array<{ id: string; email: string }> = [];
+      const untrusted: Array<{ id: string; name: string }> = [];
 
       for (const row of rows) {
         try {
@@ -42,7 +42,7 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
           rearms.push(...built);
         } catch (err) {
           if (isVaultError(err) && err.code === VaultErrorCode.UNTRUSTED_RECIPIENT) {
-            untrusted.push({ id: row.emergencyAccessId, email: row.granteeEmail });
+            untrusted.push({ id: row.emergencyAccessId, name: row.granteeName });
           } else {
             throw err;
           }

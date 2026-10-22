@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, within } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import i18n from '@encryption/src/i18n';
@@ -52,8 +52,14 @@ DefaultStory.args = { ...baseArgs };
 DefaultStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await canvas.findByText(baseArgs.name);
-  canvas.getByText(baseArgs.secondary);
+  const email = canvas.getByText(baseArgs.secondary);
   expectCard(canvasElement, null);
+  // Both lines fit: resting on them adds nothing.
+  await userEvent.hover(canvasElement);
+  await userEvent.hover(email);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(document.body.querySelector('.c__tooltip')).toBeNull();
+  await userEvent.unhover(email);
   expect(canvas.queryByRole('button')).toBeNull();
 };
 
@@ -100,6 +106,37 @@ KeyMismatchStory.play = async ({ canvasElement }) => {
 };
 
 export const KeyMismatch = prepareStory(KeyMismatchStory);
+
+// Lines the ellipsis cuts (a long address beside a chip squeezes the name too)
+// show in full on resting the pointer on them, as a `title` would.
+const longEmail = 'amandine.salambo-de-la-fontaine@direction-interministerielle.numerique.gouv.fr';
+
+async function expectHoverTooltip(target: HTMLElement, text: string) {
+  await userEvent.hover(target);
+  const tooltip = await waitFor(() => {
+    const element = document.body.querySelector<HTMLElement>('.c__tooltip');
+    expect(element).toHaveTextContent(text);
+
+    return element!;
+  });
+  await waitFor(() => expect(tooltip).toBeVisible());
+  await userEvent.unhover(target);
+  await waitFor(() => expect(document.body.querySelector('.c__tooltip')).toBeNull());
+}
+
+const CutEmailStory = Template.bind({});
+CutEmailStory.args = { ...KeyMismatchStory.args, secondary: longEmail };
+CutEmailStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  const name = await canvas.findByText(baseArgs.name);
+
+  // A tooltip waits for the pointer to have moved, as a real mouse does before entering.
+  await userEvent.hover(canvasElement);
+  await expectHoverTooltip(name, baseArgs.name);
+  await expectHoverTooltip(canvas.getByText(longEmail), longEmail);
+};
+
+export const CutEmail = prepareStory(CutEmailStory);
 
 const TrustedStory = Template.bind({});
 TrustedStory.args = {

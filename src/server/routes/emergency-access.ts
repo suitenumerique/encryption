@@ -27,6 +27,7 @@ import {
 } from '@encryption/src/server/routes/emergency-core';
 import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
 import { SIG_ONLY, SKIP_SIG, activeIdentityWireKey, assertUserId, registerTransportAuth } from '@encryption/src/server/routes/transport-auth';
+import { userFullName } from '@encryption/src/server/user-name';
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
@@ -154,10 +155,14 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
       if (onboarded.length !== 1) {
         const known = candidates.length > 0;
 
-        return { user: known && candidates.length === 1 ? { user_id: candidates[0].id, email: candidates[0].email } : null, onboarded: false };
+        return {
+          user:
+            known && candidates.length === 1 ? { user_id: candidates[0].id, email: candidates[0].email, name: userFullName(candidates[0]) } : null,
+          onboarded: false,
+        };
       }
 
-      return { user: { user_id: onboarded[0].id, email: onboarded[0].email }, onboarded: true };
+      return { user: { user_id: onboarded[0].id, email: onboarded[0].email, name: userFullName(onboarded[0]) }, onboarded: true };
     }
   );
 
@@ -223,6 +228,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
           id: row.id,
           grantee_user_id: row.granteeUserId,
           grantee_email: row.grantee.email,
+          grantee_name: userFullName(row.grantee),
           status: row.status,
           wait_time_days: row.waitTimeDays,
           created_at_millis: row.createdAt.getTime(),
@@ -254,6 +260,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
           id: row.id,
           grantor_user_id: row.grantorUserId,
           grantor_email: row.grantor.email,
+          grantor_name: userFullName(row.grantor),
           status: row.status,
           wait_time_days: row.waitTimeDays,
           created_at_millis: row.createdAt.getTime(),
@@ -368,7 +375,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
         sendEmergencyDesignated({
           recipient: grantee.email,
           locale: grantee.locale,
-          grantorEmail: grantor.email,
+          grantor: grantor.labelWithEmail,
           waitTimeDays: body.wait_time_days,
           productUrl,
         }).catch(logEmailFailure('designated'));
@@ -407,7 +414,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
 
       const [grantor, grantee] = await Promise.all([emergencyRecipient(row.grantorUserId), emergencyRecipient(row.granteeUserId)]);
       if (grantor && grantee)
-        sendEmergencyAccepted({ recipient: grantor.email, locale: grantor.locale, granteeEmail: grantee.email }).catch(logEmailFailure('accepted'));
+        sendEmergencyAccepted({ recipient: grantor.email, locale: grantor.locale, grantee: grantee.label }).catch(logEmailFailure('accepted'));
 
       return { status: 'confirmed' as const };
     }
@@ -576,9 +583,9 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
       const [grantor, grantee] = await Promise.all([emergencyRecipient(row.grantorUserId), emergencyRecipient(row.granteeUserId)]);
       if (userId === row.grantorUserId) {
         if (grantee && grantor)
-          sendEmergencyRevoked({ recipient: grantee.email, locale: grantee.locale, grantorEmail: grantor.email }).catch(logEmailFailure('revoked'));
+          sendEmergencyRevoked({ recipient: grantee.email, locale: grantee.locale, grantor: grantor.label }).catch(logEmailFailure('revoked'));
       } else if (grantor && grantee) {
-        sendEmergencyDeclined({ recipient: grantor.email, locale: grantor.locale, granteeEmail: grantee.email }).catch(logEmailFailure('declined'));
+        sendEmergencyDeclined({ recipient: grantor.email, locale: grantor.locale, grantee: grantee.label }).catch(logEmailFailure('declined'));
       }
 
       return { deleted: true };
@@ -623,7 +630,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
       await sendEmergencyRecoveryRequested({
         recipient: grantor.email,
         locale: grantor.locale,
-        granteeEmail: grantee.email,
+        grantee: grantee.labelWithEmail,
         waitTimeDays: row.waitTimeDays,
         deadlineMillis: now + row.waitTimeDays * 24 * 60 * 60 * 1000,
         productUrl,
@@ -664,7 +671,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
 
       const [grantor, grantee] = await Promise.all([emergencyRecipient(row.grantorUserId), emergencyRecipient(row.granteeUserId)]);
       if (grantor && grantee)
-        sendEmergencyRecoveryCancelled({ recipient: grantor.email, locale: grantor.locale, granteeEmail: grantee.email }).catch(
+        sendEmergencyRecoveryCancelled({ recipient: grantor.email, locale: grantor.locale, grantee: grantee.label }).catch(
           logEmailFailure('cancelled')
         );
 
@@ -699,7 +706,7 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
 
       const [grantor, grantee] = await Promise.all([emergencyRecipient(row.grantorUserId), emergencyRecipient(row.granteeUserId)]);
       if (grantee && grantor)
-        sendEmergencyRecoveryRejected({ recipient: grantee.email, locale: grantee.locale, grantorEmail: grantor.email }).catch(
+        sendEmergencyRecoveryRejected({ recipient: grantee.email, locale: grantee.locale, grantor: grantor.label }).catch(
           logEmailFailure('rejected')
         );
 
@@ -732,10 +739,13 @@ export async function emergencyAccessRoute(app: FastifyInstance): Promise<void> 
 
           const [grantor, grantee] = await Promise.all([emergencyRecipient(row.grantorUserId), emergencyRecipient(row.granteeUserId)]);
           if (grantor && grantee) {
-            sendEmergencyRecoveryApprovedGrantor({ recipient: grantor.email, locale: grantor.locale, granteeEmail: grantee.email, productUrl }).catch(
-              logEmailFailure('approved grantor')
-            );
-            sendEmergencyRecoveryApprovedContact({ recipient: grantee.email, locale: grantee.locale, grantorEmail: grantor.email, productUrl }).catch(
+            sendEmergencyRecoveryApprovedGrantor({
+              recipient: grantor.email,
+              locale: grantor.locale,
+              grantee: grantee.labelWithEmail,
+              productUrl,
+            }).catch(logEmailFailure('approved grantor'));
+            sendEmergencyRecoveryApprovedContact({ recipient: grantee.email, locale: grantee.locale, grantor: grantor.label, productUrl }).catch(
               logEmailFailure('approved contact')
             );
           }

@@ -1,6 +1,6 @@
-import { Button, UserAvatar } from '@gouvfr-lasuite/ui-components';
+import { Button, Tooltip, UserAvatar } from '@gouvfr-lasuite/ui-components';
 import { Ban, Checkmark2, CircleCheck, Clock, Copy, ShieldAlert, Unlock, Warning } from '@gouvfr-lasuite/ui-components/icons';
-import { type ReactNode, useCallback, useState } from 'react';
+import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
@@ -36,22 +36,82 @@ const CARD_TONE_CLASS: Record<Exclude<Tone, 'default'>, string> = {
   success: styles.cardSuccess,
 };
 
-/** Name over a secondary line (an email, an organization), with the design system's avatar. */
-export function Identity({ name, secondary }: { name: string; secondary?: string | null }) {
+// Which of an identity's two lines the ellipsis cuts, measured on the text column
+// (the tooltip takes the ref of the line it wraps, so the lines are found by
+// their data attribute), again whenever the column is resized, and once the web
+// fonts have loaded (they change the text's width, not the column's).
+function useCutLines(name: string, line: string | null) {
+  const columnRef = useRef<HTMLDivElement>(null);
+  const [cut, setCut] = useState({ name: false, line: false });
+
+  useLayoutEffect(() => {
+    const column = columnRef.current;
+    if (!column) return;
+
+    const isCut = (selector: string) => {
+      const element = column.querySelector<HTMLElement>(selector);
+
+      return element !== null && element.scrollWidth > element.clientWidth;
+    };
+    const measure = () => setCut({ name: isCut('[data-line="name"]'), line: isCut('[data-line="secondary"]') });
+    const observer = new ResizeObserver(measure);
+    let active = true;
+
+    measure();
+    observer.observe(column);
+    void document.fonts.ready.then(() => {
+      if (active) measure();
+    });
+
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [name, line]);
+
+  return { columnRef, cut };
+}
+
+/** One line of an identity, with its full text in a tooltip when there is more than it shows. */
+function IdentityLine({ className, kind, text, tooltip }: { className: string; kind: 'name' | 'secondary'; text: string; tooltip: string | null }) {
+  const element = (
+    <p className={className} data-line={kind}>
+      {text}
+    </p>
+  );
+
+  return tooltip ? (
+    <Tooltip content={tooltip} placement="top" className={styles.identityTooltip}>
+      {element}
+    </Tooltip>
+  ) : (
+    element
+  );
+}
+
+/**
+ * A person: avatar, name, and their email under it when nothing else takes that
+ * line; when it does (a contact's wait period), the email shows on hovering the
+ * name (and is read after it by a screen reader, which no tooltip reaches on a
+ * line that takes no focus). A person whose name is not known yet is named by
+ * their email, once. A line cut by the ellipsis shows in full on hovering it.
+ */
+export function Identity({ name, email, secondary }: { name: string; email?: string; secondary?: string | null }) {
+  const distinctEmail = email && email !== name ? email : null;
+  const line = secondary ?? distinctEmail;
+  const hiddenEmail = secondary && distinctEmail ? distinctEmail : null;
+  const { columnRef, cut } = useCutLines(name, line);
+  const nameTooltip = cut.name ? (hiddenEmail ? `${name} (${hiddenEmail})` : name) : hiddenEmail;
+
   return (
     <div className={styles.identity}>
       <span aria-hidden="true">
         <UserAvatar fullName={name} size="small" />
       </span>
-      <div className={styles.identityText}>
-        <p className={styles.identityName} title={name}>
-          {name}
-        </p>
-        {secondary && (
-          <p className={styles.identitySecondary} title={secondary}>
-            {secondary}
-          </p>
-        )}
+      <div className={styles.identityText} ref={columnRef}>
+        <IdentityLine className={styles.identityName} kind="name" text={name} tooltip={nameTooltip} />
+        {hiddenEmail && <span className={styles.visuallyHidden}>{hiddenEmail}</span>}
+        {line && <IdentityLine className={styles.identitySecondary} kind="secondary" text={line} tooltip={cut.line ? line : null} />}
       </div>
     </div>
   );
@@ -120,6 +180,7 @@ export function CopyFingerprintButton({ fingerprint, label }: { fingerprint: str
 
 interface IdentityCardProps {
   name: string;
+  email?: string;
   secondary?: string | null;
   fingerprint?: string | null;
   tone?: Tone;
@@ -133,11 +194,11 @@ interface IdentityCardProps {
  * users compare out of band. `tone` colours the border and the digit boxes
  * (warning for a changed key, error for a refused one).
  */
-export function IdentityCard({ name, secondary, fingerprint, tone = 'default', aside, children }: IdentityCardProps) {
+export function IdentityCard({ name, email, secondary, fingerprint, tone = 'default', aside, children }: IdentityCardProps) {
   return (
     <div className={tone === 'default' ? styles.card : `${styles.card} ${CARD_TONE_CLASS[tone]}`}>
       <div className={styles.cardHeader}>
-        <Identity name={name} secondary={secondary} />
+        <Identity name={name} email={email} secondary={secondary} />
         {aside && <div className={styles.cardAside}>{aside}</div>}
       </div>
       {fingerprint && <FingerprintBoxes fingerprint={fingerprint} tone={tone} />}

@@ -12,19 +12,19 @@ export function subject(locale: string): string {
 
 export interface EmergencyDesignatedEmailProps {
   locale: string;
-  grantorEmail: string;
+  grantor: string;
   waitTimeDays: number;
   productUrl: string;
 }
 
-export function EmergencyDesignatedEmail({ locale, grantorEmail, waitTimeDays, productUrl }: EmergencyDesignatedEmailProps) {
+export function EmergencyDesignatedEmail({ locale, grantor, waitTimeDays, productUrl }: EmergencyDesignatedEmailProps) {
   return (
     <StandardLayout locale={locale} title={subject(locale)}>
       <MjmlText>
         <h1>{t(locale, `${NS}.title`)}</h1>
         <p>{t(locale, 'emails.hello')}</p>
         <p>
-          <EmailHtml html={tHtml(locale, `${NS}.intro`, { grantorEmail })} />
+          <EmailHtml html={tHtml(locale, `${NS}.intro`, { grantor })} />
         </p>
         <p>{t(locale, `${NS}.role`, { waitTimeDays })}</p>
         <p>{t(locale, `${NS}.privacy`)}</p>

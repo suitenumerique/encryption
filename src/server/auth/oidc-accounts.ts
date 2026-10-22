@@ -51,6 +51,21 @@ function extractLanguage(claims: Record<string, unknown>): Locale | null {
   return null;
 }
 
+interface Names {
+  firstName: string | null;
+  lastName: string | null;
+}
+
+// The names the login route already picked from the provider's claims (it refuses
+// a login without them), passed as `first_name` and `last_name`. Shown to the
+// people this user shares with; null when absent, so a token without them never
+// erases stored ones.
+function extractNames(claims: Record<string, unknown>): Names {
+  const read = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null);
+
+  return { firstName: read(claims.first_name), lastName: read(claims.last_name) };
+}
+
 function retiredCredentialError(): Error {
   const error = new Error('Credential belongs to a retired identity provider');
   (error as NodeJS.ErrnoException).code = API_ERROR_FORBIDDEN;
@@ -97,6 +112,7 @@ export async function resolveOidcAccount(
   interfaceLanguage?: Locale
 ): Promise<ResolvedAccount> {
   const emails = extractEmails(claims);
+  const names = extractNames(claims);
   // The provider's choice first, else what the interface is displayed in, else
   // (both absent) whatever is stored.
   const language = extractLanguage(claims) ?? interfaceLanguage ?? null;
@@ -114,16 +130,23 @@ export async function resolveOidcAccount(
     // months after a provider migration, which credentials are dead.
     await prisma.oidcAccount.update({ where: { id: account.id }, data: { lastSeenAt: new Date() } });
 
-    // The stored email and language follow the provider (the language, failing
-    // that, the interface), opportunistically: a login that carries neither keeps
-    // what is stored.
+    // The stored email, names and language follow the provider (the language,
+    // failing that, the interface), opportunistically: a login that carries none
+    // of them keeps what is stored.
     const staleEmail = emails.email !== null && account.user.email !== emails.email;
     const staleLanguage = language !== null && account.user.language !== language;
+    const staleFirstName = names.firstName !== null && account.user.firstName !== names.firstName;
+    const staleLastName = names.lastName !== null && account.user.lastName !== names.lastName;
 
-    if (staleEmail || staleLanguage) {
+    if (staleEmail || staleLanguage || staleFirstName || staleLastName) {
       await prisma.user.update({
         where: { id: account.userId },
-        data: { ...(staleEmail ? { email: emails.email! } : {}), ...(staleLanguage ? { language } : {}) },
+        data: {
+          ...(staleEmail ? { email: emails.email! } : {}),
+          ...(staleLanguage ? { language } : {}),
+          ...(staleFirstName ? { firstName: names.firstName } : {}),
+          ...(staleLastName ? { lastName: names.lastName } : {}),
+        },
       });
     }
 
@@ -164,6 +187,17 @@ export async function resolveOidcAccount(
       try {
         const linked = await prisma.oidcAccount.create({ data: { userId: candidates[0].id, issuer, subject } });
 
+        // The new provider's names, as a known credential's login would refresh them.
+        if (names.firstName !== null || names.lastName !== null) {
+          await prisma.user.update({
+            where: { id: linked.userId },
+            data: {
+              ...(names.firstName !== null ? { firstName: names.firstName } : {}),
+              ...(names.lastName !== null ? { lastName: names.lastName } : {}),
+            },
+          });
+        }
+
         return { userId: linked.userId, linkedByEmail: true };
       } catch (err) {
         return adoptRaceWinner(issuer, subject, err);
@@ -178,6 +212,8 @@ export async function resolveOidcAccount(
     const created = await prisma.user.create({
       data: {
         email: emails.email,
+        firstName: names.firstName,
+        lastName: names.lastName,
         ...(language ? { language } : {}),
         oidcAccounts: { create: { issuer, subject } },
       },

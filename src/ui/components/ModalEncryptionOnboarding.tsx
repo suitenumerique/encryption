@@ -21,8 +21,8 @@ import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBack
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { StepUpScreen } from '@encryption/src/ui/components/StepUpScreen';
-import { UntrustedRearmError } from '@encryption/src/ui/components/emergency-access-logic';
-import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
+import { UntrustedRearmError, granteeName } from '@encryption/src/ui/components/emergency-access-logic';
+import { FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
@@ -279,7 +279,7 @@ export function ModalEncryptionOnboarding({
   const [forcedRotation, setForcedRotation] = useState<{ recoveryPhrase: string; keyring: VaultKeyringWire; publicKey: string } | null>(null);
   const [rotationBusy, setRotationBusy] = useState(false);
   const [rotationError, setRotationError] = useState<string | null>(null);
-  const [rotationBlocked, setRotationBlocked] = useState<Array<{ id: string; email: string }> | null>(null);
+  const [rotationBlocked, setRotationBlocked] = useState<Array<{ id: string; name: string }> | null>(null);
   const { commitKeyring, revokeContacts } = useKeyringCommit(getIdToken);
 
   // True when the user has just performed the "delete old key" flow.
@@ -315,7 +315,7 @@ export function ModalEncryptionOnboarding({
   // Trusted contacts who accepted their designation before the identity was
   // disabled: their escrow still opens that vault, so they can hand the phrase
   // back. Best effort, only worth a sentence when there is at least one.
-  const [helpfulContacts, setHelpfulContacts] = useState<string[]>([]);
+  const [helpfulContacts, setHelpfulContacts] = useState<Array<{ id: string; name: string; email: string }>>([]);
 
   useEffect(() => {
     if (hasExistingBackendKey || step !== 'checking-history') return;
@@ -344,7 +344,11 @@ export function ModalEncryptionOnboarding({
         setStep('previous-identity');
         try {
           const { contacts } = await withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken));
-          setHelpfulContacts(contacts.filter((contact) => contact.status !== 'invited').map((contact) => contact.grantee_email));
+          setHelpfulContacts(
+            contacts
+              .filter((contact) => contact.status !== 'invited')
+              .map((contact) => ({ id: contact.id, name: granteeName(contact), email: contact.grantee_email }))
+          );
         } catch {
           // The hint is a courtesy: without the list the screen still offers every way in.
         }
@@ -948,9 +952,11 @@ export function ModalEncryptionOnboarding({
             <div className={`${styles.card} ${styles.contacts}`}>
               <strong>{t('onboarding.previous_identity_contacts_title')}</strong>
               <p>{t('onboarding.previous_identity_contacts_text')}</p>
-              <ul className={styles.list}>
-                {helpfulContacts.map((email) => (
-                  <li key={email}>{email}</li>
+              <ul className={styles.people}>
+                {helpfulContacts.map((contact) => (
+                  <li key={contact.id}>
+                    <Identity name={contact.name} email={contact.email} />
+                  </li>
                 ))}
               </ul>
             </div>
@@ -1081,7 +1087,7 @@ export function ModalEncryptionOnboarding({
               {rotationBlocked && (
                 <Notice type={VariantType.WARNING}>
                   <div className={styles.alertStack}>
-                    <span>{t('emergency.rearm_blocked', { emails: rotationBlocked.map((contact) => contact.email).join(', ') })}</span>
+                    <span>{t('emergency.rearm_blocked', { names: rotationBlocked.map((contact) => contact.name).join(', ') })}</span>
                     <div>
                       <Button size="small" color="error" onClick={handleRotationRevokeAndRetry} disabled={rotationBusy}>
                         {t('emergency.rearm_revoke_retry')}

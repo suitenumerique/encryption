@@ -12,26 +12,20 @@ export function subject(locale: string): string {
 
 export interface EmergencyRecoveryRequestedEmailProps {
   locale: string;
-  granteeEmail: string;
+  grantee: string;
   waitTimeDays: number;
   deadlineMillis: number;
   productUrl: string;
 }
 
-export function EmergencyRecoveryRequestedEmail({
-  locale,
-  granteeEmail,
-  waitTimeDays,
-  deadlineMillis,
-  productUrl,
-}: EmergencyRecoveryRequestedEmailProps) {
+export function EmergencyRecoveryRequestedEmail({ locale, grantee, waitTimeDays, deadlineMillis, productUrl }: EmergencyRecoveryRequestedEmailProps) {
   return (
     <StandardLayout locale={locale} title={subject(locale)}>
       <MjmlText>
         <h1>{t(locale, `${NS}.title`)}</h1>
         <p>{t(locale, 'emails.hello')}</p>
         <p>
-          <EmailHtml html={tHtml(locale, `${NS}.intro`, { granteeEmail })} />
+          <EmailHtml html={tHtml(locale, `${NS}.intro`, { grantee })} />
         </p>
         <p>
           <EmailHtml html={tHtml(locale, `${NS}.deadline`, { deadline: new Date(deadlineMillis), waitTimeDays })} />

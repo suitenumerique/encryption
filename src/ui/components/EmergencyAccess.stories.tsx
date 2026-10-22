@@ -18,8 +18,8 @@ import { sampleEmergencyEscrowRecord } from '@encryption/src/ui/testing/fixtures
 
 // A row's secondary actions live in its "⋯" menu, rendered in a popover outside the
 // canvas: open it, find the item, and close it again so the story ends on the list.
-async function playExpectRowMenuItem(canvasElement: HTMLElement, email: string, item: string): Promise<void> {
-  const trigger = await playFindButton(canvasElement, i18n.t('emergency.row_menu', { email }));
+async function playExpectRowMenuItem(canvasElement: HTMLElement, name: string, item: string): Promise<void> {
+  const trigger = await playFindButton(canvasElement, i18n.t('emergency.row_menu', { name }));
   await userEvent.click(trigger);
   await within(document.body).findByRole('menuitem', { name: item });
   await userEvent.keyboard('{Escape}');
@@ -61,6 +61,7 @@ const trustedContact: TrustedContact = {
   id: '11111111-1111-1111-1111-111111111111',
   grantee_user_id: '22222222-2222-2222-2222-222222222222',
   grantee_email: 'bob.dupont@numerique.gouv.fr',
+  grantee_name: 'Bob Dupont',
   status: 'confirmed' as const,
   wait_time_days: 15,
   created_at_millis: 1_700_000_000_000,
@@ -74,6 +75,7 @@ const grantedVault: GrantedVault = {
   id: '33333333-3333-3333-3333-333333333333',
   grantor_user_id: '44444444-4444-4444-4444-444444444444',
   grantor_email: 'carol.bernard@numerique.gouv.fr',
+  grantor_name: 'Carol Bernard',
   status: 'confirmed' as const,
   wait_time_days: 30,
   created_at_millis: 1_700_000_000_000,
@@ -103,16 +105,27 @@ export const Empty = prepareStory(EmptyStory);
 const WithContactsStory = Template.bind({});
 WithContactsStory.args = { ...baseArgs };
 WithContactsStory.parameters = { msw: lists([trustedContact], []) };
-// A confirmed contact: listed with its wait and its menu, no status chip.
+// A confirmed contact: listed by name with its wait and its menu, no status
+// chip; the wait takes the line under the name, so the email shows on hovering it
+// (and is read after the name by a screen reader).
 WithContactsStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(trustedContact.grantee_email);
+  const name = await canvas.findByText(trustedContact.grantee_name!);
+  canvas.getByText(trustedContact.grantee_email);
+  expect(within(document.body).queryByRole('tooltip')).toBeNull();
+  await userEvent.hover(canvasElement);
+  await userEvent.hover(name);
+  const tooltip = await within(document.body).findByRole('tooltip');
+  expect(tooltip).toHaveTextContent(trustedContact.grantee_email);
+  await waitFor(() => expect(tooltip).toBeVisible());
+  await userEvent.unhover(name);
+  await waitFor(() => expect(within(document.body).queryByRole('tooltip')).toBeNull());
   canvas.getByText(i18n.t('emergency.wait_label', { count: trustedContact.wait_time_days }));
   expect(canvas.queryByText(i18n.t('emergency.trusted_empty'))).toBeNull();
   expect(canvas.queryByText(i18n.t('emergency.status_invited'))).toBeNull();
   canvas.getByText(i18n.t('emergency.granted_empty'));
   expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
-  await playExpectRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
+  await playExpectRowMenuItem(canvasElement, trustedContact.grantee_name!, i18n.t('emergency.btn_revoke'));
 };
 
 export const WithContacts = prepareStory(WithContactsStory);
@@ -123,7 +136,7 @@ WithContactsFromSettingsHomeStory.args = { ...baseArgs, onBack: () => console.lo
 WithContactsFromSettingsHomeStory.parameters = WithContactsStory.parameters;
 WithContactsFromSettingsHomeStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('emergency.title'));
-  await within(canvasElement).findByText(trustedContact.grantee_email);
+  await within(canvasElement).findByText(trustedContact.grantee_name!);
   await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
 };
 
@@ -149,10 +162,10 @@ EntrustedToMeStory.args = { ...baseArgs };
 EntrustedToMeStory.parameters = { msw: lists([], [grantedVault]) };
 EntrustedToMeStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(grantedVault.grantor_email);
+  await canvas.findByText(grantedVault.grantor_name!);
   canvas.getByText(i18n.t('emergency.trusted_empty'));
   expect(canvas.queryByText(i18n.t('emergency.granted_empty'))).toBeNull();
-  await playExpectRowMenuItem(canvasElement, grantedVault.grantor_email, i18n.t('emergency.btn_request_access'));
+  await playExpectRowMenuItem(canvasElement, grantedVault.grantor_name!, i18n.t('emergency.btn_request_access'));
 };
 
 export const EntrustedToMe = prepareStory(EntrustedToMeStory);
@@ -167,7 +180,10 @@ DesignateStory.parameters = {
       handleGetApiEmergencyAccessTrusted({ body: { contacts: [] } }),
       handleGetApiEmergencyAccessGranted({ body: { grantors: [] } }),
       handleGetApiEmergencyAccessSearch({
-        body: { user: { user_id: '22222222-2222-2222-2222-222222222222', email: 'bob.dupont@numerique.gouv.fr' }, onboarded: true },
+        body: {
+          user: { user_id: '22222222-2222-2222-2222-222222222222', email: 'bob.dupont@numerique.gouv.fr', name: 'Bob Dupont' },
+          onboarded: true,
+        },
       }),
       handlePostApiEmergencyAccess({ body: { id: '11111111-1111-1111-1111-111111111111', status: 'invited' } }),
     ],
@@ -194,11 +210,11 @@ RecoveryPromptStory.parameters = {
   msw: lists([{ ...trustedContact, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
 };
 // The prompt opens only after the authoritative list loads and confirms a
-// running request, so assert the fetched contact's email and the refuse action
+// running request, so assert the fetched contact's name and the refuse action
 // surface (the modal renders in a portal on document.body).
 RecoveryPromptStory.play = async () => {
   const dialog = await playFindDialog(document.body, i18n.t('emergency.prompt_recovery_title'));
-  await within(dialog).findByText(trustedContact.grantee_email);
+  await within(dialog).findByText(trustedContact.grantee_name!);
   await playFindButton(dialog, i18n.t('emergency.btn_prompt_refuse'));
 };
 
@@ -227,7 +243,7 @@ GrantedRecoveryRequestedStory.parameters = {
 };
 GrantedRecoveryRequestedStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('emergency.status_requested'));
-  await playExpectRowMenuItem(canvasElement, grantedVault.grantor_email, i18n.t('emergency.btn_cancel_request'));
+  await playExpectRowMenuItem(canvasElement, grantedVault.grantor_name!, i18n.t('emergency.btn_cancel_request'));
 };
 
 export const GrantedRecoveryRequested = prepareStory(GrantedRecoveryRequestedStory);
@@ -316,7 +332,7 @@ InvitedContactStory.args = { ...baseArgs };
 InvitedContactStory.parameters = { msw: lists([{ ...trustedContact, status: 'invited' }], []) };
 InvitedContactStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('emergency.status_invited'));
-  await playExpectRowMenuItem(canvasElement, trustedContact.grantee_email, i18n.t('emergency.btn_revoke'));
+  await playExpectRowMenuItem(canvasElement, trustedContact.grantee_name!, i18n.t('emergency.btn_revoke'));
 };
 
 export const InvitedContact = prepareStory(InvitedContactStory);
@@ -328,12 +344,20 @@ const auditTampered: TrustedContact = {
   ...trustedContact,
   id: '55555555-5555-5555-5555-555555555555',
   grantee_email: 'alice.martin@numerique.gouv.fr',
+  grantee_name: 'Alice Martin',
 };
-const auditStale: TrustedContact = { ...trustedContact, id: '66666666-6666-6666-6666-666666666666', grantee_email: 'bruno.leroy@numerique.gouv.fr' };
+// Not signed in since names were stored: named by their email.
+const auditStale: TrustedContact = {
+  ...trustedContact,
+  id: '66666666-6666-6666-6666-666666666666',
+  grantee_email: 'bruno.leroy@numerique.gouv.fr',
+  grantee_name: null,
+};
 const auditOutdated: TrustedContact = {
   ...trustedContact,
   id: '88888888-8888-8888-8888-888888888888',
   grantee_email: 'chloe.moreau@numerique.gouv.fr',
+  grantee_name: 'Chloé Moreau',
 };
 
 const AuditFailuresStory = Template.bind({});
@@ -354,6 +378,8 @@ AuditFailuresStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(/does not match what you signed/i);
   await within(canvasElement).findByText(/encryption identity has changed/i);
   await within(canvasElement).findByText(/encryption key has been updated/i);
+  // A contact with no name known yet is named by their email.
+  within(canvasElement).getByText(auditStale.grantee_email);
 };
 
 export const AuditFailures = prepareStory(AuditFailuresStory);

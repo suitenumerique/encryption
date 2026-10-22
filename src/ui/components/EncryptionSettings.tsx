@@ -159,7 +159,7 @@ export function EncryptionSettings({
   // server rejects the rewrite unless the granted escrows are burned + re-armed,
   // so a routine phrase change carries the mandatory re-arms too.
   const { commitKeyring, revokeContacts } = useKeyringCommit(getIdToken);
-  const [rearmBlocked, setRearmBlocked] = useState<Array<{ id: string; email: string }> | null>(null);
+  const [rearmBlocked, setRearmBlocked] = useState<Array<{ id: string; name: string }> | null>(null);
 
   const handleConfirmPhraseBackup = useCallback(async () => {
     if (!pendingKeyring) return;
@@ -318,7 +318,7 @@ export function EncryptionSettings({
 
     withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken))
       .then(({ contacts }) => {
-        if (!cancelled) setLiveEmergencyPhrases(grantedRearmRows(contacts, Date.now()).map((row) => row.granteeEmail));
+        if (!cancelled) setLiveEmergencyPhrases(grantedRearmRows(contacts, Date.now()).map((row) => row.granteeName));
       })
       .catch(() => {
         // Advisory banner only: a failed fetch must not break the settings screen.
@@ -817,7 +817,7 @@ export function EncryptionSettings({
                 {rearmBlocked && (
                   <Notice type={VariantType.WARNING}>
                     <div className={styles.alertStack}>
-                      <span>{t('emergency.rearm_blocked', { emails: rearmBlocked.map((contact) => contact.email).join(', ') })}</span>
+                      <span>{t('emergency.rearm_blocked', { names: rearmBlocked.map((contact) => contact.name).join(', ') })}</span>
                       <div>
                         <Button size="small" color="error" onClick={handleRevokeBlockedAndRetry} disabled={isChangingPhrase}>
                           {t('emergency.rearm_revoke_retry')}
@@ -867,7 +867,7 @@ export function EncryptionSettings({
             {liveEmergencyPhrases.length > 0 && (
               <p>
                 {t('settings.change_phrase_emergency_note', {
-                  emails: liveEmergencyPhrases.join(', '),
+                  names: liveEmergencyPhrases.join(', '),
                   count: liveEmergencyPhrases.length,
                 })}
               </p>
@@ -937,7 +937,7 @@ export function EncryptionSettings({
 
       {liveEmergencyPhrases.length > 0 && (
         <Notice type={VariantType.WARNING}>
-          {t('settings.emergency_phrase_live', { emails: liveEmergencyPhrases.join(', '), count: liveEmergencyPhrases.length })}
+          {t('settings.emergency_phrase_live', { names: liveEmergencyPhrases.join(', '), count: liveEmergencyPhrases.length })}
         </Notice>
       )}
 

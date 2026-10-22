@@ -31,7 +31,7 @@ const Template: StoryFn<ComponentType> = (args, { globals }) => {
 
 const DefaultStory = Template.bind({});
 DefaultStory.args = {
-  grantorEmail: 'alice.martin@numerique.gouv.fr',
+  grantor: 'Alice Martin (alice.martin@numerique.gouv.fr)',
   waitTimeDays: 15,
   productUrl: 'http://localhost:7201',
 };

@@ -12,10 +12,10 @@ export function subject(locale: string): string {
 
 export interface EmergencyVaultRecoveredEmailProps {
   locale: string;
-  granteeEmail: string;
+  grantee: string;
 }
 
-export function EmergencyVaultRecoveredEmail({ locale, granteeEmail }: EmergencyVaultRecoveredEmailProps) {
+export function EmergencyVaultRecoveredEmail({ locale, grantee }: EmergencyVaultRecoveredEmailProps) {
   return (
     <StandardLayout locale={locale} title={subject(locale)}>
       <MjmlText>
@@ -23,7 +23,7 @@ export function EmergencyVaultRecoveredEmail({ locale, granteeEmail }: Emergency
         <p>{t(locale, 'emails.hello')}</p>
         <p>{t(locale, `${NS}.body`)}</p>
         <p>
-          <EmailHtml html={tHtml(locale, `${NS}.voided`, { granteeEmail })} />
+          <EmailHtml html={tHtml(locale, `${NS}.voided`, { grantee })} />
         </p>
         <p>{t(locale, `${NS}.warning`)}</p>
       </MjmlText>

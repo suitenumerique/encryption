@@ -337,6 +337,7 @@ describe('auth routes', () => {
 
         expect(accounts).toHaveLength(1);
         expect(accounts[0].userId).toBe(data?.user_id);
+        expect(await testPrisma.user.findUniqueOrThrow({ where: { id: data!.user_id } })).toMatchObject({ firstName: 'Alice', lastName: 'Martin' });
       });
 
       it('403s at first contact when no source yields an email', async () => {
@@ -396,6 +397,16 @@ describe('auth routes', () => {
         expect(await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ email: 'new@example.org', language: 'fr' });
       });
 
+      it('refreshes the stored names at login when the provider changed them', async () => {
+        const { userId } = await seedAccount();
+        await testPrisma.user.update({ where: { id: userId }, data: { firstName: 'Alicia', lastName: 'Durand' } });
+        providerSays(VERIFIED);
+
+        await login();
+
+        expect(await testPrisma.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({ firstName: 'Alice', lastName: 'Martin' });
+      });
+
       it("takes the interface's language when the provider sends no locale, and the provider's over it", async () => {
         providerSays({}, { userinfo: VERIFIED });
         const { data } = await login({ language: 'fr' });
@@ -434,6 +445,7 @@ describe('auth routes', () => {
         const { data } = await login();
 
         expect(data?.user_id).toBe(existing);
+        expect(await testPrisma.user.findUniqueOrThrow({ where: { id: existing } })).toMatchObject({ firstName: 'Alice', lastName: 'Martin' });
       });
 
       it('mints a fresh user instead of linking when the email is ambiguous, or the sole match dormant for over a year', async () => {

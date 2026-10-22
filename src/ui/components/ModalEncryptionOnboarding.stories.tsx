@@ -178,10 +178,11 @@ export const PurgedHistory = prepareStory(PurgedHistoryStory);
 // Same history, but the account had designated trusted contacts before the
 // identity was disabled: the screen names them as a way back in. An invitation
 // that was never accepted is not one, so the pending contact stays out.
-const trustedContact = (email: string, status: 'confirmed' | 'invited') => ({
-  id: '11111111-1111-1111-1111-111111111111',
+const trustedContact = (id: string, name: string, email: string, status: 'confirmed' | 'invited') => ({
+  id,
   grantee_user_id: '22222222-2222-2222-2222-222222222222',
   grantee_email: email,
+  grantee_name: name,
   status,
   wait_time_days: 15,
   created_at_millis: 1_700_000_000_000,
@@ -200,9 +201,9 @@ PreviousIdentityWithContactsStory.parameters = {
       handleGetApiEmergencyAccessTrusted({
         body: {
           contacts: [
-            trustedContact('bob.dupont@numerique.gouv.fr', 'confirmed'),
-            trustedContact('carol.bernard@numerique.gouv.fr', 'confirmed'),
-            trustedContact('dan.martin@numerique.gouv.fr', 'invited'),
+            trustedContact('11111111-1111-1111-1111-111111111111', 'Bob Dupont', 'bob.dupont@numerique.gouv.fr', 'confirmed'),
+            trustedContact('11111111-1111-1111-1111-111111111112', 'Carol Bernard', 'carol.bernard@numerique.gouv.fr', 'confirmed'),
+            trustedContact('11111111-1111-1111-1111-111111111113', 'Dan Martin', 'dan.martin@numerique.gouv.fr', 'invited'),
           ],
         },
       }),
@@ -211,9 +212,11 @@ PreviousIdentityWithContactsStory.parameters = {
 };
 PreviousIdentityWithContactsStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_previous_identity'));
-  await waitFor(() => expect(canvasElement.textContent).toContain('bob.dupont@numerique.gouv.fr'));
-  expect(canvasElement.textContent).toContain('carol.bernard@numerique.gouv.fr');
-  expect(canvasElement.textContent).not.toContain('dan.martin@numerique.gouv.fr');
+  // Each contact by name, the email under it.
+  await waitFor(() => expect(canvasElement.textContent).toContain('Bob Dupont'));
+  expect(canvasElement.textContent).toContain('bob.dupont@numerique.gouv.fr');
+  expect(canvasElement.textContent).toContain('Carol Bernard');
+  expect(canvasElement.textContent).not.toContain('Dan Martin');
 };
 
 export const PreviousIdentityWithContacts = prepareStory(PreviousIdentityWithContactsStory);

@@ -32,7 +32,7 @@ const Template: StoryFn<ComponentType> = (args, { globals }) => {
 
 const DefaultStory = Template.bind({});
 DefaultStory.args = {
-  granteeEmail: 'jean.dupont@numerique.gouv.fr',
+  grantee: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
   waitTimeDays: 15,
   deadlineMillis: Date.UTC(2026, 7, 15, 12),
   productUrl: 'http://localhost:7201',

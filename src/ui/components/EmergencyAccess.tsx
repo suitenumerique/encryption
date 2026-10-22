@@ -39,7 +39,10 @@ import {
   WAIT_TIME_PRESETS,
   countdownTo,
   emergencyPhase,
+  granteeName,
+  grantorName,
   parseWaitDays,
+  personName,
   rearmBodyFromDesignation,
 } from '@encryption/src/ui/components/emergency-access-logic';
 import { Chip, Identity, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
@@ -111,6 +114,7 @@ function RowMenu({ label, options, disabled }: { label: string; options: Dropdow
  */
 function ContactRow({
   name,
+  email,
   secondary,
   status,
   menu,
@@ -118,6 +122,7 @@ function ContactRow({
   bandTone = 'neutral',
 }: {
   name: string;
+  email: string;
   secondary?: string;
   status?: ReactNode;
   menu?: ReactNode;
@@ -129,7 +134,7 @@ function ContactRow({
   return (
     <div className={styles.contact}>
       <div className={styles.contactMain}>
-        <Identity name={name} secondary={secondary} />
+        <Identity name={name} email={email} secondary={secondary} />
         <div className={styles.cardAside}>
           {status}
           {menu}
@@ -162,7 +167,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
   const [step, setStep] = useState<'email' | 'verify' | 'wait' | 'success'>('email');
   const [email, setEmail] = useState(prefillEmail ?? '');
   const [searchOutcome, setSearchOutcome] = useState<'not-found' | 'not-onboarded' | null>(null);
-  const [contact, setContact] = useState<{ userId: string; email: string; fingerprint: string } | null>(null);
+  const [contact, setContact] = useState<{ userId: string; name: string; email: string; fingerprint: string } | null>(null);
   const [waitChoice, setWaitChoice] = useState<number>(WAIT_TIME_PRESETS[1]);
   const [customWait, setCustomWait] = useState('');
   const [useCustom, setUseCustom] = useState(false);
@@ -208,7 +213,12 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
         const known = fingerprints[foundId];
         const alreadyTrusted = known?.status === 'trusted' && known.fingerprint === entry.identityFingerprint;
 
-        setContact({ userId: foundId, email: result.user.email, fingerprint: entry.identityFingerprint });
+        setContact({
+          userId: foundId,
+          name: personName(result.user.name, result.user.email),
+          email: result.user.email,
+          fingerprint: entry.identityFingerprint,
+        });
         // Skip the verification step only when the contact is ALREADY trusted
         // with this exact fingerprint (the escrow op enforces it again anyway).
         setStep(alreadyTrusted ? 'wait' : 'verify');
@@ -309,7 +319,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
       <Screen
         illustration="shield-check"
         title={t('emergency.designate_title')}
-        description={t('emergency.designate_success', { email: contact.email })}
+        description={t('emergency.designate_success', { name: contact.name })}
         actions={<Button onClick={onDesignated}>{t('emergency.btn_back_to_list')}</Button>}
       />
     );
@@ -329,7 +339,7 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
         back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: busy }}
         actions={<TrustRefuseButtons busy={busy} onTrust={handleTrust} onRefuse={handleRefuse} />}
       >
-        <IdentityCard name={contact.email} fingerprint={contact.fingerprint} />
+        <IdentityCard name={contact.name} email={contact.email} fingerprint={contact.fingerprint} />
         <p className={styles.hint}>{t('profile.compare_instruction')}</p>
       </Screen>
     );
@@ -358,7 +368,8 @@ function DesignateFlow({ getIdToken, prefillEmail = null, onBack, onDesignated, 
         }
       >
         <IdentityCard
-          name={contact.email}
+          name={contact.name}
+          email={contact.email}
           aside={
             <Chip tone="success" icon="trusted">
               {t('verify.trusted')}
@@ -547,7 +558,7 @@ function RevealView({ entry, getIdToken, onDone, markSessionExpired, banner }: R
   const description = (
     <>
       <p>
-        <strong>{t('emergency.reveal_grantor', { email: entry.grantor_email })}</strong>
+        <strong>{t('emergency.reveal_grantor', { name: grantorName(entry) })}</strong>
       </p>
       <ul className={styles.list}>
         <li>{t('emergency.reveal_instruction_1')}</li>
@@ -567,7 +578,7 @@ function RevealView({ entry, getIdToken, onDone, markSessionExpired, banner }: R
       <Screen
         back={back}
         title={t('emergency.reveal_title')}
-        description={t('emergency.reveal_untrusted_grantor', { email: entry.grantor_email })}
+        description={t('emergency.reveal_untrusted_grantor', { name: grantorName(entry) })}
         banner={banner}
         actions={
           grantorFingerprint && (
@@ -581,7 +592,7 @@ function RevealView({ entry, getIdToken, onDone, markSessionExpired, banner }: R
           )
         }
       >
-        {grantorFingerprint && <IdentityCard name={entry.grantor_email} fingerprint={grantorFingerprint} tone="warning" />}
+        {grantorFingerprint && <IdentityCard name={grantorName(entry)} email={entry.grantor_email} fingerprint={grantorFingerprint} tone="warning" />}
       </Screen>
     );
   }
@@ -754,7 +765,7 @@ export function EmergencyAccess({
     (entry: EmergencyTrustedEntry) =>
       runRowAction(entry.id, async () => {
         await withFreshIdToken(getIdToken, (idToken) => rejectEmergencyRecovery(idToken, entry.id));
-        setNotice(t('emergency.reject_done', { email: entry.grantee_email }));
+        setNotice(t('emergency.reject_done', { name: granteeName(entry) }));
       }),
     [runRowAction, getIdToken, t]
   );
@@ -845,7 +856,7 @@ export function EmergencyAccess({
           await rejectEmergencyRecovery(idToken, req.id);
         }
       });
-      setNotice(t('emergency.reject_done', { email: requests.map((r) => r.grantee_email).join(', ') }));
+      setNotice(t('emergency.reject_done', { name: requests.map(granteeName).join(', ') }));
       setPromptDismissed(true);
       await loadLists();
     } catch (err) {
@@ -945,7 +956,7 @@ export function EmergencyAccess({
                     ? 'emergency.prompt_recovery_approved'
                     : 'emergency.prompt_recovery_body'
                 }
-                values={{ email: req.grantee_email }}
+                values={{ name: granteeName(req) }}
                 components={{ strong: <strong /> }}
               />
             </p>
@@ -1003,7 +1014,7 @@ export function EmergencyAccess({
                   <Trans
                     t={t}
                     i18nKey="emergency.confirm_revoke_body"
-                    values={{ email: (confirm.entry as EmergencyTrustedEntry).grantee_email }}
+                    values={{ name: granteeName(confirm.entry as EmergencyTrustedEntry) }}
                     components={{ strong: <strong /> }}
                   />
                 )}
@@ -1011,7 +1022,7 @@ export function EmergencyAccess({
                   <Trans
                     t={t}
                     i18nKey="emergency.confirm_decline_body"
-                    values={{ email: (confirm.entry as EmergencyGrantedEntry).grantor_email }}
+                    values={{ name: grantorName(confirm.entry as EmergencyGrantedEntry) }}
                     components={{ strong: <strong /> }}
                   />
                 )}
@@ -1019,7 +1030,7 @@ export function EmergencyAccess({
                   <Trans
                     t={t}
                     i18nKey="emergency.confirm_request_body"
-                    values={{ email: (confirm.entry as EmergencyGrantedEntry).grantor_email, count: confirm.entry.wait_time_days }}
+                    values={{ name: grantorName(confirm.entry as EmergencyGrantedEntry), count: confirm.entry.wait_time_days }}
                     components={{ strong: <strong /> }}
                   />
                 )}
@@ -1111,11 +1122,11 @@ export function EmergencyAccess({
                             <Trans
                               t={t}
                               i18nKey="emergency.trusted_requested_warning"
-                              values={{ email: entry.grantee_email, time: countdownLabel(countdown, i18n.language) }}
+                              values={{ name: granteeName(entry), time: countdownLabel(countdown, i18n.language) }}
                               components={{ strong: <strong /> }}
                             />
                           ) : (
-                            t('emergency.trusted_approved_warning', { email: entry.grantee_email })
+                            t('emergency.trusted_approved_warning', { name: granteeName(entry) })
                           )}
                         </span>
                         <Button size="nano" color="error" disabled={busy} onClick={() => handleReject(entry)}>
@@ -1149,14 +1160,15 @@ export function EmergencyAccess({
                   return (
                     <ContactRow
                       key={entry.id}
-                      name={entry.grantee_email}
+                      name={granteeName(entry)}
+                      email={entry.grantee_email}
                       secondary={t('emergency.wait_label', { count: entry.wait_time_days })}
                       status={phase !== 'confirmed' && <StatusChip phase={phase} t={t} />}
                       band={band}
                       bandTone={bandTone}
                       menu={
                         <RowMenu
-                          label={t('emergency.row_menu', { email: entry.grantee_email })}
+                          label={t('emergency.row_menu', { name: granteeName(entry) })}
                           disabled={busy}
                           options={[
                             {
@@ -1203,7 +1215,7 @@ export function EmergencyAccess({
                   if (phase === 'invited') {
                     band = (
                       <>
-                        <span>{t('emergency.granted_invited_text', { email: entry.grantor_email })}</span>
+                        <span>{t('emergency.granted_invited_text', { name: grantorName(entry) })}</span>
                         <Button size="nano" variant="bordered" color="error" disabled={busy} onClick={() => setConfirm({ kind: 'decline', entry })}>
                           {t('emergency.btn_decline')}
                         </Button>
@@ -1219,7 +1231,7 @@ export function EmergencyAccess({
                     bandTone = 'warning';
                     band = (
                       <>
-                        <span>{t('emergency.granted_approved_text', { email: entry.grantor_email })}</span>
+                        <span>{t('emergency.granted_approved_text', { name: grantorName(entry) })}</span>
                         <Button
                           size="nano"
                           disabled={busy}
@@ -1262,14 +1274,15 @@ export function EmergencyAccess({
                   return (
                     <ContactRow
                       key={entry.id}
-                      name={entry.grantor_email}
+                      name={grantorName(entry)}
+                      email={entry.grantor_email}
                       secondary={t('emergency.wait_label', { count: entry.wait_time_days })}
                       status={phase !== 'confirmed' && <StatusChip phase={phase} t={t} />}
                       band={band}
                       bandTone={bandTone}
                       menu={
                         options.length > 0 && (
-                          <RowMenu label={t('emergency.row_menu', { email: entry.grantor_email })} disabled={busy} options={options} />
+                          <RowMenu label={t('emergency.row_menu', { name: grantorName(entry) })} disabled={busy} options={options} />
                         )
                       }
                     />

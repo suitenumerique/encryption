@@ -45,6 +45,7 @@ declare const styles: {
   readonly identityName: string;
   readonly identitySecondary: string;
   readonly identityText: string;
+  readonly identityTooltip: string;
   readonly input: string;
   readonly inputInvalid: string;
   readonly inputMono: string;
@@ -62,6 +63,7 @@ declare const styles: {
   readonly optionText: string;
   readonly optionTitle: string;
   readonly options: string;
+  readonly people: string;
   readonly qr: string;
   readonly scanner: string;
   readonly screen: string;
@@ -89,6 +91,7 @@ declare const styles: {
   readonly statusWarning: string;
   readonly textLink: string;
   readonly textLinks: string;
+  readonly visuallyHidden: string;
   readonly waiting: string;
   readonly wordInputs: string;
   readonly wordInputsCell: string;

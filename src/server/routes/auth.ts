@@ -157,6 +157,8 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
           email: identity.email,
           email_verified: identity.emailVerified,
           locale: identity.locale,
+          first_name: identity.firstName,
+          last_name: identity.lastName,
         },
         language
       );

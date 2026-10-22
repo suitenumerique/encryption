@@ -27,8 +27,8 @@ import {
 import { VaultPurgeWarningEmail, subject as purgeWarningSubject } from '@encryption/src/server/email/templates/VaultPurgeWarning';
 import { VaultPurgedEmail, subject as purgedSubject } from '@encryption/src/server/email/templates/VaultPurged';
 
-const grantorEmail = 'alice.martin@numerique.gouv.fr';
-const granteeEmail = 'jean.dupont@numerique.gouv.fr';
+const grantor = 'Alice Martin (alice.martin@numerique.gouv.fr)';
+const grantee = 'Jean Dupont';
 const productUrl = 'http://localhost:7201';
 
 // Midday UTC so the formatted date is August 15 in every realistic server timezone
@@ -49,109 +49,109 @@ const cases: Case[] = [
   {
     name: 'EmergencyDesignated',
     subject: designatedSubject,
-    make: (locale) => EmergencyDesignatedEmail({ locale, grantorEmail, waitTimeDays: 15, productUrl }),
+    make: (locale) => EmergencyDesignatedEmail({ locale, grantor, waitTimeDays: 15, productUrl }),
     expected: {
-      fr: [grantorEmail, '15 jours', 'contact de confiance', productUrl],
-      en: [grantorEmail, '15 days', 'trusted contact', productUrl],
+      fr: [grantor, '15 jours', 'contact de confiance', productUrl],
+      en: [grantor, '15 days', 'trusted contact', productUrl],
     },
   },
   {
     name: 'EmergencyAccepted',
     subject: acceptedSubject,
-    make: (locale) => EmergencyAcceptedEmail({ locale, granteeEmail }),
+    make: (locale) => EmergencyAcceptedEmail({ locale, grantee }),
     expected: {
-      fr: [granteeEmail, 'accepté'],
-      en: [granteeEmail, 'accepted'],
+      fr: [grantee, 'accepté'],
+      en: [grantee, 'accepted'],
     },
   },
   {
     name: 'EmergencyDeclined',
     subject: declinedSubject,
-    make: (locale) => EmergencyDeclinedEmail({ locale, granteeEmail }),
+    make: (locale) => EmergencyDeclinedEmail({ locale, grantee }),
     expected: {
-      fr: [granteeEmail, 'décliné'],
-      en: [granteeEmail, 'declined'],
+      fr: [grantee, 'décliné'],
+      en: [grantee, 'declined'],
     },
   },
   {
     name: 'EmergencyRecoveryRequested',
     subject: requestedSubject,
-    make: (locale) => EmergencyRecoveryRequestedEmail({ locale, granteeEmail, waitTimeDays: 15, deadlineMillis, productUrl }),
+    make: (locale) => EmergencyRecoveryRequestedEmail({ locale, grantee, waitTimeDays: 15, deadlineMillis, productUrl }),
     expected: {
-      fr: [granteeEmail, '15 jours', '<strong>15 août 2026</strong>', 'refusez-la', productUrl],
-      en: [granteeEmail, '15-day', '<strong>August 15, 2026</strong>', 'refuse it now', productUrl],
+      fr: [grantee, '15 jours', '<strong>15 août 2026</strong>', 'refusez-la', productUrl],
+      en: [grantee, '15-day', '<strong>August 15, 2026</strong>', 'refuse it now', productUrl],
     },
   },
   {
     name: 'EmergencyRecoveryReminder',
     subject: reminderSubject,
-    make: (locale) => EmergencyRecoveryReminderEmail({ locale, granteeEmail, daysRemaining: 3, productUrl }),
+    make: (locale) => EmergencyRecoveryReminderEmail({ locale, grantee, daysRemaining: 3, productUrl }),
     expected: {
-      fr: [`<strong>${granteeEmail}</strong>`, '3 jours', productUrl],
-      en: [`<strong>${granteeEmail}</strong>`, '3 days', productUrl],
+      fr: [`<strong>${grantee}</strong>`, '3 jours', productUrl],
+      en: [`<strong>${grantee}</strong>`, '3 days', productUrl],
     },
   },
   {
     name: 'EmergencyRecoveryApprovedGrantor',
     subject: approvedGrantorSubject,
-    make: (locale) => EmergencyRecoveryApprovedGrantorEmail({ locale, granteeEmail, productUrl }),
+    make: (locale) => EmergencyRecoveryApprovedGrantorEmail({ locale, grantee, productUrl }),
     expected: {
-      fr: [granteeEmail, 'accordé', productUrl],
-      en: [granteeEmail, 'granted', productUrl],
+      fr: [grantee, 'accordé', productUrl],
+      en: [grantee, 'granted', productUrl],
     },
   },
   {
     name: 'EmergencyRecoveryApprovedContact',
     subject: approvedContactSubject,
-    make: (locale) => EmergencyRecoveryApprovedContactEmail({ locale, grantorEmail, productUrl }),
+    make: (locale) => EmergencyRecoveryApprovedContactEmail({ locale, grantor, productUrl }),
     expected: {
-      fr: [grantorEmail, 'en personne', productUrl],
-      en: [grantorEmail, 'in person', productUrl],
+      fr: [grantor, 'en personne', productUrl],
+      en: [grantor, 'in person', productUrl],
     },
   },
   {
     name: 'EmergencyRecoveryRejected',
     subject: rejectedSubject,
-    make: (locale) => EmergencyRecoveryRejectedEmail({ locale, grantorEmail }),
+    make: (locale) => EmergencyRecoveryRejectedEmail({ locale, grantor }),
     expected: {
-      fr: [grantorEmail, 'refusé'],
-      en: [grantorEmail, 'refused'],
+      fr: [grantor, 'refusé'],
+      en: [grantor, 'refused'],
     },
   },
   {
     name: 'EmergencyRecoveryCancelled',
     subject: cancelledSubject,
-    make: (locale) => EmergencyRecoveryCancelledEmail({ locale, granteeEmail }),
+    make: (locale) => EmergencyRecoveryCancelledEmail({ locale, grantee }),
     expected: {
-      fr: [granteeEmail, 'annulé'],
-      en: [granteeEmail, 'cancelled'],
+      fr: [grantee, 'annulé'],
+      en: [grantee, 'cancelled'],
     },
   },
   {
     name: 'EmergencyVaultRecovered',
     subject: vaultRecoveredSubject,
-    make: (locale) => EmergencyVaultRecoveredEmail({ locale, granteeEmail }),
+    make: (locale) => EmergencyVaultRecoveredEmail({ locale, grantee }),
     expected: {
-      fr: [granteeEmail, 'caduque'],
-      en: [granteeEmail, 'void'],
+      fr: [grantee, 'caduque'],
+      en: [grantee, 'void'],
     },
   },
   {
     name: 'EmergencyVaultRecoveredContact',
     subject: vaultRecoveredContactSubject,
-    make: (locale) => EmergencyVaultRecoveredContactEmail({ locale, grantorEmail }),
+    make: (locale) => EmergencyVaultRecoveredContactEmail({ locale, grantor }),
     expected: {
-      fr: [grantorEmail, 'caduque'],
-      en: [grantorEmail, 'void'],
+      fr: [grantor, 'caduque'],
+      en: [grantor, 'void'],
     },
   },
   {
     name: 'EmergencyRevoked',
     subject: revokedSubject,
-    make: (locale) => EmergencyRevokedEmail({ locale, grantorEmail }),
+    make: (locale) => EmergencyRevokedEmail({ locale, grantor }),
     expected: {
-      fr: [grantorEmail, 'contact de confiance'],
-      en: [grantorEmail, 'trusted contact'],
+      fr: [grantor, 'contact de confiance'],
+      en: [grantor, 'trusted contact'],
     },
   },
   {
