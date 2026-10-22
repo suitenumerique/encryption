@@ -1,6 +1,7 @@
 import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, within } from 'storybook/test';
 
+import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import i18n from '@encryption/src/i18n';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
@@ -40,6 +41,7 @@ DefaultStory.play = async ({ canvasElement }) => {
   expect(canvas.queryByText(i18n.t('onboarding.invalid_word_hint'))).toBeNull();
 };
 
+DefaultStory.parameters = { ...DefaultStory.parameters, design: consoleFrame('4880-17087') };
 export const Default = prepareStory(DefaultStory);
 
 // French words are typed with composed accents while the wordlist is stored

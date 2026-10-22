@@ -1,6 +1,7 @@
 import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, within } from 'storybook/test';
 
+import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
@@ -76,6 +77,7 @@ HomeStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('settings.manage_trusted_contacts'));
 };
 
+HomeStory.parameters = { ...HomeStory.parameters, design: consoleFrame('4905-9065') };
 export const Home = prepareStory(HomeStory);
 
 // From the home, a flow comes back to it; the story ends on the flow, opened again.
@@ -92,6 +94,7 @@ HomeToVerificationCodeStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
 };
 
+HomeToVerificationCodeStory.parameters = { ...HomeToVerificationCodeStory.parameters, design: consoleFrame('4877-7889') };
 export const HomeToVerificationCode = prepareStory(HomeToVerificationCodeStory);
 
 const HomeDisabledForAccountStory = Template.bind({});
@@ -104,6 +107,7 @@ HomeDisabledForAccountStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('settings.review_options'));
 };
 
+HomeDisabledForAccountStory.parameters = { ...HomeDisabledForAccountStory.parameters, design: consoleFrame('4878-8784') };
 export const HomeDisabledForAccount = prepareStory(HomeDisabledForAccountStory);
 
 const HomeNotSetUpStory = Template.bind({});
@@ -117,6 +121,7 @@ HomeNotSetUpStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('settings.set_up'));
 };
 
+HomeNotSetUpStory.parameters = { ...HomeNotSetUpStory.parameters, design: consoleFrame('4878-9504') };
 export const HomeNotSetUp = prepareStory(HomeNotSetUpStory);
 
 const VaultNotReadyStory = Template.bind({});
@@ -174,6 +179,7 @@ ManageStory.play = async ({ canvasElement }) => {
   await expect(await playFindButton(canvasElement, i18n.t('settings.turn_off_button'))).toBeEnabled();
 };
 
+ManageStory.parameters = { ...ManageStory.parameters, design: [consoleFrame('4877-7804', 'This device'), consoleFrame('4877-6339', 'My account')] };
 export const Manage = prepareStory(ManageStory);
 
 const ManageDisabledForAccountStory = Template.bind({});
@@ -185,12 +191,14 @@ ManageDisabledForAccountStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('settings.reconcile_delete_local'));
 };
 
+ManageDisabledForAccountStory.parameters = { ...ManageDisabledForAccountStory.parameters, design: consoleFrame('4878-8985') };
 export const ManageDisabledForAccount = prepareStory(ManageDisabledForAccountStory);
 
-// Once the account is off, only this device's keys are left to remove.
+// Once the account is off, only this device's keys are left to remove (no frame
+// of its own in the design).
 const ManageTurnOffDeviceOnlyStory = Template.bind({});
 ManageTurnOffDeviceOnlyStory.args = { ...baseArgs, section: 'manage' };
-ManageTurnOffDeviceOnlyStory.parameters = ManageDisabledForAccountStory.parameters;
+ManageTurnOffDeviceOnlyStory.parameters = { msw: { handlers: directoryDisabled } };
 ManageTurnOffDeviceOnlyStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('settings.reconcile_delete_local')));
   await playFindHeading(canvasElement, i18n.t('settings.manage_title'));
@@ -243,6 +251,7 @@ VerificationCodeStory.play = async ({ canvasElement }) => {
   expect(within(canvasElement).queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
 };
 
+VerificationCodeStory.parameters = { ...VerificationCodeStory.parameters, design: consoleFrame('4877-7889') };
 export const VerificationCode = prepareStory(VerificationCodeStory);
 
 const RecoveryPhraseStory = Template.bind({});

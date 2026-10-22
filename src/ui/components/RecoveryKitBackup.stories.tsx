@@ -1,6 +1,7 @@
 import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 
+import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
@@ -42,6 +43,7 @@ DefaultStory.play = async ({ canvasElement }) => {
   expect(canvasElement.querySelector(`.${styles.words}`)).toBeNull();
 };
 
+DefaultStory.parameters = { ...DefaultStory.parameters, design: consoleFrame('4879-12693') };
 export const Default = prepareStory(DefaultStory);
 
 // Reading the phrase on screen counts as having it: the word grid replaces the
@@ -87,6 +89,33 @@ PrintedStory.play = async ({ canvasElement }) => {
 };
 
 export const Printed = prepareStory(PrintedStory);
+
+// Copying confirms itself on the button for three seconds, and unlocks the
+// confirmation for good. The clipboard is stubbed: a story frame may not be
+// granted it, and the phrase must not land in the developer's own clipboard.
+const CopiedStory = Template.bind({});
+CopiedStory.args = { ...baseArgs };
+CopiedStory.play = async ({ canvasElement }) => {
+  const confirm = await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done'));
+  let copied: string | null = null;
+
+  const originalWriteText = navigator.clipboard.writeText;
+  navigator.clipboard.writeText = async (text: string) => {
+    copied = text;
+  };
+
+  try {
+    await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_copy_clipboard')));
+    await playFindButton(canvasElement, i18n.t('onboarding.btn_copied'));
+  } finally {
+    navigator.clipboard.writeText = originalWriteText;
+  }
+  expect(copied).toBe(sampleRecoveryPhrase);
+  expect(confirm).toBeEnabled();
+};
+
+CopiedStory.parameters = { ...CopiedStory.parameters, design: consoleFrame('4879-12694') };
+export const Copied = prepareStory(CopiedStory);
 
 const BusyStory = Template.bind({});
 BusyStory.args = { ...baseArgs, isBusy: true };

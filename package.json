@@ -135,6 +135,7 @@
     "@mdx-js/rollup": "3.1.1",
     "@microsoft/api-extractor": "7.59.0",
     "@storybook/addon-a11y": "10.5.10",
+    "@storybook/addon-designs": "11.1.4",
     "@storybook/addon-docs": "10.5.10",
     "@storybook/addon-vitest": "10.5.10",
     "@storybook/react": "10.5.10",

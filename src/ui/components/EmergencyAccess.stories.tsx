@@ -1,6 +1,7 @@
 import { Meta, StoryFn } from '@storybook/react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 
+import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindDialog, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
@@ -128,6 +129,10 @@ WithContactsStory.play = async ({ canvasElement }) => {
   await playExpectRowMenuItem(canvasElement, trustedContact.grantee_name!, i18n.t('emergency.btn_revoke'));
 };
 
+WithContactsStory.parameters = {
+  ...WithContactsStory.parameters,
+  design: [consoleFrame('4906-18762', 'Trusted contacts'), consoleFrame('4906-19369', 'Contact menu')],
+};
 export const WithContacts = prepareStory(WithContactsStory);
 
 // Reached from the interface's own encryption home: a way back to it.
@@ -140,6 +145,7 @@ WithContactsFromSettingsHomeStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
 };
 
+WithContactsFromSettingsHomeStory.parameters = { ...WithContactsFromSettingsHomeStory.parameters, design: consoleFrame('4906-18762') };
 export const WithContactsFromSettingsHome = prepareStory(WithContactsFromSettingsHomeStory);
 
 // A contact whose running request will auto-approve once the wait elapses: a
@@ -154,6 +160,7 @@ RecoveryPendingStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('emergency.btn_refuse_request'));
 };
 
+RecoveryPendingStory.parameters = { ...RecoveryPendingStory.parameters, design: consoleFrame('4906-18762') };
 export const RecoveryPending = prepareStory(RecoveryPendingStory);
 
 // The other side: a vault someone entrusted to me, which I can ask to recover.
@@ -168,6 +175,10 @@ EntrustedToMeStory.play = async ({ canvasElement }) => {
   await playExpectRowMenuItem(canvasElement, grantedVault.grantor_name!, i18n.t('emergency.btn_request_access'));
 };
 
+EntrustedToMeStory.parameters = {
+  ...EntrustedToMeStory.parameters,
+  design: [consoleFrame('4906-18762', 'Trusted contacts'), consoleFrame('4906-19394', 'Menu of someone you can help')],
+};
 export const EntrustedToMe = prepareStory(EntrustedToMeStory);
 
 // The designation flow: search a colleague, land on the fingerprint-verify step

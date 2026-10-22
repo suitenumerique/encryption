@@ -1,6 +1,7 @@
 import { Meta, StoryFn } from '@storybook/react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
+import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
@@ -58,6 +59,7 @@ NewUserStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_enable'));
 };
 
+NewUserStory.parameters = { ...NewUserStory.parameters, design: consoleFrame('4879-12692') };
 export const NewUser = prepareStory(NewUserStory);
 
 const ExistingUserStory = Template.bind({});
@@ -98,6 +100,7 @@ ExistingUserStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('onboarding.btn_continue'));
 };
 
+ExistingUserStory.parameters = { ...ExistingUserStory.parameters, design: consoleFrame('4880-17085') };
 export const ExistingUser = prepareStory(ExistingUserStory);
 
 // This browser held the vault but forgot it after a year without use: the same
@@ -231,6 +234,7 @@ RestoreStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_restore'));
 };
 
+RestoreStory.parameters = { ...RestoreStory.parameters, design: consoleFrame('4880-17087') };
 export const Restore = prepareStory(RestoreStory);
 
 // 24 words of the English list, pasted at once like a saved sheet.
@@ -262,6 +266,7 @@ RestoreRejectedStory.play = async ({ canvasElement }) => {
   await expect(await playFindButton(canvasElement, i18n.t('onboarding.btn_restore'))).toBeDisabled();
 };
 
+RestoreRejectedStory.parameters = { ...RestoreRejectedStory.parameters, design: consoleFrame('4884-27719') };
 export const RestoreRejected = prepareStory(RestoreRejectedStory);
 
 const RestoredStory = Template.bind({});
@@ -273,11 +278,13 @@ RestoredStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('onboarding.restored_description'));
 };
 
+RestoredStory.parameters = { ...RestoredStory.parameters, design: consoleFrame('4882-22604') };
 export const Restored = prepareStory(RestoredStory);
 
 const LastResortStory = Template.bind({});
 LastResortStory.args = { ...ExistingUserStory.args };
-LastResortStory.parameters = ExistingUserStory.parameters;
+// No frame of its own in the design: the existing user's mocks without their link.
+LastResortStory.parameters = { msw: ExistingUserStory.parameters.msw };
 LastResortStory.play = async ({ canvasElement }) => {
   // "Lost phrase?" sits under the phrase boxes.
   await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
@@ -303,6 +310,7 @@ BackupStory.play = async ({ canvasElement }) => {
   expect(canvasElement.querySelector(`.${styles.words}`)).toBeNull();
 };
 
+BackupStory.parameters = { ...BackupStory.parameters, design: consoleFrame('4879-12693') };
 export const Backup = prepareStory(BackupStory);
 
 // The product's cross on the backup step does not close: the screen holds a
@@ -319,6 +327,7 @@ BackupCancelPromptStory.play = async ({ canvasElement }) => {
   await playFindHeading(document.body, i18n.t('onboarding.cancel_setup_title'));
 };
 
+BackupCancelPromptStory.parameters = { ...BackupCancelPromptStory.parameters, design: consoleFrame('4879-12695') };
 export const BackupCancelPrompt = prepareStory(BackupCancelPromptStory);
 
 // Replacing an identity the account already has (here a disabled one, so the

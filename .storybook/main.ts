@@ -32,6 +32,7 @@ const config: StorybookConfig = {
       },
     },
     '@storybook/addon-vitest',
+    '@storybook/addon-designs',
     'storybook-dark-mode',
   ],
   staticDirs: [path.resolve(configDir, 'public'), { from: path.resolve(configDir, '../src/server/public-assets'), to: '/public-assets' }],

@@ -3,6 +3,7 @@ import jsQR from 'jsqr';
 import { useEffect, useRef } from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 
+import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindAlert, playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
@@ -136,6 +137,7 @@ NewDeviceStory.play = async ({ canvasElement }) => {
   await expect(await decodeQr(qr)).toBe(sampleFingerprint);
 };
 
+NewDeviceStory.parameters = { ...NewDeviceStory.parameters, design: consoleFrame('4880-17086') };
 export const NewDevice = prepareStory(NewDeviceStory);
 
 const NewDeviceCodeRevealedStory = Template.bind({});
@@ -149,6 +151,7 @@ NewDeviceCodeRevealedStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('device_approval.show_qr'));
 };
 
+NewDeviceCodeRevealedStory.parameters = { ...NewDeviceCodeRevealedStory.parameters, design: consoleFrame('4882-22440') };
 export const NewDeviceCodeRevealed = prepareStory(NewDeviceCodeRevealedStory);
 
 const NewDeviceAdoptedStory = Template.bind({});
@@ -171,6 +174,7 @@ NewDeviceAdoptedStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('device_approval.new_success_title'), { timeout: 10000 });
 };
 
+NewDeviceAdoptedStory.parameters = { ...NewDeviceAdoptedStory.parameters, design: consoleFrame('4882-22604') };
 export const NewDeviceAdopted = prepareStory(NewDeviceAdoptedStory);
 
 const ErroredStory = Template.bind({});
@@ -208,6 +212,7 @@ EnrolledDeviceStory.play = async ({ canvasElement }) => {
   expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
 };
 
+EnrolledDeviceStory.parameters = { ...EnrolledDeviceStory.parameters, design: consoleFrame('4883-22638') };
 export const EnrolledDevice = prepareStory(EnrolledDeviceStory);
 
 // Reached from the interface's own encryption home: a way back to it.
@@ -220,6 +225,7 @@ EnrolledDeviceFromSettingsHomeStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
 };
 
+EnrolledDeviceFromSettingsHomeStory.parameters = { ...EnrolledDeviceFromSettingsHomeStory.parameters, design: consoleFrame('4883-22638') };
 export const EnrolledDeviceFromSettingsHome = prepareStory(EnrolledDeviceFromSettingsHomeStory);
 
 const EnrolledDeviceManualEntryStory = Template.bind({});
@@ -230,6 +236,7 @@ EnrolledDeviceManualEntryStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead')));
 };
 
+EnrolledDeviceManualEntryStory.parameters = { ...EnrolledDeviceManualEntryStory.parameters, design: consoleFrame('4883-22846') };
 export const EnrolledDeviceManualEntry = prepareStory(EnrolledDeviceManualEntryStory);
 
 const EnrolledDeviceNoCameraStory = Template.bind({});
@@ -243,6 +250,7 @@ EnrolledDeviceNoCameraStory.play = async ({ canvasElement }) => {
   expect(canvas.queryByRole('button', { name: i18n.t('device_approval.scan_instead') })).toBeNull();
 };
 
+EnrolledDeviceNoCameraStory.parameters = { ...EnrolledDeviceNoCameraStory.parameters, design: consoleFrame('4883-22846') };
 export const EnrolledDeviceNoCamera = prepareStory(EnrolledDeviceNoCameraStory);
 
 const EnrolledDeviceCodeMismatchStory = Template.bind({});
@@ -270,6 +278,7 @@ EnrolledDeviceCodeMismatchStory.play = async ({ canvasElement }) => {
   await playFindAlert(canvasElement, i18n.t('device_approval.code_no_match'));
 };
 
+EnrolledDeviceCodeMismatchStory.parameters = { ...EnrolledDeviceCodeMismatchStory.parameters, design: consoleFrame('4884-28194') };
 export const EnrolledDeviceCodeMismatch = prepareStory(EnrolledDeviceCodeMismatchStory);
 
 const EnrolledDeviceApprovedStory = Template.bind({});
@@ -294,4 +303,5 @@ EnrolledDeviceApprovedStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('device_approval.approve_success_title'));
 };
 
+EnrolledDeviceApprovedStory.parameters = { ...EnrolledDeviceApprovedStory.parameters, design: consoleFrame('4883-23011') };
 export const EnrolledDeviceApproved = prepareStory(EnrolledDeviceApprovedStory);
