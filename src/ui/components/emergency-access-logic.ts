@@ -49,6 +49,16 @@ export function personName(name: string | null | undefined, email: string): stri
   return name?.trim() || email;
 }
 
+/**
+ * A person with their address in brackets, for a decision about them: two
+ * people can share a name, the address says which account it is.
+ */
+export function personNameWithEmail(name: string | null | undefined, email: string): string {
+  const shown = personName(name, email);
+
+  return shown === email ? email : `${shown} (${email})`;
+}
+
 export const granteeName = (entry: { grantee_name: string | null; grantee_email: string }) => personName(entry.grantee_name, entry.grantee_email);
 
 export const grantorName = (entry: { grantor_name: string | null; grantor_email: string }) => personName(entry.grantor_name, entry.grantor_email);
@@ -57,6 +67,7 @@ export interface RearmRow {
   emergencyAccessId: string;
   granteeUserId: string;
   granteeName: string;
+  granteeEmail: string;
   waitTimeDays: number;
 }
 
@@ -86,6 +97,7 @@ export function grantedRearmRows(
       emergencyAccessId: contact.id,
       granteeUserId: contact.grantee_user_id,
       granteeName: granteeName(contact),
+      granteeEmail: contact.grantee_email,
       waitTimeDays: contact.wait_time_days,
     }));
 }
@@ -124,15 +136,22 @@ export function countdownTo(deadlineMillis: number, nowMillis: number): Countdow
   };
 }
 
+/** A granted contact whose re-arm the vault refused (no longer trusted), named for the revoke decision. */
+export interface BlockedContact {
+  id: string;
+  name: string;
+  email: string;
+}
+
 /**
  * Thrown by the keyring-commit flow when some granted contacts are no longer
  * TOFU-trusted, so their mandatory re-arm cannot be built. The caller offers
  * to revoke exactly these relationships and retry.
  */
 export class UntrustedRearmError extends Error {
-  readonly contacts: Array<{ id: string; name: string }>;
+  readonly contacts: BlockedContact[];
 
-  constructor(contacts: Array<{ id: string; name: string }>) {
+  constructor(contacts: BlockedContact[]) {
     super('Some granted contacts are no longer trusted; their escrow cannot be re-armed.');
     this.name = 'UntrustedRearmError';
     this.contacts = contacts;

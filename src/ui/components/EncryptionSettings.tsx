@@ -20,7 +20,12 @@ import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/s
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { SyncIntegrityAlert } from '@encryption/src/ui/components/SyncIntegrityAlert';
-import { UntrustedRearmError, grantedRearmRows } from '@encryption/src/ui/components/emergency-access-logic';
+import {
+  type BlockedContact,
+  UntrustedRearmError,
+  grantedRearmRows,
+  personNameWithEmail,
+} from '@encryption/src/ui/components/emergency-access-logic';
 import { Chip, CopyFingerprintButton, FingerprintBoxes, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
@@ -135,31 +140,48 @@ export function EncryptionSettings({
     setView('recovery-phrase');
   }, []);
 
-  // Generate the new phrase + re-wrap the keyring LOCALLY (no server call yet).
+  // Commit the new keyring to the server. This is the moment the OLD phrase (and
+  // all its backups) stops working, so it runs only after the user confirms.
+  // Goes through the shared keyring-commit flow: while a recovery is granted the
+  // server rejects the rewrite unless the granted escrows are burned + re-armed,
+  // so a routine phrase change carries the mandatory re-arms too.
+  const { commitKeyring, findBlockedContacts, revokeContacts } = useKeyringCommit(getIdToken);
+  const [rearmBlocked, setRearmBlocked] = useState<BlockedContact[] | null>(null);
+
+  // Generate the new phrase + re-wrap the keyring LOCALLY (no server call yet),
+  // once no granted contact would block its commit: the user is never handed a
+  // phrase to save that could not take effect.
   const handleGeneratePhrase = useCallback(async () => {
     setIsChangingPhrase(true);
     setChangeError(null);
+    setRearmBlocked(null);
 
     try {
+      // Advisory: the commit enforces the same condition, so only an expired
+      // session (which the commit would hit too) stops here.
+      const blocked = await findBlockedContacts().catch((err: unknown) => {
+        if (err instanceof SessionExpiredError) throw err;
+
+        return [];
+      });
+      if (blocked.length > 0) {
+        setRearmBlocked(blocked);
+
+        return;
+      }
+
       const lang = mnemonicLanguageForLocale(i18n.language);
       const { recoveryPhrase, keyring } = await changeRecoveryPhrase(lang);
       setPendingKeyring(keyring);
       setNewRecoveryPhrase(recoveryPhrase);
       setChangePhraseStep('backup');
     } catch (err) {
-      setChangeError((err as Error).message);
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setChangeError((err as Error).message);
     } finally {
       setIsChangingPhrase(false);
     }
-  }, [changeRecoveryPhrase, i18n.language]);
-
-  // Commit the new keyring to the server. This is the moment the OLD phrase (and
-  // all its backups) stops working, so it runs only after the user confirms.
-  // Goes through the shared keyring-commit flow: while a recovery is granted the
-  // server rejects the rewrite unless the granted escrows are burned + re-armed,
-  // so a routine phrase change carries the mandatory re-arms too.
-  const { commitKeyring, revokeContacts } = useKeyringCommit(getIdToken);
-  const [rearmBlocked, setRearmBlocked] = useState<Array<{ id: string; name: string }> | null>(null);
+  }, [findBlockedContacts, changeRecoveryPhrase, i18n.language, markSessionExpired]);
 
   const handleConfirmPhraseBackup = useCallback(async () => {
     if (!pendingKeyring) return;
@@ -189,7 +211,9 @@ export function EncryptionSettings({
   }, [pendingKeyring, commitKeyring, i18n.language, markSessionExpired]);
 
   // A granted contact is no longer trusted, so their mandatory re-arm cannot be
-  // built: revoke exactly those relationships (user-approved) and retry.
+  // built: revoke exactly those relationships (user-approved), then go on with
+  // the step they blocked (generating the phrase, or, should their status have
+  // changed meanwhile, committing it).
   const handleRevokeBlockedAndRetry = useCallback(async () => {
     if (!rearmBlocked) return;
 
@@ -208,8 +232,8 @@ export function EncryptionSettings({
     }
 
     setIsChangingPhrase(false);
-    await handleConfirmPhraseBackup();
-  }, [rearmBlocked, revokeContacts, markSessionExpired, handleConfirmPhraseBackup]);
+    await (changePhraseStep === 'backup' ? handleConfirmPhraseBackup() : handleGeneratePhrase());
+  }, [rearmBlocked, revokeContacts, markSessionExpired, changePhraseStep, handleConfirmPhraseBackup, handleGeneratePhrase]);
 
   // Back out before committing: nothing was sent to the server, so just drop the
   // unsaved phrase and re-wrapped keyring. The current phrase keeps working.
@@ -775,6 +799,23 @@ export function EncryptionSettings({
   // Change the recovery phrase.
   // ---------------------------------------------------------------------------
   if (view === 'recovery-phrase') {
+    const rearmBlockedNotice = rearmBlocked && (
+      <Notice type={VariantType.WARNING}>
+        <div className={styles.alertStack}>
+          <span>
+            {t('emergency.rearm_blocked', {
+              names: rearmBlocked.map((contact) => personNameWithEmail(contact.name, contact.email)).join(', '),
+            })}
+          </span>
+          <div>
+            <Button size="small" color="error" onClick={handleRevokeBlockedAndRetry} disabled={isChangingPhrase}>
+              {t('emergency.rearm_revoke_retry')}
+            </Button>
+          </div>
+        </div>
+      </Notice>
+    );
+
     // The backup step takes over the whole view, like the onboarding backup screen.
     if (changePhraseStep === 'backup' && newRecoveryPhrase) {
       return (
@@ -814,18 +855,7 @@ export function EncryptionSettings({
             banner={
               <>
                 {sessionBanner}
-                {rearmBlocked && (
-                  <Notice type={VariantType.WARNING}>
-                    <div className={styles.alertStack}>
-                      <span>{t('emergency.rearm_blocked', { names: rearmBlocked.map((contact) => contact.name).join(', ') })}</span>
-                      <div>
-                        <Button size="small" color="error" onClick={handleRevokeBlockedAndRetry} disabled={isChangingPhrase}>
-                          {t('emergency.rearm_revoke_retry')}
-                        </Button>
-                      </div>
-                    </div>
-                  </Notice>
-                )}
+                {rearmBlockedNotice}
               </>
             }
             passphrase={newRecoveryPhrase}
@@ -874,10 +904,16 @@ export function EncryptionSettings({
             )}
           </>
         }
-        banner={changeError && <Notice type={VariantType.ERROR}>{changeError}</Notice>}
+        banner={
+          <>
+            {sessionBanner}
+            {changeError && <Notice type={VariantType.ERROR}>{changeError}</Notice>}
+            {rearmBlockedNotice}
+          </>
+        }
         actions={
           <>
-            <Button onClick={handleGeneratePhrase} disabled={isChangingPhrase}>
+            <Button onClick={handleGeneratePhrase} disabled={isChangingPhrase || rearmBlocked !== null}>
               {isChangingPhrase ? t('settings.changing_phrase') : t('settings.change_phrase_continue')}
             </Button>
             <Button variant="bordered" color="neutral" onClick={handleCancelPhrase} disabled={isChangingPhrase}>

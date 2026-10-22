@@ -10,6 +10,7 @@ import {
   grantedRearmRows,
   parseWaitDays,
   personName,
+  personNameWithEmail,
   rearmBodyFromDesignation,
 } from '@encryption/src/ui/components/emergency-access-logic';
 
@@ -65,6 +66,13 @@ describe('personName', () => {
   });
 });
 
+describe('personNameWithEmail', () => {
+  it('adds the address in brackets, once when no name is known', () => {
+    expect(personNameWithEmail('Carol Martin', 'carol@example.org')).toBe('Carol Martin (carol@example.org)');
+    expect(personNameWithEmail(null, 'carol@example.org')).toBe('carol@example.org');
+  });
+});
+
 describe('grantedRearmRows', () => {
   const now = 1_000_000;
   const base = { grantee_user_id: 'u1', grantee_email: 'contact@example.org', grantee_name: 'Carol Martin', wait_time_days: 15 };
@@ -82,8 +90,8 @@ describe('grantedRearmRows', () => {
     );
 
     expect(rows).toEqual([
-      { emergencyAccessId: 'a', granteeUserId: 'u1', granteeName: 'Carol Martin', waitTimeDays: 15 },
-      { emergencyAccessId: 'b', granteeUserId: 'u1', granteeName: 'Carol Martin', waitTimeDays: 15 },
+      { emergencyAccessId: 'a', granteeUserId: 'u1', granteeName: 'Carol Martin', granteeEmail: 'contact@example.org', waitTimeDays: 15 },
+      { emergencyAccessId: 'b', granteeUserId: 'u1', granteeName: 'Carol Martin', granteeEmail: 'contact@example.org', waitTimeDays: 15 },
     ]);
   });
 
@@ -139,10 +147,10 @@ describe('countdownTo', () => {
 
 describe('UntrustedRearmError', () => {
   it('carries the blocking contacts for the revoke-and-retry offer', () => {
-    const err = new UntrustedRearmError([{ id: 'a', name: 'Carol Martin' }]);
+    const err = new UntrustedRearmError([{ id: 'a', name: 'Carol Martin', email: 'carol@example.org' }]);
 
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('UntrustedRearmError');
-    expect(err.contacts).toEqual([{ id: 'a', name: 'Carol Martin' }]);
+    expect(err.contacts).toEqual([{ id: 'a', name: 'Carol Martin', email: 'carol@example.org' }]);
   });
 });

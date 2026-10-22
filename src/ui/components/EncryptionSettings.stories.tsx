@@ -4,9 +4,14 @@ import { expect, userEvent, within } from 'storybook/test';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
-import { handleGetApiPublicKeys, handleGetApiPublicKeysNext } from '@encryption/src/ui/api/generated/msw.gen';
+import {
+  handleDeleteApiEmergencyAccessById,
+  handleGetApiEmergencyAccessTrusted,
+  handleGetApiPublicKeys,
+  handleGetApiPublicKeysNext,
+} from '@encryption/src/ui/api/generated/msw.gen';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
-import { samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
 
 type ComponentType = typeof EncryptionSettings;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
@@ -242,7 +247,8 @@ export const VerificationCode = prepareStory(VerificationCodeStory);
 
 const RecoveryPhraseStory = Template.bind({});
 RecoveryPhraseStory.args = { ...baseArgs, section: 'recovery-phrase' };
-RecoveryPhraseStory.parameters = { msw: { handlers: [directoryInSync] } };
+// No trusted contact holds an emergency phrase: nothing holds the change back.
+RecoveryPhraseStory.parameters = { msw: { handlers: [directoryInSync, handleGetApiEmergencyAccessTrusted({ body: { contacts: [] } })] } };
 RecoveryPhraseStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('settings.change_phrase'));
   await within(canvasElement).findByText(i18n.t('settings.change_phrase_warning'));
@@ -263,6 +269,73 @@ RecoveryPhraseBackupStory.play = async ({ canvasElement }) => {
 };
 
 export const RecoveryPhraseBackup = prepareStory(RecoveryPhraseBackupStory);
+
+// A trusted contact obtained the emergency phrase and is no longer verified: the
+// new phrase could not be committed, since the vault refuses to re-arm their
+// escrow. So it is said before any phrase is generated, naming them with their
+// address (two people can share a name), with the offer to revoke them.
+const unverifiedGrantedContact = {
+  id: '11111111-1111-1111-1111-111111111111',
+  grantee_user_id: '22222222-2222-2222-2222-222222222222',
+  grantee_email: 'bob.dupont@numerique.gouv.fr',
+  grantee_name: 'Bob Dupont',
+  status: 'recoveryApproved' as const,
+  wait_time_days: 15,
+  created_at_millis: 1_700_000_000_000,
+  recovery_requested_at_millis: 1_700_000_000_000,
+  deadline_millis: null,
+  vault_active: true,
+  escrow: sampleEmergencyEscrowRecord,
+};
+
+// The stub vault knows no verified identity, so this contact reads as unverified.
+const RecoveryPhraseRearmBlockedStory = Template.bind({});
+RecoveryPhraseRearmBlockedStory.args = { ...RecoveryPhraseStory.args };
+RecoveryPhraseRearmBlockedStory.parameters = {
+  msw: { handlers: [directoryInSync, handleGetApiEmergencyAccessTrusted({ body: { contacts: [unverifiedGrantedContact] } })] },
+};
+RecoveryPhraseRearmBlockedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  const continueButton = await playFindButton(canvasElement, i18n.t('settings.change_phrase_continue'));
+  await userEvent.click(continueButton);
+  await canvas.findByText(i18n.t('emergency.rearm_blocked', { names: 'Bob Dupont (bob.dupont@numerique.gouv.fr)' }));
+  await playFindButton(canvasElement, i18n.t('emergency.rearm_revoke_retry'));
+  // Still on the first screen: no phrase was generated.
+  await expect(continueButton).toBeDisabled();
+  expect(canvas.queryByRole('heading', { name: i18n.t('settings.change_phrase_new_title') })).toBeNull();
+};
+
+export const RecoveryPhraseRearmBlocked = prepareStory(RecoveryPhraseRearmBlockedStory);
+
+// Revoking the blocking contact goes on to the new phrase.
+let blockingContactRevoked = false;
+
+const RecoveryPhraseRearmRevokedStory = Template.bind({});
+RecoveryPhraseRearmRevokedStory.args = { ...RecoveryPhraseStory.args };
+RecoveryPhraseRearmRevokedStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiEmergencyAccessTrusted(() => Response.json({ contacts: blockingContactRevoked ? [] : [unverifiedGrantedContact] })),
+      handleDeleteApiEmergencyAccessById(() => {
+        blockingContactRevoked = true;
+
+        return Response.json({ deleted: true });
+      }),
+    ],
+  },
+};
+RecoveryPhraseRearmRevokedStory.beforeEach = () => {
+  blockingContactRevoked = false;
+};
+RecoveryPhraseRearmRevokedStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('settings.change_phrase_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('emergency.rearm_revoke_retry')));
+  await playFindHeading(canvasElement, i18n.t('settings.change_phrase_new_title'));
+  expect(within(canvasElement).queryByText(i18n.t('emergency.rearm_blocked', { names: 'Bob Dupont (bob.dupont@numerique.gouv.fr)' }))).toBeNull();
+};
+
+export const RecoveryPhraseRearmRevoked = prepareStory(RecoveryPhraseRearmRevokedStory);
 
 // A flow opened on a device without keys points to the setup.
 const SectionWithoutKeysStory = Template.bind({});

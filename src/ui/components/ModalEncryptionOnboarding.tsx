@@ -21,7 +21,7 @@ import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBack
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { StepUpScreen } from '@encryption/src/ui/components/StepUpScreen';
-import { UntrustedRearmError, granteeName } from '@encryption/src/ui/components/emergency-access-logic';
+import { type BlockedContact, UntrustedRearmError, granteeName, personNameWithEmail } from '@encryption/src/ui/components/emergency-access-logic';
 import { FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
@@ -279,8 +279,10 @@ export function ModalEncryptionOnboarding({
   const [forcedRotation, setForcedRotation] = useState<{ recoveryPhrase: string; keyring: VaultKeyringWire; publicKey: string } | null>(null);
   const [rotationBusy, setRotationBusy] = useState(false);
   const [rotationError, setRotationError] = useState<string | null>(null);
-  const [rotationBlocked, setRotationBlocked] = useState<Array<{ id: string; name: string }> | null>(null);
-  const { commitKeyring, revokeContacts } = useKeyringCommit(getIdToken);
+  const [rotationBlocked, setRotationBlocked] = useState<BlockedContact[] | null>(null);
+  const { commitKeyring, findBlockedContacts, revokeContacts } = useKeyringCommit(getIdToken);
+  // The key the rotation reports once done, kept while a blocked contact holds it back.
+  const [rotationPublicKey, setRotationPublicKey] = useState<string | null>(null);
 
   // True when the user has just performed the "delete old key" flow.
   // Used to (a) skip the existing-key-choice auto-redirect below since
@@ -616,17 +618,37 @@ export function ModalEncryptionOnboarding({
   // Enter the mandatory post-emergency-unlock rotation: derive a fresh phrase +
   // keyring locally (nothing sent yet) and take over the whole view. The user
   // cannot skip it: the contact has seen the phrase that just unlocked the vault.
+  // A granted contact who would block the commit is dealt with first, so the
+  // phrase shown is one that can take effect.
   const startForcedRotation = useCallback(
     async (publicKey: string) => {
+      setRotationPublicKey(publicKey);
+      setRotationError(null);
+      setRotationBlocked(null);
+
+      let blocked: BlockedContact[] = [];
+      try {
+        blocked = await findBlockedContacts();
+      } catch {
+        // The vault is already restored: an unanswered check must not undo that,
+        // and the commit enforces the same condition anyway.
+      }
+
+      if (blocked.length > 0) {
+        setForcedRotation(null);
+        setRotationBlocked(blocked);
+        setStep('forced-rotation');
+
+        return;
+      }
+
       const lang = mnemonicLanguageForLocale(i18n.language);
       const { recoveryPhrase, keyring } = await changeRecoveryPhrase(lang);
 
       setForcedRotation({ recoveryPhrase, keyring, publicKey });
-      setRotationError(null);
-      setRotationBlocked(null);
       setStep('forced-rotation');
     },
-    [changeRecoveryPhrase, i18n.language]
+    [findBlockedContacts, changeRecoveryPhrase, i18n.language]
   );
 
   const handleRestoreKeys = useCallback(async () => {
@@ -740,7 +762,8 @@ export function ModalEncryptionOnboarding({
   }, [forcedRotation, commitKeyring, i18n.language, onSuccess, markSessionExpired, clearSessionExpired]);
 
   // A granted contact is no longer trusted, so their mandatory re-arm cannot be
-  // built: revoke exactly those relationships (user-approved) and retry.
+  // built: revoke exactly those relationships (user-approved), then go on with
+  // the step they blocked (generating the phrase, or committing it).
   const handleRotationRevokeAndRetry = useCallback(async () => {
     if (!rotationBlocked) return;
 
@@ -758,9 +781,19 @@ export function ModalEncryptionOnboarding({
       return;
     }
 
-    setRotationBusy(false);
-    await handleConfirmForcedRotation();
-  }, [rotationBlocked, revokeContacts, markSessionExpired, handleConfirmForcedRotation]);
+    if (forcedRotation) {
+      setRotationBusy(false);
+      await handleConfirmForcedRotation();
+    } else if (rotationPublicKey) {
+      try {
+        await startForcedRotation(rotationPublicKey);
+      } catch (err) {
+        setRotationError((err as Error).message);
+      } finally {
+        setRotationBusy(false);
+      }
+    }
+  }, [rotationBlocked, revokeContacts, markSessionExpired, forcedRotation, handleConfirmForcedRotation, rotationPublicKey, startForcedRotation]);
 
   // Warn on tab reload/close while a backup step shows an un-confirmed phrase
   // (initial onboarding backup, or the forced post-emergency rotation).
@@ -784,6 +817,23 @@ export function ModalEncryptionOnboarding({
 
   const deEnrolledNotice = deEnrolledAfterDays !== null && (
     <Notice type={VariantType.INFO}>{t('onboarding.de_enrolled_notice', { count: deEnrolledAfterDays })}</Notice>
+  );
+
+  const rotationBlockedNotice = rotationBlocked && (
+    <Notice type={VariantType.WARNING}>
+      <div className={styles.alertStack}>
+        <span>
+          {t('emergency.rearm_blocked', {
+            names: rotationBlocked.map((contact) => personNameWithEmail(contact.name, contact.email)).join(', '),
+          })}
+        </span>
+        <div>
+          <Button size="small" color="error" onClick={handleRotationRevokeAndRetry} disabled={rotationBusy}>
+            {t('emergency.rearm_revoke_retry')}
+          </Button>
+        </div>
+      </div>
+    </Notice>
   );
 
   const anotherDeviceButton = onUseAnotherDevice && (
@@ -1071,7 +1121,22 @@ export function ModalEncryptionOnboarding({
         />
       )}
 
-      {/* Mandatory rotation after an emergency unlock: no skip, no cancel. */}
+      {/* Mandatory rotation after an emergency unlock: no skip, no cancel. A
+          contact blocking it is dealt with before any phrase is shown. */}
+      {step === 'forced-rotation' && !forcedRotation && rotationBlocked && (
+        <Screen
+          illustration="shield-gear"
+          title={t('emergency.rotation_title')}
+          description={t('emergency.rotation_explanation')}
+          banner={
+            <>
+              {banner}
+              {rotationBlockedNotice}
+              {rotationError && <Notice type={VariantType.ERROR}>{rotationError}</Notice>}
+            </>
+          }
+        />
+      )}
       {step === 'forced-rotation' && forcedRotation && (
         <RecoveryKitBackup
           title={t('emergency.rotation_title')}
@@ -1084,18 +1149,7 @@ export function ModalEncryptionOnboarding({
           banner={
             <>
               {banner}
-              {rotationBlocked && (
-                <Notice type={VariantType.WARNING}>
-                  <div className={styles.alertStack}>
-                    <span>{t('emergency.rearm_blocked', { names: rotationBlocked.map((contact) => contact.name).join(', ') })}</span>
-                    <div>
-                      <Button size="small" color="error" onClick={handleRotationRevokeAndRetry} disabled={rotationBusy}>
-                        {t('emergency.rearm_revoke_retry')}
-                      </Button>
-                    </div>
-                  </div>
-                </Notice>
-              )}
+              {rotationBlockedNotice}
             </>
           }
           passphrase={forcedRotation.recoveryPhrase}
