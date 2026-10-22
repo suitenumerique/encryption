@@ -1,0 +1,260 @@
+# Encryption Service — Developer Context
+
+## What is this project?
+
+A centralized end-to-end encryption service for a collaborative suite (Docs, Drive, Fichier, Visio). It provides encryption capabilities via isolated iframes on two domains served by a single server:
+
+- **`data.encryption`** (vault) — invisible iframe loaded by products. Stores private keys in IndexedDB, performs all crypto operations via libsodium WASM. Communicates only via postMessage. Minimal attack surface.
+- **`encryption`** (UI) — visible iframe for onboarding, backup, restore, device transfer, settings, and documentation. Uses React + `@gouvfr-lasuite/ui-components` (LaSuite's design system, successor of UI Kit + Cunningham, the one Docs and Drive use).
+
+Products load a client SDK (`client.js`) from `data.encryption` via a `<script>` tag. The SDK orchestrates both iframes.
+
+## Project structure
+
+Single `package.json`, no workspaces. Source in `src/` with clear module separation:
+
+- `src/crypto/` — libsodium encryption, hybrid X25519 key pairs, BIP-39 mnemonics, fingerprints
+- `src/vault/` — vault entry point, postMessage handler, operations, Service Worker, origin guard
+- `src/client/` — VaultClient SDK (framework-agnostic, served as IIFE + ESM)
+- `src/ui/` — React app (`@gouvfr-lasuite/ui-components`, i18next, MDX docs, browser check)
+- `src/server/` — Fastify server, Host-based routing, API routes, security headers
+- `src/shared/` — constants, Zod schemas, error codes (shared between server and client)
+- `src/prisma/` — Prisma 7 schema, client with `@prisma/adapter-pg`; the PostgreSQL schema comes from the `?schema=` parameter of `DATABASE_URL` (read by both the migration tooling and the runtime adapter): deployments use a dedicated `encryption` schema, never `public` (see README), while the local `.env.test*` files leave it out and use `public`
+- `src/demo/` — fake product pages for testing (two instances on different ports)
+- `src/maintenance/` — batch recovery from the maintenance escrow: the generic export format (`export-format.ts`: `manifest.ndjson` + files, a tree of keys via `maintenanceKey` / `parent` / `wrappedKey`), the recovery walk (`recover.ts`), the rotation of copies to an organization's new maintenance key (`rotate.ts`: an export of the copies alone in, each copy wrapped again for the new public key out, beside the one it replaces, no secret; the tool's "Rotate" tab), the streaming output (`export-writer.ts`: one item in memory at a time, into a picked folder in Chrome/Edge or a store-only ZIP64 archive spooled in the origin private file system in Firefox, `tool/output.ts`), a streaming ZIP writer, and `tool/`, the operator's **single-file HTML tool** (`npm run build:maintenance` → `dist/maintenance/maintenance-tool.html`, served as a download at `/public-assets/maintenance-tool.html`): React, inline script and style allowed by hash in its own CSP with no `connect-src`, opened from disk on an isolated computer. The secret key is a 24-word phrase (the X-Wing seed). `npm run test:maintenance-tool` builds it and drives the built file from `file://` in Playwright on the committed `sample-export/` (CI: the story job). `sample-export/` is a frozen export encrypted for the DEV phrase (documents, pixel-PNG attachments under object keys, a comment, a Drive-like tree, another organization's document, a damaged copy), rewritten only on a deliberate format change with `npm run maintenance:sample-export` (its randomness is seeded, so a rerun without a change rewrites the same bytes); `sample-export.test.ts` decrypts it from A to Z
+- `src/i18n/` — French translations, i18next setup
+- `src/build/` — build-time helpers (browser versions from browserslist)
+- `deploy/` — deployment material: PostgreSQL role scripts, the Helm chart and its tests (`deploy/helm/encryption.test.ts` renders it with the real `helm` binary and checks the Deployment against `src/server/env-schema.ts`), helmfile and Argo CD examples. The chart is versioned apart from the application: `chart/vX.Y.Z` tags publish `lasuite/encryption-chart` on Docker Hub and run only the chart jobs; `vX.Y.Z` tags release the image and skip the chart. A push to the CI branch republishes the image as `main` only when something outside `deploy/helm` changed, and the chart as `0.0.0-main` only when `deploy/helm/encryption` or `.github` changed, both compared with the commit of the last successful run on the branch (the `changes` job), so a failed release is published again by the next push. `image.tag` is therefore required in the values. `deploy/helm/suite-stack` is a second, unpublished chart for beta testing: the encryption chart (from the checkout) plus the published Docs, Drive and `dev-backend` (PostgreSQL, Redis, MinIO, Keycloak) charts as dependencies, a bootstrap Job that creates the databases, roles, buckets, OIDC clients and tester accounts and runs the encryption migration, Mailpit, and render-time checks that the blocks agree (`templates/_checks.tpl`); `deploy/helm/suite-stack.test.ts` covers it and needs the network for `helm dependency update`. `deploy/helmfile/preview` renders that stack as one environment per pull request (`feature` + `domain` inputs, hostnames derived, namespace `preview-<n>`), deployed per pull request by an Argo CD ApplicationSet in the deployment repository (`deploy/argocd/applicationset-preview.example.yaml`, a pull request generator on the `preview` label); `.github/workflows/preview.yml` publishes the pull request's own image to `lasuite/encryption` on Docker Hub (`pr-<n>`, which the helmfile derives from the number, and `sha-<8>`; the branch name on a manual run, allowed on `feat/*` branches only), with the Docker Hub token of the `release` environment (whose branch rules must admit `refs/pull/*/merge` and `feat/*`), comments the URLs, nudges Argo CD's webhook, and cleans its tags (a pull request's on close or unlabel, the rest after thirty days). The image build and scan steps are shared with the release job through `.github/actions/build-image`.
+- `.storybook/` — Storybook config with factory pattern from assistant-declaration. The CI's `chromatic` job publishes it to Chromatic (`chromatic.config.json`: TurboSnap, never fails on visual changes, a push auto-accepts them as the new baseline), skipped when `CHROMATIC_PROJECT_TOKEN` is absent (forks, Dependabot, `act`). A story displaying a date derived from "now" must set `parameters.date` and build its fixtures from that instant, or its snapshot changes every day.
+
+## Tech stack
+
+- **Crypto**: libsodium-wrappers-sumo (WASM), hybrid X25519 + post-quantum placeholder, XChaCha20-Poly1305
+- **Server**: Fastify (plain), Prisma 7 + PostgreSQL, esbuild bundle (single .mjs, zero node_modules in production)
+- **Frontend**: React, `@gouvfr-lasuite/ui-components` (components, its SVG icons from `/icons`, never Material Icons; Marianne loaded from `/fonts/marianne`; sizes and colors only through its `--c--globals--*` / `--c--contextuals--*` variables, the same ones the Figma names), i18next, MDX docs. Product theme names go through `resolveThemeName` (`src/ui/theme.ts`: `dsfr` → `dsfr-light`)
+- **Build**: Vite (vault, UI, client SDK, demo), esbuild (server), vite-plugin-sri-gen
+- **Tests**: Vitest (unit, Node) + Vitest browser mode via `@storybook/addon-vitest` (stories, Chromium/Playwright)
+- **Auth**: Keycloak (local dev), any OIDC provider (production). The **server** runs the login as a confidential client (`OIDC_CLIENT_SECRET`, PKCE on top): `GET /api/auth/authorize`, then `/auth/callback` posts the code to `POST /api/auth/token` (`src/server/routes/auth.ts`), which answers the provider's **ID token**. The interface keeps it per suite user (`src/ui/auth/id-token-storage.ts`) and sends it as the Bearer of every call, verified locally by `src/server/plugins/id-token-auth.ts`; the access token never leaves the server. No refresh: at expiry (about 1 h) or on a 401 it becomes `SessionExpiredError` and the Reconnect banner. Replacing an identity needs a **step-up** (RFC 9470, `src/server/auth/step-up.ts`), surfaced as `StepUpRequiredError`. Claims, scopes and step-up variables: README "Identity provider"; design: architecture.md §2.1. The local realm is imported only once, so a Keycloak created before a change to `config/development/realm-export.json` keeps its old clients until its volume is recreated or the client updated through the admin API.
+- **Package manager**: npm with all versions pinned (no ^ or ~)
+
+## Key conventions
+
+- **All imports use `@encryption/src/...`** — zero relative imports. The alias maps to the project root via tsconfig paths.
+- **All UI text goes through i18next** (`useTranslation('common')`) — translations in `src/i18n/fr/common.json`.
+- **Server API returns error codes** — codes defined in `src/shared/error-codes.ts`, translated on the frontend via `translateApiError()`. Every error body also carries an English `message`, read from the SAME i18n files (`errors.api.{code}`) by a server-side i18next instance (`src/server/i18n.ts`) and injected centrally by `attachApiErrorMessages`. It serves consumers that are not a translated UI: logs, the client SDK, product backends. Add a new code to `src/i18n/{en,fr}/common.json` under `errors.api` — `error-codes.test.ts` fails on a missing or orphan entry in either locale. The **code stays authoritative** — never branch on the message, and the UI only falls back to it for a code it has no translation for.
+- **The typed API surface is generated, never hand-written** — routes declare Zod `schema` (request + response + `errorResponses(...)`), `npm run api:schema:generate` emits `openapi.json` from the live routes, and `npm run api:client:generate` turns it into `src/ui/api/generated/` (types, SDK, MSW handlers). **Run `npm run api:schema:sync` and commit the result whenever you add or change an endpoint** — CI fails if the committed output is stale. The UI calls the generated SDK through `src/ui/api/client.ts`; route tests call the same SDK over `createTestApiClient(app)`, which injects instead of using the network. In Storybook the global MSW handlers answer **501 for every endpoint** on purpose: a story declares the responses it needs itself, so it stays a self-contained description of one state.
+- **A story must assert the state it claims to show.** `npm run test:e2e:headless` (Vitest browser mode via `@storybook/addon-vitest`, also a CI step) opens every story in Chromium, but it can only fail on a thrown error or a failed `play()` assertion. A story with no `play()` therefore proves only that it does not crash: components catch their own errors, so it can render an error alert instead of its state and still pass. When a state is reached by an action (a click, a step in a flow) or is one of several similar screens, drive it and assert it in `play()`.
+- **Zod schemas live with their only consumer.** `src/shared/schemas/` is reserved for shapes whose _inferred type_ is needed OUTSIDE the server (`VaultItemWire`, `VaultKeyringWire`, post-message, interface-context) — the schema and its type cannot be split, and putting them in a route file would make the vault/crypto bundles import server code. Everything else is route-local: **inline the `z.object({…})` directly in the route's `schema` block when it is used once**, and only lift it to a named const when a second call site (or a unit test) genuinely needs it. Use `src/server/schemas/` when two routes share it. Consumers of a response shape read its type off the generated client, never off a schema.
+- **PostMessage type keys are centralized** in `src/shared/constants.ts` as `MSG_VAULT_*` and `MSG_INTERFACE_*` constants.
+- **Comments and logs in English** — only i18n JSON and MDX user documentation are in French.
+- **Fingerprints are 40 decimal digits** without spaces: a scheme digit (`1`) then 128 bits of a domain-separated SHA-256, computed only by `computeDecimalFingerprint` (`src/shared/decimal-fingerprint.ts`, shared by vault, interface and SDK); formatted with `formatFingerprint()` for display only.
+- **Every signature, keyed derivation, fingerprint and AEAD ciphertext binds a domain label** from `src/shared/crypto-domains.ts` (`lasuite-encryption/<purpose>/v<n>`): signed bytes start with it, `encryptContent` and the X-Wing wrap take it as required associated data (typed `AeadDomain` / `KemWrapDomain`, with an optional length-framed context), and `deriveSubkey` (`SubkeyDomain`) is the only way to key a second primitive from a KEK or an X-Wing secret. A new use of a key gets a new label there, never an existing one. Known-answer tests freeze the formats: a failing vector means existing data stops opening.
+- **Test files sit next to source files** (e.g., `encryption.test.ts` next to `encryption.ts`), not in `__tests__/` directories.
+- **Dev tooling follows the betagouv pattern** (etabli, assistant-declaration): prettier with Trivago import sorting, ESLint, EditorConfig, VS Code configs, dotenv-run-script.
+
+## Cryptography architecture
+
+**Two key pairs per user**, each one holds:
+
+- **Encryption key pair** — X-Wing hybrid KEM (X25519 + ML-KEM-768), wraps symmetric keys.
+- **Signature key pair** — Ed25519 (`crypto_sign_*`). This is the **identity**: its public-key fingerprint is what users verify out-of-band (QR code / transmitted digits). It signs identity bindings and proof-of-possession challenges; it never wraps content.
+
+They are minted, backed up, and transferred together (`UserKeyBundle`). The identity (signature key) is long-lived and stable; the encryption key can rotate independently and repeatedly under that same identity, so contacts who verified the identity out-of-band never have to re-verify when only the encryption key changes.
+
+**The registry is two tables** (`src/prisma/schema.prisma`):
+
+- **`identities`** — one row per identity (signature) key: the Ed25519 public key (globally unique = anti-impersonation), a per-user `generation`, and future-only continuity columns (`previousIdentityId` + `continuitySignature`) that let a new identity be cross-signed by the previous one, so verifiers who trust the old identity transitively trust the new (reserved for an Ed25519 → post-quantum signature migration; the flow is not wired yet).
+- **`key_registrations`** — one row per encryption key, referencing `identityId`, with a monotonic per-user `version`, `createdAt`, and the **binding signature** (Ed25519 by the identity key over version + createdAt + userId + both public keys). Rotating the encryption key inserts a new row referencing the SAME identity; the directory joins the active row to its identity.
+
+Because `version` and `createdAt` are inside the signature, a database attacker cannot reorder, splice, or backdate rows without breaking it; any verifier holding the out-of-band-verified identity key detects tampering. Consumers verify the binding before using the data; an incoherent record triggers a warning. Registration records are immutable — restoring an already-registered key **reactivates** its existing row (preserving version/createdAt/signature), never mints a new version.
+
+**Proof of possession at registration** proves both private keys: the encryption key resolves a challenge from the server, and the identity key signs the server's challenge id. The server re-verifies the binding signature, enforces strictly-increasing version (for genuinely new keys), reuses the identity when its signature key already belongs to the user, and rejects a signature/encryption key already claimed by another user. Fingerprint verification (out-of-band) + binding verification together form the trust decision.
+
+**Symmetric (documents)**: XChaCha20-Poly1305 via `crypto_aead_xchacha20poly1305_ietf`. Quantum-safe.
+
+**Backup passphrase**: Full secret keys serialized as base64url JSON (~400 chars). NOT seed-based — using a shared seed would reduce hybrid security to the seed's entropy, losing the independent-compromise benefit.
+
+**Device transfer**: Ephemeral AES-256 key encoded as 24-word BIP-39 mnemonic (`@scure/bip39`). The encrypted payload goes to the server, the mnemonic stays with the user.
+
+## PostMessage API
+
+Two categories of operations:
+
+- **Product operations** (any allowed origin): `has-keys`, `get-public-key`, `encrypt-without-key`, `encrypt-with-key`, `decrypt-with-key`, `share-keys`, fingerprint checks
+- **Privileged operations** (only `encryption`): `generate-keys`, `sign-key-registration`, `respond-to-key-challenge`, `export-backup`, `import-backup`, `destroy-keys`, device transfer
+
+The vault enforces this via `PRIVILEGED_OPERATIONS` set + `isInterfaceOrigin()` check.
+
+**The interface draws its own modal over the product.** Every SDK `open*` call (`openOnboarding()`, `openSettings(section?)`, `openEmergencyAccess()`, `openRecipientProfile(userId, label)`, no container) lays a transparent full-viewport iframe over the page, kept `visibility: hidden` until the app inside asks for its context, then revealed with the `interface:ready` event; the product shows only a loader in a modal of its own until then (Docs and Drive `EncryptionHostBody`, the demo) and unmounts it on `interface:closed`. Inside, `App.tsx` wraps every screen in the design system's `Modal` (small = 350px, medium = 450px, large = 526px, set in `layout.module.css`; a screen asks for a wider one with `useModalSize`: medium for the trusted contacts and the recovery phrase boxes, large for the settings home; close control anchored to the box), so no size ever crosses the two windows; the verify overlay and the SDK-opened emergency prompt draw their own modal, documentation pages are whole pages. Screens are laid out with the primitives in `src/ui/components/layout/` (`Screen`: illustration, title, description, body, stacked full-width actions, an optional `back` link above the title for a step back inside a flow; `IdentityCard` + `FingerprintBoxes`; `layout.module.css`, a CSS module whose keys are typed by the generated `layout.module.css.d.ts`: run `npm run css:types` after editing the stylesheet, `src/build/css-module-types.test.ts` fails when it is stale, and a removed class then fails `tsc` at every call site). The modal's close control raises a close request that the shown screen may hold (`useCloseGuard`, e.g. an unsaved recovery phrase asks "cancel the setup?"); the interface confirms with `MSG_INTERFACE_CLOSED` once it has really closed, and a product can raise the same request with `vaultClient.requestClose()`. `openSettings()` without a section shows the interface's own encryption home (status banner, then every flow), for a product with no account page; with a section (`src/shared/settings-section.ts`: `manage`, `add-device`, `verification-code`, `recovery-phrase`, `trusted-contacts`, route `/settings/<section>`) it shows that single flow, which closes the interface when it ends: LaSuite Accounts lists the flows on its own Encryption page and opens them this way, after `getEncryptionStatus()` (vault keys + public directory, no interface sign-in needed) chose its banner. In Storybook, `parameters.hostModal` (`true` = 350px, widened by a screen's `useModalSize` as in the product, `'medium'` = 450px from the start, both with the close control; `'card'` = the width alone, for a component that lives inside a screen) stands in for that modal.
+
+## Security measures
+
+- CSP, COEP, COOP, CORP headers (vault is the most restrictive)
+- SRI on all script tags in HTML (generated at build time)
+- Service Worker for offline support and version updates
+- Runtime origin validation on every postMessage
+- Domain validation: `VAULT_DOMAIN` must start with `data.`, `UI_DOMAIN` must start with `interface.`
+- Direct access blocked on both domains (iframe check in HTML)
+- Browser version check (from browserslist) shown as warning
+- Extensions warning during onboarding
+- `robots.txt` + `<meta name="robots" content="noindex, nofollow">`
+- `/.well-known/security.txt` (RFC 9116) on both hosts, only when the operator set `SECURITY_CONTACT_URL` (the contact is theirs, not the code's); generated at request time so `Expires` never goes stale. `SECURITY.md` is the channel for the code itself
+- Rate limiting: 10 key creations per 30 days, 10 device transfers per hour
+- Maintenance escrow (architecture.md Appendix E), off unless `MAINTENANCE_ESCROW_KEYS` is set: a JSON list of operator X-Wing keys, one per organization, each with the email domains it covers (`src/server/maintenance-escrow.ts`: longest domain on a label boundary, `*` for the rest, else no copy). The vault wraps every resource key once more for the key covering the resource's OWNER (the creator in `encrypt-without-key`, `ownerSub` or the sharer in `share-keys`): it asks `/api/maintenance-escrow/assignment` (the server holds the emails) for a fingerprint and wraps only for the runtime-config key with that fingerprint, so neither the server nor a product can introduce a key. Label `DOMAIN_KEM_MAINTENANCE_KEY` (never the document-key one), AFTER the recipient trust gate, returned as a separate `maintenanceKey` field; products persist it next to the ciphertext. The copy is `[0x01][key id:16][wrap]` (key id = the fingerprint's 128 bits, a routing hint), so the tool sets aside another organization's items (`other-keys/<fingerprint>/` in its archive, still encrypted) and SQL can filter an export per key. `shareKeys` with no recipients returns only that copy (backfill). Never a recipient, never a user key; the nested Drive operations produce none. The server logs each key's fingerprint (`DOMAIN_MAINTENANCE_KEY_FINGERPRINT`) with its domains at boot so custodians can compare it with the tool's.
+- Device transfer sessions auto-deleted after 1 hour
+- A browser forgets a user's vault after `VAULT_DEVICE_INACTIVITY_DAYS` without use (365 by default, `0` off, otherwise at least 30): `src/vault/device-activity.ts`, checked by the message handler before every operation and on every read of the persisted cache; `has-keys` then carries `deEnrolled` so the onboarding explains it
+- Reporting API endpoint at `/api/browser-reports` (`BROWSER_REPORT_PATH`), declared
+  under the reserved `default` name so it receives every report type, not only CSP.
+  Security types (`csp-violation`, `coop`, `coep`, `integrity-violation`, `crash`)
+  are logged at warn, the rest at info. A violation on the vault host in production
+  is close to proof of a compromised bundle: its policy allows no external load at all.
+
+## Error reporting
+
+Optional, off unless `SENTRY_DSN` is set, and never a dependency of the service.
+
+- **No Sentry SDK anywhere.** `src/server/monitoring.ts` speaks Sentry's public
+  envelope API over `fetch`, in one reviewable file with no package added to the
+  tree. The SDK's value is automatic context capture (request bodies, headers,
+  breadcrumbs, local variables, spans), which on an E2EE service is exactly the
+  behaviour that must not exist: CVE-2025-65944 is that story, where `Authorization`
+  and `Cookie` headers reached Sentry through span attributes and Sentry's own
+  server-side scrubbing missed them too. Any Sentry-compatible collector works
+  (Sentry, self-hosted Sentry, GlitchTip).
+- **Allowlist, not scrubbing.** The event is built field by field: error type,
+  redacted message, stack frames, and six permitted tag names (`route`, `method`,
+  `status`, `host`, `reportType`, `code`). No request, user, breadcrumb, context or
+  extra key is ever constructed. `redact()` removes emails and any 32+ character
+  base64url/hex run (a key, a wrapped blob, a JWT segment) from every string sent.
+- **The interface and the vault report through our own backend**, never to a
+  collector directly, with one shared reporter (`src/shared/error-reporting.ts`) and
+  one strict schema (`src/shared/schemas/browser-error-report.ts`): an error class
+  name (letters only), a stable `VaultError` code, and same-origin stack positions
+  parsed in the browser. `error.stack` itself is never sent, since its first line is
+  the message. The CSP keeps `connect-src 'self'`, an extension blocking analytics
+  cannot suppress a security report, and redaction happens server-side.
+  - The **interface** adds the message and `location.pathname` (never the query
+    string, which on `/auth/callback` carries an authorization code).
+  - The **vault** never adds them (its variables are private keys and plaintext),
+    and the server drops any report from the vault host that carries either, so the
+    guarantee does not rest on vault code. It reports only what nothing else covers:
+    uncaught errors in the vault window and its Service Worker, an unexpected
+    (non-`VaultError`) throw inside an operation, and the integrity codes
+    (`VAULT_INTEGRITY_FAILED`, `INVALID_KEY_BINDING`). CSP, Trusted Types, COOP/COEP
+    violations and crashes already reach the endpoint through the browser's Reporting
+    API, and expected failures already reach the product as codes.
+  - The **Service Worker** carries an inline name-and-code-only copy and must never
+    import the reporter: a module shared with the vault entry becomes a chunk the
+    vault host does not serve, and the vault build fails on it.
+- **Source maps are files for the server, never for the browser.** The build writes
+  a `.map` next to every bundle and the image ships both. Nobody uploads them and no
+  browser ever fetches one. They are read only when an error is reported, by
+  `src/server/symbolicate.ts`, inside the container: an interface exception points
+  at positions in the minified bundle, translated through the matching
+  `dist/ui/assets/*.map` back to `src/ui/*.tsx` lines, and a server exception points
+  at `dist/server/main.mjs`, translated through `main.mjs.map` to `src/server/*.ts`
+  lines, before the event leaves. It uses `node:module`'s `SourceMap`, so no package
+  is added. Node is deliberately NOT started with `--enable-source-maps`: it decodes
+  the whole server map up front and keeps it, about 200 MB of heap for the rare
+  error, so the server map is opened when a report needs it and dropped a minute
+  later. Server logs therefore carry bundle positions (`main.mjs:312045:12`); the
+  bundle is not minified, so they already name functions, and
+  `npm run stack:resolve` translates them (`--map` for the map copied out of a
+  deployed image). This is the shape that fits an image many organizations deploy against
+  their own collector: a CI job uploading maps would upload them to OUR collector,
+  and a deployment needs nothing beyond `SENTRY_DSN`. Consequently `release` is only
+  a label (the `/api/version` build hash by default) and no commit SHA has to travel
+  anywhere. Two consequences of "the browser never reads them": Vite builds with
+  `sourcemap: 'hidden'`, which writes the same file as `true` but appends no
+  `sourceMappingURL` comment to the bundle (the browser's cue to fetch a map, and an
+  extra line in the bytes SRI hashes); and the maps **are not reachable over HTTP**:
+  the interface's static root refuses `.map` (`isServableAsset`, with a test) and the
+  vault host serves a fixed allowlist that has never included one. They carry
+  positions only (`sourcemapExcludeSources`, `--sources-content=false`), since the
+  source text is already public in this repository and only the mappings are used.
+
+## Port scheme (local development)
+
+| Port | Service                    | Hostname                                             |
+| ---- | -------------------------- | ---------------------------------------------------- |
+| 7200 | Fastify (API + Vault + UI) | `data.encryption.localhost` / `encryption.localhost` |
+| 7201 | Demo Product A             | `localhost`                                          |
+| 7202 | Demo Product B             | `localhost`                                          |
+| 7203 | Keycloak                   | `localhost`                                          |
+| 7204 | Storybook                  | `localhost`                                          |
+| 7205 | PostgreSQL (app)           | `localhost`                                          |
+| 7206 | PostgreSQL (Keycloak)      | `localhost`                                          |
+| 7207 | Maildev (web)              | `localhost`                                          |
+| 7208 | Maildev (SMTP)             | `localhost`                                          |
+| 7209 | GlitchTip                  | `localhost`                                          |
+| 7210 | Maintenance tool (dev)     | `localhost`, `/maintenance-tool.html`                |
+
+In development, a single Fastify server on port 7200 embeds Vault and UI via Vite middleware mode. Host-based routing dispatches requests to the correct Vite instance. Everything works on `localhost:7200`, but for proper origin isolation (matching production), use the `.localhost` subdomains above. Modern browsers resolve `*.localhost` to `127.0.0.1` automatically and treat them as secure contexts (required for `crypto.subtle`). If your browser doesn't resolve them, add these entries to `/etc/hosts`:
+
+```
+127.0.0.1 data.encryption.localhost
+127.0.0.1 encryption.localhost
+```
+
+## How to run locally
+
+```bash
+# Start databases + Keycloak
+docker compose up -d
+
+# Install deps + generate Prisma client
+npm install
+npm run db:schema:compile
+
+# Create database tables
+npm run db:push
+
+# Start everything (server with vault+UI, 2 demo products)
+npm run dev
+
+# Open Demo Product A
+open http://localhost:7201
+
+# Open Demo Product B (different port = different origin, proves cross-origin works)
+open http://localhost:7202
+```
+
+Error reports from the dev server land in the GlitchTip started by `docker compose up`
+(a Sentry-compatible collector, so the code path is the one a production Sentry would
+exercise). Open http://localhost:7209 and log in as `dev@example.com` /
+`devdevdev`: the project and the fixed DSN in `.env.test` are seeded on every boot.
+
+`.env.test` also sets `MAINTENANCE_ESCROW_KEYS` to one `*` entry with the public key of the committed DEV phrase (`DEV_MAINTENANCE_PHRASE` in `src/maintenance/dev-maintenance-key.ts`, a fixture, never for a real deployment), so demo documents carry a `maintenanceKey` that the maintenance tool opens (README, "Maintenance escrow", has the export command for the demo store).
+
+## Common commands
+
+```bash
+npm run dev              # Start server (API + vault + UI) + demos + storybook
+npm run build            # Build server + vault + UI + client SDK
+npm run test:unit        # Run tests
+npm run test:helm        # Render and check the Helm chart in deploy/helm (needs helm + kubeconform)
+npm run test:e2e:headless # Render every story in a headless browser
+npm run test:e2e         # Same, with the browser visible
+npm run lint             # ESLint + TypeScript check
+npm run format           # Prettier write
+npm run format:check     # Prettier check
+npm run db:push          # Apply schema to database
+npm run db:studio        # Open Prisma Studio
+npm run dev:storybook    # Start Storybook on port 7204
+npm run dev:maintenance  # The maintenance tool with hot reload on port 7210 (no CSP: the built file has it)
+```
+
+`test:e2e` renders the stories through Vite directly, so there is nothing to build or
+serve first and it does not need port 7204. It opens a real browser to watch;
+`test:e2e:headless` passes `--browser.headless` for CI (Vitest already defaults to
+headless whenever `CI` is set). `start:storybook` still serves a built
+`storybook-static/` on 7204 if you want to browse one.
+The browsers do not arrive with `npm install`: the `playwright` package declares no
+install script, so one only appears when something runs `npx playwright install`.
+Install chromium once locally (`npx playwright install chromium`); CI does it
+explicitly, from a cache, and the Docker build never runs a browser at all.
+
+## What's next / known TODOs
+
+- **ML-KEM**: When `libsodium.js` exposes ML-KEM bindings, swap the post-quantum slot in `src/crypto/encryption.ts` (`getPostQuantumKem` function). The `KeyEncapsulation` interface is already designed for this swap.
+- **English translations**: Only French (`fr`) is available. The i18next setup supports multiple languages, just add `src/i18n/en/common.json`.

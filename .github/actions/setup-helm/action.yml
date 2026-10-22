@@ -1,0 +1,36 @@
+name: Setup Helm
+description: Helm and kubeconform for the chart tests and the chart release, helmfile for the test that renders deploy/helmfile/preview.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Helm, kubeconform and helmfile
+      shell: bash
+      env:
+        HELM_VERSION: v3.19.0
+        HELM_SHA256: a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496
+        KUBECONFORM_VERSION: v0.7.0
+        KUBECONFORM_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
+        HELMFILE_VERSION: 1.1.7
+        HELMFILE_SHA256: e9d870f4e502b9f0850d7e0546cab8b418ff7f44ff4df0ed54cd3df8dfda189c
+      run: | # zizmor: ignore[github-env] the path written is a constant, never derived from an input
+        set -euo pipefail
+        mkdir -p "${HOME}/.local/bin"
+
+        curl -sSfL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+        echo "${HELM_SHA256}  /tmp/helm.tgz" | sha256sum -c -
+        tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm
+        mv /tmp/linux-amd64/helm "${HOME}/.local/bin/helm"
+
+        curl -sSfL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
+        echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum -c -
+        tar -xzf /tmp/kubeconform.tgz -C "${HOME}/.local/bin" kubeconform
+
+        curl -sSfL "https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION}_linux_amd64.tar.gz" -o /tmp/helmfile.tgz
+        echo "${HELMFILE_SHA256}  /tmp/helmfile.tgz" | sha256sum -c -
+        tar -xzf /tmp/helmfile.tgz -C "${HOME}/.local/bin" helmfile
+
+        echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+        "${HOME}/.local/bin/helm" version --short
+        "${HOME}/.local/bin/kubeconform" -v
+        "${HOME}/.local/bin/helmfile" --version

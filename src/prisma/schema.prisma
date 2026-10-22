@@ -1,0 +1,406 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Signature (identity) algorithm. A closed set, not a free string: every value
+/// needs specific libsodium/verification handling, so add a member only when the
+/// algorithm is actually implemented. This value is part of the SIGNED continuity
+/// payload (see src/crypto/key-registration.ts), so:
+///   - NEVER rename a member (it would break verification of existing records);
+///   - add future members with their EXACT wire spelling as the member NAME
+///     (e.g. `ml_dsa`, `slh_dsa`), NOT via @map, so the Prisma value equals the
+///     signed string.
+enum SignatureAlgo {
+  ed25519
+}
+
+/// Encryption (KEM) algorithm. Same closed-set rules. Unlike the signature algo,
+/// this value is server-side metadata only (never returned to clients or signed),
+/// so `@map` is safe here: Postgres enum members can't contain '-', so the
+/// canonical stored string "x-wing" is kept via @map while the Prisma member is
+/// the identifier `x_wing`.
+enum EncryptionAlgo {
+  x_wing @map("x-wing")
+}
+
+/// The kind of a sealed vault item (routing metadata the CLIENT uses to rebuild
+/// VaultState). A closed set enforced at the DB so a client cannot POST a
+/// meaningless type through the API. Adding a new item kind is a deliberate
+/// server migration (the vault's VAULT_SCHEMA_VERSION coordinates the client
+/// side). Members must match the client's `ItemType` strings exactly
+/// (src/crypto/vault-items.ts); they are covered by the signed manifest, so never
+/// rename one.
+enum VaultItemType {
+  identity
+  encryptionKey
+  tofu
+  active
+}
+
+/// A user of the encryption service. `id` is the canonical, immutable user
+/// identifier: it is embedded in binding signatures, request proofs, sealed
+/// TOFU items, and local caches, so it MUST never change once minted. OIDC
+/// credentials map to it through OidcAccount; credentials can change (provider
+/// migration, sub format change), this id cannot.
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @map("email") // latest email from OIDC claims to be used for notifications (not login), this one is not unique since over time an organization could reallocate an email for a new sub
+  language  String   @default("en") @map("language") // app locale ('fr' | 'en'), refreshed at each login from the OIDC `locale` claim, else from the interface's language; chooses the language of notification emails
+  firstName String?  @map("first_name") // from the OIDC claims, refreshed at each login; shows this user to the people they share with (null until their first login since it was added)
+  lastName  String?  @map("last_name")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  oidcAccounts            OidcAccount[]
+  identities              Identity[]
+  encryptionKeys          EncryptionKey[]
+  keyPossessionChallenges KeyPossessionChallenge[]
+  vaultKeyrings           VaultKeyring[]
+  vaultChallenges         VaultChallenge[]
+  vaultApprovals          VaultApproval[]
+  emergencyAccessGranted  EmergencyAccess[]        @relation("emergencyAccessAsGrantor")
+  emergencyAccessReceived EmergencyAccess[]        @relation("emergencyAccessAsGrantee")
+
+  @@map("users")
+}
+
+/// One OIDC credential (issuer + sub) linked to a user. `subject` is only
+/// unique per issuer (two providers can issue the same sub value for two
+/// different humans), hence the composite unique. A user accumulates rows
+/// across provider migrations. Rows are never deleted, but retired-issuer rows
+/// are kept for AUDIT and operator merge tooling only: directory resolution is
+/// scoped to the currently configured issuer (matching a retired row could
+/// return another human's keys on a cross-issuer sub collision). `disabledAt`
+/// blocks authentication with a retired provider.
+model OidcAccount {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  issuer     String    @map("issuer") /// the token's `iss` claim, verbatim
+  subject    String    @map("subject") /// the token's `sub` claim, verbatim
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") /// bumped at each login; identifies dead credentials after a migration
+  disabledAt DateTime? @map("disabled_at") /// set when an operator retires a provider's credentials; blocks auth, not resolution
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([issuer, subject])
+  @@index([userId])
+  @@map("oidc_accounts")
+}
+
+/// A user's IDENTITY: the Ed25519 signature key contacts verify out-of-band
+/// via fingerprint / QR code. Split from the encryption key (KeyRegistration
+/// below) on purpose — the identity is long-lived and stable, while encryption
+/// keys can rotate independently (a stronger KEM, a system-driven upgrade)
+/// WITHOUT contacts having to re-verify anything. That separation is the whole
+/// point of the signature identity: one identity vouches for many encryption
+/// keys over time.
+///
+/// `signaturePublicKey` is globally unique — the anti-impersonation property:
+/// two users can never claim the same identity, even if a private key leaked.
+/// The same key is NOT duplicated across the user's encryption-key rotations,
+/// because those live in KeyRegistration and only reference `identityId`.
+///
+/// Identity rotation (a DIFFERENT identity key — e.g. migrating Ed25519 → a
+/// post-quantum signature once one is standardized) is modelled by the
+/// continuity chain: a new identity carries `previousIdentityId` +
+/// `continuitySignature` = Sign(previousIdentitySecret, canonical(newIdentity)),
+/// so a verifier who already trusts the old identity transitively trusts the
+/// new one with no fresh out-of-band check. The rotation *flow* is future work;
+/// the columns exist now so the model never has to be migrated for it.
+model Identity {
+  id                 String        @id @default(uuid()) @db.Uuid
+  userId             String        @map("user_id") @db.Uuid /// canonical internal user id (users.id), NOT the OIDC sub; it is embedded in signed payloads so it must be immutable
+  signaturePublicKey Bytes         @unique @map("signature_public_key") /// [version:1][ed25519Pubkey:32] — the identity; globally unique so two users can't claim the same identity even if a private key leaked. Bytes: the server verifies bindings + PoP against it.
+  algo               SignatureAlgo @default(ed25519) @map("algo") /// identity signature algorithm (closed set, see SignatureAlgo)
+  generation         Int           @map("generation") /// monotonic per user, starting at 1; bumps only on a genuine identity rotation
+  createdAt          DateTime      @default(now()) @map("created_at")
+  disabledAt         DateTime?     @map("disabled_at")
+
+  /// Cross-signing chain for a FUTURE identity migration. Null for a first or
+  /// standalone identity. When set, `continuitySignature` is a signature by the
+  /// PREVIOUS identity key over this identity's canonical bytes.
+  previousIdentityId  String?    @map("previous_identity_id") @db.Uuid
+  previousIdentity    Identity?  @relation("IdentityChain", fields: [previousIdentityId], references: [id])
+  nextIdentities      Identity[] @relation("IdentityChain")
+  continuitySignature Bytes?     @map("continuity_signature") /// Sign(previousIdentitySecret, canonical(this identity)); Bytes because the server will verify the link when the continuity/migration flow is wired
+
+  user                               User              @relation(fields: [userId], references: [id])
+  encryptionKeys                     EncryptionKey[]
+  vaultKeyrings                      VaultKeyring[]
+  emergencyAccessesAsGranteeIdentity EmergencyAccess[] @relation("emergencyAccessGranteeIdentity")
+
+  @@unique([userId, generation])
+  @@index([userId, disabledAt])
+  @@map("identities")
+}
+
+/// One encryption public key (X-Wing wire blob) bound to an Identity for one
+/// monotonic per-user `version`. `keyBindingSignature` is an Ed25519 signature,
+/// made by the bound identity key, over the canonical payload (domain, version,
+/// createdAt, userId, encryptionPublicKey, signaturePublicKey) — see
+/// src/crypto/key-registration.ts. Because `version` and `createdAt` are inside
+/// that signature, a database attacker cannot reorder, splice, or backdate rows
+/// without invalidating it; any verifier holding the out-of-band-verified
+/// identity key detects the tampering.
+///
+/// Rotating the encryption key (keeping the identity) inserts a new row with
+/// `version` = previous max + 1 referencing the SAME `identityId`, and disables
+/// the previous active rows in a transaction — so only the most recent row
+/// without a `disabledAt` is active. `encryptionPublicKey` is globally unique:
+/// a key is never reused. Restoring an already-registered key REACTIVATES its
+/// existing row (same version, same signed createdAt) rather than inserting a
+/// duplicate — the signed metadata is immutable, so re-dating it is impossible.
+model EncryptionKey {
+  id                  String         @id @default(uuid()) @db.Uuid
+  userId              String         @map("user_id") @db.Uuid
+  user                User           @relation(fields: [userId], references: [id])
+  identityId          String         @map("identity_id") @db.Uuid
+  identity            Identity       @relation(fields: [identityId], references: [id])
+  encryptionPublicKey Bytes          @unique @map("encryption_public_key") /// [version:1][xwingPubkey:1216]; globally unique. Bytes: the server encapsulates to it for the PoP challenge.
+  algo                EncryptionAlgo @default(x_wing) @map("algo") /// encryption KEM algorithm (closed set, see EncryptionAlgo)
+  keyBindingSignature Bytes          @map("key_binding_signature") /// Ed25519 signature over the canonical registration payload; the server re-verifies it, so Bytes
+  version             Int            @map("version") /// monotonic per user, starting at 1; part of the signed payload
+  createdAt           DateTime       @default(now()) @map("created_at") /// client-asserted creation time (inside the signature; server validates skew)
+  updatedAt           DateTime       @default(now()) @updatedAt @map("updated_at")
+  disabledAt          DateTime?      @map("disabled_at")
+
+  @@unique([userId, version])
+  @@index([userId, disabledAt])
+  @@index([userId, createdAt])
+  @@index([identityId])
+  @@map("encryption_keys")
+}
+
+/// Pending proof-of-possession challenges for identity registration.
+///
+/// The candidate identity (both public keys + the binding signature + the
+/// version/timestamp it intends to register) is stashed here between `init`
+/// and `complete`. The server encapsulates a fresh X-Wing shared secret to the
+/// candidate ENCRYPTION key and stores `expectedHmac = HMAC_SHA256(ss, id)`.
+///
+/// On `complete` the client proves possession of BOTH private keys:
+///   - encryption key: echoes the HMAC (from its own decapsulation),
+///   - signature key: returns an Ed25519 signature over `id`.
+/// Only then is the candidate promoted into a PublicKey row. Rows expire and
+/// are cleaned up.
+model KeyPossessionChallenge {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @map("user_id") @db.Uuid
+  user                User     @relation(fields: [userId], references: [id])
+  encryptionPublicKey Bytes    @map("encryption_public_key") /// [version:1][xwingPubkey:1216] — replayed verbatim into EncryptionKey on success
+  signaturePublicKey  Bytes    @map("signature_public_key") /// [version:1][ed25519Pubkey:32]
+  keyBindingSignature Bytes    @map("key_binding_signature") /// Ed25519 binding signature, verified at init and persisted on success
+  version             Int      @map("version") /// candidate key version (validated for monotonicity inside the complete transaction)
+  signedCreatedAt     DateTime @map("signed_created_at") /// client-asserted creation time covered by the binding signature
+  expectedHmac        Bytes    @map("expected_hmac") /// 32-byte HMAC-SHA256 tag the client must echo back (encryption-key PoP)
+  createdAt           DateTime @default(now()) @map("created_at")
+  expiresAt           DateTime @map("expires_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("key_possession_challenges")
+}
+
+/// One opaque record of a user's synchronized vault (an encryption key version,
+/// an identity generation, a TOFU entry, or the active pointer). `ciphertext` is
+/// sealed with the user's VRK and is never readable by the server. `revisionDate`
+/// drives per-item optimistic concurrency: an update carries the client's last
+/// known value and is rejected if the stored row is newer.
+model VaultItem {
+  id           String        @id @default(uuid()) @db.Uuid
+  vaultId      String        @map("vault_id") @db.Uuid /// which vault (keyring) this item belongs to; the owning user is reachable through it
+  itemId       String        @map("item_id") /// logical id, e.g. "enc:2", "tofu:<userId>", "active"
+  type         VaultItemType @map("type") /// routing metadata (closed set, see VaultItemType)
+  ciphertext   String        @map("ciphertext") /// base64, sealed with the VRK
+  revisionDate DateTime      @map("revision_date")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at")
+
+  vault VaultKeyring @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@unique([vaultId, itemId])
+  @@index([vaultId])
+  @@map("vault_items")
+}
+
+/// Per-vault metadata: the monotonic account revision (what clients poll to
+/// decide whether to pull) and the signed manifest that pins every item.
+///
+/// Split from VaultKeyring on purpose (a 1-1 relation) as a HOT/COLD divide:
+/// `accountRevision` + `manifest` change on EVERY vault mutation, whereas the
+/// keyring's unlock/auth material (wrappedVrk, authPublicKey, authPubSig, kdf,
+/// lang) is stable (changes only on a passphrase change). Keeping them apart
+/// avoids rewriting the stable credential row on every sync, and keeps the
+/// possibly-large manifest JSON off the small row that is read for auth,
+/// directory joins, and proof-of-possession.
+model VaultMeta {
+  vaultId         String   @id @map("vault_id") @db.Uuid
+  accountRevision Int      @default(0) @map("account_revision")
+  manifest        String   @map("manifest") /// canonical JSON
+  manifestSig     Bytes    @map("manifest_sig") /// Ed25519 by the identity key; the server verifies it at write so a stored vault is never left with a manifest the identity didn't sign
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  vault VaultKeyring @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@map("vault_meta")
+}
+
+/// A user's vault (container). A user can hold SEVERAL keyrings over time:
+/// exactly one is active (`disabledAt` null, the current vault), and any others
+/// are dormant remnants of superseded vaults, preserved so their recovery phrase
+/// can still recover their content within the retention window. Starting over
+/// never destroys the previous vault; it disables that keyring and creates a new
+/// one. The unlock material itself lives in VaultCredential: one vault can be
+/// opened by several credentials (the owner's phrase, plus dormant emergency
+/// phrases escrowed to trusted contacts).
+model VaultKeyring {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  identityId       String    @map("identity_id") @db.Uuid /// the directory identity this vault belongs to; lets reactivation flip the right identity + encryption key active
+  disabledAt       DateTime? @map("disabled_at") /// null = the user's current (active) vault
+  purgeNoticeAt    DateTime? @map("purge_notice_at") /// last purge warning emailed; only counts when later than disabledAt, so a reactivated then dormant-again vault is warned anew
+  purgeScheduledAt DateTime? @map("purge_scheduled_at") /// the deletion date that warning announced; the purge never runs before it, even after the retention was shortened
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  user        User              @relation(fields: [userId], references: [id])
+  identity    Identity          @relation(fields: [identityId], references: [id])
+  items       VaultItem[]
+  meta        VaultMeta?
+  credentials VaultCredential[]
+
+  @@index([userId])
+  @@index([userId, disabledAt])
+  @@map("vault_keyring")
+}
+
+/// The kind of a vault credential. `primary` is the owner's own recovery phrase
+/// (exactly one per vault, code-enforced); `emergency` is a dormant phrase
+/// escrowed to a trusted contact, owned by an EmergencyAccess row and only a
+/// valid unlock candidate while that row's recovery is approved.
+enum VaultCredentialType {
+  primary
+  emergency
+}
+
+/// One way to unlock a vault (a keyslot, LUKS-style): the material derived from
+/// one recovery phrase. All credentials of a vault wrap the SAME VRK, so they
+/// all open the same content; they differ only in which phrase derives them and
+/// in when the server accepts a proof against them.
+/// `wrappedVrk` is the only passphrase-brute-forceable artifact, so it is
+/// released only behind a proof of possession of the phrase. `authPublicKey` is a
+/// passphrase-derived verifier used server-side to check that proof (and to
+/// self-select which credential a phrase unlocks); it is NEVER returned to a
+/// client. `lang` is non-secret: it only selects the BIP-39 wordlist the
+/// phrase is drawn from, so restore uses the same word list it was generated
+/// with.
+model VaultCredential {
+  id            String              @id @default(uuid()) @db.Uuid
+  vaultId       String              @map("vault_id") @db.Uuid
+  type          VaultCredentialType @map("type")
+  wrappedVrk    String              @map("wrapped_vrk") /// base64; opaque, never compared server-side
+  authPublicKey Bytes               @map("auth_public_key") /// Ed25519 verifier the unlock/reactivate proof is checked against
+  authPubSig    Bytes               @map("auth_pub_sig") /// the identity's signature over authPublicKey (verified at credential write)
+  kdfOps        Int                 @map("kdf_ops") /// Argon2id opsLimit (time cost) used to derive the KEK from the recovery phrase; stored so the same params reproduce the KEK
+  kdfMem        Int                 @map("kdf_mem") /// Argon2id memLimit (memory cost) for the same KEK derivation
+  lang          String              @map("lang") /// BIP-39 wordlist language for the recovery phrase (e.g. "english", "french"); non-secret, only picks the wordlist
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at")
+
+  vault           VaultKeyring     @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  emergencyAccess EmergencyAccess?
+
+  @@index([vaultId])
+  @@map("vault_credentials")
+}
+
+/// Lifecycle of a trusted-contact relationship
+enum EmergencyAccessStatus {
+  invited
+  confirmed
+  recoveryRequested @map("recovery_requested")
+  recoveryApproved  @map("recovery_approved")
+}
+
+/// A trusted-contact (emergency access) relationship. Created in ONE step by
+/// the grantor: the row carries, from designation on, a dormant emergency
+/// credential for the grantor's vault (via `credentialId`) plus the matching
+/// emergency phrase wrapped to the contact's encryption key. The server can
+/// read neither. The wait period (`waitTimeDays`) is enforced lazily against
+/// `recoveryRequestedAt` at every release point; the hourly job only exists to
+/// send notifications and flip the visible status.
+/// The escrow fields are covered by `escrowSignature` (grantor identity key,
+/// context "lasuite-encryption/emergency-escrow/v1"), so the grantor's devices can audit the list
+/// against server tampering; the server also verifies it at write.
+/// Deleting the credential cascades this row away (vault purge, revocation).
+model EmergencyAccess {
+  id                      String                @id @default(uuid()) @db.Uuid
+  grantorUserId           String                @map("grantor_user_id") @db.Uuid
+  granteeUserId           String                @map("grantee_user_id") @db.Uuid
+  status                  EmergencyAccessStatus @map("status")
+  waitTimeDays            Int                   @map("wait_time_days") /// user-chosen opposition window, server-validated 1..90
+  credentialId            String                @unique @map("credential_id") @db.Uuid
+  wrappedPhraseForGrantee String                @map("wrapped_phrase_for_grantee") /// base64; the emergency phrase entropy wrapped to the contact's X-Wing key; released only while recovery is approved
+  granteeIdentityId       String                @map("grantee_identity_id") @db.Uuid /// FK to the pinned contact identity (identities row) for staleness detection; the raw key itself is still committed inside escrowSignature, so a server cannot repoint it undetectably
+  granteeKeyVersion       Int                   @map("grantee_key_version") /// contact's encryption-key version the capsule targets; lets the UI flag an outdated wrap and offer a re-arm
+  escrowSignature         Bytes                 @map("escrow_signature") /// Ed25519 by the grantor identity key over the canonical escrow payload; verified at write
+  escrowCreatedAt         DateTime              @map("escrow_created_at") /// client-asserted, inside the signature
+  recoveryRequestedAt     DateTime?             @map("recovery_requested_at") /// set at initiate; the wait deadline is recoveryRequestedAt + waitTimeDays
+  lastNotifiedAt          DateTime?             @map("last_notified_at") /// throttles the escalating reminder emails
+  createdAt               DateTime              @default(now()) @map("created_at")
+  updatedAt               DateTime              @default(now()) @updatedAt @map("updated_at")
+
+  grantor         User            @relation("emergencyAccessAsGrantor", fields: [grantorUserId], references: [id])
+  grantee         User            @relation("emergencyAccessAsGrantee", fields: [granteeUserId], references: [id])
+  granteeIdentity Identity        @relation("emergencyAccessGranteeIdentity", fields: [granteeIdentityId], references: [id])
+  credential      VaultCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@unique([grantorUserId, granteeUserId])
+  @@index([granteeUserId])
+  @@index([granteeIdentityId])
+  @@index([status, recoveryRequestedAt])
+  @@map("emergency_access")
+}
+
+/// Single-use nonce issued before a vault fetch or write, signed by the caller's
+/// vault auth key to prove possession of the recovery phrase.
+model VaultChallenge {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  nonce     Bytes    @map("nonce")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("vault_challenges")
+}
+
+/// A device-approval request. A new device publishes its ephemeral public key
+/// and a single-use `requestId` (the QR payload, no secret). An enrolled device
+/// wraps the bootstrap material (VRK + identity key) to that key and stores it
+/// here for the newcomer to poll.
+model VaultApproval {
+  id                     String   @id @default(uuid()) @db.Uuid
+  userId                 String   @map("user_id") @db.Uuid
+  user                   User     @relation(fields: [userId], references: [id])
+  requestId              String   @unique @map("request_id")
+  devicePublicKey        String   @map("device_public_key") /// base64
+  // Opaque base64 blob wrapped to the new device's ephemeral key: a JSON bundle
+  // of the VRK + identity secret key (extensible)
+  wrappedDeviceBootstrap String?  @map("wrapped_vrk_for_device") /// base64, set on approval
+  expiresAt              DateTime @map("expires_at")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("vault_approvals")
+}

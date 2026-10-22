@@ -1,0 +1,1115 @@
+/*
+ * Shared layout of the interface screens. App.tsx draws the design system's
+ * Modal around every screen (card, padding, close control), so a screen only
+ * lays out the modal's content: an optional illustration, a title/description
+ * block, a body and a stack of full-width actions. Every size comes from the
+ * design system's tokens, as named in the design (spacings `4xs` 2px, `xxxs`
+ * 4px, `xxs` 6px, `xs` 8px, `sm` 12px, `base` 16px, `md` 24px); line heights
+ * follow the design's text styles (12/16, 14/18, 16/22, 18/24).
+ */
+
+/* The interface's modal widths, as designed: 350px for every flow, 450px for the
+   lists (trusted contacts) and the 24-word phrase, 526px for the settings home
+   (the 478px column of an account page). */
+:global(:root) {
+  --c--components--modal--width-small: 350px;
+  --c--components--modal--width-medium: 450px;
+  --c--components--modal--width-large: 526px;
+}
+
+/* The design system widens a large modal to the window on narrower screens:
+   ours is narrower than that, so it only shrinks, like the other two. */
+:global(.c__modal.c__modal--large) {
+  width: min(var(--c--components--modal--width-large), calc(100vw - var(--c--globals--spacings--base)));
+}
+
+/* The design's mini buttons with an icon ("< Back", "Add a device", "Copy code"):
+   4px before the icon and 8px after the label. The design system pads them like
+   its larger buttons (8px and 16px). */
+:global(.c__button--nano.c__button--with-icon--left) {
+  padding: 0 var(--c--globals--spacings--xs) 0 var(--c--globals--spacings--xxxs);
+}
+
+/* The design system fades the backdrop in over 200ms. The product already
+   dims the page under its loader and drops it as soon as this modal is
+   painted, so a fade here would let the page show through undimmed in between:
+   the modal appears at once instead. */
+:global(.c__modal__backdrop) {
+  animation: none;
+  opacity: 1;
+}
+
+/* The close control, anchored to the box rather than sticky in the scroller, so
+   it keeps one place whether the content scrolls or not (the design's 24px
+   neutral button, 5px from the corner), with a halo that masks what scrolls
+   under it. */
+:global(.c__modal .c__modal__close) {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  height: auto;
+  z-index: 1;
+}
+
+:global(.c__modal .c__modal__close .c__button) {
+  position: static;
+  width: var(--c--globals--spacings--md) !important;
+  height: var(--c--globals--spacings--md);
+  padding: 0 !important;
+  background: var(--c--components--modal--background-color);
+  box-shadow: 0 0 0 var(--c--globals--spacings--xxxs) var(--c--components--modal--background-color);
+}
+
+:global(.c__modal .c__modal__close .c__button svg) {
+  width: 12px;
+  height: 12px;
+}
+
+/* The opaque halo above outranks the design system's hover colour, so the hover
+   tint is laid over it as an image, keeping what scrolls underneath masked. */
+:global(.c__modal .c__modal__close .c__button:hover),
+:global(.c__modal .c__modal__close .c__button:focus-visible) {
+  background-image: linear-gradient(
+    var(--c--contextuals--background--semantic--contextual--primary),
+    var(--c--contextuals--background--semantic--contextual--primary)
+  );
+}
+
+.screen {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--base);
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: var(--c--globals--font--families--base);
+}
+
+/* A screen shown outside a modal (a documentation fallback). */
+.screen--padded {
+  padding: var(--c--globals--spacings--md);
+}
+
+.screen__illustration {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100px;
+}
+
+/* The vector illustrations keep their own size (the shield and the room for
+   its shadow); the remaining raster one fills the design's 142x100 slot. */
+.screen__illustration img {
+  display: block;
+}
+
+.screen__illustration-raster {
+  width: 142px;
+  height: 100px;
+  object-fit: contain;
+}
+
+.screen__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xxxs);
+  /* Clear of the close control in the top right corner. */
+  padding-right: var(--c--globals--spacings--base);
+}
+
+.screen__illustration + .screen__header {
+  padding-right: 0;
+}
+
+.screen__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--lg);
+  line-height: 24px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.screen__title--error {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.screen__description {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  overflow-wrap: anywhere;
+}
+
+.screen__description--xs {
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+}
+
+.screen__description > * {
+  margin: 0;
+}
+
+.screen__description strong {
+  font-weight: var(--c--globals--font--weights--bold);
+}
+
+/* Paragraphs and lists alike: each block sits one step under the previous one.
+   `:not(:first-child)` gives it more weight than the resets on the blocks
+   themselves (the one above, and `.list`'s own margin), so no block escapes it. */
+.screen__description > :not(:first-child) {
+  margin-top: var(--c--globals--spacings--xs);
+}
+
+.screen__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--sm);
+}
+
+/* The way back inside a flow: the design's small "< Back" in the top left
+   corner, 6px from the modal's edges while the content starts 24px in. */
+.screen__back {
+  position: absolute;
+  top: calc(var(--c--globals--spacings--xxs) - var(--c--components--modal--padding));
+  left: calc(var(--c--globals--spacings--xxs) - var(--c--components--modal--padding));
+}
+
+/* With a back link, the title starts under it, as designed (12px from the modal's
+   padding, 6px under the link). */
+.screen:has(> .screen__back) > :not(.screen__back):first-of-type {
+  margin-top: var(--c--globals--spacings--sm);
+}
+
+/* Actions stack full-width by default; `--row` right-aligns a Cancel/Confirm pair. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  width: 100%;
+}
+
+.actions > :global(.c__button) {
+  width: 100%;
+  justify-content: center;
+}
+
+/* A stacked label longer than the card wraps; the button grows instead of overflowing. */
+.actions:not(.actions--row) > :global(.c__button) {
+  height: auto;
+  min-height: var(--c--components--button--medium-height);
+  padding-top: var(--c--globals--spacings--xs);
+  padding-bottom: var(--c--globals--spacings--xs);
+  white-space: normal;
+  line-height: 22px;
+}
+
+/* The design separates the final confirmation from the ways to save the phrase. */
+.actions--spaced {
+  margin-top: var(--c--globals--spacings--xs);
+}
+
+.actions--row {
+  flex-direction: row;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--sm);
+}
+
+.actions--row > :global(.c__button) {
+  width: auto;
+}
+
+/* Small text (12px) used for hints under a card or a form. */
+.hint {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.hint--center {
+  text-align: center;
+}
+
+/* A field-level error under a group of boxes (a code, a phrase). */
+.error-text {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  text-align: center;
+  color: var(--c--contextuals--content--semantic--error--secondary);
+}
+
+/* A small text action centered under a block ("Show code", "Scan QR code instead"). */
+.text-link {
+  align-self: center;
+}
+
+.text-links {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--xxs);
+}
+
+/* Pairing a device: the link and the error sit close under the camera or the code
+   boxes they belong to (6px, against the body's 12px). */
+.scanner ~ .text-link,
+.fingerprint-wrap ~ .text-link,
+.fingerprint-wrap ~ .error-text {
+  margin-top: calc(var(--c--globals--spacings--xxs) - var(--c--globals--spacings--sm));
+}
+
+/* A bordered card (an identity, a contact row). */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--surface--primary);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* The trusted-contacts card on the previous-identity screen: body text scale. */
+.contacts {
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+}
+
+.contacts > p {
+  margin: 0;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* People listed one per row (avatar, name, email), no bullets. */
+.people {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card--warning {
+  border-color: var(--c--contextuals--border--semantic--warning--secondary);
+}
+
+.card--error {
+  border-color: var(--c--contextuals--border--semantic--error--secondary);
+}
+
+.card--success {
+  border-color: var(--c--contextuals--border--semantic--success--secondary);
+}
+
+.card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: 0 var(--c--globals--spacings--4xs);
+  min-height: 34px;
+}
+
+.card__aside {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxxs);
+  flex-shrink: 0;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxs);
+  min-width: 0;
+}
+
+.identity__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.identity__name {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity__secondary {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The full text of an identity line on hovering it (the email hidden behind a
+   name, a name or an email cut by the ellipsis): on one line, as wide as the
+   text, rather than the narrow column it is rendered in or the design system's
+   150px (meant for sentences, which wrap; an address has no space to wrap on).
+   Only a viewport too narrow for it breaks it, anywhere. It shows once the
+   pointer has rested on the line, as a `title` does, not the instant it passes
+   over (the design system's tooltip has no delay of its own): its content marks
+   itself rested after a timer, not a CSS animation, which visual-testing
+   services pause on their first frame. */
+:global(.c__tooltip).identity__tooltip {
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--c--globals--spacings--base));
+  overflow-wrap: anywhere;
+}
+
+:global(.c__tooltip).identity__tooltip:not(:has(.identity__tooltip-rested)) {
+  visibility: hidden;
+}
+
+/* Read by screen readers, not shown (what a hover tooltip shows the others). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A status chip next to an identity ("Recovery requested", "Key mismatch", ...). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxxs);
+  height: var(--c--globals--spacings--md);
+  padding: 0 var(--c--globals--spacings--xxxs);
+  border-radius: var(--c--globals--spacings--xxxs);
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  font-weight: var(--c--globals--font--weights--medium);
+  white-space: nowrap;
+}
+
+.chip--warning {
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+.chip--error {
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.chip--success {
+  color: var(--c--contextuals--content--semantic--success--tertiary);
+}
+
+.chip--info {
+  color: var(--c--contextuals--content--semantic--info--tertiary);
+}
+
+.chip--neutral {
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+/* The 40-digit safety fingerprint: 8 groups of 5 digits in two rows of boxes. */
+.fingerprint {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--xxxs);
+  width: 100%;
+  /* Safari only reads the prefixed property, and the dev server serves this
+     file as written (only the production build adds prefixes). */
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.fingerprint__group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  box-sizing: border-box;
+  padding: var(--c--globals--spacings--xxs);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--surface--tertiary);
+  font-family: var(--c--globals--font--families--base);
+  font-size: var(--c--globals--font--sizes--md);
+  line-height: 22px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+.fingerprint--warning .fingerprint__group {
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+}
+
+.fingerprint--error .fingerprint__group {
+  background: var(--c--contextuals--background--semantic--error--tertiary);
+}
+
+.fingerprint--success .fingerprint__group {
+  background: var(--c--contextuals--background--semantic--success--tertiary);
+}
+
+.fingerprint-wrap {
+  width: 100%;
+}
+
+/* The typed pairing code: the fingerprint boxes as text fields. */
+.fingerprint__group--input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  background: var(--c--contextuals--background--surface--primary);
+  text-align: center;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.fingerprint__group--input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+.fingerprint--invalid .fingerprint__group--input {
+  border-color: var(--c--contextuals--border--semantic--error--primary);
+}
+
+/* A group of boxes shown in a card of its own, with its controls under it (the
+   pairing code and QR code of the new device). */
+.code-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxs);
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: var(--c--globals--spacings--xs);
+}
+
+/* The QR code's card hugs it, centered; the digits take the full width. */
+.code-card:has(> .qr) {
+  align-self: center;
+}
+
+.qr {
+  line-height: 0;
+  /* The code reaches the card's padding, as designed; scanners still need light
+     around it, which a dark theme's card is not. */
+  box-shadow: 0 0 0 var(--c--globals--spacings--xxs) var(--c--globals--colors--gray-000);
+}
+
+.qr svg {
+  display: block;
+  width: 202px;
+  height: 202px;
+}
+
+/* Cunningham's Alert content is a flex row; a checkbox under the message needs
+   the column. */
+.alert-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+/* The acknowledgement starts at the alert's edge, under the icon, as designed:
+   back by the icon (16px) and its gap, and by the checkbox's own padding and
+   border, which stay for its focus ring. */
+.alert-stack :global(.c__checkbox) {
+  margin: calc(-1 * (var(--c--globals--spacings--xxxs) + 1px)) 0 calc(-1 * (var(--c--globals--spacings--xxxs) + 1px))
+    calc(-1 * (var(--c--globals--spacings--base) + var(--c--globals--spacings--xs) + var(--c--globals--spacings--xxxs) + 1px));
+}
+
+/* A Notice follows the design wherever it is shown: its message in the variant's
+   own colour. */
+.notice:global(.c__alert--error) :global(.c__alert__content) {
+  color: var(--c--contextuals--content--semantic--error--secondary);
+}
+
+.notice:global(.c__alert--warning) :global(.c__alert__content) {
+  color: var(--c--contextuals--content--semantic--warning--secondary);
+}
+
+.notice:global(.c__alert--success) :global(.c__alert__content) {
+  color: var(--c--contextuals--content--semantic--success--secondary);
+}
+
+.notice:global(.c__alert--info) :global(.c__alert__content) {
+  color: var(--c--contextuals--content--semantic--info--secondary);
+}
+
+.notice :global(.c__alert__content__left) {
+  align-items: flex-start;
+  line-height: 16px;
+}
+
+/* The icon beside the message (the design system drops any wrapper): a long
+   message would otherwise squeeze it to nothing. */
+.notice :global(.c__alert__content__left > svg) {
+  flex-shrink: 0;
+}
+
+/* The design's radios and checkboxes are 16px, beside a 14px label. */
+.screen {
+  --c--components--forms-checkbox--size: var(--c--globals--spacings--base);
+}
+
+/* Options 8px apart and flush with the content, as designed: each label keeps its
+   padding and border, where its focus ring is drawn, cancelled by a margin. */
+.screen :global(.c__radio__group .c__checkbox__group__list) {
+  gap: var(--c--globals--spacings--xs);
+}
+
+.screen :global(.c__radio) {
+  margin: calc(-1 * (var(--c--globals--spacings--xxxs) + 1px));
+}
+
+.screen :global(.c__radio input::before) {
+  width: var(--c--globals--spacings--xs);
+  height: var(--c--globals--spacings--xs);
+}
+
+.screen :global(.c__checkbox__container) {
+  align-items: flex-start;
+  gap: var(--c--globals--spacings--xxs);
+}
+
+.screen :global(.c__checkbox__wrapper) {
+  display: flex;
+  padding-top: 1px;
+}
+
+/* The check mark is drawn for the design system's 24px box: fit it to ours, under
+   the same 1px. */
+.screen :global(.c__checkbox__wrapper svg) {
+  top: 1px;
+  width: var(--c--components--forms-checkbox--size);
+  height: var(--c--components--forms-checkbox--size);
+}
+
+/* A section inside a longer screen (the settings home, the contact lists). */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.section__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xxxs);
+}
+
+.section__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--md);
+  line-height: 22px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.section__subtitle {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* The one fact a prompt must get across (a deadline): its own tinted box, the
+   value large enough to be read before anything else on the screen. */
+.deadline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--4xs);
+  padding: var(--c--globals--spacings--sm);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+  text-align: center;
+}
+
+.deadline__value {
+  font-size: var(--c--globals--font--sizes--md);
+  line-height: 22px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.deadline__time {
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+/* An empty list: a dashed placeholder where the rows would be, so "nothing here
+   yet" reads as a state of the list rather than as one more line of copy. */
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--sm);
+  border: 1px dashed var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  text-align: center;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+/* Native text controls, themed like the design system's text fields. */
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--surface--primary);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font-family: var(--c--globals--font--families--base);
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+.input--invalid {
+  border-color: var(--c--contextuals--border--semantic--error--primary);
+}
+
+/* Caption of a group of boxes inside a card ("This device", "Registered on the server"). */
+.group-label {
+  margin: var(--c--globals--spacings--xxs) 0 var(--c--globals--spacings--xs);
+  font-size: var(--c--globals--font--sizes--t);
+  line-height: 14px;
+  font-weight: var(--c--globals--font--weights--medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.label {
+  display: block;
+  margin: 0 0 var(--c--globals--spacings--xs);
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+}
+
+/* "Waiting for approval from your other device...": a spinner beside the text,
+   set apart from the code above it. */
+.waiting {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--4xs);
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+/* The spinner is a flex item next to text: without this it gives up width and turns oval. */
+.code-card + .waiting {
+  margin-top: calc(var(--c--globals--spacings--md) - var(--c--globals--spacings--sm));
+}
+
+.waiting :global(.c__spinner),
+.loading :global(.c__loader) {
+  flex-shrink: 0;
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  text-align: center;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--sm);
+  min-height: 160px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+  font-size: var(--c--globals--font--sizes--sm);
+}
+
+.loading__label {
+  margin: 0;
+}
+
+.list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.list li + li {
+  margin-top: var(--c--globals--spacings--4xs);
+}
+
+/* The revealed recovery phrase: numbered words in three columns. */
+.words {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--surface--secondary);
+  list-style: none;
+  counter-reset: word;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.words li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--c--globals--spacings--xxxs);
+  min-width: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.words li::before {
+  counter-increment: word;
+  content: counter(word);
+  flex-shrink: 0;
+  width: 18px;
+  text-align: right;
+  font-size: var(--c--globals--font--sizes--xs);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.words li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The 24 word boxes of the recovery phrase input: the number beside each box,
+   as designed for the 450px modal. */
+.word-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--c--globals--spacings--xxxs) var(--c--globals--spacings--xs);
+}
+
+.word-inputs__cell {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxs);
+  min-width: 0;
+}
+
+.word-inputs__index {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: right;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.word-inputs .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.word-inputs--invalid .input {
+  border-color: var(--c--contextuals--border--semantic--error--primary);
+}
+
+.hint--invalid {
+  color: var(--c--contextuals--content--semantic--error--secondary);
+}
+
+/* Radio and checkbox options follow the design: a 14px medium label over a 12px
+   description. */
+.screen :global(.c__checkbox__label),
+.screen :global(.c__radio__label) {
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+}
+
+/* The description under a radio's label, aligned with the label. */
+.screen :global(.c__checkbox .c__field__footer) {
+  padding: 0 0 0 calc(var(--c--globals--spacings--base) + var(--c--globals--spacings--xxs));
+}
+
+.screen :global(.c__checkbox .c__field__text) {
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.screen :global(.c__alert .c__checkbox__label) {
+  font-weight: var(--c--globals--font--weights--regular);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+/* A choice between two ways in, drawn as selectable cards ("Use another device"
+   / "Use your recovery phrase"). */
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.option {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--c--globals--spacings--xs);
+  width: 100%;
+  padding: var(--c--globals--spacings--sm);
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: transparent;
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.option:hover {
+  background: var(--c--contextuals--background--semantic--contextual--primary);
+}
+
+.option:has(.option__input:focus-visible) {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 1px;
+}
+
+/* A native radio, kept for the keyboard (arrow keys) and screen readers: the card is its label. */
+.option__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.option--selected,
+.option--selected:hover {
+  border-color: var(--c--contextuals--border--semantic--brand--primary);
+  background: var(--c--contextuals--background--semantic--brand--tertiary);
+}
+
+.option__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--c--contextuals--content--semantic--brand--tertiary);
+}
+
+.option__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--4xs);
+}
+
+.option__title {
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--bold);
+}
+
+.option__description {
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* The encryption home (the interface's own, for a product without an account
+   page): a status banner, then groups of settings rows with their action. */
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxxs);
+  /* The design draws the border inside its 8px padding. */
+  padding: calc(var(--c--globals--spacings--xs) - 1px);
+  border: 1px solid var(--c--contextuals--border--semantic--neutral--tertiary);
+  border-radius: var(--c--globals--spacings--xs);
+  background: var(--c--contextuals--background--semantic--neutral--tertiary);
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.status > svg {
+  flex-shrink: 0;
+}
+
+/* The home's blocks (heading, status, each group of rows) stand apart. */
+.screen:has(> .screen__body > .status),
+.screen__body:has(> .status) {
+  gap: var(--c--globals--spacings--md);
+}
+
+.status__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.status--success {
+  border-color: var(--c--contextuals--border--semantic--success--tertiary);
+  background: var(--c--contextuals--background--semantic--success--tertiary);
+  color: var(--c--contextuals--content--semantic--success--tertiary);
+}
+
+.status--warning {
+  border-color: var(--c--contextuals--border--semantic--warning--tertiary);
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.settings-row__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings-row__title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+.settings-row__description {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+.settings-row > :global(.c__button) {
+  flex-shrink: 0;
+}
+
+/* A contact row of the trusted contacts lists: identity, status, a menu, and a
+   tinted band under it for what needs an answer (a running recovery). */
+.contact {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--c--contextuals--border--surface--primary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--surface--primary);
+  overflow: hidden;
+}
+
+.contact__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xxs) var(--c--globals--spacings--xs);
+}
+
+.contact__band {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs);
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  background: var(--c--contextuals--background--surface--tertiary);
+  color: var(--c--contextuals--content--semantic--neutral--secondary);
+}
+
+/* The message takes the room left by the button, and breaks a long email address
+   rather than running under it. */
+.contact__band > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact__band--error {
+  background: var(--c--contextuals--background--semantic--error--tertiary);
+  color: var(--c--contextuals--content--semantic--error--tertiary);
+}
+
+.contact__band--warning {
+  background: var(--c--contextuals--background--semantic--warning--tertiary);
+  color: var(--c--contextuals--content--semantic--warning--tertiary);
+}
+
+/* The two lists of the trusted contacts stand 16px apart, as designed. */
+.screen__body:has(> .section > :is(.contact, .empty)) {
+  gap: var(--c--globals--spacings--base);
+}
+
+.contact__band :global(.c__button) {
+  flex-shrink: 0;
+}
+
+/* The camera preview of the QR scanner, framed like the design's viewfinder. */
+.scanner {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  border-radius: var(--c--globals--spacings--xs);
+  background: var(--c--contextuals--background--semantic--neutral--secondary);
+  box-sizing: border-box;
+}
+
+/* The design system's provider mounts a toast container fixed to the bottom edge
+   of the viewport. The interface never toasts, and its viewport is an iframe cut
+   to the content, so that empty, padded strip would sit over the last action and
+   swallow its clicks. */
+:global(.c__toast__container:empty) {
+  display: none;
+}
+
+:global(.c__toast__container) {
+  pointer-events: none;
+}

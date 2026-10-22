@@ -1,0 +1,208 @@
+/**
+ * Canonical encoding + signing of a key-registration record.
+ *
+ * The registry (server `public_keys` table) stores, per identity:
+ *   - the encryption public key (X-Wing wire blob),
+ *   - the signature public key (Ed25519 wire blob) — the IDENTITY,
+ *   - a monotonic per-user `version` (1, 2, 3, …),
+ *   - a creation timestamp,
+ *   - a binding signature: Ed25519_sign(signatureSecret, canonicalPayload),
+ *     where the payload covers ALL of the above.
+ *
+ * Properties this buys us:
+ *   - Identity binding: the encryption key is provably chosen by the holder of
+ *     the identity (signature) key. A directory that swaps in a different
+ *     encryption key for a user cannot forge a matching binding signature.
+ *   - Tamper-evidence / ordering: `version` and `createdAt` are inside the
+ *     signed payload, so a database attacker cannot reorder, backdate, or
+ *     splice rows without breaking the signature. A verifier that knows the
+ *     legitimate identity key (verified out-of-band) detects any such edit.
+ *
+ * Both the vault (signer) and verifiers (server at registration time, other
+ * users' vaults / products at share time) use this exact encoding, so the
+ * bytes must be byte-for-byte deterministic. Everything is length-prefixed and
+ * little-endian, and we sign over the wire blobs verbatim (the same base64 the
+ * server stores and returns) to avoid any re-serialization ambiguity.
+ */
+import { concat, lengthPrefixed, writeUint32LE, writeUint64LE } from '@encryption/src/crypto/encryption';
+import { base64ToUint8, importPublicKeyFromBase64 } from '@encryption/src/crypto/encryption-backup';
+import { type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
+import { DOMAIN_IDENTITY_CONTINUITY, DOMAIN_KEY_POP, DOMAIN_KEY_REGISTRATION } from '@encryption/src/shared/crypto-domains';
+
+export interface KeyRegistrationRecord {
+  /**
+   * INTERNAL encryption-service user id (users.id), never the OIDC sub: the
+   * signed payload must survive identity-provider migrations, so it embeds the
+   * one identifier whose lifecycle the service fully owns.
+   */
+  userId: string;
+  /** Monotonic per-user key version, starting at 1. */
+  version: number;
+  /** Creation time in integer milliseconds since the epoch (signed verbatim). */
+  createdAtMillis: number;
+  /** Encryption public key wire blob: base64-decoded [version:1][xwing:1216]. */
+  encryptionPublicKeyWire: Uint8Array;
+  /** Signature (identity) public key wire blob: base64-decoded [version:1][ed25519:32]. */
+  signaturePublicKeyWire: Uint8Array;
+}
+
+/**
+ * Build the canonical byte string that the binding signature covers. Both the
+ * signer and every verifier must produce identical bytes for the same record.
+ */
+export function encodeKeyRegistrationPayload(record: KeyRegistrationRecord): Uint8Array {
+  const userIdBytes = new TextEncoder().encode(record.userId);
+  const domainBytes = new TextEncoder().encode(DOMAIN_KEY_REGISTRATION);
+
+  return concat([
+    ...lengthPrefixed(domainBytes),
+    writeUint32LE(record.version),
+    writeUint64LE(record.createdAtMillis),
+    ...lengthPrefixed(userIdBytes),
+    ...lengthPrefixed(record.encryptionPublicKeyWire),
+    ...lengthPrefixed(record.signaturePublicKeyWire),
+  ]);
+}
+
+/**
+ * Message signed during the proof-of-possession `complete` step to prove the
+ * caller also holds the IDENTITY (signature) secret key. Bound to the
+ * server-issued `challengeId` so a captured signature can't be replayed
+ * against a different challenge.
+ */
+export function encodePopChallengeMessage(challengeId: string): Uint8Array {
+  const encoder = new TextEncoder();
+
+  return concat([...lengthPrefixed(encoder.encode(DOMAIN_KEY_POP)), ...lengthPrefixed(encoder.encode(challengeId))]);
+}
+
+/**
+ * A registry record exactly as it travels on the wire / lives in the DB:
+ * both public keys and the binding signature as base64, plus the signed
+ * metadata. This is what the server returns from the directory and what the
+ * server validates at registration.
+ */
+export interface SerializedKeyRegistration {
+  userId: string;
+  version: number;
+  createdAtMillis: number;
+  encryptionPublicKeyB64: string; // base64 [version:1][xwing]
+  signaturePublicKeyB64: string; // base64 [version:1][ed25519]
+  keyBindingSignatureB64: string; // base64 Ed25519 signature
+}
+
+/**
+ * Verify that a registry record's binding signature is valid for its claimed
+ * identity (signature) key. Returns `false` — never throws — for a forged,
+ * tampered, or malformed record, so every caller (server registration, a
+ * recipient's vault, a product backend) can treat "doesn't verify" as a normal
+ * branch and refuse to trust the entry.
+ *
+ * NOTE: a `true` result means the record is internally coherent and was signed
+ * by the holder of the signature key. It does NOT by itself mean that
+ * signature key is the right person — that is what the out-of-band fingerprint
+ * check establishes. The two together are the trust decision.
+ */
+/**
+ * A new identity vouched for by the previous one. Reserved for the future
+ * identity-migration flow (e.g. Ed25519 → a post-quantum signature): the
+ * PREVIOUS identity key signs the NEW identity's canonical bytes, so a verifier
+ * who already trusts the old identity out-of-band transitively trusts the new
+ * one — no fresh fingerprint check. The crypto lives here now so the format is
+ * fixed and tested before any flow depends on it.
+ */
+export interface IdentityContinuityRecord {
+  userId: string;
+  /** The NEW identity's monotonic generation (previous generation + 1). */
+  generation: number;
+  /** The NEW identity's signature algorithm (e.g. 'ed25519', later 'ml-dsa'). */
+  algo: string;
+  /** The NEW identity's signature public key wire blob. */
+  signaturePublicKeyWire: Uint8Array;
+}
+
+/**
+ * Canonical byte string a continuity signature covers. Binds the new identity's
+ * user, generation, algorithm, and public key so the previous identity's
+ * endorsement can't be transplanted onto a different identity.
+ */
+export function encodeIdentityContinuityPayload(record: IdentityContinuityRecord): Uint8Array {
+  const userIdBytes = new TextEncoder().encode(record.userId);
+  const domainBytes = new TextEncoder().encode(DOMAIN_IDENTITY_CONTINUITY);
+  const algoBytes = new TextEncoder().encode(record.algo);
+
+  return concat([
+    ...lengthPrefixed(domainBytes),
+    ...lengthPrefixed(userIdBytes),
+    writeUint32LE(record.generation),
+    ...lengthPrefixed(algoBytes),
+    ...lengthPrefixed(record.signaturePublicKeyWire),
+  ]);
+}
+
+/**
+ * Verify that a new identity is endorsed by the previous identity key. Returns
+ * `false` — never throws — for a forged, tampered, or malformed record, so a
+ * verifier can treat "doesn't chain" as a normal branch and fall back to a
+ * fresh out-of-band check. A `true` result means: whoever holds the PREVIOUS
+ * identity key deliberately vouched for this exact NEW identity.
+ */
+/**
+ * Sign a new identity with the PREVIOUS identity's secret key, so a verifier who
+ * already trusts the previous identity transitively trusts the new one. The
+ * counterpart of {@link verifyIdentityContinuity}.
+ */
+export async function signIdentityContinuity(record: IdentityContinuityRecord, previousSignatureSecretKey: SignatureSecretKey): Promise<Uint8Array> {
+  return signDetached(encodeIdentityContinuityPayload(record), previousSignatureSecretKey);
+}
+
+export async function verifyIdentityContinuity(
+  record: IdentityContinuityRecord,
+  previousSignaturePublicKeyB64: string,
+  continuitySignatureB64: string
+): Promise<boolean> {
+  let previousRawKey: Uint8Array;
+  let signature: Uint8Array;
+  let message: Uint8Array;
+
+  // A record that cannot be encoded (a field too long, a generation out of range)
+  // cannot have been signed: refuse it like a bad signature.
+  try {
+    previousRawKey = importPublicKeyFromBase64(previousSignaturePublicKeyB64);
+    signature = base64ToUint8(continuitySignatureB64);
+    message = encodeIdentityContinuityPayload(record);
+  } catch {
+    return false;
+  }
+
+  return verifyDetached(signature, message, previousRawKey);
+}
+
+export async function verifyKeyRegistration(record: SerializedKeyRegistration): Promise<boolean> {
+  let encryptionPublicKeyWire: Uint8Array;
+  let signaturePublicKeyWire: Uint8Array;
+  let signatureRawKey: Uint8Array;
+  let signature: Uint8Array;
+
+  try {
+    encryptionPublicKeyWire = base64ToUint8(record.encryptionPublicKeyB64);
+    signaturePublicKeyWire = base64ToUint8(record.signaturePublicKeyB64);
+    // The raw Ed25519 key (wire blob minus its version byte) is what the
+    // verify primitive expects; importPublicKeyFromBase64 strips that byte and
+    // rejects an unknown version.
+    signatureRawKey = importPublicKeyFromBase64(record.signaturePublicKeyB64);
+    signature = base64ToUint8(record.keyBindingSignatureB64);
+  } catch {
+    return false;
+  }
+
+  const message = encodeKeyRegistrationPayload({
+    userId: record.userId,
+    version: record.version,
+    createdAtMillis: record.createdAtMillis,
+    encryptionPublicKeyWire,
+    signaturePublicKeyWire,
+  });
+
+  return verifyDetached(signature, message, signatureRawKey);
+}
