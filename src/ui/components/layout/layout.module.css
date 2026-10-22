@@ -366,19 +366,17 @@
    150px (meant for sentences, which wrap; an address has no space to wrap on).
    Only a viewport too narrow for it breaks it, anywhere. It shows once the
    pointer has rested on the line, as a `title` does, not the instant it passes
-   over (the design system's tooltip has no delay of its own). */
+   over (the design system's tooltip has no delay of its own): its content marks
+   itself rested after a timer, not a CSS animation, which visual-testing
+   services pause on their first frame. */
 :global(.c__tooltip).identity__tooltip {
   width: max-content;
   max-width: calc(100vw - 2 * var(--c--globals--spacings--base));
   overflow-wrap: anywhere;
-  animation: identity-tooltip-rest 500ms;
 }
 
-@keyframes identity-tooltip-rest {
-  from,
-  to {
-    visibility: hidden;
-  }
+:global(.c__tooltip).identity__tooltip:not(:has(.identity__tooltip-rested)) {
+  visibility: hidden;
 }
 
 /* Read by screen readers, not shown (what a hover tooltip shows the others). */

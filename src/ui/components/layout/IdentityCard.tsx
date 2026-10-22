@@ -1,6 +1,6 @@
 import { Button, Tooltip, UserAvatar } from '@gouvfr-lasuite/ui-components';
 import { Ban, Checkmark2, CircleCheck, Clock, Copy, ShieldAlert, Unlock, Warning } from '@gouvfr-lasuite/ui-components/icons';
-import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
@@ -72,6 +72,23 @@ function useCutLines(name: string, line: string | null) {
   return { columnRef, cut };
 }
 
+// How long the pointer rests on a line before its tooltip shows, as a `title`.
+const TOOLTIP_REST_MS = 500;
+
+// Mounted when the tooltip opens: marks itself rested once the pointer stayed,
+// which reveals the tooltip (see .identity__tooltip).
+function RestedTooltipText({ text }: { text: string }) {
+  const [rested, setRested] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setRested(true), TOOLTIP_REST_MS);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  return <span className={rested ? styles.identityTooltipRested : undefined}>{text}</span>;
+}
+
 /** One line of an identity, with its full text in a tooltip when there is more than it shows. */
 function IdentityLine({ className, kind, text, tooltip }: { className: string; kind: 'name' | 'secondary'; text: string; tooltip: string | null }) {
   const element = (
@@ -81,7 +98,7 @@ function IdentityLine({ className, kind, text, tooltip }: { className: string; k
   );
 
   return tooltip ? (
-    <Tooltip content={tooltip} placement="top" className={styles.identityTooltip}>
+    <Tooltip content={<RestedTooltipText text={tooltip} />} placement="top" className={styles.identityTooltip}>
       {element}
     </Tooltip>
   ) : (

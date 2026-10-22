@@ -46,6 +46,7 @@ declare const styles: {
   readonly identitySecondary: string;
   readonly identityText: string;
   readonly identityTooltip: string;
+  readonly identityTooltipRested: string;
   readonly input: string;
   readonly inputInvalid: string;
   readonly label: string;
