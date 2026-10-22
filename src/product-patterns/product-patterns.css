@@ -1,0 +1,103 @@
+/*
+ * What encryption draws on top of the design system's share modal. Sizes go
+ * through the design system variables; the literals left have no variable: line
+ * heights and fixed heights.
+ */
+
+/* The pending members, under the member list. */
+.pp-pending {
+  border-top: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.pp-pending__title {
+  margin: 0;
+}
+
+.pp-pending__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--4xs);
+}
+
+.pp-pending__hint {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+}
+
+.pp-pending__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-pending__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  min-height: 42px;
+  padding: var(--c--globals--spacings--3xs) var(--c--globals--spacings--2xs);
+}
+
+.pp-pending__who {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+  min-width: 0;
+}
+
+.pp-pending__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pp-pending__ellipsis {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-pending__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--3xs);
+  height: var(--c--globals--spacings--md);
+  padding: 0 var(--c--globals--spacings--2xs);
+  border-radius: var(--c--globals--spacings--3xs);
+  background: var(--c--contextuals--background--surface--tertiary);
+  font-size: var(--c--globals--font--sizes--xs);
+  line-height: 16px;
+  font-weight: var(--c--globals--font--weights--medium);
+  color: var(--c--contextuals--content--semantic--neutral--tertiary);
+  white-space: nowrap;
+}
+
+/* Why some actions are gone for a viewer without encryption on this device, above
+   the pending members. */
+.c__share-modal__link-settings.pp-notice {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  border-top: 1px solid var(--c--contextuals--border--surface--primary);
+  text-align: left;
+}
+
+/* The people a confirmation lists before inviting them without encryption, one
+   row each, as in the member list. */
+.pp-invite-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  margin: var(--c--globals--spacings--sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
