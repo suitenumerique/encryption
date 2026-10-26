@@ -22,7 +22,7 @@ env:
   CONTAINER_IMAGE: lasuite/encryption
   CHART_IMAGE: lasuite/encryption-chart # its own repository: chart versions must not collide with image tags
   NODE_OPTIONS: --max-old-space-size=4096
-  NODE_VERSION: 24.19.0
+  NODE_VERSION: 24.22.1
   NPM_VERSION: 12.0.2
 
 jobs:
