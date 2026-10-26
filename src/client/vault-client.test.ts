@@ -215,6 +215,18 @@ describe('VaultClient encryption status', () => {
     await expect(statusWith({ hasKeys: false, registered: null })).resolves.toEqual({ state: 'not-set-up', registered: false });
   });
 
+  it('is not set up for a user the vault cannot resolve, one who never registered anything', async () => {
+    const { client, internal } = makeClient();
+
+    internal.vaultRequest = vi.fn(async (type: unknown) => {
+      if (type === MSG_VAULT_HAS_KEYS) return { hasKeys: false };
+      throw new VaultError(VaultErrorCode.UNRESOLVED_USER, 'No encryption account is known for this user yet.');
+    });
+    client.setAuthContext({ suiteUserId: 'sub1' });
+
+    await expect(client.getEncryptionStatus()).resolves.toEqual({ state: 'not-set-up', registered: false });
+  });
+
   it('needs the auth context', async () => {
     const { client } = makeClient();
 

@@ -367,7 +367,7 @@ export class VaultClient {
       throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'setAuthContext() must be called before getEncryptionStatus()');
     }
 
-    const [{ hasKeys }, directory] = await Promise.all([this.hasKeys(), this.fetchPublicKeys([suiteUserId])]);
+    const [{ hasKeys }, directory] = await Promise.all([this.hasKeys(), this.ownDirectoryEntry(suiteUserId)]);
     const registeredUser = directory[suiteUserId];
 
     if (!hasKeys) return { state: 'not-set-up', registered: registeredUser !== undefined };
@@ -701,6 +701,21 @@ export class VaultClient {
    * when building a sharing UI: it tells you who has keys, their fingerprint,
    * and whether the directory record is coherent (`verified`).
    */
+  /**
+   * The current user's own directory record. The vault refuses every lookup on
+   * behalf of a user it cannot resolve, which is exactly a user who never
+   * registered anything: for the status, that means no record.
+   */
+  private async ownDirectoryEntry(suiteUserId: string): Promise<Record<string, RegisteredUser>> {
+    try {
+      return await this.fetchPublicKeys([suiteUserId]);
+    } catch (error) {
+      if (error instanceof VaultError && error.code === VaultErrorCode.UNRESOLVED_USER) return {};
+
+      throw error;
+    }
+  }
+
   async fetchPublicKeys(subs: string[]): Promise<Record<string, RegisteredUser>> {
     const { users } = (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { subs })) as {
       users: Record<string, RegisteredUser>;
