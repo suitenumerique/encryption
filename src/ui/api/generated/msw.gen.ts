@@ -20,6 +20,8 @@ import type {
   GetApiVaultMetaResponses,
   GetApiVaultRevisionResponses,
   GetApiVersionResponses,
+  PostApiAuthRelayData,
+  PostApiAuthRelayResponses,
   PostApiAuthTokenData,
   PostApiAuthTokenResponses,
   PostApiEmergencyAccessByIdAcceptResponses,
@@ -93,16 +95,57 @@ export function handleGetApiVersion(
   );
 }
 
+export type HandlePostApiAuthRelayResponse = {
+  body: PostApiAuthRelayResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/auth/relay` operation.
+ */
+export function handlePostApiAuthRelay(
+  response?: HandlePostApiAuthRelayResponse | HttpResponseResolver<never, PostApiAuthRelayData['body']>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<never, PostApiAuthRelayData['body']>(
+    `${options?.baseUrl ?? '*'}/api/auth/relay`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
 export type HandlePostApiAuthTokenResponse = {
   body: PostApiAuthTokenResponses[200];
   status?: 200;
 };
 
+type ToResponseUnion<T> = {
+  [K in Extract<keyof T, number>]: {
+    status: K;
+    body: T[K];
+  };
+}[Extract<keyof T, number>];
+
 /**
  * Handler for the `POST /api/auth/token` operation.
  */
 export function handlePostApiAuthToken(
-  response?: HandlePostApiAuthTokenResponse | HttpResponseResolver<never, PostApiAuthTokenData['body']>,
+  response?: HandlePostApiAuthTokenResponse | ToResponseUnion<PostApiAuthTokenResponses> | HttpResponseResolver<never, PostApiAuthTokenData['body']>,
   options?: RequestHandlerOptions
 ): HttpHandler {
   return http.post<never, PostApiAuthTokenData['body']>(
@@ -1445,6 +1488,10 @@ export type MswHandlerFactories = {
    */
   getApiVersion: typeof handleGetApiVersion;
   /**
+   * Handler for the `POST /api/auth/relay` operation.
+   */
+  postApiAuthRelay: typeof handlePostApiAuthRelay;
+  /**
    * Handler for the `POST /api/auth/token` operation.
    */
   postApiAuthToken: typeof handlePostApiAuthToken;
@@ -1602,6 +1649,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
   }
   const pick: CreateMswHandlersResult['pick'] = {
     getApiVersion: wrap(handleGetApiVersion),
+    postApiAuthRelay: wrap(handlePostApiAuthRelay),
     postApiAuthToken: wrap(handlePostApiAuthToken),
     deleteApiPublicKeys: wrap(handleDeleteApiPublicKeys),
     getApiPublicKeys: wrap(handleGetApiPublicKeys),
@@ -1659,6 +1707,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdCancel, overrides.postApiEmergencyAccessByIdCancel),
       invoke(pick.postApiEmergencyAccessByIdReject, overrides.postApiEmergencyAccessByIdReject),
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
+      invoke(pick.postApiAuthRelay, overrides.postApiAuthRelay),
       invoke(pick.postApiAuthToken, overrides.postApiAuthToken),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),
       invoke(pick.getApiMaintenanceEscrowAssignment, overrides.getApiMaintenanceEscrowAssignment),

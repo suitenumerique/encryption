@@ -31,6 +31,80 @@
         }
       }
     },
+    "/api/auth/relay": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{22,128}$"
+                  },
+                  "relay_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{22,128}$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": ["state", "relay_id", "code"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["deposited"]
+                    }
+                  },
+                  "required": ["status"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/token": {
       "post": {
         "requestBody": {
@@ -40,10 +114,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "code": {
+                  "relay_id": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4096
+                    "pattern": "^[A-Za-z0-9_-]{22,128}$"
                   },
                   "code_verifier": {
                     "type": "string",
@@ -62,7 +135,7 @@
                     "enum": ["fr", "en"]
                   }
                 },
-                "required": ["code", "code_verifier", "nonce"]
+                "required": ["relay_id", "code_verifier", "nonce"]
               }
             }
           }
@@ -106,6 +179,24 @@
                     }
                   },
                   "required": ["id_token", "expires_at", "sub", "user_id", "email", "first_name", "last_name", "second_factor"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["pending"]
+                    }
+                  },
+                  "required": ["status"],
                   "additionalProperties": false
                 }
               }

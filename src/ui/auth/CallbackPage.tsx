@@ -1,95 +1,47 @@
 /**
- * OIDC callback page — handles the redirect from the identity provider.
- * Opened in a new tab (same tab as LoginPage after the provider's redirect).
- *
- * 1. Hands the authorization code to the server, which exchanges it and
- *    answers with the provider's ID token
- * 2. Posts the ID token to `window.opener`, which is the interface iframe
- * 3. Closes the tab
+ * OIDC callback page: where the identity provider sends the sign-in tab back.
+ * It checks the state and deposits the authorization code on the server, where
+ * the interface iframe that started the sign-in collects it (see login.ts). It
+ * never sees an ID token, and needs no link to the iframe, which a provider
+ * page may have cut on the way.
  */
 import { Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { WrongUserError, handleCallback, notifyAuthComplete, startLogin } from '@encryption/src/ui/auth/login';
+import { UnknownCallbackError, depositCallback } from '@encryption/src/ui/auth/login';
 import { Notice } from '@encryption/src/ui/components/layout/Screen';
 
 export function CallbackPage() {
   const { t } = useTranslation('common');
   const [error, setError] = useState<string | null>(null);
-  const [wrongUser, setWrongUser] = useState<WrongUserError | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [unacknowledged, setUnacknowledged] = useState(false);
+  const [deposited, setDeposited] = useState(false);
   const processed = useRef(false);
 
   useEffect(() => {
     if (processed.current) return;
     processed.current = true;
 
-    (async () => {
-      try {
-        const idTokenSet = await handleCallback();
+    depositCallback()
+      .then(() => {
+        setDeposited(true);
+        // Allowed for a tab a script opened; the message below stays otherwise.
+        window.close();
+      })
+      .catch((err: unknown) => {
+        // A provider's own `error_description` stays as it wrote it, in its language.
+        if (err instanceof UnknownCallbackError) setError(t('auth.unknown_callback'));
+        else setError(err instanceof Error ? err.message : String(err));
+      });
+  }, [t]);
 
-        setSuccess(true);
-
-        // Closing only on an acknowledgement, never on a timer. See notifyAuthComplete:
-        // a tab that closes on success alone tells whoever opened it that the signed-in
-        // user matched the `expectedSub` they put in the URL, and it also hides the case
-        // where the ID token reached nobody.
-        if (await notifyAuthComplete(idTokenSet)) {
-          window.close();
-        } else {
-          setUnacknowledged(true);
-        }
-      } catch (err) {
-        if (err instanceof WrongUserError) {
-          setError('wrong_user');
-          setWrongUser(err);
-        } else {
-          setError((err as Error).message);
-        }
-      }
-    })();
-  }, []);
-
-  if (error === 'wrong_user') {
+  if (error || deposited) {
     return (
       <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Notice type={VariantType.WARNING}>{t('auth.wrong_user')}</Notice>
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <Button onClick={() => void startLogin(wrongUser?.expectedSub, { forceLogin: true, language: wrongUser?.language })}>
-            {t('auth.sign_in_another_account')}
-          </Button>
-          <Button color="neutral" onClick={() => window.close()}>
-            {t('settings.close')}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Notice type={VariantType.ERROR}>{t('auth.failed', { error })}</Notice>
+        <Notice type={error ? VariantType.ERROR : VariantType.SUCCESS}>{error ? t('auth.failed', { error }) : t('auth.success')}</Notice>
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
           <Button onClick={() => window.close()}>{t('settings.close')}</Button>
         </div>
-      </div>
-    );
-  }
-
-  if (success) {
-    return (
-      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
-        <Notice type={unacknowledged ? VariantType.WARNING : VariantType.SUCCESS}>
-          {t(unacknowledged ? 'auth.not_acknowledged' : 'auth.success')}
-        </Notice>
-        {unacknowledged && (
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
-            <Button onClick={() => window.close()}>{t('settings.close')}</Button>
-          </div>
-        )}
       </div>
     );
   }

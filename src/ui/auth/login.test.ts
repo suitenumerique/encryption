@@ -6,13 +6,22 @@ import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vite
 
 import { apiClient } from '@encryption/src/ui/api/client';
 import { clearIdTokenSet, readIdTokenSet, storeIdTokenSet, subscribeToIdTokenSet } from '@encryption/src/ui/auth/id-token-storage';
-import { type IdTokenSet, WrongUserError, getLoginUrl, handleCallback, isIdTokenExpired, prepareLogin } from '@encryption/src/ui/auth/login';
+import {
+  type IdTokenSet,
+  OIDC_LOGIN_PARAMETERS_MESSAGE_TYPE,
+  OIDC_LOGIN_READY_MESSAGE_TYPE,
+  UnknownCallbackError,
+  WrongUserError,
+  createSignIn,
+  depositCallback,
+  exchangeSignIn,
+  getLoginUrl,
+  isIdTokenExpired,
+  prepareLogin,
+  receiveLoginParameters,
+} from '@encryption/src/ui/auth/login';
 
 const PENDING_LOGIN_KEY = 'encryption-pending-login';
-
-function pendingLogin(): { state: string; nonce: string; codeVerifier: string; expectedSub?: string } {
-  return JSON.parse(sessionStorage.getItem(PENDING_LOGIN_KEY)!);
-}
 
 function arriveOnCallback(query: string) {
   window.history.replaceState(null, '', `/auth/callback?${query}`);
@@ -43,61 +52,173 @@ beforeEach(() => {
   apiClient.setConfig({ baseUrl: window.location.origin, fetch: fetchMock });
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  Object.defineProperty(window, 'opener', { value: null, configurable: true });
+});
 
-describe('prepareLogin', () => {
-  it('keeps a fresh state, nonce and 43-character PKCE verifier in this tab, and sends only the S256 challenge', async () => {
-    const url = new URL(await prepareLogin('user-42'), 'https://encryption.example');
-    const pending = pendingLogin();
+describe('createSignIn, in the iframe', () => {
+  it('draws a fresh state, nonce, relay id and 43-character verifier, and hands out only its S256 challenge', async () => {
+    const signIn = await createSignIn('user-42', { language: 'fr' });
+    const { parameters } = signIn;
+
+    expect(signIn.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(parameters.codeChallenge).toBe(createHash('sha256').update(signIn.codeVerifier).digest('base64url'));
+    expect(JSON.stringify(parameters)).not.toContain(signIn.codeVerifier);
+    expect(parameters.language).toBe('fr');
+    expect(signIn.expectedSub).toBe('user-42');
+    expect(new Set([parameters.state, parameters.nonce, parameters.relayId]).size).toBe(3);
+  });
+
+  it('never reuses a state or a relay id across sign-ins', async () => {
+    const [first, second] = await Promise.all([createSignIn(), createSignIn()]);
+
+    expect(second.parameters.state).not.toBe(first.parameters.state);
+    expect(second.parameters.relayId).not.toBe(first.parameters.relayId);
+  });
+});
+
+describe('getLoginUrl', () => {
+  it('opens /login on the interface origin, carrying nothing: the parameters come from the opener', () => {
+    expect(getLoginUrl()).toBe(`${window.location.origin}/login`);
+  });
+});
+
+describe('receiveLoginParameters, in the sign-in tab', () => {
+  const fromOpener = (data: unknown, source: Window | null = window, origin = window.location.origin) =>
+    window.dispatchEvent(new MessageEvent('message', { data, source, origin }));
+
+  it('starts nothing in a tab no page opened', async () => {
+    await expect(receiveLoginParameters()).resolves.toBeNull();
+  });
+
+  it('asks its opener, on the interface origin only, and takes the parameters it answers', async () => {
+    // The tab's own window stands in for the opener: jsdom only takes a window as a message source.
+    const postMessage = vi.spyOn(window, 'postMessage');
+    Object.defineProperty(window, 'opener', { value: window, configurable: true });
+    const { parameters } = await createSignIn();
+
+    const received = receiveLoginParameters();
+    fromOpener({ type: OIDC_LOGIN_PARAMETERS_MESSAGE_TYPE, parameters });
+
+    await expect(received).resolves.toEqual(parameters);
+    expect(postMessage).toHaveBeenCalledWith({ type: OIDC_LOGIN_READY_MESSAGE_TYPE }, window.location.origin);
+  });
+
+  it('ignores parameters from anything but its opener on the interface origin, then gives up', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, 'opener', { value: window, configurable: true });
+    const { parameters } = await createSignIn();
+
+    const received = receiveLoginParameters(1000);
+    fromOpener({ type: OIDC_LOGIN_PARAMETERS_MESSAGE_TYPE, parameters }, null);
+    fromOpener({ type: OIDC_LOGIN_PARAMETERS_MESSAGE_TYPE, parameters }, window, 'https://product.example');
+    vi.advanceTimersByTime(1000);
+
+    await expect(received).resolves.toBeNull();
+  });
+});
+
+describe('prepareLogin, in the sign-in tab', () => {
+  it('sends the state, nonce and challenge to the server, and keeps only the state and relay id in this tab', async () => {
+    const { parameters } = await createSignIn('user-42');
+    const url = new URL(prepareLogin(parameters), 'https://encryption.example');
 
     expect(url.pathname).toBe('/api/auth/authorize');
-    expect(pending.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(pending.expectedSub).toBe('user-42');
-    expect(url.searchParams.get('state')).toBe(pending.state);
-    expect(url.searchParams.get('nonce')).toBe(pending.nonce);
-    expect(url.searchParams.get('code_challenge')).toBe(createHash('sha256').update(pending.codeVerifier).digest('base64url'));
-    expect(url.toString()).not.toContain(pending.codeVerifier);
-    expect(url.searchParams.has('prompt')).toBe(false);
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      state: parameters.state,
+      nonce: parameters.nonce,
+      code_challenge: parameters.codeChallenge,
+    });
+    expect(url.toString()).not.toContain(parameters.relayId);
+    expect(JSON.parse(sessionStorage.getItem(PENDING_LOGIN_KEY)!)).toEqual({ state: parameters.state, relayId: parameters.relayId });
   });
 
   it('asks the provider for credentials again when forced', async () => {
-    const url = new URL(await prepareLogin(undefined, { forceLogin: true }), 'https://encryption.example');
+    const { parameters } = await createSignIn(undefined, { forceLogin: true });
 
-    expect(url.searchParams.get('prompt')).toBe('login');
+    expect(new URL(prepareLogin(parameters), 'https://encryption.example').searchParams.get('prompt')).toBe('login');
   });
 
   it('asks the server for a step-up (RFC 9470) when confirming a sensitive action', async () => {
-    const url = new URL(await prepareLogin('user-42', { stepUp: true }), 'https://encryption.example');
+    const { parameters } = await createSignIn('user-42', { stepUp: true });
+    const url = new URL(prepareLogin(parameters), 'https://encryption.example');
 
     expect(url.searchParams.get('step_up')).toBe('1');
     expect(url.searchParams.has('prompt')).toBe(false);
   });
 
   it("asks for the provider's sign-in pages in the interface's language", async () => {
-    expect(new URL(await prepareLogin('user-42', { language: 'en' }), 'https://encryption.example').searchParams.get('ui_locales')).toBe('en');
-    expect(new URL(await prepareLogin('user-42'), 'https://encryption.example').searchParams.has('ui_locales')).toBe(false);
-  });
+    const { parameters } = await createSignIn('user-42', { language: 'en' });
 
-  it('never reuses a state across logins', async () => {
-    await prepareLogin();
-    const first = pendingLogin().state;
-    await prepareLogin();
-
-    expect(pendingLogin().state).not.toBe(first);
+    expect(new URL(prepareLogin(parameters), 'https://encryption.example').searchParams.get('ui_locales')).toBe('en');
   });
 });
 
-describe('handleCallback', () => {
-  it('hands the code, the verifier and the nonce to the server and returns the ID token it verified', async () => {
-    await prepareLogin('user-42');
-    const pending = pendingLogin();
+describe('depositCallback, in the sign-in tab', () => {
+  it('deposits the code on the server under the relay id, and nothing more', async () => {
+    const { parameters } = await createSignIn('user-42');
+    prepareLogin(parameters);
+    arriveOnCallback(`code=the-code&state=${parameters.state}`);
+    fetchMock.mockResolvedValue(Response.json({ status: 'deposited' }, { status: 200 }));
 
-    arriveOnCallback(`code=the-code&state=${pending.state}`);
+    await depositCallback();
+
+    const request = fetchMock.mock.calls[0][0] as Request;
+
+    expect(new URL(request.url).pathname).toBe('/api/auth/relay');
+    expect(await request.json()).toEqual({ state: parameters.state, relay_id: parameters.relayId, code: 'the-code' });
+  });
+
+  it('refuses a callback whose state this tab did not issue (login CSRF), without calling the server', async () => {
+    prepareLogin((await createSignIn()).parameters);
+    arriveOnCallback('code=the-code&state=forged');
+
+    await expect(depositCallback()).rejects.toThrow(UnknownCallbackError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a callback with no sign-in pending in this tab', async () => {
+    arriveOnCallback('code=the-code&state=anything');
+
+    await expect(depositCallback()).rejects.toThrow(UnknownCallbackError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('consumes the pending sign-in: a reloaded callback cannot deposit again', async () => {
+    const { parameters } = await createSignIn();
+    prepareLogin(parameters);
+    arriveOnCallback(`code=the-code&state=${parameters.state}`);
+    fetchMock.mockResolvedValue(Response.json({ status: 'deposited' }, { status: 200 }));
+
+    await depositCallback();
+
+    expect(sessionStorage.getItem(PENDING_LOGIN_KEY)).toBeNull();
+    await expect(depositCallback()).rejects.toThrow(UnknownCallbackError);
+  });
+
+  it('surfaces the error the provider sent back', async () => {
+    const { parameters } = await createSignIn();
+    prepareLogin(parameters);
+    arriveOnCallback(`error=access_denied&error_description=User%20cancelled&state=${parameters.state}`);
+
+    await expect(depositCallback()).rejects.toThrow('User cancelled');
+  });
+});
+
+describe('exchangeSignIn, in the iframe', () => {
+  it('waits while the server has nothing deposited yet', async () => {
+    fetchMock.mockResolvedValue(Response.json({ status: 'pending' }, { status: 202 }));
+
+    await expect(exchangeSignIn(await createSignIn('user-42'))).resolves.toBeNull();
+  });
+
+  it('exchanges with its relay id, verifier and nonce, and returns the ID token the server verified', async () => {
+    const signIn = await createSignIn('user-42', { language: 'fr' });
     fetchMock.mockResolvedValue(Response.json(tokenAnswer(), { status: 200 }));
 
-    const idTokenSet = await handleCallback();
-
-    expect(idTokenSet).toEqual({
+    expect(await exchangeSignIn(signIn)).toEqual({
       idToken: 'the.provider.id-token',
       idTokenExpiresAt: Date.parse('2030-01-01T00:00:00.000Z'),
       sub: 'user-42',
@@ -111,82 +232,22 @@ describe('handleCallback', () => {
     const request = fetchMock.mock.calls[0][0] as Request;
 
     expect(new URL(request.url).pathname).toBe('/api/auth/token');
-    expect(await request.json()).toEqual({ code: 'the-code', code_verifier: pending.codeVerifier, nonce: pending.nonce, expected_sub: 'user-42' });
+    expect(await request.json()).toEqual({
+      relay_id: signIn.parameters.relayId,
+      code_verifier: signIn.codeVerifier,
+      nonce: signIn.parameters.nonce,
+      expected_sub: 'user-42',
+      language: 'fr',
+    });
   });
 
-  it('refuses a callback whose state this tab did not issue (login CSRF), without calling the server', async () => {
-    await prepareLogin();
-    arriveOnCallback('code=the-code&state=forged');
-
-    await expect(handleCallback()).rejects.toThrow(/not started from this tab/);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('refuses a callback with no login pending in this tab', async () => {
-    arriveOnCallback('code=the-code&state=anything');
-
-    await expect(handleCallback()).rejects.toThrow(/not started from this tab/);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('consumes the pending login: a reloaded callback cannot replay the code', async () => {
-    await prepareLogin();
-    arriveOnCallback(`code=the-code&state=${pendingLogin().state}`);
-    fetchMock.mockResolvedValue(Response.json(tokenAnswer(), { status: 200 }));
-
-    await handleCallback();
-
-    expect(sessionStorage.getItem(PENDING_LOGIN_KEY)).toBeNull();
-    await expect(handleCallback()).rejects.toThrow(/not started from this tab/);
-  });
-
-  it('surfaces the error the provider sent back', async () => {
-    await prepareLogin();
-    arriveOnCallback(`error=access_denied&error_description=User%20cancelled&state=${pendingLogin().state}`);
-
-    await expect(handleCallback()).rejects.toThrow('User cancelled');
-  });
-
-  it("carries the interface's language from the start of the login to the server", async () => {
-    await prepareLogin('user-42', { language: 'fr' });
-    arriveOnCallback(`code=the-code&state=${pendingLogin().state}`);
-    fetchMock.mockResolvedValue(Response.json(tokenAnswer(), { status: 200 }));
-
-    await handleCallback();
-
-    expect(await (fetchMock.mock.calls[0][0] as Request).json()).toMatchObject({ language: 'fr' });
-  });
-
-  it('turns the server refusing another account into WrongUserError, carrying the expected user and the language for the retry', async () => {
-    await prepareLogin('user-42', { language: 'fr' });
-    arriveOnCallback(`code=the-code&state=${pendingLogin().state}`);
+  it('turns the server refusing another account into WrongUserError, carrying the expected user', async () => {
     fetchMock.mockResolvedValue(Response.json({ code: 'wrong_user' }, { status: 409 }));
 
-    const error = await handleCallback().catch((err: unknown) => err);
+    const error = await exchangeSignIn(await createSignIn('user-42')).catch((err: unknown) => err);
 
     expect(error).toBeInstanceOf(WrongUserError);
     expect((error as WrongUserError).expectedSub).toBe('user-42');
-    expect((error as WrongUserError).language).toBe('fr');
-  });
-});
-
-describe('getLoginUrl', () => {
-  it('opens /login on the interface origin, carrying the expected user and the force flag', () => {
-    const url = new URL(getLoginUrl('user-42', { forceLogin: true }));
-
-    expect(url.origin).toBe(window.location.origin);
-    expect(url.pathname).toBe('/login');
-    expect(url.searchParams.get('expectedSub')).toBe('user-42');
-    expect(url.searchParams.get('forceLogin')).toBe('1');
-    expect(url.searchParams.has('stepUp')).toBe(false);
-  });
-
-  it('carries the step-up flag', () => {
-    expect(new URL(getLoginUrl('user-42', { stepUp: true })).searchParams.get('stepUp')).toBe('1');
-  });
-
-  it("carries the interface's language", () => {
-    expect(new URL(getLoginUrl('user-42', { language: 'en' })).searchParams.get('lang')).toBe('en');
   });
 });
 

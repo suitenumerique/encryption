@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
 import { type Mock, afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
@@ -14,7 +15,8 @@ import { env } from '@encryption/src/server/env';
 import { idTokenAuthPlugin } from '@encryption/src/server/plugins/id-token-auth';
 import { authRoute } from '@encryption/src/server/routes/auth';
 import { createTestApiClient } from '@encryption/src/server/testing/inject-client';
-import { postApiAuthToken } from '@encryption/src/ui/api/generated/sdk.gen';
+import { postApiAuthRelay, postApiAuthToken } from '@encryption/src/ui/api/generated/sdk.gen';
+import type { PostApiAuthTokenResponses } from '@encryption/src/ui/api/generated/types.gen';
 
 // The provider is faked at the module boundary: its own behaviour (signatures,
 // userinfo shapes) is covered by oidc-provider.test.ts. Here: what the login
@@ -54,8 +56,10 @@ const ISSUER = 'https://issuer.example';
 const mutableEnv = env as unknown as Record<string, unknown>;
 
 const PKCE_VERIFIER = 'v'.repeat(43);
+const PKCE_CHALLENGE = createHash('sha256').update(PKCE_VERIFIER).digest('base64url');
 const NONCE = 'n'.repeat(32);
-const LOGIN = { code: 'the-code', code_verifier: PKCE_VERIFIER, nonce: NONCE };
+const STATE = 's'.repeat(43);
+const RELAY_ID = 'r'.repeat(43);
 
 const ID_TOKEN_EXP = Math.floor(Date.now() / 1000) + 3600;
 
@@ -126,11 +130,34 @@ describe('auth routes', () => {
     mutableEnv.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION = false;
   });
 
-  const login = (body: Partial<typeof LOGIN> & { expected_sub?: string; language?: 'fr' | 'en' } = {}) =>
-    postApiAuthToken({ client, body: { ...LOGIN, ...body } });
+  let deposits = 0;
+
+  /**
+   * A sign-in the callback deposited, exchanged by the iframe: what the server
+   * does with what the provider says. The relay's own steps are covered under
+   * their routes.
+   */
+  const login = async (body: { code_verifier?: string; expected_sub?: string; language?: 'fr' | 'en' } = {}) => {
+    deposits += 1;
+    const relayId = `relay-${String(deposits).padStart(37, '0')}`;
+
+    await testPrisma.authRelay.create({
+      data: { state: `state-${relayId}`, codeChallenge: PKCE_CHALLENGE, relayId, code: 'the-code', expiresAt: new Date(Date.now() + 60_000) },
+    });
+
+    const result = await postApiAuthToken({ client, body: { relay_id: relayId, code_verifier: PKCE_VERIFIER, nonce: NONCE, ...body } });
+
+    return { ...result, data: result.data as PostApiAuthTokenResponses[200] | undefined };
+  };
+
+  /** What GET /api/auth/authorize keeps, as it keeps it. */
+  const inFlight = (overrides: Partial<{ relayId: string | null; code: string | null; expiresAt: Date }> = {}) =>
+    testPrisma.authRelay.create({
+      data: { state: STATE, codeChallenge: PKCE_CHALLENGE, relayId: null, code: null, expiresAt: new Date(Date.now() + 60_000), ...overrides },
+    });
 
   describe('GET /api/auth/authorize', () => {
-    it('redirects the login tab to the provider with what the tab generated', async () => {
+    it('redirects the sign-in tab to the provider with what the iframe generated', async () => {
       (buildAuthorizationUrl as Mock).mockResolvedValue('https://issuer.example/auth?x=1');
 
       const query = `state=${'s'.repeat(43)}&nonce=${NONCE}&code_challenge=${'c'.repeat(43)}&prompt=login`;
@@ -173,6 +200,121 @@ describe('auth routes', () => {
       expect(noChallenge.statusCode).toBe(400);
       expect(weakState.statusCode).toBe(400);
       expect(buildAuthorizationUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the sign-in in flight', () => {
+    beforeEach(() => {
+      (buildAuthorizationUrl as Mock).mockResolvedValue('https://issuer.example/auth?x=1');
+    });
+
+    const authorize = (state = STATE) =>
+      app.inject({ method: 'GET', url: `/api/auth/authorize?state=${state}&nonce=${NONCE}&code_challenge=${PKCE_CHALLENGE}` });
+
+    it('keeps the state and the PKCE challenge at authorize, and nothing else', async () => {
+      expect((await authorize()).statusCode).toBe(302);
+
+      expect(await testPrisma.authRelay.findMany()).toEqual([
+        expect.objectContaining({ state: STATE, codeChallenge: PKCE_CHALLENGE, relayId: null, code: null }),
+      ]);
+    });
+
+    it('lets the same sign-in pass again (back button, reload), still one row', async () => {
+      await authorize();
+
+      expect((await authorize()).statusCode).toBe(302);
+      expect(await testPrisma.authRelay.count()).toBe(1);
+    });
+
+    it('refuses a state under another challenge, or once its code was deposited: a second sign-in would share that code', async () => {
+      await authorize();
+      const otherChallenge = await app.inject({
+        method: 'GET',
+        url: `/api/auth/authorize?state=${STATE}&nonce=${NONCE}&code_challenge=${'d'.repeat(43)}`,
+      });
+
+      expect(otherChallenge.statusCode).toBe(400);
+
+      await testPrisma.authRelay.update({ where: { state: STATE }, data: { relayId: RELAY_ID, code: 'the-code' } });
+
+      expect((await authorize()).statusCode).toBe(400);
+      expect(buildAuthorizationUrl).toHaveBeenCalledTimes(1);
+    });
+
+    it('sweeps the sign-ins nobody finished', async () => {
+      await inFlight({ expiresAt: new Date(Date.now() - 1000) });
+
+      await authorize('t'.repeat(43));
+
+      expect((await testPrisma.authRelay.findMany()).map((relay) => relay.state)).toEqual(['t'.repeat(43)]);
+    });
+
+    it('takes one deposit per sign-in, whoever makes it', async () => {
+      await inFlight();
+
+      const first = await postApiAuthRelay({ client, body: { state: STATE, relay_id: RELAY_ID, code: 'the-code' } });
+      const second = await postApiAuthRelay({ client, body: { state: STATE, relay_id: 'x'.repeat(43), code: 'another-code' } });
+
+      expect(first.response?.status).toBe(200);
+      expect(second.response?.status).toBe(409);
+      expect(second.error).toMatchObject({ code: 'sign_in_expired' });
+      expect(await testPrisma.authRelay.findUnique({ where: { state: STATE } })).toMatchObject({ relayId: RELAY_ID, code: 'the-code' });
+    });
+
+    it('refuses a deposit for a sign-in that never started or expired', async () => {
+      const unknown = await postApiAuthRelay({ client, body: { state: STATE, relay_id: RELAY_ID, code: 'the-code' } });
+
+      await inFlight({ expiresAt: new Date(Date.now() - 1000) });
+      const expired = await postApiAuthRelay({ client, body: { state: STATE, relay_id: RELAY_ID, code: 'the-code' } });
+
+      expect(unknown.response?.status).toBe(409);
+      expect(expired.response?.status).toBe(409);
+    });
+
+    it('answers 202 to the iframe while nothing is deposited, without calling the provider', async () => {
+      await inFlight();
+
+      const { data, response } = await postApiAuthToken({ client, body: { relay_id: RELAY_ID, code_verifier: PKCE_VERIFIER, nonce: NONCE } });
+
+      expect(response?.status).toBe(202);
+      expect(data).toEqual({ status: 'pending' });
+      expect(exchangeCode).not.toHaveBeenCalled();
+    });
+
+    it('exchanges the deposited code, once, with the verifier of the kept challenge', async () => {
+      providerSays({}, { userinfo: VERIFIED });
+      await inFlight({ relayId: RELAY_ID, code: 'the-code' });
+
+      const body = { relay_id: RELAY_ID, code_verifier: PKCE_VERIFIER, nonce: NONCE };
+      const first = await postApiAuthToken({ client, body });
+      const second = await postApiAuthToken({ client, body });
+
+      expect(first.response?.status).toBe(200);
+      expect(exchangeCode).toHaveBeenCalledWith('the-code', PKCE_VERIFIER);
+      expect(second.response?.status).toBe(202);
+      expect(exchangeCode).toHaveBeenCalledTimes(1);
+      expect(await testPrisma.authRelay.count()).toBe(0);
+    });
+
+    it('refuses a verifier that does not match the kept challenge BEFORE calling the provider, and drops the sign-in', async () => {
+      await inFlight({ relayId: RELAY_ID, code: 'the-code' });
+
+      const { error, response } = await postApiAuthToken({ client, body: { relay_id: RELAY_ID, code_verifier: 'w'.repeat(43), nonce: NONCE } });
+
+      expect(response?.status).toBe(401);
+      expect(error).toMatchObject({ code: 'oidc_login_failed' });
+      expect(exchangeCode).not.toHaveBeenCalled();
+      expect(await testPrisma.authRelay.count()).toBe(0);
+    });
+
+    it('refuses a deposit that expired before the iframe collected it', async () => {
+      await inFlight({ relayId: RELAY_ID, code: 'the-code', expiresAt: new Date(Date.now() - 1000) });
+
+      const { error, response } = await postApiAuthToken({ client, body: { relay_id: RELAY_ID, code_verifier: PKCE_VERIFIER, nonce: NONCE } });
+
+      expect(response?.status).toBe(409);
+      expect(error).toMatchObject({ code: 'sign_in_expired' });
+      expect(exchangeCode).not.toHaveBeenCalled();
     });
   });
 

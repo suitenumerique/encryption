@@ -37,6 +37,7 @@ interface VerifyRecipientsProps {
   onComplete: (outcome: 'resolved' | 'cancelled') => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
+  onCancelAuth?: () => void;
   currentIdToken?: string | null;
 }
 
@@ -58,6 +59,7 @@ export function VerifyRecipients({
   onComplete,
   onReconnect,
   isAuthenticating = false,
+  onCancelAuth,
   currentIdToken = null,
 }: VerifyRecipientsProps) {
   const { t } = useTranslation('common');
@@ -203,7 +205,9 @@ export function VerifyRecipients({
     if (!busy) onComplete('cancelled');
   }, [busy, onComplete]);
 
-  const banner = sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />;
+  const banner = sessionExpired && onReconnect && (
+    <SessionExpiredAlert onReconnect={onReconnect} onCancel={onCancelAuth} isAuthenticating={isAuthenticating} />
+  );
 
   return (
     <Modal isOpen onClose={close} closeOnClickOutside={!busy} size={ModalSize.SMALL} aria-label={t('verify.title')}>

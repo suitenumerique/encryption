@@ -31,10 +31,10 @@ The encryption interface (`encryption`) handles its own OIDC authentication, **i
 When the user opens onboarding or the settings, the flow is:
 
 1. The iframe shows an "Authentication required" screen with a **Continue** button
-2. Clicking Continue opens a **new tab** on the Keycloak login page (OIDC client `encryption`)
-3. The user authenticates against Keycloak (possibly with a second factor)
-4. Once authenticated, the tab sends the token through `window.opener.postMessage()` and closes itself
-5. The iframe receives the token and renders the actual interface
+2. Clicking Continue opens a **new tab**, which asks the iframe for the sign-in's parameters and goes to the identity provider (OIDC client `encryption`)
+3. The user authenticates there (possibly with a second factor), taking as long as they need
+4. The provider sends the tab back to the interface, which hands the authorization code to the encryption server and closes the tab
+5. Meanwhile the iframe asks the server to exchange that code, receives the ID token, and renders the actual interface
 
 <Alert severity="info" title="Why a separate authentication?">
   The iframe cannot perform a classic OIDC redirect (redirects are blocked by the identity provider's CSP, and popups are restricted inside iframes).
@@ -91,11 +91,12 @@ We applied every available protection (CSP, COEP, COOP, CORP, SRI, iframe isolat
 
 </Alert>
 
-<Alert severity="info" title="OIDC communication: window.opener.postMessage()">
-  The interface's OIDC authentication uses `window.opener.postMessage()` (and not `BroadcastChannel`) to send the token from the callback tab to the
-  iframe. `BroadcastChannel` is also affected by storage partitioning: a `BroadcastChannel` created inside a sandboxed iframe (embedded in
-  `docs.numerique.gouv.fr`) cannot receive messages from a top-level tab (on `encryption.numerique.gouv.fr`), because they sit in different
-  partitions. `window.opener.postMessage()` uses a direct window reference, which partitioning does not affect.
+<Alert severity="info" title="Why the result goes through the server">
+  The sign-in tab cannot hand its result back to the iframe through the browser. A provider page sending `Cross-Origin-Opener-Policy: same-origin`
+  (LaSuite Accounts, ProConnect) cuts `window.opener` for good, and `BroadcastChannel` or storage do not reach across either: the iframe, embedded in
+  `docs.numerique.gouv.fr`, and the tab, on `encryption.numerique.gouv.fr`, sit in different storage partitions. So the callback deposits the code on
+  the encryption server, under a relay id only the iframe and its tab know, and the iframe exchanges it with its PKCE verifier. The SDK lets the
+  interface's tabs escape the iframe's sandbox (`allow-popups-to-escape-sandbox`): a sandboxed tab cannot load a provider page that sends COOP at all.
 </Alert>
 
 ### Operation separation
@@ -460,15 +461,16 @@ In local development a **maildev** container is provided in `docker-compose.yaml
 
 ## Server endpoints
 
-| Method   | URL                                  | Auth     | Description                                                                                                                                                                                                                                                        |
-| -------- | ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`    | `/api/version`                       | No       | Unique build identifier (hash of every bundle)                                                                                                                                                                                                                     |
-| `GET`    | `/api/public-keys?user_ids=...`      | No       | Fetch public keys by `suiteUserId`                                                                                                                                                                                                                                 |
-| `GET`    | `/api/auth/authorize`                | No       | Redirect to the identity provider (sign-in tab of the interface; `step_up=1` asks for a second factor)                                                                                                                                                             |
-| `POST`   | `/api/auth/token`                    | No       | Exchange the authorization code (`code`, `code_verifier`, `nonce`, optional `expected_sub`); answers the ID token, its expiry, `sub`, `user_id`, `email`, `name` and `second_factor`. `409 wrong_user` if the provider signed in someone other than `expected_sub` |
-| `DELETE` | `/api/public-keys`                   | ID token | Disable your active public key ("start over")                                                                                                                                                                                                                      |
-| `POST`   | `/api/public-keys/register/init`     | ID token | Registration phase 1: receive an X-Wing challenge to decapsulate. Replacing an existing identity requires step-up (`401 insufficient_user_authentication`)                                                                                                         |
-| `POST`   | `/api/public-keys/register/complete` | ID token | Registration phase 2: prove possession of the private key and persist                                                                                                                                                                                              |
+| Method   | URL                                  | Auth     | Description                                                                                                                                                                                                                                                                                  |
+| -------- | ------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/api/version`                       | No       | Unique build identifier (hash of every bundle)                                                                                                                                                                                                                                               |
+| `GET`    | `/api/public-keys?user_ids=...`      | No       | Fetch public keys by `suiteUserId`                                                                                                                                                                                                                                                           |
+| `GET`    | `/api/auth/authorize`                | No       | Keep the state and PKCE challenge, and redirect to the identity provider (sign-in tab of the interface; `step_up=1` asks for a second factor)                                                                                                                                                |
+| `POST`   | `/api/auth/relay`                    | No       | Deposit the authorization code (`state`, `relay_id`, `code`), once per sign-in, from the interface's callback page                                                                                                                                                                           |
+| `POST`   | `/api/auth/token`                    | No       | Exchange the deposited code (`relay_id`, `code_verifier`, `nonce`, optional `expected_sub`): `202` until it is deposited, then the ID token, its expiry, `sub`, `user_id`, `email`, `name` and `second_factor`. `409 wrong_user` if the provider signed in someone other than `expected_sub` |
+| `DELETE` | `/api/public-keys`                   | ID token | Disable your active public key ("start over")                                                                                                                                                                                                                                                |
+| `POST`   | `/api/public-keys/register/init`     | ID token | Registration phase 1: receive an X-Wing challenge to decapsulate. Replacing an existing identity requires step-up (`401 insufficient_user_authentication`)                                                                                                                                   |
+| `POST`   | `/api/public-keys/register/complete` | ID token | Registration phase 2: prove possession of the private key and persist                                                                                                                                                                                                                        |
 
 <Alert severity="info" title="Error handling">
   Endpoints return error codes (not messages). Your application translates those codes client-side. Example error response: `{"code": "rate_limit_keys", "params": {"max": 10, "days": 30}}`.

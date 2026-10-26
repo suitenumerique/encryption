@@ -51,10 +51,9 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
       return;
     }
 
-    // The login popup's three top-level stops (the page, the redirect to the
-    // provider, the page it comes back to): the interface opens it and talks back
-    // to itself through `window.opener`; see the COOP exception below.
-    const isAuthDocument = path === '/login' || path === '/api/auth/authorize' || path === '/auth/callback';
+    // The sign-in tab's first page: it asks the interface iframe that opened it for
+    // the sign-in's parameters through `window.opener`; see the COOP exception below.
+    const isLoginPage = path === '/login';
 
     // `request.host` keeps the port; env.VAULT_HOST/UI_HOST are derived from
     // new URL(...).host, which also keeps it. Comparing against the port-stripped
@@ -113,21 +112,16 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
         `default-src 'none'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ${connectSrc}; img-src 'self'; frame-src ${env.VAULT_URL}; base-uri 'none'; form-action 'none'; frame-ancestors ${productFrameAncestors}; require-trusted-types-for 'script'; trusted-types ${UI_TRUSTED_TYPES_POLICY}; ${reporting}`
       );
 
-      // COOP is deliberately absent on the login popup's documents and on the redirect
-      // between them, since the browser applies it at every hop. They are the only
-      // top-level documents this host serves (every other route refuses to run outside
-      // an iframe, and COOP is ignored inside one), and the interface iframe opens them
-      // as a popup and reads the result back through `window.opener`. Measured in
-      // Chromium, `same-origin` here breaks that in one of two ways: the popup is
-      // refused outright with ERR_BLOCKED_BY_RESPONSE, because a sandboxed iframe may
-      // not open a popup that declares a COOP; or, once the sandbox is allowed to be
-      // escaped, it loads with `window.opener` already null and the token is posted
-      // into nothing. The silent variant is the worse one, so the header goes rather
-      // than the sandbox. It also protects nothing here: every route that COOP would
-      // apply to is an error page telling the visitor to close the tab.
-      if (!isAuthDocument) {
-        reply.raw.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-      }
+      // COOP is deliberately `unsafe-none` on /login, the sign-in tab's first page:
+      // `same-origin` there would load it with `window.opener` already null, and the tab
+      // could not ask the interface iframe that opened it for the sign-in's parameters.
+      // Sent explicitly rather than left out, the browser's default being the same, so a
+      // proxy adding a COOP where none is set cannot break the sign-in. Past that page
+      // the opener is no longer needed (the result travels back through the server,
+      // src/server/routes/auth.ts), so the redirect to the provider and the callback send
+      // `same-origin` like the rest. Measured in Chromium and Firefox: the handshake on
+      // /login works, and the tab still closes itself from a callback sending COOP.
+      reply.raw.setHeader('Cross-Origin-Opener-Policy', isLoginPage ? 'unsafe-none' : 'same-origin');
       reply.raw.setHeader('Cross-Origin-Resource-Policy', 'same-site');
     } else {
       // API or unknown host

@@ -61,6 +61,7 @@ interface EmergencyAccessProps {
   onClose: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
+  onCancelAuth?: () => void;
   currentIdToken?: string | null;
   /** Set when the SDK auto-opened the interface on actionable state: leads with a prompt modal. */
   emergencyPending?: InterfaceContext['emergencyPending'] | null;
@@ -633,6 +634,7 @@ export function EmergencyAccess({
   onClose,
   onReconnect,
   isAuthenticating = false,
+  onCancelAuth,
   currentIdToken = null,
   emergencyPending = null,
 }: EmergencyAccessProps) {
@@ -892,7 +894,9 @@ export function EmergencyAccess({
       children
     );
 
-  const sessionBanner = sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />;
+  const sessionBanner = sessionExpired && onReconnect && (
+    <SessionExpiredAlert onReconnect={onReconnect} onCancel={onCancelAuth} isAuthenticating={isAuthenticating} />
+  );
 
   if (view === 'designate') {
     return frame(

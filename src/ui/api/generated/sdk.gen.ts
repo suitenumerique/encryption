@@ -42,6 +42,9 @@ import type {
   GetApiVaultRevisionResponses,
   GetApiVersionData,
   GetApiVersionResponses,
+  PostApiAuthRelayData,
+  PostApiAuthRelayErrors,
+  PostApiAuthRelayResponses,
   PostApiAuthTokenData,
   PostApiAuthTokenErrors,
   PostApiAuthTokenResponses,
@@ -122,6 +125,18 @@ export const getApiVersion = <ThrowOnError extends boolean = false>(
   options?: Options<GetApiVersionData, ThrowOnError>
 ): RequestResult<GetApiVersionResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetApiVersionResponses, unknown, ThrowOnError>({ url: '/api/version', ...options });
+
+export const postApiAuthRelay = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiAuthRelayData, ThrowOnError>
+): RequestResult<PostApiAuthRelayResponses, PostApiAuthRelayErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiAuthRelayResponses, PostApiAuthRelayErrors, ThrowOnError>({
+    url: '/api/auth/relay',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
 
 export const postApiAuthToken = <ThrowOnError extends boolean = false>(
   options: Options<PostApiAuthTokenData, ThrowOnError>

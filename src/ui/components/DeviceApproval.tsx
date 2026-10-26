@@ -24,6 +24,7 @@ interface DeviceApprovalProps {
   onAdopted?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
+  onCancelAuth?: () => void;
   currentIdToken?: string | null;
 }
 
@@ -105,6 +106,7 @@ export function DeviceApproval({
   onAdopted,
   onReconnect,
   isAuthenticating = false,
+  onCancelAuth,
   currentIdToken = null,
 }: DeviceApprovalProps) {
   const { t } = useTranslation('common');
@@ -150,7 +152,7 @@ export function DeviceApproval({
 
   const banner = (
     <>
-      {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
+      {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} onCancel={onCancelAuth} isAuthenticating={isAuthenticating} />}
       {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
     </>
   );

@@ -123,6 +123,8 @@ interface ModalEncryptionOnboardingProps {
   onReconnect?: () => void;
   /** True while the re-auth tab is open and we're awaiting its result. */
   isAuthenticating?: boolean;
+  /** Stops waiting for that tab (`oidcAuth.cancelAuth`). */
+  onCancelAuth?: () => void;
   /**
    * Current ID token value. Used purely as a change detector: when
    * the token becomes a new string after the user has clicked Reconnect
@@ -174,6 +176,7 @@ export function ModalEncryptionOnboarding({
   onOpenEmergencyAccess,
   onReconnect,
   isAuthenticating = false,
+  onCancelAuth,
   currentIdToken = null,
   currentIdTokenSet = null,
   onStepUp,
@@ -787,7 +790,7 @@ export function ModalEncryptionOnboarding({
 
   const banner = (
     <>
-      {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
+      {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} onCancel={onCancelAuth} isAuthenticating={isAuthenticating} />}
       {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
     </>
   );
@@ -1046,7 +1049,13 @@ export function ModalEncryptionOnboarding({
       {/* Replacing an identity: the commit waits on a step-up, and nothing else on
           the backup screen matters until it is done. */}
       {step === 'backup' && backupPassphrase && stepUpState !== 'idle' && (
-        <StepUpScreen state={stepUpState} onStepUp={onStepUp} isAuthenticating={isAuthenticating} note={t('onboarding.step_up_phrase_kept')} />
+        <StepUpScreen
+          state={stepUpState}
+          onStepUp={onStepUp}
+          onCancel={onCancelAuth}
+          isAuthenticating={isAuthenticating}
+          note={t('onboarding.step_up_phrase_kept')}
+        />
       )}
 
       {step === 'backup' && backupPassphrase && stepUpState === 'idle' && (

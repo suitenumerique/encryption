@@ -1,66 +1,37 @@
 /**
- * Login page — opened in a new tab by the iframe.
- * Immediately redirects to the identity provider, through the server.
+ * Sign-in page, opened in a new tab by the interface iframe. Asks the iframe for
+ * the sign-in's parameters, then goes to the identity provider through the
+ * server. Refuses to start when nothing on the interface's origin opened it.
  */
-import { Loader } from '@gouvfr-lasuite/ui-components';
+import { Button, Loader, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
-import { isLocale } from '@encryption/src/shared/locale';
-import { startLogin } from '@encryption/src/ui/auth/login';
+import { receiveLoginParameters, startLogin } from '@encryption/src/ui/auth/login';
+import { Notice } from '@encryption/src/ui/components/layout/Screen';
 
 export function LoginPage() {
+  const { t } = useTranslation('common');
   const started = useRef(false);
-  const [error, setError] = useState<string | null>(null);
+  const [noOpener, setNoOpener] = useState(false);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
 
-    const searchParams = new URLSearchParams(window.location.search);
-    const expectedSub = searchParams.get('expectedSub') ?? undefined;
-    const forceLogin = searchParams.get('forceLogin') === '1';
-    const stepUp = searchParams.get('stepUp') === '1';
-    const lang = searchParams.get('lang');
-
-    startLogin(expectedSub, { forceLogin, stepUp, language: isLocale(lang) ? lang : undefined }).catch((err) => {
-      console.error('[encryption] Failed to start OIDC login:', err);
-      setError(err instanceof Error ? err.message : String(err));
+    void receiveLoginParameters().then((parameters) => {
+      if (parameters) startLogin(parameters);
+      else setNoOpener(true);
     });
   }, []);
 
-  if (error) {
+  if (noOpener) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '100vh',
-          gap: '16px',
-          padding: '24px',
-        }}
-      >
-        <span style={{ fontSize: '48px' }}>⚠️</span>
-        <p style={{ color: '#c00', fontWeight: 600, textAlign: 'center' }}>Authentication failed</p>
-        <p style={{ color: '#666', fontSize: '14px', textAlign: 'center', maxWidth: '400px' }}>{error}</p>
-        <p style={{ color: '#999', fontSize: '12px', textAlign: 'center', maxWidth: '400px' }}>
-          This may happen if the encryption service cannot reach the identity provider. Check that the OIDC configuration is correct.
-        </p>
-        <button
-          onClick={() => window.close()}
-          style={{
-            marginTop: '8px',
-            padding: '8px 24px',
-            background: '#0063CB',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          Close
-        </button>
+      <div style={{ padding: '2rem', maxWidth: '480px', margin: '0 auto' }}>
+        <Notice type={VariantType.ERROR}>{t('auth.no_opener')}</Notice>
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+          <Button onClick={() => window.close()}>{t('settings.close')}</Button>
+        </div>
       </div>
     );
   }

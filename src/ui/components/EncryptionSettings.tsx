@@ -60,6 +60,7 @@ interface EncryptionSettingsProps {
   onOpenEmergencyAccess?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
+  onCancelAuth?: () => void;
   currentIdToken?: string | null;
 }
 
@@ -99,6 +100,7 @@ export function EncryptionSettings({
   onOpenEmergencyAccess,
   onReconnect,
   isAuthenticating = false,
+  onCancelAuth,
   currentIdToken = null,
 }: EncryptionSettingsProps) {
   const { t, i18n } = useTranslation('common');
@@ -533,7 +535,9 @@ export function EncryptionSettings({
   const displayName = userInfo?.name || userInfo?.email || t('settings.you');
   const displayEmail = userInfo?.name ? userInfo.email : null;
 
-  const sessionBanner = sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />;
+  const sessionBanner = sessionExpired && onReconnect && (
+    <SessionExpiredAlert onReconnect={onReconnect} onCancel={onCancelAuth} isAuthenticating={isAuthenticating} />
+  );
 
   if (keysExist === null) {
     return <LoadingScreen label={t('settings.loading')} />;

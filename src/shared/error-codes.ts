@@ -12,6 +12,7 @@ export const API_ERROR_EMAIL_CLAIM_REQUIRED = 'email_claim_required';
 export const API_ERROR_NAME_CLAIMS_REQUIRED = 'name_claims_required';
 export const API_ERROR_OIDC_LOGIN_FAILED = 'oidc_login_failed';
 export const API_ERROR_WRONG_USER = 'wrong_user';
+export const API_ERROR_SIGN_IN_EXPIRED = 'sign_in_expired';
 export const API_ERROR_INSUFFICIENT_USER_AUTHENTICATION = 'insufficient_user_authentication';
 
 export const API_ERROR_FORBIDDEN_OTHER_USER = 'forbidden_other_user';

@@ -1,34 +1,41 @@
 /**
- * Sign-in for the encryption interface.
+ * Sign-in for the encryption interface (architecture.md §2.1).
  *
  * The SERVER runs the OIDC code exchange (src/server/routes/auth.ts), since the
  * provider only accepts a client with a secret: it verifies the ID token and
  * hands it back. That ID TOKEN, never an access token, is what the interface
  * presents as the Bearer credential of every API call until it expires (about
- * an hour). The access token never leaves the server. This
- * module only does what has to happen in the browser:
+ * an hour). The access token never leaves the server.
  *
- * 1. The iframe opens /login in a NEW TAB (an iframe cannot be redirected to the
- *    provider: popups and framing are blocked there).
- * 2. That tab generates the state, nonce and PKCE verifier, keeps them in its
- *    own sessionStorage, and navigates to /api/auth/authorize, which redirects
- *    to the provider.
- * 3. The provider redirects back to /auth/callback, in the same tab, which checks
- *    the state and hands the code, verifier and nonce to POST /api/auth/token.
- * 4. The callback posts the resulting ID token to `window.opener`, the iframe,
- *    and closes once the iframe acknowledged it.
+ * The iframe cannot sign in where it is (providers refuse to be framed), so it
+ * opens a NEW TAB, and the result travels back through the server, not the
+ * browser: a provider page sending `Cross-Origin-Opener-Policy: same-origin`
+ * cuts the link between the tab and the iframe for good, and the two share no
+ * storage (the iframe's is partitioned under the product's site).
+ *
+ * 1. The iframe draws the state, nonce, PKCE verifier and a relay id, keeps the
+ *    verifier, and opens /login in a new tab (`createSignIn`, `getLoginUrl`).
+ * 2. The tab asks its opener for the parameters, while the link still exists
+ *    (`receiveLoginParameters`), and goes to /api/auth/authorize, which keeps
+ *    the state and challenge and redirects to the provider (`startLogin`).
+ * 3. The provider sends the tab back to /auth/callback, which checks the state
+ *    and deposits the code on the server under the relay id (`depositCallback`).
+ * 4. Meanwhile the iframe asks the server to exchange "the code of my relay id"
+ *    with its verifier until it is there (`exchangeSignIn`).
  */
 import { z } from 'zod';
 
 import { type Locale, SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 import '@encryption/src/shared/zod-jitless';
 import { ApiError, apiDefaults } from '@encryption/src/ui/api/client';
-import { postApiAuthToken } from '@encryption/src/ui/api/generated/sdk.gen';
+import { postApiAuthRelay, postApiAuthToken } from '@encryption/src/ui/api/generated/sdk.gen';
 
-export const OIDC_AUTH_MESSAGE_TYPE = 'encryption-oidc-auth-complete';
-export const OIDC_AUTH_ACK_MESSAGE_TYPE = 'encryption-oidc-auth-ack';
+export const OIDC_LOGIN_READY_MESSAGE_TYPE = 'encryption-oidc-login-ready';
+export const OIDC_LOGIN_PARAMETERS_MESSAGE_TYPE = 'encryption-oidc-login-parameters';
 
-const AUTH_ACK_TIMEOUT_MS = 5000;
+// How long the sign-in tab waits for its opener's parameters: they come back at
+// once from an iframe that is listening, never from anything else.
+const LOGIN_PARAMETERS_TIMEOUT_MS = 10_000;
 
 /** The provider's ID token and what the server said about it, as the interface keeps it (see id-token-storage.ts). */
 export const idTokenSetSchema = z.object({
@@ -48,17 +55,23 @@ export const idTokenSetSchema = z.object({
 });
 export type IdTokenSet = z.infer<typeof idTokenSetSchema>;
 
-// Kept in the LOGIN TAB's sessionStorage between the departure to the provider
+/** What the iframe hands its sign-in tab: everything but the verifier. */
+export const loginParametersSchema = z.object({
+  state: z.string(),
+  nonce: z.string(),
+  codeChallenge: z.string(),
+  relayId: z.string(),
+  forceLogin: z.boolean().optional(),
+  stepUp: z.boolean().optional(),
+  language: z.enum(SUPPORTED_LOCALES).optional(),
+});
+export type LoginParameters = z.infer<typeof loginParametersSchema>;
+
+// Kept in the SIGN-IN TAB's sessionStorage between the departure to the provider
 // and the return to /auth/callback (the same tab, so the same storage).
 const PENDING_LOGIN_KEY = 'encryption-pending-login';
 
-const pendingLoginSchema = z.object({
-  state: z.string(),
-  nonce: z.string(),
-  codeVerifier: z.string(),
-  expectedSub: z.string().optional(),
-  language: z.enum(SUPPORTED_LOCALES).optional(),
-});
+const pendingLoginSchema = z.object({ state: z.string(), relayId: z.string() });
 
 export interface LoginOptions {
   /** Ask the provider for credentials again even within an SSO session (used when the wrong account was detected). */
@@ -69,12 +82,19 @@ export interface LoginOptions {
    */
   stepUp?: boolean;
   /**
-   * The interface's language (the product's, else the browser's), handed to the
-   * server for the account's language when the provider sends no `locale`. Passed
-   * along from the iframe: the login tab is a top-level page, so it does not share
-   * the iframe's storage and would only know the browser's language.
+   * The interface's language (the product's, else the browser's): for the
+   * provider's pages, and for the account's language when the provider sends no
+   * `locale`.
    */
   language?: Locale;
+}
+
+/** One sign-in, as the iframe keeps it until the exchange: the verifier never leaves it before. */
+export interface SignIn {
+  parameters: LoginParameters;
+  codeVerifier: string;
+  /** The OIDC sub the product says is signed in: the server refuses to sign in anyone else. */
+  expectedSub?: string;
 }
 
 function randomBase64Url(bytes: number): string {
@@ -92,60 +112,104 @@ async function pkceChallenge(verifier: string): Promise<string> {
   return base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
 }
 
-/**
- * Record a login about to start in this tab and return where to send the tab.
- * @param expectedSub - The OIDC sub the product says is signed in. Checked by the
- *   server at the end of the flow, which refuses to sign in anyone else.
- */
-export async function prepareLogin(expectedSub?: string, options: LoginOptions = {}): Promise<string> {
-  const pending = {
-    state: randomBase64Url(32),
-    nonce: randomBase64Url(32),
-    codeVerifier: randomBase64Url(32), // 43 characters, the RFC 7636 minimum
+/** Draw a sign-in, in the iframe. */
+export async function createSignIn(expectedSub?: string, options: LoginOptions = {}): Promise<SignIn> {
+  const codeVerifier = randomBase64Url(32); // 43 characters, the RFC 7636 minimum
+
+  return {
+    parameters: {
+      state: randomBase64Url(32),
+      nonce: randomBase64Url(32),
+      codeChallenge: await pkceChallenge(codeVerifier),
+      relayId: randomBase64Url(32),
+      ...(options.forceLogin ? { forceLogin: true } : {}),
+      ...(options.stepUp ? { stepUp: true } : {}),
+      ...(options.language ? { language: options.language } : {}),
+    },
+    codeVerifier,
     ...(expectedSub ? { expectedSub } : {}),
-    ...(options.language ? { language: options.language } : {}),
   };
+}
 
-  sessionStorage.setItem(PENDING_LOGIN_KEY, JSON.stringify(pending));
+/** The sign-in page the iframe opens in a new tab, on the interface's own origin. It carries nothing: its parameters come from the opener. */
+export function getLoginUrl(): string {
+  return `${window.location.origin}/login`;
+}
 
-  const params = new URLSearchParams({ state: pending.state, nonce: pending.nonce, code_challenge: await pkceChallenge(pending.codeVerifier) });
+/**
+ * Ask the opener for the sign-in's parameters, in the sign-in tab. Only a
+ * message from `window.opener` on the interface's own origin counts: a tab
+ * opened by anyone else never starts a sign-in.
+ */
+export function receiveLoginParameters(timeoutMs = LOGIN_PARAMETERS_TIMEOUT_MS): Promise<LoginParameters | null> {
+  const opener = window.opener as Window | null;
 
-  if (options.stepUp) params.set('step_up', '1');
-  else if (options.forceLogin) params.set('prompt', 'login');
+  if (!opener) return Promise.resolve(null);
 
-  if (options.language) params.set('ui_locales', options.language);
+  const interfaceOrigin = window.location.origin;
+
+  return new Promise((resolve) => {
+    function settle(parameters: LoginParameters | null) {
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      resolve(parameters);
+    }
+
+    function onMessage(event: MessageEvent) {
+      if (event.source !== opener || event.origin !== interfaceOrigin) return;
+      if ((event.data as { type?: string } | null)?.type !== OIDC_LOGIN_PARAMETERS_MESSAGE_TYPE) return;
+
+      const parsed = loginParametersSchema.safeParse((event.data as { parameters?: unknown }).parameters);
+
+      if (parsed.success) settle(parsed.data);
+    }
+
+    const timer = setTimeout(() => settle(null), timeoutMs);
+
+    // Listening BEFORE asking: the iframe answers at once.
+    window.addEventListener('message', onMessage);
+    opener.postMessage({ type: OIDC_LOGIN_READY_MESSAGE_TYPE }, interfaceOrigin);
+  });
+}
+
+/** Where to send the sign-in tab, recording what its callback will check. */
+export function prepareLogin(parameters: LoginParameters): string {
+  sessionStorage.setItem(PENDING_LOGIN_KEY, JSON.stringify({ state: parameters.state, relayId: parameters.relayId }));
+
+  const params = new URLSearchParams({ state: parameters.state, nonce: parameters.nonce, code_challenge: parameters.codeChallenge });
+
+  if (parameters.stepUp) params.set('step_up', '1');
+  else if (parameters.forceLogin) params.set('prompt', 'login');
+
+  if (parameters.language) params.set('ui_locales', parameters.language);
 
   return `/api/auth/authorize?${params.toString()}`;
 }
 
-/** Start the login. Called from the /login page in the new tab. */
-export async function startLogin(expectedSub?: string, options: LoginOptions = {}): Promise<void> {
-  window.location.assign(await prepareLogin(expectedSub, options));
+/** Send the sign-in tab to the provider. */
+export function startLogin(parameters: LoginParameters): void {
+  window.location.assign(prepareLogin(parameters));
 }
 
-export class WrongUserError extends Error {
-  expectedSub: string;
-  /** The language of the login that failed, for the retry. */
-  language?: Locale;
-
-  constructor(expectedSub: string, language?: Locale) {
-    super('wrong_user');
-    this.name = 'WrongUserError';
-    this.expectedSub = expectedSub;
-    this.language = language;
+/** A callback this tab has no pending sign-in for: started elsewhere, forged, or already completed. */
+export class UnknownCallbackError extends Error {
+  constructor() {
+    super('This sign-in was not started from this tab, or it was already completed.');
+    this.name = 'UnknownCallbackError';
   }
 }
 
 /**
- * Finish the login. Called from the /auth/callback page in the login tab.
- * Throws WrongUserError when the provider signed in someone other than the
- * expected user (the server then handed nothing back).
+ * Hand the provider's code to the server, in the sign-in tab back on
+ * /auth/callback. The state proves this tab started the sign-in the provider is
+ * answering: a callback address forged by someone else (login CSRF) arrives
+ * with no pending sign-in here, or with another state, and deposits nothing.
  */
-export async function handleCallback(): Promise<IdTokenSet> {
+export async function depositCallback(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const raw = sessionStorage.getItem(PENDING_LOGIN_KEY);
 
-  // Single use: a reload of the callback page must not replay the code.
+  // Single use: a reload of the callback page must not deposit again.
   sessionStorage.removeItem(PENDING_LOGIN_KEY);
 
   const providerError = params.get('error');
@@ -156,24 +220,43 @@ export async function handleCallback(): Promise<IdTokenSet> {
   const pending = parsed?.success ? parsed.data : null;
   const code = params.get('code');
 
-  // The state proves this tab started the login the provider is answering: a
-  // callback URL forged by someone else (login CSRF) arrives with no pending
-  // login here, or with another state.
-  if (!pending || !code || params.get('state') !== pending.state) {
-    throw new Error('This sign-in was not started from this tab, or it was already completed.');
+  if (!pending || !code || params.get('state') !== pending.state) throw new UnknownCallbackError();
+
+  await postApiAuthRelay({ ...apiDefaults, body: { state: pending.state, relay_id: pending.relayId, code } });
+}
+
+export class WrongUserError extends Error {
+  expectedSub: string;
+
+  constructor(expectedSub: string) {
+    super('wrong_user');
+    this.name = 'WrongUserError';
+    this.expectedSub = expectedSub;
   }
+}
+
+/**
+ * Ask the server for the ID token of a sign-in, in the iframe: null while the
+ * user is still at the provider (nothing deposited yet), to ask again. Throws
+ * WrongUserError when the provider signed in someone other than the expected
+ * user (the server then handed nothing back).
+ */
+export async function exchangeSignIn(signIn: SignIn): Promise<IdTokenSet | null> {
+  const { parameters } = signIn;
 
   try {
-    const { data } = await postApiAuthToken({
+    const { data, response } = await postApiAuthToken({
       ...apiDefaults,
       body: {
-        code,
-        code_verifier: pending.codeVerifier,
-        nonce: pending.nonce,
-        ...(pending.expectedSub ? { expected_sub: pending.expectedSub } : {}),
-        ...(pending.language ? { language: pending.language } : {}),
+        relay_id: parameters.relayId,
+        code_verifier: signIn.codeVerifier,
+        nonce: parameters.nonce,
+        ...(signIn.expectedSub ? { expected_sub: signIn.expectedSub } : {}),
+        ...(parameters.language ? { language: parameters.language } : {}),
       },
     });
+
+    if (response.status === 202 || !('id_token' in data)) return null;
 
     return {
       idToken: data.id_token,
@@ -186,77 +269,10 @@ export async function handleCallback(): Promise<IdTokenSet> {
       secondFactor: data.second_factor,
     };
   } catch (err) {
-    if (err instanceof ApiError && err.code === 'wrong_user' && pending.expectedSub) {
-      throw new WrongUserError(pending.expectedSub, pending.language);
-    }
+    if (err instanceof ApiError && err.code === 'wrong_user' && signIn.expectedSub) throw new WrongUserError(signIn.expectedSub);
 
     throw err;
   }
-}
-
-/**
- * Send the ID token back to the opener (the interface iframe), and resolve to
- * whether that opener acknowledged it.
- *
- * The `targetOrigin` argument is the security boundary, not a formality: the
- * browser compares it against the opener's CURRENT origin and drops the message
- * on mismatch. Any page can open this flow in a popup, so replacing it with '*'
- * would hand the ID token to whoever opened the tab.
- *
- * The acknowledgement exists because the ID token is otherwise posted blind. Only a
- * document on our own origin can send it, so a foreign opener never produces one and
- * the tab stays open instead of closing on a timer. That removes a signal an attacker
- * could otherwise read off `window.closed` — the tab closed only when the signed-in
- * `sub` matched the one they put in the URL — and it also stops a legitimate user from
- * being left silently unauthenticated when the message reached nobody.
- *
- * Uses window.opener.postMessage(): the callback tab was opened via window.open()
- * from the interface iframe. This works cross-site because it is a direct window
- * reference, not a storage API subject to Chrome's storage partitioning, which is
- * why a BroadcastChannel cannot replace it (the tab and the iframe sit in different
- * storage partitions). The opener reference is therefore load-bearing, and it is why
- * the server omits COOP on /login and /auth/callback: any COOP on those documents
- * severs it during the provider round trip.
- */
-export function notifyAuthComplete(idTokenSet: IdTokenSet): Promise<boolean> {
-  if (!window.opener) return Promise.resolve(false);
-
-  const interfaceOrigin = window.location.origin;
-
-  return new Promise((resolve) => {
-    function settle(acknowledged: boolean) {
-      clearTimeout(timer);
-      window.removeEventListener('message', onMessage);
-      resolve(acknowledged);
-    }
-
-    function onMessage(event: MessageEvent) {
-      if (event.origin !== interfaceOrigin || (event.data as { type?: string } | null)?.type !== OIDC_AUTH_ACK_MESSAGE_TYPE) return;
-
-      settle(true);
-    }
-
-    const timer = setTimeout(() => settle(false), AUTH_ACK_TIMEOUT_MS);
-
-    // Listening BEFORE posting: the interface answers synchronously in its own message
-    // handler, so a listener registered afterwards can miss the acknowledgement.
-    window.addEventListener('message', onMessage);
-    window.opener.postMessage({ type: OIDC_AUTH_MESSAGE_TYPE, idTokenSet }, interfaceOrigin);
-  });
-}
-
-/** The login page the iframe opens in a new tab, on the interface's own origin. */
-export function getLoginUrl(expectedSub?: string, options: LoginOptions = {}): string {
-  const params = new URLSearchParams();
-
-  if (expectedSub) params.set('expectedSub', expectedSub);
-  if (options.forceLogin) params.set('forceLogin', '1');
-  if (options.stepUp) params.set('stepUp', '1');
-  if (options.language) params.set('lang', options.language);
-
-  const qs = params.toString();
-
-  return `${window.location.origin}/login${qs ? `?${qs}` : ''}`;
 }
 
 // A call started this close to the expiry could reach the server after it.

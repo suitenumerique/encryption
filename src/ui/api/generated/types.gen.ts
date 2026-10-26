@@ -22,9 +22,46 @@ export type GetApiVersionResponses = {
 
 export type GetApiVersionResponse = GetApiVersionResponses[keyof GetApiVersionResponses];
 
+export type PostApiAuthRelayData = {
+  body: {
+    state: string;
+    relay_id: string;
+    code: string;
+  };
+  path?: never;
+  query?: never;
+  url: '/api/auth/relay';
+};
+
+export type PostApiAuthRelayErrors = {
+  /**
+   * Default Response
+   */
+  409: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiAuthRelayError = PostApiAuthRelayErrors[keyof PostApiAuthRelayErrors];
+
+export type PostApiAuthRelayResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    status: 'deposited';
+  };
+};
+
+export type PostApiAuthRelayResponse = PostApiAuthRelayResponses[keyof PostApiAuthRelayResponses];
+
 export type PostApiAuthTokenData = {
   body: {
-    code: string;
+    relay_id: string;
     code_verifier: string;
     nonce: string;
     expected_sub?: string;
@@ -83,6 +120,12 @@ export type PostApiAuthTokenResponses = {
     first_name: string;
     last_name: string;
     second_factor: boolean;
+  };
+  /**
+   * Default Response
+   */
+  202: {
+    status: 'pending';
   };
 };
 

@@ -26,6 +26,7 @@ interface RecipientProfileProps {
   label: RecipientLabel;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
+  onCancelAuth?: () => void;
   currentIdToken?: string | null;
 }
 
@@ -41,7 +42,14 @@ type Standing = Decision | 'changed';
  * from the registry for out-of-band comparison, and Trust / Don't trust
  * controls. The recorded decision, if any, is the chip on the card.
  */
-export function RecipientProfile({ userId, label, onReconnect, isAuthenticating = false, currentIdToken = null }: RecipientProfileProps) {
+export function RecipientProfile({
+  userId,
+  label,
+  onReconnect,
+  isAuthenticating = false,
+  onCancelAuth,
+  currentIdToken = null,
+}: RecipientProfileProps) {
   const { t } = useTranslation('common');
   const { isReady, request } = useEncryptionContext();
 
@@ -136,7 +144,9 @@ export function RecipientProfile({ userId, label, onReconnect, isAuthenticating 
       description={fingerprint ? t('profile.compare_instruction') : undefined}
       banner={
         <>
-          {sessionExpired && onReconnect && <SessionExpiredAlert onReconnect={onReconnect} isAuthenticating={isAuthenticating} />}
+          {sessionExpired && onReconnect && (
+            <SessionExpiredAlert onReconnect={onReconnect} onCancel={onCancelAuth} isAuthenticating={isAuthenticating} />
+          )}
           {error && <Notice type={VariantType.ERROR}>{error}</Notice>}
         </>
       }

@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
+import { prisma } from '@encryption/src/prisma/client';
 import { type IdentityClaims, isIncomplete, pickIdentity } from '@encryption/src/server/auth/identity-claims';
 import { resolveOidcAccount } from '@encryption/src/server/auth/oidc-accounts';
 import {
@@ -17,28 +19,53 @@ import { hasSecondFactor } from '@encryption/src/server/auth/step-up';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
-import { API_ERROR_NAME_CLAIMS_REQUIRED, API_ERROR_OIDC_LOGIN_FAILED, API_ERROR_WRONG_USER } from '@encryption/src/shared/error-codes';
+import {
+  API_ERROR_INVALID_REQUEST,
+  API_ERROR_NAME_CLAIMS_REQUIRED,
+  API_ERROR_OIDC_LOGIN_FAILED,
+  API_ERROR_SIGN_IN_EXPIRED,
+  API_ERROR_WRONG_USER,
+} from '@encryption/src/shared/error-codes';
 import { SUPPORTED_LOCALES } from '@encryption/src/shared/locale';
 
-// What the login tab generates and keeps until the provider sends it back:
-// random base64url strings (RFC 7636 §4.1 sizes the PKCE verifier at 43-128
-// characters, its S256 challenge is exactly 43).
+// What the interface iframe generates for a sign-in: random base64url strings
+// (RFC 7636 §4.1 sizes the PKCE verifier at 43-128 characters, its S256
+// challenge is exactly 43).
 const randomParameter = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
 const pkceVerifier = z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/);
 const pkceChallenge = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const authorizationCode = z.string().min(1).max(4096);
+
+// How long a sign-in may stay in flight, from the tab's departure to the
+// provider to the iframe's exchange: the user may take their time there.
+const RELAY_LIFETIME_MS = 60 * 60 * 1000;
+
+function s256(verifier: string): Buffer {
+  return createHash('sha256').update(verifier).digest();
+}
 
 /**
- * The interface's login, run by the server as a confidential client:
+ * The interface's sign-in, run by the server as a confidential client and
+ * relayed through it (architecture.md §2.1: a provider page sending COOP cuts the
+ * link between the sign-in tab and the iframe that opened it, so the result
+ * cannot travel back through the browser):
  *
- *  1. GET  /api/auth/authorize: the login tab is sent here with the state,
- *     nonce and PKCE challenge it generated, and redirected to the provider.
+ *  1. GET  /api/auth/authorize: the sign-in tab is sent here with the state,
+ *     nonce and PKCE challenge the iframe generated. The state and the
+ *     challenge are kept, and the tab is redirected to the provider.
  *  2. The provider redirects back to /auth/callback, a page of the interface,
- *     which checks the state and posts the code here:
- *  3. POST /api/auth/token: the code is exchanged (client secret + PKCE
- *     verifier), the ID token verified against the nonce, userinfo asked for
- *     the email and names the ID token lacks, the user resolved (minted on first contact), and the
- *     ID TOKEN handed back. The interface presents it as the Bearer credential
- *     of every call until it expires; the access token is dropped here.
+ *     which checks the state and deposits the code here, with the relay id the
+ *     iframe gave it: POST /api/auth/relay.
+ *  3. POST /api/auth/token, polled by the iframe with the relay id: `202` until
+ *     the code is deposited, then the PKCE verifier is checked against the kept
+ *     challenge (whether or not the provider checks it too), the code exchanged
+ *     (client secret + verifier), the ID token verified against the nonce,
+ *     userinfo asked for the email and names the ID token lacks, the user
+ *     resolved (minted on first contact), and the ID TOKEN handed back. The
+ *     interface presents it as the Bearer credential of every call until it
+ *     expires; the access token is dropped here.
+ *
+ * The code never travels back to a browser, and no token is ever stored.
  */
 export async function authRoute(app: FastifyInstance): Promise<void> {
   configureZodValidation(app);
@@ -58,9 +85,32 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
         // The interface's language, for the provider's sign-in pages.
         ui_locales: z.enum(SUPPORTED_LOCALES).optional(),
       }),
+      response: { ...errorResponses(400) },
     },
     handler: async (request, reply) => {
       const { state, nonce, code_challenge, prompt, step_up, ui_locales } = request.query;
+      const now = new Date();
+
+      // Sign-ins nobody finished, swept here rather than by a job: this is the only way rows are added.
+      await prisma.authRelay.deleteMany({ where: { expiresAt: { lt: now } } });
+
+      try {
+        await prisma.authRelay.create({
+          data: { state, codeChallenge: code_challenge, expiresAt: new Date(now.getTime() + RELAY_LIFETIME_MS) },
+        });
+      } catch (err) {
+        if ((err as { code?: unknown } | null)?.code !== 'P2002') throw err;
+
+        // The same sign-in passing again (the browser's back button, a reload)
+        // goes on to the provider: its code still lands in the one deposit, and
+        // only the iframe holding the relay id and the verifier can collect it.
+        // Under another challenge it would be a second sign-in sharing that code.
+        const existing = await prisma.authRelay.findUnique({ where: { state } });
+        const sameSignIn = existing?.codeChallenge === code_challenge && existing.code === null && existing.expiresAt >= now;
+
+        if (!sameSignIn) return reply.status(400).send({ code: API_ERROR_INVALID_REQUEST });
+      }
+
       const location = await buildAuthorizationUrl({
         state,
         nonce,
@@ -74,10 +124,46 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
     },
   });
 
+  app.withTypeProvider<ZodTypeProvider>().post('/api/auth/relay', {
+    schema: {
+      body: z.object({
+        // The state of the callback address, which the tab checked against the one it was handed.
+        state: randomParameter,
+        // The handle of this sign-in, which only the iframe and its tab know.
+        relay_id: randomParameter,
+        code: authorizationCode,
+      }),
+      response: {
+        200: z.object({ status: z.literal('deposited') }),
+        ...errorResponses(409),
+      },
+    },
+    handler: async (request, reply) => {
+      const { state, relay_id, code } = request.body;
+
+      try {
+        // Once per sign-in: a deposit already made, whoever made it, stays.
+        const { count } = await prisma.authRelay.updateMany({
+          where: { state, code: null, expiresAt: { gte: new Date() } },
+          data: { relayId: relay_id, code },
+        });
+
+        if (count === 0) return reply.status(409).send({ code: API_ERROR_SIGN_IN_EXPIRED });
+      } catch (err) {
+        // A relay id already used by another sign-in.
+        if ((err as { code?: unknown } | null)?.code === 'P2002') return reply.status(409).send({ code: API_ERROR_SIGN_IN_EXPIRED });
+
+        throw err;
+      }
+
+      return { status: 'deposited' as const };
+    },
+  });
+
   app.withTypeProvider<ZodTypeProvider>().post('/api/auth/token', {
     schema: {
       body: z.object({
-        code: z.string().min(1).max(4096),
+        relay_id: randomParameter,
         code_verifier: pkceVerifier,
         nonce: randomParameter,
         // The OIDC sub the product says is signed in. When given, a login as
@@ -102,11 +188,34 @@ export async function authRoute(app: FastifyInstance): Promise<void> {
           /** Whether the provider reported a second factor for this login (see step-up.ts). */
           second_factor: z.boolean(),
         }),
+        /** Nothing deposited under this relay id yet: the user is still at the provider. Ask again. */
+        202: z.object({ status: z.literal('pending') }),
         ...errorResponses(401, 403, 409),
       },
     },
     handler: async (request, reply) => {
-      const { code, code_verifier, nonce, expected_sub, language } = request.body;
+      const { relay_id, code_verifier, nonce, expected_sub, language } = request.body;
+      const relay = await prisma.authRelay.findUnique({ where: { relayId: relay_id } });
+
+      if (relay === null) return reply.status(202).send({ status: 'pending' as const });
+
+      // Tried once, whatever the outcome: the provider's code is single use anyway.
+      // A concurrent exchange of the same deposit finds nothing left to delete.
+      const { count } = await prisma.authRelay.deleteMany({ where: { state: relay.state, relayId: relay_id } });
+
+      if (count === 0 || relay.code === null) return reply.status(202).send({ status: 'pending' as const });
+      if (relay.expiresAt < new Date()) return reply.status(409).send({ code: API_ERROR_SIGN_IN_EXPIRED });
+
+      // PKCE checked here too, against the challenge kept at authorize: a provider
+      // may accept `code_challenge` without enforcing it, and this server would
+      // otherwise exchange any deposited code for whoever holds the relay id.
+      if (!timingSafeEqual(s256(code_verifier), Buffer.from(relay.codeChallenge, 'base64url'))) {
+        request.log.warn('OIDC sign-in with a PKCE verifier that does not match its challenge');
+
+        return reply.status(401).send({ code: API_ERROR_OIDC_LOGIN_FAILED });
+      }
+
+      const code = relay.code;
 
       let idToken: string;
       let idClaims: IdTokenClaims;

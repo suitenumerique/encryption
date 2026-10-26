@@ -419,9 +419,25 @@ function InterfaceScreens({
 
   // Wait for OIDC authentication.
   if (!oidcAuth.idToken) {
-    // Waiting for the login tab to complete
+    // Waiting for the sign-in tab. No deadline, and no "the tab was closed": the
+    // iframe cannot see the tab once a provider page cut the link, so the user
+    // decides, by opening the sign-in again or cancelling.
     if (oidcAuth.isAuthenticating) {
-      return frameGate(<LoadingScreen label={t('auth.authenticating')} />);
+      return frameGate(
+        <Screen
+          illustration="shield-gear"
+          title={t('auth.required_title')}
+          description={t('auth.authenticating')}
+          actions={
+            <>
+              <Button onClick={oidcAuth.requestAuth}>{t('auth.reopen')}</Button>
+              <Button variant="bordered" color="neutral" onClick={oidcAuth.cancelAuth}>
+                {t('auth.cancel')}
+              </Button>
+            </>
+          }
+        />
+      );
     }
 
     // Error from a previous attempt
@@ -429,8 +445,14 @@ function InterfaceScreens({
       return frameGate(
         <Screen
           title={t('auth.required_title')}
-          banner={<Notice type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Notice>}
-          actions={<Button onClick={oidcAuth.requestAuth}>{t('auth.retry')}</Button>}
+          banner={
+            oidcAuth.wrongUser ? (
+              <Notice type={VariantType.WARNING}>{oidcAuth.error}</Notice>
+            ) : (
+              <Notice type={VariantType.ERROR}>{t('auth.failed', { error: oidcAuth.error })}</Notice>
+            )
+          }
+          actions={<Button onClick={oidcAuth.requestAuth}>{oidcAuth.wrongUser ? t('auth.sign_in_another_account') : t('auth.retry')}</Button>}
         />
       );
     }
@@ -477,6 +499,7 @@ function InterfaceScreens({
         onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
         onReconnect={oidcAuth.requestAuth}
         isAuthenticating={oidcAuth.isAuthenticating}
+        onCancelAuth={oidcAuth.cancelAuth}
         currentIdToken={oidcAuth.idToken}
         emergencyPending={parentContext.emergencyPending}
       />
@@ -489,6 +512,7 @@ function InterfaceScreens({
         getIdToken={getValidIdToken}
         onReconnect={oidcAuth.requestAuth}
         isAuthenticating={oidcAuth.isAuthenticating}
+        onCancelAuth={oidcAuth.cancelAuth}
         currentIdToken={oidcAuth.idToken}
         onAdopted={() => {
           notifyParent(parentContext.parentOrigin, MSG_INTERFACE_ONBOARDING_COMPLETE, {});
@@ -519,6 +543,7 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
           currentIdToken={oidcAuth.idToken}
           currentIdTokenSet={oidcAuth.idTokenSet}
           onStepUp={oidcAuth.requestStepUp}
@@ -539,6 +564,7 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
           currentIdToken={oidcAuth.idToken}
           currentIdTokenSet={oidcAuth.idTokenSet}
           onStepUp={oidcAuth.requestStepUp}
@@ -559,6 +585,7 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => navigate('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
           currentIdToken={oidcAuth.idToken}
           currentIdTokenSet={oidcAuth.idTokenSet}
           onStepUp={oidcAuth.requestStepUp}
@@ -584,6 +611,7 @@ function InterfaceScreens({
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
           currentIdToken={oidcAuth.idToken}
         />
       );
@@ -602,6 +630,7 @@ function InterfaceScreens({
           onComplete={(outcome) => notifyParent(parentContext.parentOrigin, MSG_INTERFACE_VERIFY_COMPLETE, { outcome })}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
           currentIdToken={oidcAuth.idToken}
         />
       );
@@ -613,6 +642,7 @@ function InterfaceScreens({
           label={parentContext.recipientProfile?.label ?? { email: '' }}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
           currentIdToken={oidcAuth.idToken}
         />
       );

@@ -43,6 +43,7 @@ const EXPECTED_AUTH_SURFACE = [
   'GET /api/vault/meta SKIP_SIG idToken=no',
   'GET /api/vault/revision SIG_ONLY idToken=no',
   'GET /api/version DEFAULT idToken=no',
+  'POST /api/auth/relay DEFAULT idToken=no',
   'POST /api/auth/token DEFAULT idToken=no',
   'POST /api/public-keys/register/complete DEFAULT idToken=yes',
   'POST /api/public-keys/register/init DEFAULT idToken=yes',

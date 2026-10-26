@@ -1051,9 +1051,15 @@ export class VaultClient {
     // - allow-forms: required for potential native form submissions (Cunningham components)
     // - allow-downloads: required for the recovery phrase file download during backup
     // - allow-popups: required for window.open() to open the OIDC login tab
+    // - allow-popups-to-escape-sandbox: that tab is a top-level page, which the
+    //   sandbox does not make safer; inheriting it, the browser refuses outright a
+    //   provider page that sends COOP (architecture.md §2.1)
     // - allow-modals: required for window.print() of the recovery kit and the
     //   beforeunload guard that warns before losing an un-saved recovery phrase
-    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals');
+    iframe.setAttribute(
+      'sandbox',
+      'allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals'
+    );
     // Permissions policy:
     // - camera: required for QR code scanning during device transfer import
     // - clipboard-write: required for the "Copy to clipboard" button during backup

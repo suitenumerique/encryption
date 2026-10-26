@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, within } from 'storybook/test';
+import { expect, fn, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton } from '@encryption/.storybook/testing';
@@ -31,13 +31,15 @@ DefaultStory.play = async ({ canvasElement }) => {
 
 export const Default = prepareStory(DefaultStory);
 
-// The login tab is open: the button waits, and the hint says where to look.
+// A sign-in tab is out: the button opens it again, Cancel stops waiting, and the hint says where to look.
 const AuthenticatingStory = Template.bind({});
 AuthenticatingStory.args = {
+  onCancel: fn(),
   isAuthenticating: true,
 };
 AuthenticatingStory.play = async ({ canvasElement }) => {
-  expect(await playFindButton(canvasElement, i18n.t('auth.signing_in'))).toBeDisabled();
+  expect(await playFindButton(canvasElement, i18n.t('auth.reopen'))).toBeEnabled();
+  expect(await playFindButton(canvasElement, i18n.t('auth.cancel'))).toBeEnabled();
   await within(canvasElement).findByText(i18n.t('auth.finish_in_tab'));
 };
 

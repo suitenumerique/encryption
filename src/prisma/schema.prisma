@@ -404,3 +404,21 @@ model VaultApproval {
   @@index([expiresAt])
   @@map("vault_approvals")
 }
+
+/// One interface sign-in in flight (architecture.md §2.1). The login tab cannot hand
+/// its result back to the interface iframe once a provider page with COOP cut the
+/// link between them, so the server relays it. Created when the tab passes
+/// through /api/auth/authorize (the state and the PKCE challenge it carries),
+/// completed once by the callback's deposit (the code, under the relay id only the
+/// iframe and its tab know), consumed by the iframe's exchange. Never holds a token.
+model AuthRelay {
+  state         String   @id
+  codeChallenge String   @map("code_challenge")
+  relayId       String?  @unique @map("relay_id")
+  code          String?
+  expiresAt     DateTime @map("expires_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("auth_relays")
+}

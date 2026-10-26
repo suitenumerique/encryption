@@ -142,13 +142,13 @@ describe('securityHeadersPlugin', () => {
       expect(vaultCsp).not.toContain('interface-markup');
     });
 
-    it('omits COOP along the login popup (page, redirect to the provider, callback) so it keeps its opener', async () => {
+    it('sends COOP unsafe-none on /login only, so the sign-in tab can ask its opener for the parameters', async () => {
       const app = await buildApp();
       const headersFor = async (url: string) => (await app.inject({ method: 'GET', url, headers: { host: UI_HOST } })).headers;
 
-      expect((await headersFor('/login?expectedSub=abc'))['cross-origin-opener-policy']).toBeUndefined();
-      expect((await headersFor('/auth/callback?code=xyz'))['cross-origin-opener-policy']).toBeUndefined();
-      expect((await headersFor('/api/auth/authorize?state=abc'))['cross-origin-opener-policy']).toBeUndefined();
+      expect((await headersFor('/login'))['cross-origin-opener-policy']).toBe('unsafe-none');
+      expect((await headersFor('/auth/callback?code=xyz'))['cross-origin-opener-policy']).toBe('same-origin');
+      expect((await headersFor('/api/auth/authorize?state=abc'))['cross-origin-opener-policy']).toBe('same-origin');
 
       expect((await headersFor('/settings'))['cross-origin-opener-policy']).toBe('same-origin');
       expect((await headersFor('/loginaaa'))['cross-origin-opener-policy']).toBe('same-origin');
