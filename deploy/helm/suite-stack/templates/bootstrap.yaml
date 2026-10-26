@@ -87,17 +87,39 @@ stringData:
     kc create "realms/${REALM}/localization/fr" -f /scripts/notice.json
     TERMS=$(kc get authentication/required-actions -r "$REALM" --fields alias --format csv --noquotes | grep -i '^terms_and_conditions$')
     kc update "authentication/required-actions/${TERMS}" -r "$REALM" -s enabled=true -s defaultAction=true
-    # Creates the client, or updates it in place so the URIs follow the values.
+    scope_id() {
+      kc get client-scopes -r "$REALM" --fields id,name --format csv --noquotes | awk -F, -v name="$1" '$2 == name { print $1 }'
+    }
+    # Creates the client scope if missing. Never updated: a scope's mappers live apart
+    # from it, and an update of the scope leaves them as they were.
+    ensure_client_scope() {
+      local name=$1 definition=$2
+      if [ -z "$(scope_id "$name")" ]; then
+        echo "$definition" | kc create client-scopes -r "$REALM" -f -
+        echo "created client scope ${name}"
+      fi
+    }
+    # Creates the client, or updates it in place so the URIs follow the values. Leaves
+    # its id in CLIENT for the scopes attached next.
+    CLIENT=
     ensure_client() {
-      local client_id=$1 definition=$2 id
-      id=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
-      if [ -z "$id" ]; then
+      local client_id=$1 definition=$2
+      CLIENT=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
+      if [ -z "$CLIENT" ]; then
         echo "$definition" | kc create clients -r "$REALM" -f -
+        CLIENT=$(kc get clients -r "$REALM" -q clientId="$client_id" --fields id --format csv --noquotes)
         echo "created client ${client_id}"
       else
-        echo "$definition" | kc update "clients/${id}" -r "$REALM" -f -
+        echo "$definition" | kc update "clients/${CLIENT}" -r "$REALM" -f -
         echo "updated client ${client_id}"
       fi
+    }
+    # Attaches an optional scope to the client last ensured (a PUT, idempotent).
+    add_optional_scope() {
+      local id
+      id=$(scope_id "$1")
+      if [ -z "$id" ]; then echo "no client scope $1 in the realm" >&2; exit 1; fi
+      kc update "clients/${CLIENT}/optional-client-scopes/${id}" -r "$REALM" -n
     }
     # Creates the user if missing, with the terms to accept at first sign-in; the password
     # is set every run, so the values win.
@@ -110,8 +132,18 @@ stringData:
       fi
       kc set-password -r "$REALM" --username "$username" --new-password "$password"
     }
+    {{- range $b.keycloak.clientScopes }}
+    {{- $mappers := list }}
+    {{- if .userProperty }}
+    {{- $mappers = list (dict "name" .name "protocol" "openid-connect" "protocolMapper" "oidc-usermodel-property-mapper" "config" (dict "user.attribute" .userProperty "claim.name" .name "jsonType.label" "String" "id.token.claim" "true" "access.token.claim" "true" "userinfo.token.claim" "true")) }}
+    {{- else if .value }}
+    {{- $mappers = list (dict "name" .name "protocol" "openid-connect" "protocolMapper" "oidc-hardcoded-claim-mapper" "config" (dict "claim.value" .value "claim.name" .name "jsonType.label" "String" "id.token.claim" "true" "access.token.claim" "true" "userinfo.token.claim" "true")) }}
+    {{- end }}
+    ensure_client_scope {{ .name | squote }} {{ dict "name" .name "protocol" "openid-connect" "attributes" (dict "include.in.token.scope" "true" "display.on.consent.screen" "false") "protocolMappers" $mappers | toJson | squote }}
+    {{- end }}
     {{- range $b.keycloak.clients }}
-    {{- $definition := dict "clientId" .clientId "protocol" "openid-connect" "enabled" true "publicClient" (default false .public) "standardFlowEnabled" true "directAccessGrantsEnabled" false "redirectUris" .redirectUris "webOrigins" .webOrigins "attributes" (dict "post.logout.redirect.uris" "+") }}
+    {{- $attributes := mergeOverwrite (dict "post.logout.redirect.uris" "+") (.attributes | default dict) }}
+    {{- $definition := dict "clientId" .clientId "protocol" "openid-connect" "enabled" true "publicClient" (default false .public) "standardFlowEnabled" true "directAccessGrantsEnabled" false "redirectUris" .redirectUris "webOrigins" .webOrigins "attributes" $attributes }}
     {{- if .pkce }}
     {{- $_ := set $definition.attributes "pkce.code.challenge.method" "S256" }}
     {{- end }}
@@ -122,6 +154,9 @@ stringData:
     {{- $_ := set $definition "secret" (required (printf "bootstrap.keycloak.clients[%s].secret is required for a confidential client" .clientId) .secret) }}
     {{- end }}
     ensure_client {{ .clientId | squote }} {{ $definition | toJson | squote }}
+    {{- range .optionalClientScopes }}
+    add_optional_scope {{ . | squote }}
+    {{- end }}
     {{- end }}
     {{- range $b.keycloak.users }}
     ensure_user {{ .username | squote }} {{ .email | squote }} {{ .firstName | squote }} {{ .lastName | squote }} {{ .password | squote }}

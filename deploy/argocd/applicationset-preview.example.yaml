@@ -78,13 +78,14 @@ spec:
             # few minutes and start on their own once it is there.
             - name: ENCRYPTION_IMAGE
               value: 'lasuite/encryption:sha-{{ .head_short_sha }}'
-            # The Docs and Drive images under test, from labels of the pull request:
-            # `docs:pr-2694` runs the images the Docs CI pushed for its labelled pull
-            # request 2694, `drive:encryption` the ones pushed by hand for that branch
+            # The Docs, Drive and Accounts images under test, from labels of the pull
+            # request: `docs:pr-2694` runs the images the Docs CI pushed for its labelled
+            # pull request 2694, `drive:encryption` the ones pushed by hand for that branch
             # (see deploy/helm/suite-stack/README.md, "Images"). The plugin turns each
-            # `docs:<tag>` / `drive:<tag>` label into the state value
-            # `docsImageTag=<tag>` / `driveImageTag=<tag>` (a valid image tag only, the
-            # labels being anyone's to set), and the helmfile runs `main` without one:
+            # `docs:<tag>` / `drive:<tag>` / `accounts:<tag>` label into the state value
+            # `docsImageTag=<tag>` / `driveImageTag=<tag>` / `accountsImageTag=<tag>` (a
+            # valid image tag only, the labels being anyone's to set), and the helmfile
+            # runs `main` without one:
             # pr-labels-to-state-values.example.sh, next to this file, is the block to paste
             # in the plugin script that does exactly that. The
             # helmfile's committed defaults never carry a test version this way, so there is

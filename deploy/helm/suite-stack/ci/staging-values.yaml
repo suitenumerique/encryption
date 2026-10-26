@@ -34,3 +34,12 @@ driveRelay:
   image:
     repository: myaccount/drive-collaboration-relay
     tag: e2ee
+
+accounts:
+  image:
+    repository: myaccount/accounts-backend
+    tag: encryption
+  frontend:
+    image:
+      repository: myaccount/accounts-frontend
+      tag: encryption

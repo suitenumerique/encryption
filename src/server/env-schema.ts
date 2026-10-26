@@ -68,6 +68,11 @@ const envFields = z.object({
   // and an authentication (`auth_time`) younger than the max age. The defaults
   // are the eIDAS second-factor levels and RFC 8176 methods.
   // Both lists empty = only the fresh authentication is required.
+  // Off by default for now: LaSuite Accounts, the suite's provider, ignores the
+  // `acr` a product asks for, reports no second factor and never renews
+  // `auth_time`, so no user could meet the step-up. Turn it on by default once
+  // Accounts handles it (suitenumerique/accounts#141).
+  OIDC_STEP_UP_ENABLED: z.stringbool().default(false),
   OIDC_STEP_UP_ACR_VALUES: commaSeparatedList('eidas0-mfa,eidas1-mfa,eidas2,eidas3'),
   OIDC_STEP_UP_AMR_VALUES: commaSeparatedList('mfa,otp,totp,hwk,sc,pop'),
   OIDC_STEP_UP_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),

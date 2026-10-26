@@ -9,6 +9,7 @@ import { computeChallengeResponse } from '@encryption/src/crypto/key-possession-
 import { encodeKeyRegistrationPayload, encodePopChallengeMessage } from '@encryption/src/crypto/key-registration';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
 import { testPrisma, testPrismaClient, useTestDatabase } from '@encryption/src/prisma/testing';
+import { env } from '@encryption/src/server/env';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
 import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import {
@@ -32,6 +33,7 @@ import {
 vi.mock('@encryption/src/server/env', () => ({
   env: {
     OIDC_ISSUER: 'https://issuer.example',
+    OIDC_STEP_UP_ENABLED: true,
     OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'],
     OIDC_STEP_UP_AMR_VALUES: ['mfa'],
     OIDC_STEP_UP_MAX_AGE_SECONDS: 300,
@@ -704,6 +706,23 @@ describe('public-keys routes', () => {
           /^Bearer error="insufficient_user_authentication", .*acr_values="eidas1-mfa", max_age="300"$/
         );
         expect(await testPrisma.keyPossessionChallenge.count()).toBe(0);
+      });
+
+      it('issues it without one while the step-up is off', async () => {
+        const reg = await buildRegistration(2);
+
+        await seedUser();
+        await seedIdentity();
+        authenticateAs({ acr: 'eidas1', auth_time: now() - 3600 });
+
+        try {
+          Object.assign(env, { OIDC_STEP_UP_ENABLED: false });
+          const response = await buildApp().inject({ method: 'POST', url: '/api/public-keys/register/init', payload: initPayload(reg) });
+
+          expect(response.statusCode).toBe(200);
+        } finally {
+          Object.assign(env, { OIDC_STEP_UP_ENABLED: true });
+        }
       });
 
       it('issues it after one', async () => {

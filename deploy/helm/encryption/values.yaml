@@ -70,7 +70,10 @@ config:
     # must show a second factor, an `acr` among `acrValues` or an `amr` among
     # `amrValues`, from a sign-in younger than `maxAgeSeconds`. The defaults are
     # the eIDAS second-factor levels; both lists empty = a fresh sign-in is enough.
+    # Off for now: LaSuite Accounts reports no second factor and never renews
+    # `auth_time`, so nobody could meet it (suitenumerique/accounts#141).
     stepUp:
+      enabled: false
       acrValues: [eidas0-mfa, eidas1-mfa, eidas2, eidas3]
       amrValues: [mfa, otp, totp, hwk, sc, pop]
       maxAgeSeconds: 300

@@ -194,6 +194,8 @@ must or may set. Plain values are inline; secrets come from a Secret, never as `
   value: {{ join "," $v.config.oidc.claims.lastName | quote }}
 - name: OIDC_CLAIMS_FULL_NAME
   value: {{ join "," $v.config.oidc.claims.fullName | quote }}
+- name: OIDC_STEP_UP_ENABLED
+  value: {{ $v.config.oidc.stepUp.enabled | toString | quote }}
 - name: OIDC_STEP_UP_ACR_VALUES
   value: {{ join "," $v.config.oidc.stepUp.acrValues | quote }}
 - name: OIDC_STEP_UP_AMR_VALUES

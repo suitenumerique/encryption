@@ -425,7 +425,11 @@ PostgreSQL's `encode(…, 'base64')` breaks lines every 76 characters: wrap it i
 
 Everyday use does **not** require 2FA: the private keys live in the user's device vault, so a stolen password alone decrypts nothing. The one action that does is **replacing the user's identity** (registering a new signature key when the user already has one, typically after losing every device), since it changes what their contacts see. It follows RFC 9470 (_OAuth 2.0 Step-Up Authentication Challenge_): the ID token must show a second factor (an `acr` among `OIDC_STEP_UP_ACR_VALUES` or an `amr` among `OIDC_STEP_UP_AMR_VALUES`) and an `auth_time` younger than `OIDC_STEP_UP_MAX_AGE_SECONDS` (300 by default). Otherwise the server answers `401` with `{"code": "insufficient_user_authentication", "params": {"max_age": 300}}` and a `WWW-Authenticate: Bearer error="insufficient_user_authentication", error_description="…", acr_values="…", max_age="300"` header. The interface then asks the user to confirm their identity: a new sign-in (`prompt=login`, `max_age=0`, `acr` required through the `claims` parameter) whose ID token replaces the current one. Products have nothing to do: the whole exchange stays inside the interface.
 
-The interface's settings screen recommends enabling 2FA with the identity provider when the sign-in reported none, since replacing the identity will require it.
+<Alert severity="info" title="Step-up off for now">
+  LaSuite Accounts, the Suite's identity provider, does not report a second factor yet, so the step-up is off by default
+  (`OIDC_STEP_UP_ENABLED=false`) and replacing an identity only takes a valid sign-in. Everything above is in place and will be turned on by default
+  once Accounts handles it ([suitenumerique/accounts#141](https://github.com/suitenumerique/accounts/issues/141)).
+</Alert>
 
 <Alert severity="warning" title="2FA across every Suite product">
   Even when the encryption service requires 2FA, an attacker who compromises access to a Suite product without 2FA (Docs, for instance) can reach the

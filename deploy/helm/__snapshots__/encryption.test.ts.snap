@@ -214,6 +214,8 @@ spec:
               value: "usual_name,family_name"
             - name: OIDC_CLAIMS_FULL_NAME
               value: "name"
+            - name: OIDC_STEP_UP_ENABLED
+              value: "false"
             - name: OIDC_STEP_UP_ACR_VALUES
               value: "eidas0-mfa,eidas1-mfa,eidas2,eidas3"
             - name: OIDC_STEP_UP_AMR_VALUES

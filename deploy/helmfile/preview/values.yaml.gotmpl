@@ -5,9 +5,11 @@
 {{- $drive := printf "%s-drive.%s" $f $d -}}
 {{- $interface := printf "%s-encryption.%s" $f $d -}}
 {{- $vault := printf "data.%s-encryption.%s" $f $d -}}
+{{- $accounts := printf "%s-accounts.%s" $f $d -}}
 {{- $auth := printf "%s-auth.%s" $f $d -}}
 {{- $s3 := printf "%s-s3.%s" $f $d -}}
-{{- $issuer := printf "https://%s/realms/suite" $auth -}}
+{{- $keycloakIssuer := printf "https://%s/realms/suite" $auth -}}
+{{- $issuer := printf "https://%s/api/v1.0/o" $accounts -}}
 {{- $minio := printf "minio.%s.svc.cluster.local" $ns -}}
 {{- $i := .Values.images -}}
 {{- /* One tag per product for all its images, given as a state value: by the deployment
@@ -15,6 +17,7 @@ from a pull request label (`docs:pr-2694` becomes docsImageTag=pr-2694), or by h
 Unset, each image keeps its own tag from the helmfile, `main` unless overridden. */ -}}
 {{- $docsTag := .Values | get "docsImageTag" "" | toString -}}
 {{- $driveTag := .Values | get "driveImageTag" "" | toString -}}
+{{- $accountsTag := .Values | get "accountsImageTag" "" | toString -}}
 # Rendered by helmfile on top of the chart's values.yaml: only what carries a hostname, the
 # namespace or an image is here, every other value stays the chart's default. Lists are
 # replaced whole, not merged, so the ones that carry a hostname are given in full.
@@ -36,25 +39,36 @@ shared:
 bootstrap:
   keycloak:
     clients:
+      - clientId: accounts
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://{{ $accounts }}/*
+        webOrigins: []
+        attributes:
+          user.info.response.signature.alg: RS256
+        optionalClientScopes:
+          - given_name
+          - usual_name
+          - siret
+  accounts:
+    applications:
       - clientId: docs
         secret: ThisIsAnExampleKeyForDevPurposeOnly
         redirectUris:
-          - https://{{ $docs }}/*
-        webOrigins:
-          - https://{{ $docs }}
+          - https://{{ $docs }}/api/v1.0/callback/
+        postLogoutRedirectUris:
+          - https://{{ $docs }}/api/v1.0/logout-callback/
       - clientId: drive
         secret: ThisIsAnExampleKeyForDevPurposeOnly
         redirectUris:
-          - https://{{ $drive }}/*
-        webOrigins:
-          - https://{{ $drive }}
+          - https://{{ $drive }}/api/v1.0/callback/
+        postLogoutRedirectUris:
+          - https://{{ $drive }}/api/v1.0/logout-callback/
       - clientId: encryption
         secret: ThisIsAnExampleKeyForDevPurposeOnly
-        pkce: true
-        idTokenLifespanSeconds: 3600
         redirectUris:
           - https://{{ $interface }}/auth/callback
-        webOrigins: []
+        postLogoutRedirectUris: []
 
 mailpit:
   host: {{ $f }}-mail.{{ $d }}
@@ -90,6 +104,7 @@ encryption:
     allowedFrameAncestors:
       - https://{{ $docs }}
       - https://{{ $drive }}
+      - https://{{ $accounts }}
     oidc:
       issuer: {{ $issuer }}
     mailer:
@@ -110,17 +125,18 @@ docs:
       DJANGO_CSRF_TRUSTED_ORIGINS: https://{{ $docs }}
       DJANGO_EMAIL_LOGO_IMG: https://{{ $docs }}/assets/logo-suite-numerique.png
       DJANGO_EMAIL_URL_APP: https://{{ $docs }}
-      OIDC_OP_JWKS_ENDPOINT: {{ $issuer }}/protocol/openid-connect/certs
-      OIDC_OP_AUTHORIZATION_ENDPOINT: {{ $issuer }}/protocol/openid-connect/auth
-      OIDC_OP_TOKEN_ENDPOINT: {{ $issuer }}/protocol/openid-connect/token
-      OIDC_OP_USER_ENDPOINT: {{ $issuer }}/protocol/openid-connect/userinfo
-      OIDC_OP_LOGOUT_ENDPOINT: {{ $issuer }}/protocol/openid-connect/logout
+      OIDC_OP_JWKS_ENDPOINT: {{ $issuer }}/.well-known/jwks.json
+      OIDC_OP_AUTHORIZATION_ENDPOINT: {{ $issuer }}/authorize/
+      OIDC_OP_TOKEN_ENDPOINT: {{ $issuer }}/token/
+      OIDC_OP_USER_ENDPOINT: {{ $issuer }}/userinfo/
+      OIDC_OP_LOGOUT_ENDPOINT: {{ $issuer }}/logout/
       OIDC_REDIRECT_ALLOWED_HOSTS: {{ $docs }}
       LOGIN_REDIRECT_URL: https://{{ $docs }}
       LOGIN_REDIRECT_URL_FAILURE: https://{{ $docs }}
       LOGOUT_REDIRECT_URL: https://{{ $docs }}
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+      ACCOUNT_SETTINGS_URL: https://{{ $accounts }}/
   frontend:
     image:
       repository: {{ $i.docsFrontend.repository }}
@@ -166,11 +182,11 @@ drive:
       DJANGO_ALLOWED_HOSTS: {{ $drive }}
       DJANGO_CSRF_TRUSTED_ORIGINS: https://{{ $drive }}
       DJANGO_EMAIL_LOGO_IMG: https://{{ $drive }}/assets/logo-suite-numerique.png
-      OIDC_OP_JWKS_ENDPOINT: {{ $issuer }}/protocol/openid-connect/certs
-      OIDC_OP_AUTHORIZATION_ENDPOINT: {{ $issuer }}/protocol/openid-connect/auth
-      OIDC_OP_TOKEN_ENDPOINT: {{ $issuer }}/protocol/openid-connect/token
-      OIDC_OP_USER_ENDPOINT: {{ $issuer }}/protocol/openid-connect/userinfo
-      OIDC_OP_LOGOUT_ENDPOINT: {{ $issuer }}/protocol/openid-connect/logout
+      OIDC_OP_JWKS_ENDPOINT: {{ $issuer }}/.well-known/jwks.json
+      OIDC_OP_AUTHORIZATION_ENDPOINT: {{ $issuer }}/authorize/
+      OIDC_OP_TOKEN_ENDPOINT: {{ $issuer }}/token/
+      OIDC_OP_USER_ENDPOINT: {{ $issuer }}/userinfo/
+      OIDC_OP_LOGOUT_ENDPOINT: {{ $issuer }}/logout/
       LOGIN_REDIRECT_URL: https://{{ $drive }}
       LOGIN_REDIRECT_URL_FAILURE: https://{{ $drive }}
       LOGOUT_REDIRECT_URL: https://{{ $drive }}
@@ -178,6 +194,7 @@ drive:
       MEDIA_BASE_URL: https://{{ $drive }}
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+      ACCOUNT_SETTINGS_URL: https://{{ $accounts }}/
       WOPI_SRC_BASE_URL: https://{{ $drive }}
   frontend:
     image:
@@ -205,5 +222,40 @@ drive:
     annotations:
       nginx.ingress.kubernetes.io/auth-url: https://{{ $drive }}/api/v1.0/items/media-auth/
       nginx.ingress.kubernetes.io/upstream-vhost: {{ $s3 }}
+  serviceMedia:
+    host: {{ $minio }}
+
+accounts:
+  image:
+    repository: {{ $i.accounts.repository }}
+    tag: {{ $accountsTag | default $i.accounts.tag | quote }}
+  backend:
+    envVars:
+      DJANGO_ALLOWED_HOSTS: {{ $accounts }}
+      DJANGO_CSRF_TRUSTED_ORIGINS: https://{{ $accounts }}
+      DJANGO_EMAIL_FROM: noreply@{{ $d }}
+      FRONTEND_LOGOUT_URL: https://{{ $accounts }}/logout
+      LOGIN_REDIRECT_URL: https://{{ $accounts }}
+      LOGOUT_REDIRECT_URL: https://{{ $accounts }}
+      MEDIA_BASE_URL: https://{{ $accounts }}
+      OAUTH2_PROVIDER_OIDC_ISS_ENDPOINT: {{ $issuer }}
+      SOCIAL_AUTH_ALLOWED_REDIRECT_HOSTS: {{ $accounts }}
+      SOCIAL_AUTH_PRO_CONNECT_OIDC_ENDPOINT: {{ $keycloakIssuer }}
+      ENCRYPTION_VAULT_URL: https://{{ $vault }}
+      ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+  frontend:
+    image:
+      repository: {{ $i.accountsFrontend.repository }}
+      tag: {{ $accountsTag | default $i.accountsFrontend.tag | quote }}
+    envVars:
+      NEXT_PUBLIC_API_ORIGIN: https://{{ $accounts }}
+  ingress:
+    className: {{ .Values.ingressClassName }}
+    host: {{ $accounts }}
+    annotations:
+      cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
+  ingressAdmin:
+    className: {{ .Values.ingressClassName }}
+    host: {{ $accounts }}
   serviceMedia:
     host: {{ $minio }}

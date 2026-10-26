@@ -21,6 +21,9 @@ import { API_ERROR_INSUFFICIENT_USER_AUTHENTICATION } from '@encryption/src/shar
  *
  * The claims are the provider's word: a second factor protects against a stolen
  * password, not against the provider itself.
+ *
+ * Off unless `OIDC_STEP_UP_ENABLED` (see env-schema.ts for why): every check
+ * then passes, so no challenge is ever sent and the interface never asks.
  */
 
 function stringList(value: unknown): string[] {
@@ -54,6 +57,8 @@ export function isFreshAuthentication(claims: Record<string, unknown>, now = Dat
 }
 
 export function satisfiesStepUp(claims: Record<string, unknown>, now = Date.now()): boolean {
+  if (!env.OIDC_STEP_UP_ENABLED) return true;
+
   return hasSecondFactor(claims) && isFreshAuthentication(claims, now);
 }
 

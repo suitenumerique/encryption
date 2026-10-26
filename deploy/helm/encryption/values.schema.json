@@ -257,6 +257,9 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
                 "acrValues": {
                   "type": "array",
                   "items": {

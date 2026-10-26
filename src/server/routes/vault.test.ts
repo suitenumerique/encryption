@@ -30,7 +30,7 @@ import {
 // The keyring rewrite fires recovery notifications after a burn + re-arm; the
 // shared manual mock (src/server/email/__mocks__/emergency.ts) makes them inert.
 vi.mock('@encryption/src/server/env', () => ({
-  env: { OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'], OIDC_STEP_UP_AMR_VALUES: ['mfa'], OIDC_STEP_UP_MAX_AGE_SECONDS: 300 },
+  env: { OIDC_STEP_UP_ENABLED: true, OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'], OIDC_STEP_UP_AMR_VALUES: ['mfa'], OIDC_STEP_UP_MAX_AGE_SECONDS: 300 },
 }));
 vi.mock('@encryption/src/server/email/emergency');
 

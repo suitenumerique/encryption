@@ -6,6 +6,7 @@ import { env } from '@encryption/src/server/env';
 
 vi.mock('@encryption/src/server/env', () => ({
   env: {
+    OIDC_STEP_UP_ENABLED: true,
     OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa', 'eidas2'],
     OIDC_STEP_UP_AMR_VALUES: ['mfa', 'totp'],
     OIDC_STEP_UP_MAX_AGE_SECONDS: 300,
@@ -55,6 +56,15 @@ describe('satisfiesStepUp', () => {
     expect(satisfiesStepUp({ acr: 'eidas2', auth_time: nowSeconds() })).toBe(true);
     expect(satisfiesStepUp({ acr: 'eidas2', auth_time: nowSeconds() - 3600 })).toBe(false);
     expect(satisfiesStepUp({ acr: 'eidas1', auth_time: nowSeconds() })).toBe(false);
+  });
+
+  it('lets everything through while the step-up is off', () => {
+    try {
+      Object.assign(env, { OIDC_STEP_UP_ENABLED: false });
+      expect(satisfiesStepUp({})).toBe(true);
+    } finally {
+      Object.assign(env, { OIDC_STEP_UP_ENABLED: true });
+    }
   });
 });
 

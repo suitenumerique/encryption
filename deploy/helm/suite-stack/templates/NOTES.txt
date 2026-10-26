@@ -9,7 +9,10 @@ Drive       https://{{ .Values.drive.ingress.host }}
 {{- if .Values.encryption.enabled }}
 Encryption  https://{{ .Values.encryption.hosts.interface }} (interface), https://{{ .Values.encryption.hosts.vault }} (vault)
 {{- end }}
-Keycloak    https://{{ .Values.shared.keycloak.hostname }} (admin console: {{ .Values.shared.keycloak.username }}), realm {{ .Values.shared.keycloak.realm.name }}
+{{- if .Values.accounts.enabled }}
+Accounts    https://{{ .Values.accounts.ingress.host }} (the products' sign-in, issuer {{ include "suite-stack.accountsIssuer" . }})
+{{- end }}
+Keycloak    https://{{ .Values.shared.keycloak.hostname }} (admin console: {{ .Values.shared.keycloak.username }}), realm {{ .Values.shared.keycloak.realm.name }}{{ if .Values.accounts.enabled }}, behind Accounts{{ end }}
 {{- if .Values.shared.minio.consoleIngress.enabled }}
 MinIO       https://{{ .Values.shared.minio.consoleIngress.hostname }} (console: {{ .Values.shared.minio.username }})
 {{- end }}
@@ -20,13 +23,16 @@ Mailbox     https://{{ .Values.mailpit.host }} (every email sent by the stack)
 Office      https://{{ .Values.onlyoffice.host }} (the editor Drive opens office files with)
 {{- end }}
 
-Tester accounts (bootstrap.keycloak.users):
+Tester accounts (bootstrap.keycloak.users){{ if .Values.accounts.enabled }}, typed at Keycloak when Accounts asks{{ end }}:
 {{- range .Values.bootstrap.keycloak.users }}
   {{ .username }} / {{ .password }} ({{ .email }})
 {{- end }}
 
 The bootstrap Job creates the databases, buckets, clients and accounts after the shared
 services are up, then migrates the encryption service; the products' own migration Jobs
-wait for their database. Watch it settle with:
+wait for their database.
+{{- if .Values.accounts.enabled }} The accounts-applications Job then registers the
+products' OAuth2 applications in Accounts, once Accounts has migrated.
+{{- end }} Watch it settle with:
 
   kubectl -n {{ .Release.Namespace }} get jobs,pods

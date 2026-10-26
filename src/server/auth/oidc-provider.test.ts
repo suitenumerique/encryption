@@ -26,6 +26,7 @@ vi.mock('@encryption/src/server/env', () => ({
     OIDC_CLAIMS_FIRST_NAME: ['given_name'],
     OIDC_CLAIMS_LAST_NAME: ['usual_name', 'family_name'],
     OIDC_CLAIMS_FULL_NAME: ['name'],
+    OIDC_STEP_UP_ENABLED: true,
     OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa', 'eidas2'],
   },
 }));

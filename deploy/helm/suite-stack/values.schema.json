@@ -10,11 +10,12 @@
     "encryption": { "type": "object" },
     "docs": { "type": "object" },
     "drive": { "type": "object" },
+    "accounts": { "type": "object" },
     "global": { "type": "object" },
     "bootstrap": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["postgres", "minio", "keycloak", "encryption", "job"],
+      "required": ["postgres", "minio", "keycloak", "accounts", "encryption", "job"],
       "properties": {
         "postgres": {
           "type": "object",
@@ -36,7 +37,7 @@
         "keycloak": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["clients", "users", "notice"],
+          "required": ["clients", "clientScopes", "users", "notice"],
           "properties": {
             "notice": {
               "type": "object",
@@ -61,7 +62,23 @@
                   "pkce": { "type": "boolean" },
                   "idTokenLifespanSeconds": { "type": "integer", "minimum": 60 },
                   "redirectUris": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^https://" } },
-                  "webOrigins": { "type": "array", "items": { "type": "string", "pattern": "^https://[^/]+$" } }
+                  "webOrigins": { "type": "array", "items": { "type": "string", "pattern": "^https://[^/]+$" } },
+                  "attributes": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^[^'\"]*$" } },
+                  "optionalClientScopes": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" } }
+                }
+              }
+            },
+            "clientScopes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name"],
+                "not": { "required": ["userProperty", "value"] },
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+                  "userProperty": { "type": "string", "pattern": "^[A-Za-z]+$" },
+                  "value": { "type": "string", "minLength": 1, "pattern": "^[^'\"]*$" }
                 }
               }
             },
@@ -77,6 +94,27 @@
                   "firstName": { "type": "string", "pattern": "^[^'\"]+$" },
                   "lastName": { "type": "string", "pattern": "^[^'\"]+$" },
                   "password": { "type": "string", "minLength": 1, "pattern": "^[^'\"]+$" }
+                }
+              }
+            }
+          }
+        },
+        "accounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applications"],
+          "properties": {
+            "applications": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["clientId", "secret", "redirectUris"],
+                "properties": {
+                  "clientId": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+                  "secret": { "type": "string", "minLength": 1, "pattern": "^[^'\"]*$" },
+                  "redirectUris": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^https://[^\\s*]+$" } },
+                  "postLogoutRedirectUris": { "type": "array", "items": { "type": "string", "pattern": "^https://[^\\s*]+$" } }
                 }
               }
             }

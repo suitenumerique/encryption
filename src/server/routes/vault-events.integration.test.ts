@@ -21,7 +21,7 @@ import { notifyVaultChanged } from '@encryption/src/server/vault-notify';
 // it, the env validator the mailer runs at import). The shared manual mock keeps
 // this suite off both; the SSE path sends no mail anyway.
 vi.mock('@encryption/src/server/env', () => ({
-  env: { OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'], OIDC_STEP_UP_AMR_VALUES: ['mfa'], OIDC_STEP_UP_MAX_AGE_SECONDS: 300 },
+  env: { OIDC_STEP_UP_ENABLED: true, OIDC_STEP_UP_ACR_VALUES: ['eidas1-mfa'], OIDC_STEP_UP_AMR_VALUES: ['mfa'], OIDC_STEP_UP_MAX_AGE_SECONDS: 300 },
 }));
 vi.mock('@encryption/src/server/email/emergency');
 
