@@ -3,6 +3,25 @@ import mjml2html from 'mjml';
 import { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 
+import { CouncilRecoveryAbortedEmail, subject as councilRecoveryAbortedSubject } from '@encryption/src/server/email/templates/CouncilRecoveryAborted';
+import {
+  CouncilRecoveryCompletedEmail,
+  subject as councilRecoveryCompletedSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryCompleted';
+import {
+  CouncilRecoveryCompletedCustodianEmail,
+  subject as councilRecoveryCompletedCustodianSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryCompletedCustodian';
+import { CouncilRecoveryMeetingEmail, subject as councilRecoveryMeetingSubject } from '@encryption/src/server/email/templates/CouncilRecoveryMeeting';
+import {
+  CouncilRecoveryRequestedEmail,
+  subject as councilRecoveryRequestedSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryRequested';
+import {
+  CouncilRecoveryToApproveEmail,
+  subject as councilRecoveryToApproveSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryToApprove';
+import { CouncilRosterToSignEmail, subject as councilRosterToSignSubject } from '@encryption/src/server/email/templates/CouncilRosterToSign';
 import { EmergencyAcceptedEmail, subject as acceptedSubject } from '@encryption/src/server/email/templates/EmergencyAccepted';
 import { EmergencyDeclinedEmail, subject as declinedSubject } from '@encryption/src/server/email/templates/EmergencyDeclined';
 import { EmergencyDesignatedEmail, subject as designatedSubject } from '@encryption/src/server/email/templates/EmergencyDesignated';
@@ -46,6 +65,81 @@ interface Case {
 }
 
 const cases: Case[] = [
+  {
+    name: 'CouncilRecoveryRequested',
+    subject: councilRecoveryRequestedSubject,
+    make: (locale) => CouncilRecoveryRequestedEmail({ locale, council: 'Équipe sécurité DINUM', productUrl: 'http://localhost:7201' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', 'collège de recouvrement'],
+      en: ['Équipe sécurité DINUM', 'recovery council'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryToApprove',
+    subject: councilRecoveryToApproveSubject,
+    make: (locale) =>
+      CouncilRecoveryToApproveEmail({
+        locale,
+        requester: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
+        council: 'Équipe sécurité DINUM',
+        productUrl: 'http://localhost:7201',
+      }),
+    expected: {
+      fr: ['Jean Dupont', 'Équipe sécurité DINUM'],
+      en: ['Jean Dupont', 'Équipe sécurité DINUM'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryMeeting',
+    subject: councilRecoveryMeetingSubject,
+    make: (locale) =>
+      CouncilRecoveryMeetingEmail({
+        locale,
+        council: 'Équipe sécurité DINUM',
+        custodians: 'Claire Petit, David Moreau',
+        productUrl: 'http://localhost:7201',
+      }),
+    expected: {
+      fr: ['Claire Petit, David Moreau'],
+      en: ['Claire Petit, David Moreau'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryCompleted',
+    subject: councilRecoveryCompletedSubject,
+    make: (locale) => CouncilRecoveryCompletedEmail({ locale, council: 'Équipe sécurité DINUM', contributors: 'Alice Martin, Claire Petit' }),
+    expected: {
+      fr: ['Alice Martin, Claire Petit'],
+      en: ['Alice Martin, Claire Petit'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryCompletedCustodian',
+    subject: councilRecoveryCompletedCustodianSubject,
+    make: (locale) => CouncilRecoveryCompletedCustodianEmail({ locale, requester: 'Jean Dupont', council: 'Équipe sécurité DINUM' }),
+    expected: {
+      fr: ['Jean Dupont'],
+      en: ['Jean Dupont'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryAborted',
+    subject: councilRecoveryAbortedSubject,
+    make: (locale) => CouncilRecoveryAbortedEmail({ locale, council: 'Équipe sécurité DINUM' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM'],
+      en: ['Équipe sécurité DINUM'],
+    },
+  },
+  {
+    name: 'CouncilRosterToSign',
+    subject: councilRosterToSignSubject,
+    make: (locale) => CouncilRosterToSignEmail({ locale, council: 'Équipe sécurité DINUM', productUrl: 'http://localhost:7201' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM'],
+      en: ['Équipe sécurité DINUM'],
+    },
+  },
   {
     name: 'EmergencyDesignated',
     subject: designatedSubject,

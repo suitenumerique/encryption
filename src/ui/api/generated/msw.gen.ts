@@ -5,6 +5,12 @@ import type {
   ClientOptions,
   DeleteApiEmergencyAccessByIdResponses,
   DeleteApiPublicKeysResponses,
+  GetApiCouncilRecoveryRequestsByIdCustodianResponses,
+  GetApiCouncilRecoveryRequestsByIdSharesResponses,
+  GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsForMeResponses,
+  GetApiCouncilsMineResponses,
+  GetApiCouncilsReshareBySessionIdBatchResponses,
   GetApiEmergencyAccessGrantedResponses,
   GetApiEmergencyAccessPendingResponses,
   GetApiEmergencyAccessSearchResponses,
@@ -24,6 +30,23 @@ import type {
   PostApiAuthRelayResponses,
   PostApiAuthTokenData,
   PostApiAuthTokenResponses,
+  PostApiCouncilRecoveryRequestsByIdAbortResponses,
+  PostApiCouncilRecoveryRequestsByIdContributeData,
+  PostApiCouncilRecoveryRequestsByIdContributeResponses,
+  PostApiCouncilRecoveryRequestsByIdRefuseResponses,
+  PostApiCouncilRecoveryRequestsData,
+  PostApiCouncilRecoveryRequestsResponses,
+  PostApiCouncilsByCouncilIdReshareData,
+  PostApiCouncilsByCouncilIdReshareResponses,
+  PostApiCouncilsByCouncilIdVersionsByVersionSignData,
+  PostApiCouncilsByCouncilIdVersionsByVersionSignResponses,
+  PostApiCouncilsEscrowData,
+  PostApiCouncilsEscrowResponses,
+  PostApiCouncilsReshareBySessionIdCancelResponses,
+  PostApiCouncilsReshareBySessionIdKeysData,
+  PostApiCouncilsReshareBySessionIdKeysResponses,
+  PostApiCouncilsReshareBySessionIdSubSharesData,
+  PostApiCouncilsReshareBySessionIdSubSharesResponses,
   PostApiEmergencyAccessByIdAcceptResponses,
   PostApiEmergencyAccessByIdCancelResponses,
   PostApiEmergencyAccessByIdInitiateResponses,
@@ -1482,6 +1505,684 @@ export function handlePostApiEmergencyAccessByIdRecover(
   );
 }
 
+export type HandleGetApiCouncilsMineResponse = {
+  body: GetApiCouncilsMineResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/councils/mine` operation.
+ */
+export function handleGetApiCouncilsMine(
+  response?: HandleGetApiCouncilsMineResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/councils/mine`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiCouncilsForMeResponse = {
+  body: GetApiCouncilsForMeResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/councils/for-me` operation.
+ */
+export function handleGetApiCouncilsForMe(
+  response?: HandleGetApiCouncilsForMeResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/councils/for-me`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsByCouncilIdVersionsByVersionSignResponse = {
+  body: PostApiCouncilsByCouncilIdVersionsByVersionSignResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/{councilId}/versions/{version}/sign` operation.
+ */
+export function handlePostApiCouncilsByCouncilIdVersionsByVersionSign(
+  response?:
+    | HandlePostApiCouncilsByCouncilIdVersionsByVersionSignResponse
+    | HttpResponseResolver<
+        {
+          councilId: string;
+          version: string;
+        },
+        PostApiCouncilsByCouncilIdVersionsByVersionSignData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      councilId: string;
+      version: string;
+    },
+    PostApiCouncilsByCouncilIdVersionsByVersionSignData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/:councilId/versions/:version/sign`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsEscrowResponse = {
+  body: PostApiCouncilsEscrowResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/escrow` operation.
+ */
+export function handlePostApiCouncilsEscrow(
+  response?: HandlePostApiCouncilsEscrowResponse | HttpResponseResolver<never, PostApiCouncilsEscrowData['body']>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<never, PostApiCouncilsEscrowData['body']>(
+    `${options?.baseUrl ?? '*'}/api/councils/escrow`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilRecoveryRequestsResponse = {
+  body: PostApiCouncilRecoveryRequestsResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/council-recovery/requests` operation.
+ */
+export function handlePostApiCouncilRecoveryRequests(
+  response?: HandlePostApiCouncilRecoveryRequestsResponse | HttpResponseResolver<never, PostApiCouncilRecoveryRequestsData['body']>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<never, PostApiCouncilRecoveryRequestsData['body']>(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiCouncilRecoveryRequestsMineResponse = {
+  body: GetApiCouncilRecoveryRequestsMineResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/council-recovery/requests/mine` operation.
+ */
+export function handleGetApiCouncilRecoveryRequestsMine(
+  response?: HandleGetApiCouncilRecoveryRequestsMineResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<never, never>(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests/mine`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilRecoveryRequestsByIdRefuseResponse = {
+  body: PostApiCouncilRecoveryRequestsByIdRefuseResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/council-recovery/requests/{id}/refuse` operation.
+ */
+export function handlePostApiCouncilRecoveryRequestsByIdRefuse(
+  response?:
+    | HandlePostApiCouncilRecoveryRequestsByIdRefuseResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests/:id/refuse`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiCouncilRecoveryRequestsByIdSharesResponse = {
+  body: GetApiCouncilRecoveryRequestsByIdSharesResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/council-recovery/requests/{id}/shares` operation.
+ */
+export function handleGetApiCouncilRecoveryRequestsByIdShares(
+  response?:
+    | HandleGetApiCouncilRecoveryRequestsByIdSharesResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests/:id/shares`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiCouncilRecoveryRequestsByIdCustodianResponse = {
+  body: GetApiCouncilRecoveryRequestsByIdCustodianResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/council-recovery/requests/{id}/custodian` operation.
+ */
+export function handleGetApiCouncilRecoveryRequestsByIdCustodian(
+  response?:
+    | HandleGetApiCouncilRecoveryRequestsByIdCustodianResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests/:id/custodian`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilRecoveryRequestsByIdContributeResponse = {
+  body: PostApiCouncilRecoveryRequestsByIdContributeResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/council-recovery/requests/{id}/contribute` operation.
+ */
+export function handlePostApiCouncilRecoveryRequestsByIdContribute(
+  response?:
+    | HandlePostApiCouncilRecoveryRequestsByIdContributeResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        PostApiCouncilRecoveryRequestsByIdContributeData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    PostApiCouncilRecoveryRequestsByIdContributeData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests/:id/contribute`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilRecoveryRequestsByIdAbortResponse = {
+  body: PostApiCouncilRecoveryRequestsByIdAbortResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/council-recovery/requests/{id}/abort` operation.
+ */
+export function handlePostApiCouncilRecoveryRequestsByIdAbort(
+  response?:
+    | HandlePostApiCouncilRecoveryRequestsByIdAbortResponse
+    | HttpResponseResolver<
+        {
+          id: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      id: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/council-recovery/requests/:id/abort`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsByCouncilIdReshareResponse = {
+  body: PostApiCouncilsByCouncilIdReshareResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/{councilId}/reshare` operation.
+ */
+export function handlePostApiCouncilsByCouncilIdReshare(
+  response?:
+    | HandlePostApiCouncilsByCouncilIdReshareResponse
+    | HttpResponseResolver<
+        {
+          councilId: string;
+        },
+        PostApiCouncilsByCouncilIdReshareData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      councilId: string;
+    },
+    PostApiCouncilsByCouncilIdReshareData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/:councilId/reshare`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandleGetApiCouncilsReshareBySessionIdBatchResponse = {
+  body: GetApiCouncilsReshareBySessionIdBatchResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/councils/reshare/{sessionId}/batch` operation.
+ */
+export function handleGetApiCouncilsReshareBySessionIdBatch(
+  response?:
+    | HandleGetApiCouncilsReshareBySessionIdBatchResponse
+    | HttpResponseResolver<
+        {
+          sessionId: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<
+    {
+      sessionId: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/reshare/:sessionId/batch`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsReshareBySessionIdKeysResponse = {
+  body: PostApiCouncilsReshareBySessionIdKeysResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/reshare/{sessionId}/keys` operation.
+ */
+export function handlePostApiCouncilsReshareBySessionIdKeys(
+  response?:
+    | HandlePostApiCouncilsReshareBySessionIdKeysResponse
+    | HttpResponseResolver<
+        {
+          sessionId: string;
+        },
+        PostApiCouncilsReshareBySessionIdKeysData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      sessionId: string;
+    },
+    PostApiCouncilsReshareBySessionIdKeysData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/reshare/:sessionId/keys`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsReshareBySessionIdSubSharesResponse = {
+  body: PostApiCouncilsReshareBySessionIdSubSharesResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/reshare/{sessionId}/sub-shares` operation.
+ */
+export function handlePostApiCouncilsReshareBySessionIdSubShares(
+  response?:
+    | HandlePostApiCouncilsReshareBySessionIdSubSharesResponse
+    | HttpResponseResolver<
+        {
+          sessionId: string;
+        },
+        PostApiCouncilsReshareBySessionIdSubSharesData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      sessionId: string;
+    },
+    PostApiCouncilsReshareBySessionIdSubSharesData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/reshare/:sessionId/sub-shares`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsReshareBySessionIdCancelResponse = {
+  body: PostApiCouncilsReshareBySessionIdCancelResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/reshare/{sessionId}/cancel` operation.
+ */
+export function handlePostApiCouncilsReshareBySessionIdCancel(
+  response?:
+    | HandlePostApiCouncilsReshareBySessionIdCancelResponse
+    | HttpResponseResolver<
+        {
+          sessionId: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      sessionId: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/reshare/:sessionId/cancel`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
 export type MswHandlerFactories = {
   /**
    * Handler for the `GET /api/version` operation.
@@ -1631,6 +2332,70 @@ export type MswHandlerFactories = {
    * Handler for the `POST /api/emergency-access/{id}/recover` operation.
    */
   postApiEmergencyAccessByIdRecover: typeof handlePostApiEmergencyAccessByIdRecover;
+  /**
+   * Handler for the `GET /api/councils/mine` operation.
+   */
+  getApiCouncilsMine: typeof handleGetApiCouncilsMine;
+  /**
+   * Handler for the `GET /api/councils/for-me` operation.
+   */
+  getApiCouncilsForMe: typeof handleGetApiCouncilsForMe;
+  /**
+   * Handler for the `POST /api/councils/{councilId}/versions/{version}/sign` operation.
+   */
+  postApiCouncilsByCouncilIdVersionsByVersionSign: typeof handlePostApiCouncilsByCouncilIdVersionsByVersionSign;
+  /**
+   * Handler for the `POST /api/councils/escrow` operation.
+   */
+  postApiCouncilsEscrow: typeof handlePostApiCouncilsEscrow;
+  /**
+   * Handler for the `POST /api/council-recovery/requests` operation.
+   */
+  postApiCouncilRecoveryRequests: typeof handlePostApiCouncilRecoveryRequests;
+  /**
+   * Handler for the `GET /api/council-recovery/requests/mine` operation.
+   */
+  getApiCouncilRecoveryRequestsMine: typeof handleGetApiCouncilRecoveryRequestsMine;
+  /**
+   * Handler for the `POST /api/council-recovery/requests/{id}/refuse` operation.
+   */
+  postApiCouncilRecoveryRequestsByIdRefuse: typeof handlePostApiCouncilRecoveryRequestsByIdRefuse;
+  /**
+   * Handler for the `GET /api/council-recovery/requests/{id}/shares` operation.
+   */
+  getApiCouncilRecoveryRequestsByIdShares: typeof handleGetApiCouncilRecoveryRequestsByIdShares;
+  /**
+   * Handler for the `GET /api/council-recovery/requests/{id}/custodian` operation.
+   */
+  getApiCouncilRecoveryRequestsByIdCustodian: typeof handleGetApiCouncilRecoveryRequestsByIdCustodian;
+  /**
+   * Handler for the `POST /api/council-recovery/requests/{id}/contribute` operation.
+   */
+  postApiCouncilRecoveryRequestsByIdContribute: typeof handlePostApiCouncilRecoveryRequestsByIdContribute;
+  /**
+   * Handler for the `POST /api/council-recovery/requests/{id}/abort` operation.
+   */
+  postApiCouncilRecoveryRequestsByIdAbort: typeof handlePostApiCouncilRecoveryRequestsByIdAbort;
+  /**
+   * Handler for the `POST /api/councils/{councilId}/reshare` operation.
+   */
+  postApiCouncilsByCouncilIdReshare: typeof handlePostApiCouncilsByCouncilIdReshare;
+  /**
+   * Handler for the `GET /api/councils/reshare/{sessionId}/batch` operation.
+   */
+  getApiCouncilsReshareBySessionIdBatch: typeof handleGetApiCouncilsReshareBySessionIdBatch;
+  /**
+   * Handler for the `POST /api/councils/reshare/{sessionId}/keys` operation.
+   */
+  postApiCouncilsReshareBySessionIdKeys: typeof handlePostApiCouncilsReshareBySessionIdKeys;
+  /**
+   * Handler for the `POST /api/councils/reshare/{sessionId}/sub-shares` operation.
+   */
+  postApiCouncilsReshareBySessionIdSubShares: typeof handlePostApiCouncilsReshareBySessionIdSubShares;
+  /**
+   * Handler for the `POST /api/councils/reshare/{sessionId}/cancel` operation.
+   */
+  postApiCouncilsReshareBySessionIdCancel: typeof handlePostApiCouncilsReshareBySessionIdCancel;
 };
 
 export type CreateMswHandlersResult = {
@@ -1685,6 +2450,22 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     postApiEmergencyAccessByIdCancel: wrap(handlePostApiEmergencyAccessByIdCancel),
     postApiEmergencyAccessByIdReject: wrap(handlePostApiEmergencyAccessByIdReject),
     postApiEmergencyAccessByIdRecover: wrap(handlePostApiEmergencyAccessByIdRecover),
+    getApiCouncilsMine: wrap(handleGetApiCouncilsMine),
+    getApiCouncilsForMe: wrap(handleGetApiCouncilsForMe),
+    postApiCouncilsByCouncilIdVersionsByVersionSign: wrap(handlePostApiCouncilsByCouncilIdVersionsByVersionSign),
+    postApiCouncilsEscrow: wrap(handlePostApiCouncilsEscrow),
+    postApiCouncilRecoveryRequests: wrap(handlePostApiCouncilRecoveryRequests),
+    getApiCouncilRecoveryRequestsMine: wrap(handleGetApiCouncilRecoveryRequestsMine),
+    postApiCouncilRecoveryRequestsByIdRefuse: wrap(handlePostApiCouncilRecoveryRequestsByIdRefuse),
+    getApiCouncilRecoveryRequestsByIdShares: wrap(handleGetApiCouncilRecoveryRequestsByIdShares),
+    getApiCouncilRecoveryRequestsByIdCustodian: wrap(handleGetApiCouncilRecoveryRequestsByIdCustodian),
+    postApiCouncilRecoveryRequestsByIdContribute: wrap(handlePostApiCouncilRecoveryRequestsByIdContribute),
+    postApiCouncilRecoveryRequestsByIdAbort: wrap(handlePostApiCouncilRecoveryRequestsByIdAbort),
+    postApiCouncilsByCouncilIdReshare: wrap(handlePostApiCouncilsByCouncilIdReshare),
+    getApiCouncilsReshareBySessionIdBatch: wrap(handleGetApiCouncilsReshareBySessionIdBatch),
+    postApiCouncilsReshareBySessionIdKeys: wrap(handlePostApiCouncilsReshareBySessionIdKeys),
+    postApiCouncilsReshareBySessionIdSubShares: wrap(handlePostApiCouncilsReshareBySessionIdSubShares),
+    postApiCouncilsReshareBySessionIdCancel: wrap(handlePostApiCouncilsReshareBySessionIdCancel),
   };
   const all: CreateMswHandlersResult['all'] = (options = {}) => {
     type OverrideValue<R> = R | [response?: R, options?: RequestHandlerOptions];
@@ -1693,11 +2474,22 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     }
     const overrides = options.pick ?? {};
     return [
+      invoke(pick.postApiCouncilsByCouncilIdVersionsByVersionSign, overrides.postApiCouncilsByCouncilIdVersionsByVersionSign),
       invoke(pick.postApiVaultApprovalsByRequestIdApprove, overrides.postApiVaultApprovalsByRequestIdApprove),
+      invoke(pick.postApiCouncilRecoveryRequestsByIdRefuse, overrides.postApiCouncilRecoveryRequestsByIdRefuse),
+      invoke(pick.getApiCouncilRecoveryRequestsByIdShares, overrides.getApiCouncilRecoveryRequestsByIdShares),
+      invoke(pick.getApiCouncilRecoveryRequestsByIdCustodian, overrides.getApiCouncilRecoveryRequestsByIdCustodian),
+      invoke(pick.postApiCouncilRecoveryRequestsByIdContribute, overrides.postApiCouncilRecoveryRequestsByIdContribute),
+      invoke(pick.postApiCouncilRecoveryRequestsByIdAbort, overrides.postApiCouncilRecoveryRequestsByIdAbort),
+      invoke(pick.getApiCouncilsReshareBySessionIdBatch, overrides.getApiCouncilsReshareBySessionIdBatch),
+      invoke(pick.postApiCouncilsReshareBySessionIdKeys, overrides.postApiCouncilsReshareBySessionIdKeys),
+      invoke(pick.postApiCouncilsReshareBySessionIdSubShares, overrides.postApiCouncilsReshareBySessionIdSubShares),
+      invoke(pick.postApiCouncilsReshareBySessionIdCancel, overrides.postApiCouncilsReshareBySessionIdCancel),
       invoke(pick.postApiPublicKeysRegisterInit, overrides.postApiPublicKeysRegisterInit),
       invoke(pick.postApiPublicKeysRegisterComplete, overrides.postApiPublicKeysRegisterComplete),
       invoke(pick.postApiVaultApprovalsRequest, overrides.postApiVaultApprovalsRequest),
       invoke(pick.getApiVaultApprovalsPending, overrides.getApiVaultApprovalsPending),
+      invoke(pick.getApiCouncilRecoveryRequestsMine, overrides.getApiCouncilRecoveryRequestsMine),
       invoke(pick.putApiVaultItemsByItemId, overrides.putApiVaultItemsByItemId),
       invoke(pick.getApiVaultApprovalsByRequestId, overrides.getApiVaultApprovalsByRequestId),
       invoke(pick.getApiPublicKeysByUserIdContinuity, overrides.getApiPublicKeysByUserIdContinuity),
@@ -1707,6 +2499,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdCancel, overrides.postApiEmergencyAccessByIdCancel),
       invoke(pick.postApiEmergencyAccessByIdReject, overrides.postApiEmergencyAccessByIdReject),
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
+      invoke(pick.postApiCouncilsByCouncilIdReshare, overrides.postApiCouncilsByCouncilIdReshare),
       invoke(pick.postApiAuthRelay, overrides.postApiAuthRelay),
       invoke(pick.postApiAuthToken, overrides.postApiAuthToken),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),
@@ -1722,6 +2515,10 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.getApiEmergencyAccessPending, overrides.getApiEmergencyAccessPending),
       invoke(pick.getApiEmergencyAccessTrusted, overrides.getApiEmergencyAccessTrusted),
       invoke(pick.getApiEmergencyAccessGranted, overrides.getApiEmergencyAccessGranted),
+      invoke(pick.getApiCouncilsMine, overrides.getApiCouncilsMine),
+      invoke(pick.getApiCouncilsForMe, overrides.getApiCouncilsForMe),
+      invoke(pick.postApiCouncilsEscrow, overrides.postApiCouncilsEscrow),
+      invoke(pick.postApiCouncilRecoveryRequests, overrides.postApiCouncilRecoveryRequests),
       invoke(pick.getApiPublicKeysByUserId, overrides.getApiPublicKeysByUserId),
       invoke(pick.deleteApiEmergencyAccessById, overrides.deleteApiEmergencyAccessById),
       invoke(pick.putApiEmergencyAccessById, overrides.putApiEmergencyAccessById),

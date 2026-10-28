@@ -122,6 +122,22 @@ config:
   #     - domains: ['*']
   #       publicKey: AUJD...
   maintenanceEscrowKeys: []
+  # Recovery councils (shamir.md): for each group of users by email domain, the
+  # custodians who can together give one of them their vault back, by internal user
+  # id with their email as a guard, and how many it takes (at least 1, at most one
+  # less than the custodians, 2 to 12 custodians). The configuration only PROPOSES:
+  # what is in force is the roster the custodians signed, so emptying this deletes
+  # nothing already set up. Empty = no council is proposed.
+  #   recoveryCouncils:
+  #     - id: dinum
+  #       label: Équipe sécurité DINUM
+  #       domains: [numerique.gouv.fr]
+  #       custodians:
+  #         - { userId: 0b7e5f0c-..., email: rssi@numerique.gouv.fr }
+  #         - { userId: 6f2d4c1a-..., email: dpo@numerique.gouv.fr }
+  #         - { userId: 9a8b7c6d-..., email: dsi@numerique.gouv.fr }
+  #       threshold: 2
+  recoveryCouncils: []
   retention:
     # Days a dormant vault (replaced by a start-over, or left by leaving encryption)
     # stays restorable before its content is deleted, with emails 30 and 7 days

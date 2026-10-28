@@ -1,4 +1,5 @@
 import type { EmergencyDesignateBody } from '@encryption/src/shared/schemas/emergency-access';
+import type { CouncilEscrowBody, CouncilEscrowRecordWire, RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 import type { VaultItemWire, VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { GetApiPublicKeysResponses } from '@encryption/src/ui/api/generated/types.gen';
 
@@ -74,4 +75,52 @@ export const sampleEmergencyEscrowRecord = {
   escrow_signature: fakeBase64(64),
   escrow_created_at_millis: 1_700_000_000_000,
   credential_auth_public_key_hash: fakeBase64(32),
+};
+
+// ----- Recovery council ---------------------------------------------------------
+
+/** A council's 40-digit code, as its organization publishes it. */
+export const sampleCouncilFingerprint = '1284091733520481176234905126639870015423';
+
+export const sampleCouncilMembers = [
+  { slot: 1, user_id: '0b7e5f0c-6a0e-4a0f-9d5e-2f1c8e3a9b11', identity_public_key: fakeBase64(33), name: 'Alice Martin' },
+  { slot: 2, user_id: '6f2d4c1a-3b5e-4e7f-8a9b-0c1d2e3f4a5b', identity_public_key: fakeBase64(33), name: 'Bruno Petit' },
+  { slot: 3, user_id: '9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d', identity_public_key: fakeBase64(33), name: 'Chloé Durand' },
+  { slot: 4, user_id: '1e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5c', identity_public_key: fakeBase64(33), name: 'David Moreau' },
+];
+
+export function sampleRosterVersion(overrides: Partial<RosterVersionWire> = {}): RosterVersionWire {
+  return {
+    version: 1,
+    threshold: 2,
+    previous_roster_hash: '',
+    members: sampleCouncilMembers,
+    signatures: sampleCouncilMembers.map(() => ({ identity_public_key: fakeBase64(33), signature: fakeBase64(64) })),
+    ...overrides,
+  };
+}
+
+export const sampleCouncilEscrowRecord: CouncilEscrowRecordWire = {
+  council_id: 'dinum',
+  roster_version: 1,
+  roster_hash: fakeBase64(32),
+  threshold: 2,
+  escrow_created_at_millis: 1_700_000_000_000,
+  credential_auth_public_key_hash: fakeBase64(32),
+  secret_commitment: fakeBase64(32),
+  share_commitments: fakeBase64(64),
+  shares: sampleCouncilMembers.map((m) => ({ slot: m.slot, capsule_hash: fakeBase64(32) })),
+  escrow_signature: fakeBase64(64),
+};
+
+export const sampleCouncilEscrowBody: CouncilEscrowBody = {
+  council_id: 'dinum',
+  roster_version: 1,
+  threshold: 2,
+  credential: sampleVaultKeyring,
+  escrow_created_at_millis: 1_700_000_000_000,
+  secret_commitment: fakeBase64(32),
+  share_commitments: fakeBase64(64),
+  shares: sampleCouncilMembers.map((m) => ({ slot: m.slot, wrapped_share: fakeBase64(1200) })),
+  escrow_signature: fakeBase64(64),
 };

@@ -33,7 +33,7 @@ const API_BASE = '';
 interface VaultContentWire {
   vault_id: string;
   wrapped_vrk: string;
-  credential_type: 'primary' | 'emergency';
+  credential_type: 'primary' | 'emergency' | 'council';
   revision: number;
   manifest: string | null;
   manifest_sig: string | null;

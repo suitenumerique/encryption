@@ -1,6 +1,6 @@
 import { type IDBPDatabase, openDB } from 'idb';
 
-import { DB_NAME, STORE_DEVICE_ACTIVITY, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { DB_NAME, STORE_COUNCIL_REQUEST, STORE_DEVICE_ACTIVITY, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -34,6 +34,10 @@ export const MIGRATIONS: ReadonlyArray<(db: IDBPDatabase) => void> = [
   // v3 — when this browser last used each user's vault (de-enroll after inactivity).
   (db) => {
     if (!db.objectStoreNames.contains(STORE_DEVICE_ACTIVITY)) db.createObjectStore(STORE_DEVICE_ACTIVITY);
+  },
+  // v4 — the ephemeral key of a running recovery request to the user's council.
+  (db) => {
+    if (!db.objectStoreNames.contains(STORE_COUNCIL_REQUEST)) db.createObjectStore(STORE_COUNCIL_REQUEST);
   },
 ];
 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
+import { jsonEnvironmentValue } from '@encryption/src/server/email-domain-groups';
 import { maintenanceEscrowKeysSchema } from '@encryption/src/server/maintenance-escrow';
+import { recoveryCouncilsSchema } from '@encryption/src/server/recovery-councils';
 import { parseDeviceInactivityDays } from '@encryption/src/shared/device-inactivity';
 import { isValidOriginEntry, parseOriginAllowlist } from '@encryption/src/shared/origin-allowlist';
 
@@ -168,17 +170,19 @@ const envFields = z.object({
   // resources it escrows (src/server/maintenance-escrow.ts). Validated in full at
   // boot: a malformed key would otherwise fail every document creation in the
   // browser, and a domain listed twice would make the choice of key ambiguous.
-  MAINTENANCE_ESCROW_KEYS: z.preprocess((value, ctx) => {
-    if (value === undefined || value === '') return undefined;
-
-    try {
-      return JSON.parse(value as string);
-    } catch {
-      ctx.addIssue({ code: 'custom', message: 'must be a JSON list of { "domains": [...], "publicKey": "..." }' });
-
-      return z.NEVER;
-    }
-  }, maintenanceEscrowKeysSchema.optional()),
+  MAINTENANCE_ESCROW_KEYS: z.preprocess(
+    jsonEnvironmentValue('must be a JSON list of { "domains": [...], "publicKey": "..." }'),
+    maintenanceEscrowKeysSchema.optional()
+  ),
+  // Optional recovery councils (shamir.md): a JSON list of councils, each with the
+  // email domains of the users it covers, its custodians and its threshold
+  // (src/server/recovery-councils.ts). The variable only PROPOSES a membership:
+  // what is in force is the roster signed by the custodians themselves, so an
+  // empty or removed entry changes nothing already set up.
+  RECOVERY_COUNCILS: z.preprocess(
+    jsonEnvironmentValue('must be a JSON list of { "id", "label", "domains": [...], "custodians": [{ "userId", "email" }], "threshold" }'),
+    recoveryCouncilsSchema.optional()
+  ),
   // Optional JSON for the product brand font (BrandFont: family + woff URLs),
   // shared by the emails and the interface UI. Unset = each
   // surface's generic fallback.

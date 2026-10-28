@@ -37,6 +37,13 @@ describe('interface routes', () => {
     expect(PATH_FOR_ROUTE['emergency-access']).toBe('/emergency-access');
   });
 
+  it('maps the recovery council screens, opened on their own or as a settings section', () => {
+    expect(getRouteFromPath('/recovery-council')).toBe('recovery-council');
+    expect(getRouteFromPath('/council-custodian')).toBe('council-custodian');
+    expect(getSettingsSectionFromPath('/settings/recovery-council')).toBe('recovery-council');
+    expect(getSettingsSectionFromPath('/settings/custodian')).toBe('custodian');
+  });
+
   it('maps a settings section to the settings route and its section', () => {
     expect(getRouteFromPath('/settings/manage')).toBe('settings');
     expect(getSettingsSectionFromPath('/settings/manage')).toBe('manage');

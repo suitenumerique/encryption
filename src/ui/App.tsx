@@ -15,12 +15,14 @@ import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
 import { clearIdTokenSet, readIdTokenSet, storeIdTokenSet, subscribeToIdTokenSet } from '@encryption/src/ui/auth/id-token-storage';
 import { isIdTokenExpired } from '@encryption/src/ui/auth/login';
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
+import { CouncilCustodian } from '@encryption/src/ui/components/CouncilCustodian';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
 import { EmergencySignedOutPrompt } from '@encryption/src/ui/components/EmergencySignedOutPrompt';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
+import { RecoveryCouncil } from '@encryption/src/ui/components/RecoveryCouncil';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
@@ -511,6 +513,38 @@ function InterfaceScreens({
     );
   }
 
+  // The council screens ask for a fresh second factor on custodian actions.
+  const councilAuth = {
+    onReconnect: oidcAuth.requestAuth,
+    onStepUp: oidcAuth.requestStepUp,
+    isAuthenticating: oidcAuth.isAuthenticating,
+    onCancelAuth: oidcAuth.cancelAuth,
+    currentIdToken: oidcAuth.idToken,
+  };
+
+  function recoveryCouncil(direct: boolean) {
+    return (
+      <RecoveryCouncil
+        {...councilAuth}
+        getIdToken={getValidIdToken}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+      />
+    );
+  }
+
+  function councilCustodian(direct: boolean) {
+    return (
+      <CouncilCustodian
+        {...councilAuth}
+        getIdToken={getValidIdToken}
+        userId={internalUserId}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+      />
+    );
+  }
+
   function deviceApproval(direct: boolean) {
     return (
       <DeviceApproval
@@ -602,6 +636,8 @@ function InterfaceScreens({
       // the device pairing are screens of their own, the rest belongs to settings.
       if (settingsSection === 'add-device') return deviceApproval(true);
       if (settingsSection === 'trusted-contacts') return emergencyAccess(true);
+      if (settingsSection === 'recovery-council') return recoveryCouncil(true);
+      if (settingsSection === 'custodian') return councilCustodian(true);
 
       return (
         <EncryptionSettings
@@ -614,6 +650,8 @@ function InterfaceScreens({
           onSetUp={() => navigate('onboarding')}
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
+          onOpenRecoveryCouncil={() => setRouteOverride('recovery-council')}
+          onOpenCustodian={() => setRouteOverride('council-custodian')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           onCancelAuth={oidcAuth.cancelAuth}
@@ -624,6 +662,12 @@ function InterfaceScreens({
 
     case 'emergency-access':
       return emergencyAccess(false);
+
+    case 'recovery-council':
+      return recoveryCouncil(false);
+
+    case 'council-custodian':
+      return councilCustodian(false);
 
     case 'device-approval':
       return deviceApproval(false);

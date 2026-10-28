@@ -1266,7 +1266,7 @@
                     },
                     "credential_type": {
                       "type": "string",
-                      "enum": ["primary", "emergency"]
+                      "enum": ["primary", "emergency", "council"]
                     },
                     "revision": {
                       "type": "integer",
@@ -1475,7 +1475,7 @@
                     },
                     "credential_type": {
                       "type": "string",
-                      "enum": ["primary", "emergency"]
+                      "enum": ["primary", "emergency", "council"]
                     },
                     "revision": {
                       "type": "integer",
@@ -2278,6 +2278,121 @@
                         "escrow_created_at_millis"
                       ]
                     }
+                  },
+                  "council_rearm": {
+                    "type": "object",
+                    "properties": {
+                      "council_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "roster_version": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true,
+                        "maximum": 9007199254740991
+                      },
+                      "threshold": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true,
+                        "maximum": 9007199254740991
+                      },
+                      "credential": {
+                        "type": "object",
+                        "properties": {
+                          "wrapped_vrk": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          },
+                          "auth_public_key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          },
+                          "auth_pub_sig": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          },
+                          "kdf_ops": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "kdf_mem": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "lang": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
+                        },
+                        "required": ["wrapped_vrk", "auth_public_key", "auth_pub_sig", "kdf_ops", "kdf_mem", "lang"]
+                      },
+                      "escrow_created_at_millis": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "secret_commitment": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      },
+                      "share_commitments": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      },
+                      "shares": {
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "slot": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 255
+                            },
+                            "wrapped_share": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          },
+                          "required": ["slot", "wrapped_share"]
+                        }
+                      },
+                      "escrow_signature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      }
+                    },
+                    "required": [
+                      "council_id",
+                      "roster_version",
+                      "threshold",
+                      "credential",
+                      "escrow_created_at_millis",
+                      "secret_commitment",
+                      "share_commitments",
+                      "shares",
+                      "escrow_signature"
+                    ]
+                  },
+                  "council_drop": {
+                    "type": "boolean"
                   }
                 },
                 "required": ["wrapped_vrk", "auth_public_key", "auth_pub_sig", "kdf_ops", "kdf_mem", "lang"]
@@ -4007,6 +4122,3220 @@
             }
           },
           "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/mine": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mfa_enforced": {
+                      "type": "boolean"
+                    },
+                    "councils": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "council_id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": ["custodian", "invited"]
+                          },
+                          "configured": {
+                            "type": "boolean"
+                          },
+                          "my_slot": {
+                            "nullable": true,
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "chain": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "version": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "exclusiveMinimum": true,
+                                  "maximum": 9007199254740991
+                                },
+                                "threshold": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "exclusiveMinimum": true,
+                                  "maximum": 9007199254740991
+                                },
+                                "previous_roster_hash": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                },
+                                "members": {
+                                  "maxItems": 12,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "slot": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 255
+                                      },
+                                      "user_id": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "identity_public_key": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 1024
+                                      },
+                                      "name": {
+                                        "nullable": true,
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["slot", "user_id", "identity_public_key", "name"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "signatures": {
+                                  "maxItems": 64,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "identity_public_key": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 1024
+                                      },
+                                      "signature": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 1024
+                                      }
+                                    },
+                                    "required": ["identity_public_key", "signature"],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": ["version", "threshold", "previous_roster_hash", "members", "signatures"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "proposal": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "roster": {
+                                "type": "object",
+                                "properties": {
+                                  "version": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "exclusiveMinimum": true,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "threshold": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "exclusiveMinimum": true,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "previous_roster_hash": {
+                                    "type": "string",
+                                    "maxLength": 1024
+                                  },
+                                  "members": {
+                                    "maxItems": 12,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "slot": {
+                                          "type": "integer",
+                                          "minimum": 1,
+                                          "maximum": 255
+                                        },
+                                        "user_id": {
+                                          "type": "string",
+                                          "format": "uuid",
+                                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                        },
+                                        "identity_public_key": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        },
+                                        "name": {
+                                          "nullable": true,
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["slot", "user_id", "identity_public_key", "name"],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "signatures": {
+                                    "maxItems": 64,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "identity_public_key": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        },
+                                        "signature": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        }
+                                      },
+                                      "required": ["identity_public_key", "signature"],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": ["version", "threshold", "previous_roster_hash", "members", "signatures"],
+                                "additionalProperties": false
+                              },
+                              "quorum_missing": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "pending_members": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "slot": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["slot", "name"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "signed_by_me": {
+                                "type": "boolean"
+                              },
+                              "may_sign": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["roster", "quorum_missing", "pending_members", "signed_by_me", "may_sign"],
+                            "additionalProperties": false
+                          },
+                          "blocked": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "email": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "enum": ["unknown-user", "email-mismatch", "not-onboarded"]
+                                }
+                              },
+                              "required": ["email", "reason"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "health": {
+                            "type": "object",
+                            "properties": {
+                              "escrows": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "ok": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "at_risk": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "lost": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "outdated": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "version": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "escrows": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["version", "escrows"],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": ["escrows", "ok", "at_risk", "lost", "outdated"],
+                            "additionalProperties": false
+                          },
+                          "requests": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "user_name": {
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "user_email": {
+                                  "type": "string"
+                                },
+                                "created_at_millis": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "expires_at_millis": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "stage": {
+                                  "type": "string",
+                                  "enum": ["collecting", "awaiting_meeting", "cooldown", "released", "completed", "aborted", "expired"]
+                                },
+                                "contributors": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "slot": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "in_person": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": ["slot", "name", "in_person"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "my_contribution": {
+                                  "type": "string",
+                                  "enum": ["none", "remote", "in_person"]
+                                },
+                                "can_contribute": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "user_name",
+                                "user_email",
+                                "created_at_millis",
+                                "expires_at_millis",
+                                "stage",
+                                "contributors",
+                                "my_contribution",
+                                "can_contribute"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "reshare": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "session_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "source_version": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "target_version": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "helper_slots": {
+                                "type": "array",
+                                "items": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "i_am_helper": {
+                                "type": "boolean"
+                              },
+                              "remaining_for_me": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "remaining": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "session_id",
+                              "source_version",
+                              "target_version",
+                              "helper_slots",
+                              "i_am_helper",
+                              "remaining_for_me",
+                              "remaining"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "council_id",
+                          "label",
+                          "role",
+                          "configured",
+                          "my_slot",
+                          "chain",
+                          "proposal",
+                          "blocked",
+                          "health",
+                          "requests",
+                          "reshare"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["mfa_enforced", "councils"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/for-me": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "council": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "council_id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "configured": {
+                          "type": "boolean"
+                        },
+                        "chain": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "version": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 9007199254740991
+                              },
+                              "threshold": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 9007199254740991
+                              },
+                              "previous_roster_hash": {
+                                "type": "string",
+                                "maxLength": 1024
+                              },
+                              "members": {
+                                "maxItems": 12,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "slot": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 255
+                                    },
+                                    "user_id": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "identity_public_key": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 1024
+                                    },
+                                    "name": {
+                                      "nullable": true,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["slot", "user_id", "identity_public_key", "name"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "signatures": {
+                                "maxItems": 64,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "identity_public_key": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 1024
+                                    },
+                                    "signature": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 1024
+                                    }
+                                  },
+                                  "required": ["identity_public_key", "signature"],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": ["version", "threshold", "previous_roster_hash", "members", "signatures"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": ["council_id", "label", "configured", "chain"],
+                      "additionalProperties": false
+                    },
+                    "escrow": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "council_id": {
+                          "type": "string"
+                        },
+                        "vault_active": {
+                          "type": "boolean"
+                        },
+                        "generation": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "current_version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "record": {
+                          "type": "object",
+                          "properties": {
+                            "council_id": {
+                              "type": "string"
+                            },
+                            "roster_version": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991
+                            },
+                            "roster_hash": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            },
+                            "threshold": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991
+                            },
+                            "escrow_created_at_millis": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "credential_auth_public_key_hash": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            },
+                            "secret_commitment": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            },
+                            "share_commitments": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            },
+                            "shares": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "slot": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 255
+                                  },
+                                  "capsule_hash": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1024
+                                  }
+                                },
+                                "required": ["slot", "capsule_hash"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "escrow_signature": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            }
+                          },
+                          "required": [
+                            "council_id",
+                            "roster_version",
+                            "roster_hash",
+                            "threshold",
+                            "escrow_created_at_millis",
+                            "credential_auth_public_key_hash",
+                            "secret_commitment",
+                            "share_commitments",
+                            "shares",
+                            "escrow_signature"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "health": {
+                          "type": "object",
+                          "properties": {
+                            "live": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "threshold": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": ["ok", "at-risk", "lost"]
+                            },
+                            "outdated": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": ["live", "threshold", "status", "outdated"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["id", "council_id", "vault_active", "generation", "current_version", "record", "health"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["council", "escrow"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/{councilId}/versions/{version}/sign": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "signature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["signature"]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "councilId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 9007199254740991
+            },
+            "in": "path",
+            "name": "version",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "activated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["activated"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/escrow": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "council_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "roster_version": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": true,
+                    "maximum": 9007199254740991
+                  },
+                  "threshold": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": true,
+                    "maximum": 9007199254740991
+                  },
+                  "credential": {
+                    "type": "object",
+                    "properties": {
+                      "wrapped_vrk": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "auth_public_key": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      },
+                      "auth_pub_sig": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      },
+                      "kdf_ops": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true,
+                        "maximum": 9007199254740991
+                      },
+                      "kdf_mem": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true,
+                        "maximum": 9007199254740991
+                      },
+                      "lang": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": ["wrapped_vrk", "auth_public_key", "auth_pub_sig", "kdf_ops", "kdf_mem", "lang"]
+                  },
+                  "escrow_created_at_millis": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "secret_commitment": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "share_commitments": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "shares": {
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "slot": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 255
+                        },
+                        "wrapped_share": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        }
+                      },
+                      "required": ["slot", "wrapped_share"]
+                    }
+                  },
+                  "escrow_signature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "council_id",
+                  "roster_version",
+                  "threshold",
+                  "credential",
+                  "escrow_created_at_millis",
+                  "secret_commitment",
+                  "share_commitments",
+                  "shares",
+                  "escrow_signature"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": ["id"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ephemeral_public_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": ["ephemeral_public_key"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "expires_at_millis": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["id", "expires_at_millis"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests/mine": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "request": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "council_label": {
+                          "type": "string"
+                        },
+                        "stage": {
+                          "type": "string",
+                          "enum": ["in_progress", "meet", "released"]
+                        },
+                        "created_at_millis": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "expires_at_millis": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "meet": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["name"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": ["id", "council_label", "stage", "created_at_millis", "expires_at_millis", "meet"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["request"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests/{id}/refuse": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "refused": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["refused"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests/{id}/shares": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "request_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "council_id": {
+                      "type": "string"
+                    },
+                    "user_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true,
+                      "maximum": 9007199254740991
+                    },
+                    "threshold": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true,
+                      "maximum": 9007199254740991
+                    },
+                    "share_commitments": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "lang": {
+                      "type": "string"
+                    },
+                    "escrow": {
+                      "type": "object",
+                      "properties": {
+                        "council_id": {
+                          "type": "string"
+                        },
+                        "roster_version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "roster_hash": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "threshold": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "escrow_created_at_millis": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "credential_auth_public_key_hash": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "secret_commitment": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "share_commitments": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "shares": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "slot": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 255
+                              },
+                              "capsule_hash": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["slot", "capsule_hash"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "escrow_signature": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        }
+                      },
+                      "required": [
+                        "council_id",
+                        "roster_version",
+                        "roster_hash",
+                        "threshold",
+                        "escrow_created_at_millis",
+                        "credential_auth_public_key_hash",
+                        "secret_commitment",
+                        "share_commitments",
+                        "shares",
+                        "escrow_signature"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "contributions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "slot": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 255
+                          },
+                          "wrapped_share": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          },
+                          "in_person": {
+                            "type": "boolean"
+                          },
+                          "signature": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          },
+                          "custodian_user_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "custodian_identity_public_key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          },
+                          "custodian_name": {
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "slot",
+                          "wrapped_share",
+                          "in_person",
+                          "signature",
+                          "custodian_user_id",
+                          "custodian_identity_public_key",
+                          "custodian_name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "request_id",
+                    "council_id",
+                    "user_id",
+                    "generation",
+                    "threshold",
+                    "share_commitments",
+                    "lang",
+                    "escrow",
+                    "contributions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests/{id}/custodian": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "council_id": {
+                      "type": "string"
+                    },
+                    "user_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "user_name": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "user_email": {
+                      "type": "string"
+                    },
+                    "ephemeral_public_key": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "enum": ["collecting", "awaiting_meeting", "cooldown", "released", "completed", "aborted", "expired"]
+                    },
+                    "meeting_required": {
+                      "type": "boolean"
+                    },
+                    "escrow": {
+                      "type": "object",
+                      "properties": {
+                        "council_id": {
+                          "type": "string"
+                        },
+                        "roster_version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "roster_hash": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "threshold": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "escrow_created_at_millis": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "credential_auth_public_key_hash": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "secret_commitment": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "share_commitments": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "shares": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "slot": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 255
+                              },
+                              "capsule_hash": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["slot", "capsule_hash"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "escrow_signature": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        }
+                      },
+                      "required": [
+                        "council_id",
+                        "roster_version",
+                        "roster_hash",
+                        "threshold",
+                        "escrow_created_at_millis",
+                        "credential_auth_public_key_hash",
+                        "secret_commitment",
+                        "share_commitments",
+                        "shares",
+                        "escrow_signature"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "capsule": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": ["direct"]
+                            },
+                            "generation": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991
+                            },
+                            "slot": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 255
+                            },
+                            "wrapped_share": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          },
+                          "required": ["kind", "generation", "slot", "wrapped_share"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": ["reshared"]
+                            },
+                            "generation": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991
+                            },
+                            "slot": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 255
+                            },
+                            "session_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "escrow_id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "target_roster_version": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "exclusiveMinimum": true,
+                              "maximum": 9007199254740991
+                            },
+                            "helpers": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "helper_slot": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 255
+                                  },
+                                  "helper_identity_public_key": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1024
+                                  },
+                                  "wrapped_transfer_key": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096
+                                  },
+                                  "binding_signature": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1024
+                                  },
+                                  "sealed_sub_share": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1024
+                                  },
+                                  "commitments": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1024
+                                  },
+                                  "commitments_signature": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1024
+                                  }
+                                },
+                                "required": [
+                                  "helper_slot",
+                                  "helper_identity_public_key",
+                                  "wrapped_transfer_key",
+                                  "binding_signature",
+                                  "sealed_sub_share",
+                                  "commitments",
+                                  "commitments_signature"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": ["kind", "generation", "slot", "session_id", "escrow_id", "target_roster_version", "helpers"],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "council_id",
+                    "user_id",
+                    "user_name",
+                    "user_email",
+                    "ephemeral_public_key",
+                    "stage",
+                    "meeting_required",
+                    "escrow",
+                    "capsule"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests/{id}/contribute": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "slot": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 255
+                  },
+                  "wrapped_share": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "in_person": {
+                    "type": "boolean"
+                  },
+                  "signature": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": ["slot", "wrapped_share", "in_person", "signature"]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stage": {
+                      "type": "string",
+                      "enum": ["collecting", "awaiting_meeting", "cooldown", "released", "completed", "aborted", "expired"]
+                    }
+                  },
+                  "required": ["stage"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/council-recovery/requests/{id}/abort": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "aborted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["aborted"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/{councilId}/reshare": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source_version": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": true,
+                    "maximum": 9007199254740991
+                  },
+                  "helper_slots": {
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 255
+                    }
+                  }
+                },
+                "required": ["source_version", "helper_slots"]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "councilId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": ["session_id"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/reshare/{sessionId}/batch": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "council_id": {
+                      "type": "string"
+                    },
+                    "helper_slots": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 255
+                      }
+                    },
+                    "my_slot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 255
+                    },
+                    "target_roster_version": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true,
+                      "maximum": 9007199254740991
+                    },
+                    "target_threshold": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true,
+                      "maximum": 9007199254740991
+                    },
+                    "chain": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "version": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "threshold": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "previous_roster_hash": {
+                            "type": "string",
+                            "maxLength": 1024
+                          },
+                          "members": {
+                            "maxItems": 12,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "slot": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 255
+                                },
+                                "user_id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "identity_public_key": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 1024
+                                },
+                                "name": {
+                                  "nullable": true,
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["slot", "user_id", "identity_public_key", "name"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "signatures": {
+                            "maxItems": 64,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "identity_public_key": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 1024
+                                },
+                                "signature": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 1024
+                                }
+                              },
+                              "required": ["identity_public_key", "signature"],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": ["version", "threshold", "previous_roster_hash", "members", "signatures"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "transfer_keys_done": {
+                      "type": "boolean"
+                    },
+                    "escrows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "escrow_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "user_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "record": {
+                            "type": "object",
+                            "properties": {
+                              "council_id": {
+                                "type": "string"
+                              },
+                              "roster_version": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 9007199254740991
+                              },
+                              "roster_hash": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              "threshold": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 9007199254740991
+                              },
+                              "escrow_created_at_millis": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "credential_auth_public_key_hash": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              "secret_commitment": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              "share_commitments": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              "shares": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "slot": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 255
+                                    },
+                                    "capsule_hash": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 1024
+                                    }
+                                  },
+                                  "required": ["slot", "capsule_hash"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "escrow_signature": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": [
+                              "council_id",
+                              "roster_version",
+                              "roster_hash",
+                              "threshold",
+                              "escrow_created_at_millis",
+                              "credential_auth_public_key_hash",
+                              "secret_commitment",
+                              "share_commitments",
+                              "shares",
+                              "escrow_signature"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "capsule": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["direct"]
+                                  },
+                                  "generation": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "exclusiveMinimum": true,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "slot": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 255
+                                  },
+                                  "wrapped_share": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096
+                                  }
+                                },
+                                "required": ["kind", "generation", "slot", "wrapped_share"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["reshared"]
+                                  },
+                                  "generation": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "exclusiveMinimum": true,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "slot": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 255
+                                  },
+                                  "session_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "escrow_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  "target_roster_version": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "exclusiveMinimum": true,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "helpers": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "helper_slot": {
+                                          "type": "integer",
+                                          "minimum": 1,
+                                          "maximum": 255
+                                        },
+                                        "helper_identity_public_key": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        },
+                                        "wrapped_transfer_key": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 4096
+                                        },
+                                        "binding_signature": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        },
+                                        "sealed_sub_share": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        },
+                                        "commitments": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        },
+                                        "commitments_signature": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 1024
+                                        }
+                                      },
+                                      "required": [
+                                        "helper_slot",
+                                        "helper_identity_public_key",
+                                        "wrapped_transfer_key",
+                                        "binding_signature",
+                                        "sealed_sub_share",
+                                        "commitments",
+                                        "commitments_signature"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": ["kind", "generation", "slot", "session_id", "escrow_id", "target_roster_version", "helpers"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": ["escrow_id", "user_id", "record", "capsule"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "remaining": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "session_id",
+                    "council_id",
+                    "helper_slots",
+                    "my_slot",
+                    "target_roster_version",
+                    "target_threshold",
+                    "chain",
+                    "transfer_keys_done",
+                    "escrows",
+                    "remaining"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/reshare/{sessionId}/keys": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "keys": {
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "recipient_slot": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 255
+                        },
+                        "wrapped_transfer_key": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        },
+                        "binding_signature": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        }
+                      },
+                      "required": ["recipient_slot", "wrapped_transfer_key", "binding_signature"]
+                    }
+                  }
+                },
+                "required": ["keys"]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stored": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["stored"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/reshare/{sessionId}/sub-shares": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "escrows": {
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "escrow_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "commitments": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "commitments_signature": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "sub_shares": {
+                          "minItems": 1,
+                          "maxItems": 12,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "recipient_slot": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 255
+                              },
+                              "sealed": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["recipient_slot", "sealed"]
+                          }
+                        }
+                      },
+                      "required": ["escrow_id", "commitments", "commitments_signature", "sub_shares"]
+                    }
+                  }
+                },
+                "required": ["escrows"]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "moved": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "remaining": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["moved", "remaining"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/councils/reshare/{sessionId}/cancel": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cancelled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["cancelled"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
             "description": "Default Response",
             "content": {
               "application/json": {

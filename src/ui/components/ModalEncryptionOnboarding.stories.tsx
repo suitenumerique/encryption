@@ -8,6 +8,7 @@ import i18n from '@encryption/src/i18n';
 import { API_ERROR_VAULT_NOT_FOUND } from '@encryption/src/shared/error-codes';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import {
+  handleGetApiCouncilsForMe,
   handleGetApiEmergencyAccessTrusted,
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
@@ -16,6 +17,7 @@ import {
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
+import { forMe } from '@encryption/src/ui/testing/council-stories';
 import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
 
 type ComponentType = typeof ModalEncryptionOnboarding;
@@ -101,6 +103,32 @@ ExistingUserStory.play = async ({ canvasElement }) => {
 
 ExistingUserStory.parameters = { ...ExistingUserStory.parameters, design: consoleFrame('4880-17085') };
 export const ExistingUser = prepareStory(ExistingUserStory);
+
+// Covered by a recovery council that can still help: a third way back.
+const ExistingUserWithCouncilStory = Template.bind({});
+ExistingUserWithCouncilStory.args = { ...ExistingUserStory.args };
+ExistingUserWithCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiPublicKeys(({ request }) => {
+        const userIds = new URL(request.url).searchParams.getAll('user_ids');
+
+        return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
+      }),
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+    ],
+  },
+};
+ExistingUserWithCouncilStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  const council = await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('council.option_title')) });
+  await userEvent.click(council);
+  await expect(council).toBeChecked();
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  // The council screen takes over (its request lookup is not mocked here, so it settles on "unavailable").
+  await playFindHeading(canvasElement, i18n.t('council.recovery_title'));
+};
+export const ExistingUserWithCouncil = prepareStory(ExistingUserWithCouncilStory);
 
 // This browser held the vault but forgot it after a year without use: the same
 // choice, explained.

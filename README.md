@@ -189,6 +189,7 @@ Every variable is listed in [`.env.model`](.env.model) with a production-shaped 
 | `VAULT_DEVICE_INACTIVITY_DAYS` | Optional, 365 by default. Days without use after which a browser forgets its copy of the vault and must be enrolled again with another device or the recovery phrase. `0` never, otherwise at least 30.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `SECURITY_CONTACT_URL`         | Optional. Where researchers report a problem with your instance (`mailto:` or `https://`), published as `/.well-known/security.txt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `MAINTENANCE_ESCROW_KEYS`      | Optional. Enables the maintenance escrow: a JSON list of `{ "domains": [...], "publicKey": "..." }`, one public key per organization as the maintenance tool generates it, `*` for every other email (see "Maintenance escrow").                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `RECOVERY_COUNCILS`            | Optional. Proposes recovery councils: a JSON list of `{ "id", "label", "domains": [...], "custodians": [{ "userId", "email" }], "threshold" }`, 2 to 12 custodians, a threshold of at most one less (see "Recovery councils").                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Identity provider
 
@@ -328,6 +329,41 @@ Again: it lowers end-to-end encryption by exactly one holder, the custodians of 
 mkdir -p demo-export && curl -s 'http://localhost:7200/api/demo/documents?product=7201' \
   | jq -c '.[] | select(.maintenanceKey) | {id, title, maintenanceKey, content: .encryptedContent}' > demo-export/manifest.ndjson
 ```
+
+### Recovery councils
+
+A recovery council is a group of people mandated by an organization (security officer, DPO, IT management) who can, **together and at once**, give one locked-out user their encrypted data back, without any of them ever seeing it. It complements the recovery phrase and the trusted contacts: a contact can leave and makes the user wait by design, a council does neither. It is not the maintenance escrow, which recovers content in batch after a failure on our side. The design, with the alternatives considered, is in [shamir.md](shamir.md).
+
+**How it works, in one paragraph.** A user who accepts their council gets a second, dormant way into their vault, whose secret is split (Shamir, k of n) between the custodians, each part encrypted for one of them. A locked-out user asks from the "Restore your encryption" screen; custodians are emailed and approve remotely, up to `threshold - 1` of them; the user is then told who to go and see, and the last custodian hands over their part **in person** (or on a video call), after scanning or typing the code on the user's own screen. The parts meet only in that browser, which opens the vault and makes the user choose a new recovery phrase at once. A stolen login alone never gets more than `threshold - 1` parts, which reveal nothing.
+
+**Setting a council up.**
+
+1. Each custodian signs in to the encryption service once and sets up encryption. Their internal user id is what the configuration names (it survives an email change and a new identity provider); `npm run council:resolve -- rssi@numerique.gouv.fr` prints it from a machine with database access, or `SELECT id FROM users WHERE email = '…'`.
+2. Configure the council, matched to users by email domain exactly like maintenance keys (the longest listed domain on a label boundary, `*` for every other email):
+
+   ```bash
+   RECOVERY_COUNCILS='[{
+     "id": "dinum",
+     "label": "Équipe sécurité DINUM",
+     "domains": ["numerique.gouv.fr"],
+     "custodians": [
+       { "userId": "0b7e5f0c-…", "email": "rssi@numerique.gouv.fr" },
+       { "userId": "6f2d4c1a-…", "email": "dpo@numerique.gouv.fr" },
+       { "userId": "9a8b7c6d-…", "email": "dsi@numerique.gouv.fr" }
+     ],
+     "threshold": 2
+   }]'
+   ```
+
+   2 to 12 custodians, and a threshold of at most one less than them, so one absence never blocks a recovery (a margin of two is advised; the server logs a warning otherwise). `requestTtlDays` (7 by default, up to 30) is how long a request stays open; `cooldownMinutes` (0 by default) a minimum time between a request and its release. The email is a guard: a council naming a user id whose account has another email is not proposed.
+
+3. Every custodian opens their **custodian space** (encryption settings, or `openSettings('custodian')`) and accepts: by signing, each vouches for their own key. The council takes effect once all of them did. Its 40-digit code is then shown to its custodians and users; **publish it** (intranet page, the security team's welcome email): users compare it before accepting the council.
+
+**What the configuration can and cannot do.** It only proposes. What is in force is the membership the custodians signed, kept in the database as a chain of versions each signed by a quorum of the previous one and by every newcomer. A change of the variable (a custodian replaced, added, removed, a new threshold) becomes a change the custodians see and sign; a custodian who started over (new identity) needs the same. Until it is signed, nothing changes. An emptied, removed or broken entry deletes nothing either: the council stays in force as signed, and its custodians are told no change is possible. A compromised server cannot slip a key of its own into a council: users' and custodians' vaults verify the signed chain.
+
+**After a change of membership**, the parts of the departed custodian are deleted at once, and users stay recoverable through the margin. The custodians then **move the setups** to the new membership from their custodian space: as many of them as the old threshold each process the setups in batches from their own vault, no user is disturbed and no secret is rebuilt. A user whose setup can no longer be opened by enough custodians (too many departures before the move) is asked, in their settings, to set it up again; nothing is redone automatically. Every part carries public commitments the user signed (verifiable secret sharing), so a custodian's vault refuses a part that does not match, the server refuses a move computed from a wrong part, and a recovery leaves a bad part out. Database backups keep the parts a move deleted: limit their retention, or a departed custodian with access to an old backup keeps their old part.
+
+**Custodians must use a second factor.** Their actions (accept, sign, approve, hand over, stop, move) require a fresh authentication with a second factor when the step-up is enabled (`OIDC_STEP_UP_ENABLED`, see "Identity provider"); with a provider that reports none, the custodian space says so.
 
 ## Reporting a security issue
 

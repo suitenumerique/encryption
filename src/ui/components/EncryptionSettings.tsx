@@ -8,6 +8,7 @@ import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { UserInfo } from '@encryption/src/ui/App';
+import { fetchCouncilForMe, fetchMyCouncils } from '@encryption/src/ui/api/council-client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import {
   deletePublicKeys,
@@ -58,6 +59,8 @@ interface EncryptionSettingsProps {
   onSetUp?: () => void;
   onOpenDeviceApproval?: () => void;
   onOpenEmergencyAccess?: () => void;
+  onOpenRecoveryCouncil?: () => void;
+  onOpenCustodian?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
   onCancelAuth?: () => void;
@@ -98,6 +101,8 @@ export function EncryptionSettings({
   onSetUp,
   onOpenDeviceApproval,
   onOpenEmergencyAccess,
+  onOpenRecoveryCouncil,
+  onOpenCustodian,
   onReconnect,
   isAuthenticating = false,
   onCancelAuth,
@@ -354,6 +359,40 @@ export function EncryptionSettings({
       cancelled = true;
     };
   }, [keysExist, getIdToken, changePhraseStep]);
+
+  // The council rows appear only for someone a council covers, and for its
+  // custodians: the interface never learns more than "you are a custodian".
+  const [council, setCouncil] = useState<{ covered: boolean; custodian: boolean; pending: number }>({ covered: false, custodian: false, pending: 0 });
+
+  useEffect(() => {
+    if (!keysExist) return;
+
+    let cancelled = false;
+
+    withFreshIdToken(getIdToken, async (idToken) => {
+      const [forMe, mine] = await Promise.all([fetchCouncilForMe(idToken).catch(() => null), fetchMyCouncils(idToken).catch(() => null)]);
+      const councils = mine?.councils ?? [];
+
+      return {
+        covered: forMe?.council != null,
+        custodian: councils.length > 0,
+        pending: councils.reduce(
+          (sum, c) => sum + c.requests.filter((r) => r.can_contribute).length + (c.proposal?.may_sign && !c.proposal.signed_by_me ? 1 : 0),
+          0
+        ),
+      };
+    })
+      .then((state) => {
+        if (!cancelled) setCouncil(state);
+      })
+      .catch(() => {
+        // Optional rows: a failed fetch leaves them hidden.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [keysExist, getIdToken]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -1005,6 +1044,17 @@ export function EncryptionSettings({
                 </Button>
               }
             />
+            {onOpenCustodian && council.custodian && (
+              <SettingsRow
+                title={t('council.custodian_row_title')}
+                description={council.pending > 0 ? t('council.custodian_row_pending', { count: council.pending }) : t('council.custodian_row')}
+                action={
+                  <Button size="nano" variant="bordered" color={council.pending > 0 ? 'warning' : 'neutral'} onClick={onOpenCustodian}>
+                    {t('council.custodian_open')}
+                  </Button>
+                }
+              />
+            )}
           </div>
 
           <div className={styles.section}>
@@ -1025,6 +1075,17 @@ export function EncryptionSettings({
                 action={
                   <Button size="nano" variant="bordered" color="neutral" onClick={onOpenEmergencyAccess}>
                     {t('settings.manage_trusted_contacts')}
+                  </Button>
+                }
+              />
+            )}
+            {onOpenRecoveryCouncil && council.covered && (
+              <SettingsRow
+                title={t('council.row_title')}
+                description={t('council.row_description')}
+                action={
+                  <Button size="nano" variant="bordered" color="neutral" onClick={onOpenRecoveryCouncil}>
+                    {t('council.row_open')}
                   </Button>
                 }
               />

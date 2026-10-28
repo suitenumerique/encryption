@@ -1,5 +1,5 @@
 import { Button, Checkbox, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
-import { Key, PhoneDesktop } from '@gouvfr-lasuite/ui-components/icons';
+import { Key, PhoneDesktop, ShieldCheck } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -11,11 +11,13 @@ import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultError, VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import type { UserInfo } from '@encryption/src/ui/App';
 import { ApiError } from '@encryption/src/ui/api/client';
+import { fetchCouncilForMe } from '@encryption/src/ui/api/council-client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { deletePublicKeys, fetchNextKeyVersion, fetchPublicKeys, registerKeyInit } from '@encryption/src/ui/api/public-keys-client';
 import { createVault, hasRestorableVault } from '@encryption/src/ui/api/vault-client';
 import type { IdTokenSet } from '@encryption/src/ui/auth/login';
 import { SessionExpiredError, StepUpRequiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
+import { CouncilRecovery, type CouncilRecoveryResult } from '@encryption/src/ui/components/CouncilRecovery';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
@@ -25,6 +27,7 @@ import { Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useStepUp } from '@encryption/src/ui/hooks/useStepUp';
@@ -43,6 +46,7 @@ type OnboardingStep =
   | 'restored'
   | 'backup'
   | 'done'
+  | 'council-recovery'
   | 'forced-rotation'
   | 'forced-rotation-done';
 
@@ -234,14 +238,37 @@ export function ModalEncryptionOnboarding({
   const [commitError, setCommitError] = useState<string | null>(null);
   const [restoreInput, setRestoreInput] = useState('');
   // The way back chosen on the "Restore your encryption" screen.
-  const [restoreMethod, setRestoreMethod] = useState<'device' | 'phrase'>(onUseAnotherDevice ? 'device' : 'phrase');
+  const [restoreMethod, setRestoreMethod] = useState<'device' | 'phrase' | 'council'>(onUseAnotherDevice ? 'device' : 'phrase');
+  // The user's council can give the vault back (an escrow enough custodians can
+  // still open): one more way back, and the rotation after it re-arms the council.
+  const [councilAvailable, setCouncilAvailable] = useState(false);
+  const [councilUnlock, setCouncilUnlock] = useState(false);
+  const [councilDropped, setCouncilDropped] = useState(false);
+  const councilVault = useCouncilVault();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getIdToken()
+      .then((idToken) => (idToken ? fetchCouncilForMe(idToken) : null))
+      .then((forMe) => {
+        if (!cancelled && forMe?.escrow && forMe.escrow.health.status !== 'lost') setCouncilAvailable(true);
+      })
+      .catch(() => {
+        // Optional way back: without an answer it is simply not offered.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken]);
   // The entered phrase opened nothing: the boxes turn red until it is edited.
   const [phraseRejected, setPhraseRejected] = useState(false);
   // True only when every word box of the recovery phrase is filled; gates the restore button.
   const [restoreComplete, setRestoreComplete] = useState(false);
   // Set when the entered phrase unlocked a DORMANT vault: shows an in-app confirm
   // modal (not window.confirm) before reactivating, since that demotes the current one.
-  const [reactivatePrompt, setReactivatePrompt] = useState<{ date: string } | null>(null);
+  const [reactivatePrompt, setReactivatePrompt] = useState<{ date: string; council?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The "cancel the setup?" prompt raised by the product's close control on the backup step.
   const [cancelPrompt, setCancelPrompt] = useState(false);
@@ -694,6 +721,21 @@ export function ModalEncryptionOnboarding({
     setIsPending(true);
     setError(null);
 
+    if (reactivatePrompt?.council) {
+      try {
+        const reactivated = await withFreshIdToken(getIdToken, (idToken) => councilVault.reactivate(idToken));
+        setReactivatePrompt(null);
+        await startForcedRotation(reactivated.publicKey);
+      } catch (err) {
+        if (err instanceof SessionExpiredError) markSessionExpired();
+        else setError(t(unlockErrorKey(err)));
+      } finally {
+        setIsPending(false);
+      }
+
+      return;
+    }
+
     try {
       const reactivated = await withFreshIdToken(getIdToken, (idToken) => reactivateVault(restoreInput.trim(), idToken));
       setReactivatePrompt(null);
@@ -714,7 +756,28 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, markSessionExpired, t]);
+  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, markSessionExpired, t, reactivatePrompt, councilVault]);
+
+  // The council gave the vault back in this browser: the dormant phrase it
+  // released is burned by the forced change of the user's own phrase.
+  const handleCouncilRecovered = useCallback(
+    async (result: CouncilRecoveryResult) => {
+      setCouncilUnlock(true);
+
+      if (!result.isActiveVault) {
+        setReactivatePrompt({ date: new Intl.DateTimeFormat(i18n.language).format(new Date(result.vaultCreatedAtMillis)), council: true });
+
+        return;
+      }
+
+      try {
+        await startForcedRotation(result.publicKey);
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    },
+    [startForcedRotation, i18n.language]
+  );
 
   // Commit the rotated keyring: the moment the escrowed phrase (and the old
   // primary one) dies. The shared flow burns + re-arms every granted
@@ -728,7 +791,25 @@ export function ModalEncryptionOnboarding({
     clearSessionExpired();
 
     try {
-      await commitKeyring(forcedRotation.keyring, mnemonicLanguageForLocale(i18n.language));
+      const lang = mnemonicLanguageForLocale(i18n.language);
+      let council: { councilRearm?: Awaited<ReturnType<typeof councilVault.createEscrow>>; councilDrop?: boolean } | undefined;
+
+      // The council's setup is renewed with a fresh dormant phrase over its
+      // current members; if that cannot be built (its membership no longer
+      // verifies), the user leaves it and is told to set it up again.
+      if (councilUnlock) {
+        try {
+          const forMe = await withFreshIdToken(getIdToken, fetchCouncilForMe);
+          council = {
+            councilRearm: await councilVault.createEscrow(forMe.council!.council_id, forMe.council!.chain, lang, forMe.escrow!.record.roster_hash),
+          };
+        } catch {
+          council = { councilDrop: true };
+        }
+      }
+
+      await commitKeyring(forcedRotation.keyring, lang, council);
+      setCouncilDropped(council?.councilDrop === true);
       onSuccess?.(forcedRotation.publicKey);
       setForcedRotation(null);
       setStep('forced-rotation-done');
@@ -739,7 +820,7 @@ export function ModalEncryptionOnboarding({
     } finally {
       setRotationBusy(false);
     }
-  }, [forcedRotation, commitKeyring, i18n.language, onSuccess, markSessionExpired, clearSessionExpired]);
+  }, [forcedRotation, commitKeyring, i18n.language, onSuccess, markSessionExpired, clearSessionExpired, councilUnlock, councilVault, getIdToken]);
 
   // A granted contact is no longer trusted, so their mandatory re-arm cannot be
   // built: revoke exactly those relationships (user-approved), then go on with
@@ -833,7 +914,11 @@ export function ModalEncryptionOnboarding({
       >
         <Screen
           title={t('onboarding.reactivate_title')}
-          description={reactivatePrompt ? t('onboarding.reactivate_confirm', { date: reactivatePrompt.date }) : ''}
+          description={
+            reactivatePrompt
+              ? t(reactivatePrompt.council ? 'council.reactivate_confirm' : 'onboarding.reactivate_confirm', { date: reactivatePrompt.date })
+              : ''
+          }
           actions={
             <>
               <Button onClick={handleConfirmReactivate} disabled={isPending}>
@@ -913,7 +998,10 @@ export function ModalEncryptionOnboarding({
             <Button
               onClick={() => {
                 if (restoreMethod === 'device' && onUseAnotherDevice) onUseAnotherDevice();
-                else {
+                else if (restoreMethod === 'council') {
+                  setRestoreFrom('existing-key-choice');
+                  setStep('council-recovery');
+                } else {
                   setRestoreFrom('existing-key-choice');
                   setStep('restore');
                 }
@@ -940,6 +1028,15 @@ export function ModalEncryptionOnboarding({
               title={t('onboarding.btn_restore_from_backup')}
               description={t('onboarding.option_phrase_description')}
             />
+            {councilAvailable && (
+              <RestoreOption
+                selected={restoreMethod === 'council'}
+                onSelect={() => setRestoreMethod('council')}
+                icon={<ShieldCheck aria-hidden size={20} />}
+                title={t('council.option_title')}
+                description={t('council.option_description')}
+              />
+            )}
           </div>
         </Screen>
       )}
@@ -972,6 +1069,19 @@ export function ModalEncryptionOnboarding({
                 {t('onboarding.btn_restore_from_backup')}
               </Button>
               {anotherDeviceButton}
+              {councilAvailable && (
+                <Button
+                  variant="bordered"
+                  color="neutral"
+                  icon={<ShieldCheck aria-hidden />}
+                  onClick={() => {
+                    setRestoreFrom('previous-identity');
+                    setStep('council-recovery');
+                  }}
+                >
+                  {t('council.option_title')}
+                </Button>
+              )}
               <Button variant="tertiary" color="neutral" onClick={() => setStep('explanation')}>
                 {t('onboarding.btn_start_new_identity')}
               </Button>
@@ -992,6 +1102,18 @@ export function ModalEncryptionOnboarding({
             </div>
           )}
         </Screen>
+      )}
+
+      {step === 'council-recovery' && (
+        <CouncilRecovery
+          getIdToken={getIdToken}
+          onBack={() => setStep(restoreFrom)}
+          onRecovered={handleCouncilRecovered}
+          onReconnect={onReconnect}
+          isAuthenticating={isAuthenticating}
+          onCancelAuth={onCancelAuth}
+          currentIdToken={currentIdToken}
+        />
       )}
 
       {step === 'last-resort' && (
@@ -1120,10 +1242,17 @@ export function ModalEncryptionOnboarding({
         <RecoveryKitBackup
           title={t('emergency.rotation_title')}
           description={
-            <>
-              <p>{t('emergency.rotation_explanation')}</p>
-              <p>{t('emergency.rotation_rearm_note')}</p>
-            </>
+            councilUnlock ? (
+              <>
+                <p>{t('council.rotation_explanation')}</p>
+                <p>{t('council.rotation_rearm_note')}</p>
+              </>
+            ) : (
+              <>
+                <p>{t('emergency.rotation_explanation')}</p>
+                <p>{t('emergency.rotation_rearm_note')}</p>
+              </>
+            )
           }
           banner={
             <>
@@ -1145,7 +1274,8 @@ export function ModalEncryptionOnboarding({
         <Screen
           illustration="shield-check"
           title={t('emergency.rotation_title')}
-          description={t('emergency.rotation_done')}
+          description={councilUnlock ? t('council.rotation_done') : t('emergency.rotation_done')}
+          banner={councilDropped && <Notice type={VariantType.WARNING}>{t('council.rotation_dropped')}</Notice>}
           actions={<Button onClick={onClose}>{t('settings.done')}</Button>}
         />
       )}

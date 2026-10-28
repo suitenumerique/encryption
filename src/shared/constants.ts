@@ -47,6 +47,11 @@ export const STORE_USER_ALIAS = 'userAlias';
 // when and why, so the interface can tell the user. Plain metadata, no secret.
 export const STORE_DEVICE_ACTIVITY = 'deviceActivity';
 
+// The ephemeral key of a recovery request to the user's council, kept while the
+// request runs (days, across reloads): the custodians' shares are wrapped for it.
+// Its secret half never leaves this store, and is deleted once the vault is back.
+export const STORE_COUNCIL_REQUEST = 'councilRequest';
+
 // ============================================================================
 // Trusted Types policy names
 // ============================================================================
@@ -95,6 +100,17 @@ export const MSG_VAULT_CREATE_EMERGENCY_ESCROW = 'vault:create-emergency-escrow'
 export const MSG_VAULT_BUILD_EMERGENCY_REARMS = 'vault:build-emergency-rearms';
 export const MSG_VAULT_VERIFY_ESCROWS = 'vault:verify-escrows';
 export const MSG_VAULT_REVEAL_EMERGENCY_PHRASE = 'vault:reveal-emergency-phrase';
+// --- Recovery council (shamir.md) ---
+export const MSG_VAULT_COUNCIL_VERIFY_ROSTER = 'vault:council-verify-roster';
+export const MSG_VAULT_COUNCIL_CREATE_ESCROW = 'vault:council-create-escrow';
+export const MSG_VAULT_COUNCIL_CHECK_ESCROW = 'vault:council-check-escrow';
+export const MSG_VAULT_COUNCIL_START_REQUEST = 'vault:council-start-request';
+export const MSG_VAULT_COUNCIL_REQUEST_KEY = 'vault:council-request-key';
+export const MSG_VAULT_COUNCIL_COMPLETE_RECOVERY = 'vault:council-complete-recovery';
+export const MSG_VAULT_COUNCIL_REACTIVATE = 'vault:council-reactivate';
+export const MSG_VAULT_COUNCIL_CONTRIBUTE = 'vault:council-contribute';
+export const MSG_VAULT_COUNCIL_SIGN_ROSTER = 'vault:council-sign-roster';
+export const MSG_VAULT_COUNCIL_RESHARE_BATCH = 'vault:council-reshare-batch';
 // --- Vault product requests: fingerprint registry ---
 export const MSG_VAULT_CHECK_FINGERPRINTS = 'vault:check-fingerprints';
 export const MSG_VAULT_ACCEPT_FINGERPRINT = 'vault:accept-fingerprint';

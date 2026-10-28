@@ -66,6 +66,9 @@ model User {
   vaultApprovals          VaultApproval[]
   emergencyAccessGranted  EmergencyAccess[]        @relation("emergencyAccessAsGrantor")
   emergencyAccessReceived EmergencyAccess[]        @relation("emergencyAccessAsGrantee")
+  councilMemberships      CouncilRosterMember[]
+  councilEscrows          CouncilEscrow[]
+  councilRequests         CouncilRequest[]
 
   @@map("users")
 }
@@ -131,10 +134,14 @@ model Identity {
   nextIdentities      Identity[] @relation("IdentityChain")
   continuitySignature Bytes?     @map("continuity_signature") /// Sign(previousIdentitySecret, canonical(this identity)); Bytes because the server will verify the link when the continuity/migration flow is wired
 
-  user                               User              @relation(fields: [userId], references: [id])
+  user                               User                     @relation(fields: [userId], references: [id])
   encryptionKeys                     EncryptionKey[]
   vaultKeyrings                      VaultKeyring[]
-  emergencyAccessesAsGranteeIdentity EmergencyAccess[] @relation("emergencyAccessGranteeIdentity")
+  emergencyAccessesAsGranteeIdentity EmergencyAccess[]        @relation("emergencyAccessGranteeIdentity")
+  councilMemberships                 CouncilRosterMember[]
+  councilRosterSignatures            CouncilRosterSignature[]
+  councilCapsules                    CouncilCapsule[]
+  councilContributions               CouncilContribution[]
 
   @@unique([userId, generation])
   @@index([userId, disabledAt])
@@ -284,10 +291,14 @@ model VaultKeyring {
 /// The kind of a vault credential. `primary` is the owner's own recovery phrase
 /// (exactly one per vault, code-enforced); `emergency` is a dormant phrase
 /// escrowed to a trusted contact, owned by an EmergencyAccess row and only a
-/// valid unlock candidate while that row's recovery is approved.
+/// valid unlock candidate while that row's recovery is approved; `council` is a
+/// dormant phrase split between a recovery council's custodians, owned by a
+/// CouncilEscrow row and only a valid unlock candidate while one of its
+/// recovery requests is released.
 enum VaultCredentialType {
   primary
   emergency
+  council
 }
 
 /// One way to unlock a vault (a keyslot, LUKS-style): the material derived from
@@ -316,6 +327,7 @@ model VaultCredential {
 
   vault           VaultKeyring     @relation(fields: [vaultId], references: [id], onDelete: Cascade)
   emergencyAccess EmergencyAccess?
+  councilEscrow   CouncilEscrow?
 
   @@index([vaultId])
   @@map("vault_credentials")
@@ -421,4 +433,278 @@ model AuthRelay {
 
   @@index([expiresAt])
   @@map("auth_relays")
+}
+
+/// Where a roster version stands. Exactly one `active` version per council (its
+/// head), at most one `proposed` (the change the configuration asks for, waiting
+/// for its signatures), and the `superseded` ones kept for the chain users walk.
+enum CouncilRosterStatus {
+  proposed
+  active
+  superseded
+}
+
+/// One version of a recovery council's membership (shamir.md §9-10). The council
+/// itself is configured (RECOVERY_COUNCILS); what is in force is this signed
+/// chain: version 1 signed by every custodian it names, each later version by
+/// `threshold` custodians of the previous one and every custodian it adds. The
+/// signed payload (src/crypto/council.ts) covers the council id, the version,
+/// the threshold, the previous version's hash and every member's slot, user id
+/// and identity key; `rosterHash` is its SHA-256, kept to link and look up.
+model CouncilRosterVersion {
+  id                 String              @id @default(uuid()) @db.Uuid
+  councilId          String              @map("council_id")
+  version            Int                 @map("version")
+  threshold          Int                 @map("threshold")
+  status             CouncilRosterStatus @map("status")
+  previousRosterHash Bytes               @map("previous_roster_hash") /// empty for version 1
+  rosterHash         Bytes               @map("roster_hash")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  activatedAt        DateTime?           @map("activated_at")
+
+  members             CouncilRosterMember[]
+  signatures          CouncilRosterSignature[]
+  escrows             CouncilEscrow[]          @relation("councilEscrowCurrentRoster")
+  signedEscrows       CouncilEscrow[]          @relation("councilEscrowSignedRoster")
+  reshareSessionsFrom CouncilReshareSession[]  @relation("councilReshareSource")
+  reshareSessionsTo   CouncilReshareSession[]  @relation("councilReshareTarget")
+
+  @@unique([councilId, version])
+  @@index([councilId, status])
+  @@map("council_roster_versions")
+}
+
+/// A custodian in one roster version. `slot` is their x-coordinate in every
+/// split over this version; a slot is never given to another person or key.
+model CouncilRosterMember {
+  id              String @id @default(uuid()) @db.Uuid
+  rosterVersionId String @map("roster_version_id") @db.Uuid
+  slot            Int    @map("slot")
+  userId          String @map("user_id") @db.Uuid
+  identityId      String @map("identity_id") @db.Uuid /// the identity key pinned in the signed payload
+
+  rosterVersion CouncilRosterVersion @relation(fields: [rosterVersionId], references: [id], onDelete: Cascade)
+  user          User                 @relation(fields: [userId], references: [id])
+  identity      Identity             @relation(fields: [identityId], references: [id])
+
+  @@unique([rosterVersionId, slot])
+  @@unique([rosterVersionId, userId])
+  @@index([userId])
+  @@map("council_roster_members")
+}
+
+/// A custodian's signature over a roster version, by the identity key it was
+/// made with (verified at write against that identity).
+model CouncilRosterSignature {
+  id              String   @id @default(uuid()) @db.Uuid
+  rosterVersionId String   @map("roster_version_id") @db.Uuid
+  identityId      String   @map("identity_id") @db.Uuid
+  signature       Bytes    @map("signature")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  rosterVersion CouncilRosterVersion @relation(fields: [rosterVersionId], references: [id], onDelete: Cascade)
+  identity      Identity             @relation(fields: [identityId], references: [id])
+
+  @@unique([rosterVersionId, identityId])
+  @@map("council_roster_signatures")
+}
+
+/// A user's council escrow: a dormant credential of their vault whose phrase
+/// entropy is split between the custodians of `rosterVersion`. The user's
+/// identity signed the split as made (`signedRosterVersion`, `signedShares`,
+/// the secret commitment); a resharing later moves the shares to another
+/// version (`rosterVersion`, `threshold`, `generation`) without the user.
+/// Deleting the credential cascades this row away.
+model CouncilEscrow {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  councilId             String   @map("council_id")
+  credentialId          String   @unique @map("credential_id") @db.Uuid
+  rosterVersionId       String   @map("roster_version_id") @db.Uuid /// the version the current shares are split over
+  threshold             Int      @map("threshold") /// shares needed for the current split
+  generation            Int      @default(1) @map("generation") /// bumped by every resharing
+  signedRosterVersionId String   @map("signed_roster_version_id") @db.Uuid /// the version the user signed (their pin)
+  signedThreshold       Int      @map("signed_threshold")
+  signedShares          Json     @map("signed_shares") /// [{ slot, capsule_hash }] as signed, base64
+  signedCommitments     Bytes    @map("signed_commitments") /// the Pedersen commitments the user signed (32-byte points)
+  commitments           Bytes    @map("commitments") /// those of the current split: the signed ones, then each resharing's sum
+  secretCommitment      Bytes    @map("secret_commitment")
+  escrowSignature       Bytes    @map("escrow_signature")
+  escrowCreatedAt       DateTime @map("escrow_created_at") /// client-asserted, inside the signature
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user                User                       @relation(fields: [userId], references: [id])
+  credential          VaultCredential            @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  rosterVersion       CouncilRosterVersion       @relation("councilEscrowCurrentRoster", fields: [rosterVersionId], references: [id])
+  signedRosterVersion CouncilRosterVersion       @relation("councilEscrowSignedRoster", fields: [signedRosterVersionId], references: [id])
+  capsules            CouncilCapsule[]
+  requests            CouncilRequest[]
+  subShares           CouncilSubShare[]
+  reshareCommitments  CouncilReshareCommitment[]
+
+  @@index([userId])
+  @@index([councilId, rosterVersionId])
+  @@map("council_escrows")
+}
+
+/// One custodian's share of an escrow's current split: either wrapped for them
+/// directly by the user's vault (`wrappedShare`), or, after a resharing, the
+/// sub-shares of `sessionId` they add up when they contribute.
+model CouncilCapsule {
+  id               String    @id @default(uuid()) @db.Uuid
+  escrowId         String    @map("escrow_id") @db.Uuid
+  generation       Int       @map("generation")
+  slot             Int       @map("slot")
+  identityId       String    @map("identity_id") @db.Uuid /// the custodian identity the share is for; a reset custodian's capsules are dead
+  wrappedShare     String?   @map("wrapped_share") /// base64, X-Wing wrap of [x][y] for the custodian
+  sessionId        String?   @map("session_id") @db.Uuid
+  /// When a reshared capsule's custodian opened and checked its sub-shares, and
+  /// whether one failed (then the helper that sent it). A failed one is not live.
+  checkedAt        DateTime? @map("checked_at")
+  invalid          Boolean   @default(false) @map("invalid")
+  faultyHelperSlot Int?      @map("faulty_helper_slot")
+
+  escrow   CouncilEscrow          @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+  identity Identity               @relation(fields: [identityId], references: [id])
+  session  CouncilReshareSession? @relation(fields: [sessionId], references: [id])
+
+  @@unique([escrowId, generation, slot])
+  @@index([identityId])
+  @@map("council_capsules")
+}
+
+/// Lifecycle of a recovery request. Between `open` and `released` the visible
+/// progress (collecting, awaiting the meeting) is derived from the contributions.
+enum CouncilRequestStatus {
+  open
+  released
+  completed
+  aborted
+}
+
+/// A locked-out user's request to their council (shamir.md §7). The browser that
+/// opened it holds the ephemeral key every share is wrapped for; the server
+/// releases the council credential only once `threshold` shares arrived, one of
+/// them handed over in person, and the cooldown elapsed.
+model CouncilRequest {
+  id                 String               @id @default(uuid()) @db.Uuid
+  userId             String               @map("user_id") @db.Uuid
+  escrowId           String               @map("escrow_id") @db.Uuid
+  ephemeralPublicKey Bytes                @map("ephemeral_public_key")
+  status             CouncilRequestStatus @map("status")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  expiresAt          DateTime             @map("expires_at")
+  releasedAt         DateTime?            @map("released_at")
+  closedAt           DateTime?            @map("closed_at") /// completed or aborted
+
+  user          User                  @relation(fields: [userId], references: [id])
+  escrow        CouncilEscrow         @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+  contributions CouncilContribution[]
+
+  @@index([userId, status])
+  @@index([escrowId, status])
+  @@map("council_requests")
+}
+
+/// One custodian's share handed to a request, wrapped for its ephemeral key and
+/// signed by the custodian (the user's vault checks the signatures afterwards).
+model CouncilContribution {
+  id                  String   @id @default(uuid()) @db.Uuid
+  requestId           String   @map("request_id") @db.Uuid
+  slot                Int      @map("slot")
+  custodianIdentityId String   @map("custodian_identity_id") @db.Uuid
+  wrappedShare        String   @map("wrapped_share") /// base64
+  inPerson            Boolean  @map("in_person")
+  signature           Bytes    @map("signature")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  request           CouncilRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  custodianIdentity Identity       @relation(fields: [custodianIdentityId], references: [id])
+
+  @@unique([requestId, slot])
+  @@map("council_contributions")
+}
+
+enum CouncilReshareStatus {
+  open
+  completed
+  cancelled
+}
+
+/// A resharing (shamir.md §11.2): `helperSlots`, custodians of the source
+/// version, move the escrows still split over it to the target version, in
+/// batches from their own vaults, without any user and without rebuilding a
+/// secret. An escrow moves once every helper has sealed its sub-shares for it.
+model CouncilReshareSession {
+  id                    String               @id @default(uuid()) @db.Uuid
+  councilId             String               @map("council_id")
+  sourceRosterVersionId String               @map("source_roster_version_id") @db.Uuid
+  targetRosterVersionId String               @map("target_roster_version_id") @db.Uuid
+  helperSlots           Int[]                @map("helper_slots")
+  status                CouncilReshareStatus @map("status")
+  createdByUserId       String               @map("created_by_user_id") @db.Uuid
+  createdAt             DateTime             @default(now()) @map("created_at")
+  closedAt              DateTime?            @map("closed_at")
+
+  sourceRosterVersion CouncilRosterVersion       @relation("councilReshareSource", fields: [sourceRosterVersionId], references: [id])
+  targetRosterVersion CouncilRosterVersion       @relation("councilReshareTarget", fields: [targetRosterVersionId], references: [id])
+  transferKeys        CouncilReshareKey[]
+  subShares           CouncilSubShare[]
+  commitments         CouncilReshareCommitment[]
+  capsules            CouncilCapsule[]
+
+  @@index([councilId, status])
+  @@map("council_reshare_sessions")
+}
+
+/// The transfer key one helper wraps for one new custodian, signed by the helper.
+model CouncilReshareKey {
+  id                 String @id @default(uuid()) @db.Uuid
+  sessionId          String @map("session_id") @db.Uuid
+  helperSlot         Int    @map("helper_slot")
+  recipientSlot      Int    @map("recipient_slot")
+  wrappedTransferKey String @map("wrapped_transfer_key") /// base64
+  signature          Bytes  @map("signature")
+
+  session CouncilReshareSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, helperSlot, recipientSlot])
+  @@map("council_reshare_keys")
+}
+
+/// One sub-share of one escrow, sealed under a transfer key.
+model CouncilSubShare {
+  id            String @id @default(uuid()) @db.Uuid
+  sessionId     String @map("session_id") @db.Uuid
+  escrowId      String @map("escrow_id") @db.Uuid
+  helperSlot    Int    @map("helper_slot")
+  recipientSlot Int    @map("recipient_slot")
+  sealed        String @map("sealed") /// base64
+
+  session CouncilReshareSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  escrow  CouncilEscrow         @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, escrowId, helperSlot, recipientSlot])
+  @@index([escrowId])
+  @@map("council_subshares")
+}
+
+/// The Pedersen commitments one helper's sub-shares of one escrow verify against,
+/// signed by the helper; their constant term was checked against the escrow's
+/// current commitments on arrival. Kept with the sub-shares they verify.
+model CouncilReshareCommitment {
+  id          String @id @default(uuid()) @db.Uuid
+  sessionId   String @map("session_id") @db.Uuid
+  escrowId    String @map("escrow_id") @db.Uuid
+  helperSlot  Int    @map("helper_slot")
+  commitments Bytes  @map("commitments")
+  signature   Bytes  @map("signature")
+
+  session CouncilReshareSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  escrow  CouncilEscrow         @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, escrowId, helperSlot])
+  @@index([escrowId])
+  @@map("council_reshare_commitments")
 }

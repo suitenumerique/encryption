@@ -7,11 +7,14 @@ import { playFindButton, playFindHeading } from '@encryption/.storybook/testing'
 import i18n from '@encryption/src/i18n';
 import {
   handleDeleteApiEmergencyAccessById,
+  handleGetApiCouncilsForMe,
+  handleGetApiCouncilsMine,
   handleGetApiEmergencyAccessTrusted,
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
+import { custodianCouncil, forMe } from '@encryption/src/ui/testing/council-stories';
 import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
 
 type ComponentType = typeof EncryptionSettings;
@@ -79,6 +82,51 @@ HomeStory.play = async ({ canvasElement }) => {
 
 HomeStory.parameters = { ...HomeStory.parameters, design: consoleFrame('4905-9065') };
 export const Home = prepareStory(HomeStory);
+
+// Covered by a recovery council, and custodian of one with a request waiting.
+const HomeWithCouncilStory = Template.bind({});
+HomeWithCouncilStory.args = {
+  ...baseArgs,
+  onOpenRecoveryCouncil: () => console.log('onOpenRecoveryCouncil'),
+  onOpenCustodian: () => console.log('onOpenCustodian'),
+};
+HomeWithCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      handleGetApiCouncilsMine({
+        body: {
+          mfa_enforced: true,
+          councils: [
+            custodianCouncil({
+              requests: [
+                {
+                  id: '5d6e7f80-0000-4000-8000-000000000001',
+                  user_name: 'Ursula Roux',
+                  user_email: 'ursula.roux@numerique.gouv.fr',
+                  created_at_millis: 1_760_000_000_000,
+                  expires_at_millis: 1_760_600_000_000,
+                  stage: 'collecting',
+                  contributors: [],
+                  my_contribution: 'none',
+                  can_contribute: true,
+                },
+              ],
+            }),
+          ],
+        },
+      }),
+    ],
+  },
+};
+HomeWithCouncilStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.row_title'));
+  await canvas.findByText(i18n.t('council.custodian_row_pending', { count: 1 }));
+  expect(canvas.getAllByRole('button', { name: i18n.t('council.row_open') })).toHaveLength(1);
+};
+export const HomeWithCouncil = prepareStory(HomeWithCouncilStory);
 
 // From the home, a flow comes back to it; the story ends on the flow, opened again.
 const HomeToVerificationCodeStory = Template.bind({});

@@ -13,11 +13,19 @@ import {
   sealedItemsMatchManifest,
   verifyManifest,
 } from '@encryption/src/crypto/vault-manifest';
-import { DEFAULT_KDF_PARAMS, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
+import { verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
 import { satisfiesStepUp, sendStepUpChallenge } from '@encryption/src/server/auth/step-up';
+import { sendCouncilRecoveryCompleted, sendCouncilRecoveryCompletedCustodian } from '@encryption/src/server/email/council';
 import { errorResponses } from '@encryption/src/server/error-response';
-import { emergencyApprovalHolds, notifyVaultRecovered, verifyEscrowSubmission } from '@encryption/src/server/routes/emergency-core';
+import {
+  emergencyApprovalHolds,
+  emergencyRecipient,
+  notifyVaultRecovered,
+  verifyEscrowSubmission,
+} from '@encryption/src/server/routes/emergency-core';
+import { kdfParamsAllowed } from '@encryption/src/server/routes/kdf-params';
+import { checkEscrowSubmission, councilLabel, writeEscrow } from '@encryption/src/server/routes/recovery-council';
 import {
   type CompleteTxResult,
   activateRegistration,
@@ -34,6 +42,7 @@ import { addVaultListener, notifyVaultChanged, removeVaultListener } from '@encr
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
+  API_ERROR_COUNCIL_REARM_REQUIRED,
   API_ERROR_EMERGENCY_ESCROW_INVALID,
   API_ERROR_EMERGENCY_REARM_REQUIRED,
   API_ERROR_RATE_LIMIT_APPROVALS,
@@ -51,18 +60,6 @@ import {
 } from '@encryption/src/shared/error-codes';
 import { VaultKeyringUpdateBodySchema } from '@encryption/src/shared/schemas/emergency-access';
 import { VaultItemSchema, VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
-
-// KDF params are BOUNDED (not hard-pinned) on every keyring write: they must be at
-// least the current standard (so no client can store a weak, cheap-to-brute-force
-// vault) and no more than a sane maximum (so a stolen token can't store an
-// absurd-cost vault that would DoS a later restore). Bounding rather than pinning
-// lets the standard be RAISED over time for new vaults while OLDER vaults keep the
-// (still-acceptable) params they were created with — restore uses each vault's OWN
-// stored params (see /api/vault/meta -> kdf_variants), never a single constant.
-const KDF_MAX_OPS = 10;
-const KDF_MAX_MEM = 1024 * 1024 * 1024; // 1 GiB
-const kdfParamsAllowed = (ops: number, mem: number) =>
-  ops >= DEFAULT_KDF_PARAMS.opsLimit && ops <= KDF_MAX_OPS && mem >= DEFAULT_KDF_PARAMS.memLimit && mem <= KDF_MAX_MEM;
 
 const CHALLENGE_TTL_SECONDS = 120;
 const APPROVAL_TTL_SECONDS = 600;
@@ -173,7 +170,7 @@ const VaultFetchBodySchema = z.object({
 const VaultContentSchema = z.object({
   vault_id: z.string(),
   wrapped_vrk: z.string(),
-  credential_type: z.enum(['primary', 'emergency']),
+  credential_type: z.enum(['primary', 'emergency', 'council']),
   revision: z.number().int().nonnegative(),
   manifest: z.string().nullable(),
   manifest_sig: z.string().nullable(),
@@ -194,12 +191,21 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
 
   // Every keyslot the caller may currently open: their own primary credential
   // always, plus an emergency credential only while its approval actually holds
-  // (accepted, requested, waited out, not revoked). An escrow whose approval
-  // lapsed is therefore unopenable without deleting anything.
+  // (accepted, requested, waited out, not revoked), and a council credential only
+  // while one of its recovery requests is released and not expired. An escrow
+  // whose approval lapsed is therefore unopenable without deleting anything.
   async function unlockableCredentials(userId: string, nowMs: number) {
-    const credentials = await prisma.vaultCredential.findMany({ where: { vault: { userId } }, include: { vault: true, emergencyAccess: true } });
+    const credentials = await prisma.vaultCredential.findMany({
+      where: { vault: { userId } },
+      include: { vault: true, emergencyAccess: true, councilEscrow: { include: { requests: { where: { status: 'released' } } } } },
+    });
 
-    return credentials.filter((c) => (c.type === 'primary' ? true : c.emergencyAccess !== null && emergencyApprovalHolds(c.emergencyAccess, nowMs)));
+    return credentials.filter((c) => {
+      if (c.type === 'primary') return true;
+      if (c.type === 'council') return c.councilEscrow?.requests.some((r) => r.expiresAt.getTime() > nowMs) ?? false;
+
+      return c.emergencyAccess !== null && emergencyApprovalHolds(c.emergencyAccess, nowMs);
+    });
   }
 
   type Credential = Awaited<ReturnType<typeof unlockableCredentials>>[number];
@@ -914,6 +920,26 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         granteeIdentityIdByRow.set(row.id, granteeIdentityRow.id);
       }
 
+      // A council recovery released this vault's council credential: the user's
+      // browser rebuilt its phrase, so this rewrite burns it, and re-arms the
+      // council with a fresh escrow unless the user explicitly leaves it.
+      const usedCouncilEscrows = await prisma.councilEscrow.findMany({
+        where: { userId, credential: { vaultId: existing.id }, requests: { some: { status: 'released' } } },
+        include: {
+          requests: { where: { status: 'released' }, include: { contributions: { include: { custodianIdentity: { include: { user: true } } } } } },
+        },
+      });
+
+      if (usedCouncilEscrows.length > 0 && !body.council_rearm && !body.council_drop)
+        return reply.status(400).send({ code: API_ERROR_COUNCIL_REARM_REQUIRED });
+      if (usedCouncilEscrows.length === 0 && (body.council_rearm || body.council_drop))
+        return reply.status(400).send({ code: API_ERROR_COUNCIL_REARM_REQUIRED });
+
+      const councilRearm = body.council_rearm ? await checkEscrowSubmission(userId, body.council_rearm) : null;
+      if (councilRearm && !councilRearm.ok) return reply.status(councilRearm.status === 409 ? 409 : 400).send({ code: councilRearm.code });
+      if (body.council_rearm && usedCouncilEscrows.every((e) => e.councilId !== body.council_rearm!.council_id))
+        return reply.status(400).send({ code: API_ERROR_COUNCIL_REARM_REQUIRED });
+
       try {
         await prisma.$transaction(
           async (tx) => {
@@ -968,6 +994,12 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
 
               await tx.vaultCredential.delete({ where: { id: row.credentialId } });
             }
+
+            if (body.council_rearm && councilRearm?.ok) await writeEscrow(tx, userId, existing.id, body.council_rearm, councilRearm);
+
+            // Deleting the released credential takes its escrow, capsules and
+            // requests with it: the shares handed over now open nothing.
+            await tx.vaultCredential.deleteMany({ where: { id: { in: usedCouncilEscrows.map((e) => e.credentialId) } } });
           },
           { isolationLevel: 'Serializable' }
         );
@@ -983,6 +1015,14 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           userId,
           granted.map((row) => row.granteeUserId)
         ).catch((err) => request.log.error({ err }, 'emergency recovered emails failed'));
+      }
+
+      for (const escrow of usedCouncilEscrows) {
+        notifyCouncilRecovered(
+          userId,
+          escrow.councilId,
+          escrow.requests.flatMap((r) => r.contributions.map((c) => c.custodianIdentity.user))
+        ).catch((err) => request.log.error({ err }, 'council recovered emails failed'));
       }
 
       return { updated: true, rearmed: granted.length };
@@ -1124,4 +1164,26 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       return { approvals: pending.map((a) => ({ request_id: a.requestId, device_public_key: a.devicePublicKey })) };
     },
   });
+}
+
+// The user learns who took part; every custodian of the council learns the
+// request is closed (best-effort: the burn is already durable).
+async function notifyCouncilRecovered(
+  userId: string,
+  councilId: string,
+  contributors: Array<{ email: string; firstName: string | null; lastName: string | null }>
+): Promise<void> {
+  const council = councilLabel(councilId);
+  const user = await emergencyRecipient(userId);
+  if (!user) return;
+
+  const names = contributors.map((c) => [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email).join(', ');
+  await sendCouncilRecoveryCompleted({ recipient: user.email, locale: user.locale, council, contributors: names });
+
+  const head = await prisma.councilRosterVersion.findFirst({ where: { councilId, status: 'active' }, include: { members: true } });
+  for (const member of head?.members ?? []) {
+    const custodian = await emergencyRecipient(member.userId);
+    if (custodian)
+      await sendCouncilRecoveryCompletedCustodian({ recipient: custodian.email, locale: custodian.locale, requester: user.label, council });
+  }
 }

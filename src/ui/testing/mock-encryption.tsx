@@ -3,6 +3,15 @@ import { type ReactNode } from 'react';
 import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
   MSG_VAULT_CHECK_FINGERPRINTS,
+  MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
+  MSG_VAULT_COUNCIL_CONTRIBUTE,
+  MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_REQUEST_KEY,
+  MSG_VAULT_COUNCIL_RESHARE_BATCH,
+  MSG_VAULT_COUNCIL_SIGN_ROSTER,
+  MSG_VAULT_COUNCIL_START_REQUEST,
+  MSG_VAULT_COUNCIL_VERIFY_ROSTER,
   MSG_VAULT_FETCH_PUBLIC_KEYS,
   MSG_VAULT_GET_KNOWN_FINGERPRINTS,
   MSG_VAULT_REFUSE_FINGERPRINT,
@@ -10,6 +19,8 @@ import {
 } from '@encryption/src/shared/constants';
 import { EncryptionContext, type EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import {
+  sampleCouncilEscrowBody,
+  sampleCouncilFingerprint,
   sampleEmergencyDesignateBody,
   sampleFingerprint,
   sampleOnboardingBundle,
@@ -44,7 +55,7 @@ function stub<T>(name: string, value: T): (...args: unknown[]) => Promise<T> {
  * A story overrides `request` in `parameters.encryption` to drive a scenario
  * (unknown vs trusted recipient, an unregistered sub, a rejection).
  */
-const vaultRequest = async (type: string, payload?: unknown): Promise<unknown> => {
+export const defaultVaultRequest = async (type: string, payload?: unknown): Promise<unknown> => {
   console.log('[vault] request', type, payload);
 
   switch (type) {
@@ -74,6 +85,30 @@ const vaultRequest = async (type: string, payload?: unknown): Promise<unknown> =
       return {};
     case MSG_VAULT_SIGN_REQUEST:
       return { signature: samplePublicKey.key_binding_signature };
+    // The recovery council: the vault verifies, signs and splits; stories see the outcome.
+    case MSG_VAULT_COUNCIL_VERIFY_ROSTER:
+      return { version: 1, fingerprint: sampleCouncilFingerprint };
+    case MSG_VAULT_COUNCIL_CHECK_ESCROW:
+      return { status: 'ok', headFingerprint: sampleCouncilFingerprint };
+    case MSG_VAULT_COUNCIL_CREATE_ESCROW:
+      return sampleCouncilEscrowBody;
+    case MSG_VAULT_COUNCIL_START_REQUEST:
+    case MSG_VAULT_COUNCIL_REQUEST_KEY:
+      return { ephemeralPublicKey: samplePublicKey.encryption_public_key, fingerprint: sampleFingerprint };
+    case MSG_VAULT_COUNCIL_COMPLETE_RECOVERY:
+      return {
+        publicKey: samplePublicKey.encryption_public_key,
+        signaturePublicKey: samplePublicKey.signature_public_key,
+        isActiveVault: true,
+        vaultCreatedAtMillis: samplePublicKey.created_at_millis,
+        contributors: [],
+      };
+    case MSG_VAULT_COUNCIL_CONTRIBUTE:
+      return { slot: 1, wrapped_share: samplePublicKey.key_binding_signature, in_person: false, signature: samplePublicKey.key_binding_signature };
+    case MSG_VAULT_COUNCIL_SIGN_ROSTER:
+      return { signature: samplePublicKey.key_binding_signature };
+    case MSG_VAULT_COUNCIL_RESHARE_BATCH:
+      return { keys: null, subShares: null };
     default:
       return undefined;
   }
@@ -85,7 +120,7 @@ export function createMockEncryption(overrides: Partial<EncryptionContextType> =
     setAuthInfo: (suiteUserId: string, internalUserId?: string | null) => {
       console.log('[vault] setAuthInfo', suiteUserId, internalUserId);
     },
-    request: vaultRequest,
+    request: defaultVaultRequest,
     resolveInternalUser: stub('resolveInternalUser', samplePublicKey.user_id),
     generateKeys: stub('generateKeys', {
       publicKey: samplePublicKey.encryption_public_key,
