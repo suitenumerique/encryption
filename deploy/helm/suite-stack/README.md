@@ -17,6 +17,7 @@ It exists because the products' own pipelines only ship images of `main`, and th
 | applications  | `templates/accounts-applications.yaml`                                                | The products' OAuth2 applications in Accounts, once Accounts has migrated.      |
 | Mailpit       | `templates/mailpit.yaml`                                                              | SMTP for every product, a web mailbox for the testers.                          |
 | OnlyOffice    | `templates/onlyoffice.yaml`                                                           | The document server Drive edits office files with (WOPI), collaborative.        |
+| Sandbox       | `templates/drive-onlyoffice-sandbox.yaml`                                             | Drive's editor of encrypted office files, on a host of its own.                 |
 
 Every product reaches the shared services by fixed names (`postgres`, `redis`, `minio`, `mailpit`, `onlyoffice`, and the public hostnames of Accounts and Keycloak), whatever the release is called, so the values of one product can be copied for the next.
 

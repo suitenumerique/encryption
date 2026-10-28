@@ -240,6 +240,8 @@ describe('the stack chart', () => {
         'Deployment/drive-collaboration-relay',
         'Service/drive-collaboration-relay',
         'Ingress/drive-collaboration-relay',
+        'Service/drive-onlyoffice-sandbox',
+        'Ingress/drive-onlyoffice-sandbox',
       ].sort()
     );
     expect(
@@ -648,6 +650,11 @@ describe('the stack chart', () => {
       ['drive.backend.envVars.WOPI_ONLYOFFICE_CONVERT_JWT_SECRET=other', /WOPI_ONLYOFFICE_CONVERT_JWT_SECRET differs from onlyoffice\.jwtSecret/],
       ['driveRelay.host=other.example.org', /driveRelay\.host must be Drive's host, "drive\.suite\.example\.org"/],
       ['driveRelay.driveApiUrl=http://drive-backend', /driveRelay\.driveApiUrl must be "https:\/\/drive\.suite\.example\.org"/],
+      ['driveOnlyofficeSandbox.host=drive.suite.example.org', /driveOnlyofficeSandbox\.host must differ from Drive's host/],
+      [
+        'drive.backend.envVars.ENCRYPTION_ONLYOFFICE_SANDBOX_URL=https://drive.suite.example.org/onlyoffice-sandbox/index.html',
+        /ENCRYPTION_ONLYOFFICE_SANDBOX_URL must be "https:\/\/drive-sandbox\.suite\.example\.org\/onlyoffice-sandbox\/index\.html"/,
+      ],
       ['encryption.database.url=postgresql://other', /encryption\.database\.url must be the runtime role's URL/],
       ['encryption.config.oidc.issuer=https://auth.suite.example.org/realms/suite', /issuer must be the issuer of Accounts/],
       ['encryption.config.oidc.clientId=other', /clientId "other" has no entry in bootstrap\.accounts\.applications/],
@@ -795,6 +802,7 @@ describe('the stack chart', () => {
       '42-s3-console.ppr.example.net',
       '42-mail.ppr.example.net',
       '42-office.ppr.example.net',
+      '42-drive-sandbox.ppr.example.net',
     ]) {
       expect(text, host).toContain(host);
     }
@@ -803,6 +811,8 @@ describe('the stack chart', () => {
     // The editor's relay, on Drive's own host where its frontend connects
     expect(text).toMatch(/- host: "42-drive\.ppr\.example\.net"\n\s+http:\n\s+paths:\n\s+# The path Drive's frontend connects to/);
     expect(text).toContain('image: "lasuite/drive-collaboration-relay:pr-42"');
+    // Drive opens encrypted office files on the sandbox's own host
+    expect(text).toContain('value: "https://42-drive-sandbox.ppr.example.net/onlyoffice-sandbox/index.html"');
     expect(text).toContain('minio.preview-42.svc.cluster.local');
     expect(text).toContain('image: "lasuite/impress-backend:pr-42"');
     expect(text).toContain('image: "lasuite/drive-backend:pr-42"');

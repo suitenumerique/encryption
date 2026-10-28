@@ -265,6 +265,17 @@ allowed). Accounts itself always signs in at Keycloak.
 {{- end }}
 {{- end }}
 
+{{- /* Drive against the page it opens encrypted office files in: on a host of its own. */}}
+{{- if and $v.driveOnlyofficeSandbox.enabled $v.drive.enabled }}
+{{- if eq (toString $v.driveOnlyofficeSandbox.host) (toString $v.drive.ingress.host) }}
+{{- fail "driveOnlyofficeSandbox.host must differ from Drive's host: the editor of encrypted documents runs on its own origin" }}
+{{- end }}
+{{- $sandboxUrl := printf "https://%s/onlyoffice-sandbox/index.html" $v.driveOnlyofficeSandbox.host }}
+{{- if ne (toString $v.drive.backend.envVars.ENCRYPTION_ONLYOFFICE_SANDBOX_URL) $sandboxUrl }}
+{{- fail (printf "drive.backend.envVars.ENCRYPTION_ONLYOFFICE_SANDBOX_URL must be %q, the page served on driveOnlyofficeSandbox.host (got %q)" $sandboxUrl (toString $v.drive.backend.envVars.ENCRYPTION_ONLYOFFICE_SANDBOX_URL)) }}
+{{- end }}
+{{- end }}
+
 {{- /* Drive against the relay of its encrypted office editor: the browser connects to it
 on Drive's own host, and it checks the session cookie against Drive's origin. */}}
 {{- if and $v.driveRelay.enabled $v.drive.enabled }}

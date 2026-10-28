@@ -23,6 +23,32 @@ data:
 
 ---
 
+# Source: suite-stack/templates/drive-onlyoffice-sandbox.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive-onlyoffice-sandbox
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: drive-onlyoffice-sandbox
+spec:
+  type: ClusterIP
+  # Drive's frontend pods (the drive chart's selector labels).
+  selector:
+    app.kubernetes.io/name: drive
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8081
+
+---
+
 # Source: suite-stack/templates/drive-relay.yaml
 apiVersion: v1
 kind: Service
@@ -339,6 +365,40 @@ spec:
         - name: config
           configMap:
             name: onlyoffice
+
+---
+
+# Source: suite-stack/templates/drive-onlyoffice-sandbox.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: drive-onlyoffice-sandbox
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: drive-onlyoffice-sandbox
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: "nginx"
+  tls:
+    - hosts:
+        - "drive-sandbox.suite.example.org"
+      secretName: "drive-onlyoffice-sandbox-tls"
+  rules:
+    - host: "drive-sandbox.suite.example.org"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: drive-onlyoffice-sandbox
+                port:
+                  name: http
 
 ---
 

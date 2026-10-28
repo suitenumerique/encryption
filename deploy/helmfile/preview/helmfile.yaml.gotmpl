@@ -36,9 +36,10 @@
 # Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
 # <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
 # start with `data.`), <feature>-accounts (the products' identity provider), <feature>-auth
-# (the Keycloak behind it), <feature>-s3, <feature>-s3-console, <feature>-mail and
-# <feature>-office. One wildcard DNS record on <domain> covers them all, and cert-manager
-# issues one certificate per host. The namespace is the one given (`-n`, or the Argo CD
+# (the Keycloak behind it), <feature>-s3, <feature>-s3-console, <feature>-mail,
+# <feature>-office and <feature>-drive-sandbox (Drive's editor of encrypted files). One
+# wildcard DNS record on <domain> covers them all, and cert-manager issues one
+# certificate per host. The namespace is the one given (`-n`, or the Argo CD
 # destination), else `preview-<feature>`.
 {{- $feature := coalesce (env "ARGOCD_ENV_FEATURE") (env "FEATURE") "ci" }}
 {{- $domain := coalesce (env "ARGOCD_ENV_DOMAIN") (env "DOMAIN") "example.org" }}

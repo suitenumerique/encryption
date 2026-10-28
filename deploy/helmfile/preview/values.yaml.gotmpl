@@ -3,6 +3,7 @@
 {{- $ns := .Namespace | default (printf "preview-%s" $f) -}}
 {{- $docs := printf "%s-docs.%s" $f $d -}}
 {{- $drive := printf "%s-drive.%s" $f $d -}}
+{{- $driveSandbox := printf "%s-drive-sandbox.%s" $f $d -}}
 {{- $interface := printf "%s-encryption.%s" $f $d -}}
 {{- $vault := printf "data.%s-encryption.%s" $f $d -}}
 {{- $accounts := printf "%s-accounts.%s" $f $d -}}
@@ -79,6 +80,13 @@ mailpit:
 
 onlyoffice:
   host: {{ $f }}-office.{{ $d }}
+  ingress:
+    className: {{ .Values.ingressClassName }}
+    annotations:
+      cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
+
+driveOnlyofficeSandbox:
+  host: {{ $driveSandbox }}
   ingress:
     className: {{ .Values.ingressClassName }}
     annotations:
@@ -194,6 +202,7 @@ drive:
       MEDIA_BASE_URL: https://{{ $drive }}
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+      ENCRYPTION_ONLYOFFICE_SANDBOX_URL: https://{{ $driveSandbox }}/onlyoffice-sandbox/index.html
       ACCOUNT_SETTINGS_URL: https://{{ $accounts }}/
       WOPI_SRC_BASE_URL: https://{{ $drive }}
   frontend:

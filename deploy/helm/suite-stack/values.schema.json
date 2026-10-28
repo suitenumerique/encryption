@@ -205,6 +205,32 @@
         }
       }
     },
+    "driveOnlyofficeSandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "host"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string" },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "secretName": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "mailpit": {
       "type": "object",
       "additionalProperties": false,

@@ -319,6 +319,23 @@ driveRelay:
       # The certificate of Drive's own ingress, for the same host.
       secretName: drive-tls
 
+# The page Drive opens encrypted office files in: OnlyOffice and its converter parse the
+# decrypted document there, on a host of their own, so a booby-trapped file reaches
+# neither Drive's session nor the testers' keys. Served by Drive's frontend pods on their
+# sandbox port; its URL is drive.backend.envVars.ENCRYPTION_ONLYOFFICE_SANDBOX_URL
+# (checked).
+driveOnlyofficeSandbox:
+  enabled: true
+  host: drive-sandbox.suite.example.org
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    tls:
+      enabled: true
+      secretName: ''
+
 # ---------------------------------------------------------------------------------------
 # The encryption service (deploy/helm/encryption, every key documented there)
 # ---------------------------------------------------------------------------------------
@@ -625,6 +642,7 @@ drive:
       ENCRYPTION_FEATURE_ENABLED: 'True'
       ENCRYPTION_VAULT_URL: https://data.encryption.suite.example.org
       ENCRYPTION_INTERFACE_URL: https://encryption.suite.example.org
+      ENCRYPTION_ONLYOFFICE_SANDBOX_URL: https://drive-sandbox.suite.example.org/onlyoffice-sandbox/index.html
       # "Manage account" in the product's user menu, where encryption is managed too.
       ACCOUNT_SETTINGS_URL: https://accounts.suite.example.org/
       # The document server (onlyoffice below): discovered and called over its Service,

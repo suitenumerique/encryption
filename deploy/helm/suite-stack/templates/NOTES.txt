@@ -22,6 +22,9 @@ Mailbox     https://{{ .Values.mailpit.host }} (every email sent by the stack)
 {{- if and .Values.onlyoffice.enabled .Values.onlyoffice.ingress.enabled }}
 Office      https://{{ .Values.onlyoffice.host }} (the editor Drive opens office files with)
 {{- end }}
+{{- if and .Values.driveOnlyofficeSandbox.enabled .Values.drive.enabled .Values.driveOnlyofficeSandbox.ingress.enabled }}
+Sandbox     https://{{ .Values.driveOnlyofficeSandbox.host }} (the editor Drive opens encrypted office files in)
+{{- end }}
 
 Tester accounts (bootstrap.keycloak.users){{ if .Values.accounts.enabled }}, typed at Keycloak when Accounts asks{{ end }}:
 {{- range .Values.bootstrap.keycloak.users }}
