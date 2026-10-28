@@ -17,7 +17,7 @@ import {
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { CouncilCustodian } from '@encryption/src/ui/components/CouncilCustodian';
 import { COUNCIL_LABEL, custodianCouncil } from '@encryption/src/ui/testing/council-stories';
-import { sampleCouncilEscrowRecord, sampleCouncilMembers, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
+import { sampleCouncilEscrowRecord, sampleCouncilFingerprint, sampleCouncilMembers, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
 import { defaultVaultRequest } from '@encryption/src/ui/testing/mock-encryption';
 
 type ComponentType = typeof CouncilCustodian;
@@ -71,6 +71,19 @@ EmptyStory.play = async ({ canvasElement }) => {
 };
 export const NotACustodian = prepareStory(EmptyStory);
 
+// In force: the council's code, the one the organization publishes once.
+const CodeStory = Template.bind({});
+CodeStory.args = baseArgs;
+CodeStory.parameters = mine([custodianCouncil()]);
+CodeStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.custodian_code_hint'));
+  canvas.getByText(i18n.t('council.fingerprint_title'));
+  canvas.getByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '));
+  canvas.getByRole('button', { name: i18n.t('identity.copy_fingerprint') });
+};
+export const CouncilCode = prepareStory(CodeStory);
+
 // Named in the configuration, the council not in force yet: accept the role.
 const InvitedStory = Template.bind({});
 InvitedStory.args = baseArgs;
@@ -88,25 +101,27 @@ InvitedStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('council.invitation_title'));
   canvas.getByText(i18n.t('council.role_invited'));
   await playFindButton(canvasElement, i18n.t('council.review_and_accept'));
+  // No code before version 1 is signed.
+  expect(canvas.queryByText(i18n.t('council.custodian_code_hint'))).toBeNull();
   // An invitee sees no request and no health: those are custodians' business.
   expect(canvas.queryByText(i18n.t('council.requests_title'))).toBeNull();
 };
 export const Invited = prepareStory(InvitedStory);
 
-// A request: approve remotely while approvals are collected, or hand over in person.
+// Two requests: Ursula already met a custodian (remote approval is open), Victor
+// met nobody yet (only a share in person, after checking the code).
 const RequestsStory = Template.bind({});
 RequestsStory.args = baseArgs;
 RequestsStory.parameters = mine([
   custodianCouncil({
     requests: [
-      request,
+      { ...request, contributors: [{ slot: 2, name: 'Bruno Petit', in_person: true }] },
       {
         ...request,
         id: '5d6e7f80-0000-4000-8000-000000000002',
         user_name: 'Victor Lemaire',
         user_email: 'victor.lemaire@numerique.gouv.fr',
         stage: 'awaiting_meeting',
-        contributors: [{ slot: 2, name: 'Bruno Petit', in_person: false }],
       },
     ],
   }),
@@ -115,8 +130,11 @@ RequestsStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await canvas.findByText('Ursula Roux');
   canvas.getByText(i18n.t('council.stage_awaiting_meeting'));
-  canvas.getByText(i18n.t('council.request_contributors', { names: 'Bruno Petit' }), { exact: false });
-  // Remote approval only while approvals are collected; the meeting step takes a share in person.
+  canvas.getByText(i18n.t('council.waiting_for_meeting', { name: 'Victor Lemaire' }));
+  canvas.getByText(i18n.t('council.request_contributors', { names: i18n.t('council.contributor_in_person', { name: 'Bruno Petit' }) }), {
+    exact: false,
+  });
+  // Remote approval only after the meeting; a share in person is always possible.
   expect(canvas.getAllByRole('button', { name: i18n.t('council.approve_remotely') })).toHaveLength(1);
   expect(canvas.getAllByRole('button', { name: i18n.t('council.hand_over_in_person') })).toHaveLength(2);
 };

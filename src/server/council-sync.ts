@@ -70,7 +70,29 @@ export async function syncConfiguredCouncils(log: FastifyBaseLogger): Promise<bo
 const CLOSED_REQUEST_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Sync now, then every few minutes, for the life of the process; closed requests are purged on the way. */
+/**
+ * Councils that still hold escrows but are no longer in the configuration. A
+ * council is its `id`: renaming one starts a new council beside the old, whose
+ * users stay on it, so a rename or a removal by mistake must not go unnoticed.
+ */
+export async function unconfiguredCouncilsWithEscrows(): Promise<Array<{ councilId: string; escrows: number }>> {
+  const configured = configuredCouncils().map((c) => c.id);
+  const groups = await prisma.councilEscrow.groupBy({ by: ['councilId'], where: { councilId: { notIn: configured } }, _count: { _all: true } });
+
+  return groups.map((g) => ({ councilId: g.councilId, escrows: g._count._all }));
+}
+
 export function startCouncilSync(log: FastifyBaseLogger): void {
+  void unconfiguredCouncilsWithEscrows()
+    .then((orphans) => {
+      for (const { councilId, escrows } of orphans) {
+        log.warn(
+          `Recovery council "${councilId}" is no longer in RECOVERY_COUNCILS but still holds ${escrows} escrow(s): its users stay on it. A council id is never renamed (change its label instead); restore the entry if it was removed by mistake.`
+        );
+      }
+    })
+    .catch((err: unknown) => log.warn({ err }, 'recovery council check failed'));
+
   const run = async () => {
     try {
       if (configuredCouncils().length > 0) await syncConfiguredCouncils(log);

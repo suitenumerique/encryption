@@ -12,6 +12,7 @@ import {
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_MARK_VERIFIED,
   MSG_VAULT_COUNCIL_REACTIVATE,
   MSG_VAULT_COUNCIL_REQUEST_KEY,
   MSG_VAULT_COUNCIL_RESHARE_BATCH,
@@ -85,6 +86,7 @@ import {
   handleCouncilRequestKey,
   handleCouncilReshareBatch,
   handleCreateCouncilEscrow,
+  handleMarkCouncilVerified,
   handleReactivateCouncilVault,
   handleSignCouncilRoster,
   handleStartCouncilRequest,
@@ -285,6 +287,8 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       return handleCouncilReshareBatch(userId, payload as Parameters<typeof handleCouncilReshareBatch>[1]);
     case MSG_VAULT_COUNCIL_CHECK_SHARES:
       return handleCheckCouncilShares(userId, payload as Parameters<typeof handleCheckCouncilShares>[1]);
+    case MSG_VAULT_COUNCIL_MARK_VERIFIED:
+      return handleMarkCouncilVerified(userId, payload as Parameters<typeof handleMarkCouncilVerified>[1]);
   }
 }
 

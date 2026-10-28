@@ -31,6 +31,7 @@ import { Chip, CopyFingerprintButton, FingerprintBoxes, IdentityCard } from '@en
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
@@ -60,6 +61,8 @@ interface EncryptionSettingsProps {
   onOpenDeviceApproval?: () => void;
   onOpenEmergencyAccess?: () => void;
   onOpenRecoveryCouncil?: () => void;
+  /** Opens the verification of the user's council, offered while it is not verified. */
+  onVerifyRecoveryCouncil?: () => void;
   onOpenCustodian?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
@@ -67,11 +70,31 @@ interface EncryptionSettingsProps {
   currentIdToken?: string | null;
 }
 
-function SettingsRow({ title, description, action }: { title: string; description: string; action: ReactNode }) {
+function SettingsRow({
+  title,
+  description,
+  action,
+  status = null,
+}: {
+  title: string;
+  description: string;
+  action: ReactNode;
+  status?: 'verified' | 'unverified' | null;
+}) {
+  const { t } = useTranslation('common');
+
   return (
     <div className={styles.settingsRow}>
       <div className={styles.settingsRowText}>
-        <p className={styles.settingsRowTitle}>{title}</p>
+        <p className={styles.settingsRowTitle}>
+          {title}{' '}
+          {status === 'verified' && (
+            <Chip tone="success" icon="trusted">
+              {t('council.chip_verified')}
+            </Chip>
+          )}
+          {status === 'unverified' && <Chip tone="warning">{t('council.chip_unverified')}</Chip>}
+        </p>
         <p className={styles.settingsRowDescription}>{description}</p>
       </div>
       {action}
@@ -102,6 +125,7 @@ export function EncryptionSettings({
   onOpenDeviceApproval,
   onOpenEmergencyAccess,
   onOpenRecoveryCouncil,
+  onVerifyRecoveryCouncil,
   onOpenCustodian,
   onReconnect,
   isAuthenticating = false,
@@ -365,7 +389,14 @@ export function EncryptionSettings({
 
   // The council rows appear only for someone a council covers, and for its
   // custodians: the interface never learns more than "you are a custodian".
-  const [council, setCouncil] = useState<{ covered: boolean; custodian: boolean; pending: number }>({ covered: false, custodian: false, pending: 0 });
+  // `verified` (null when not enrolled) comes from this vault, never from the server.
+  const [council, setCouncil] = useState<{ covered: boolean; custodian: boolean; pending: number; verified: boolean | null }>({
+    covered: false,
+    custodian: false,
+    pending: 0,
+    verified: null,
+  });
+  const councilVault = useCouncilVault();
 
   useEffect(() => {
     if (!keysExist) return;
@@ -375,8 +406,14 @@ export function EncryptionSettings({
     withFreshIdToken(getIdToken, async (idToken) => {
       const [forMe, mine] = await Promise.all([fetchCouncilForMe(idToken).catch(() => null), fetchMyCouncils(idToken).catch(() => null)]);
       const councils = mine?.councils ?? [];
+      const escrow = forMe?.escrow;
+      const verified =
+        forMe?.council && escrow && escrow.vault_active && escrow.health.status !== 'lost'
+          ? ((await councilVault.checkEscrow(escrow.record, forMe.council.chain).catch(() => null))?.council?.verified ?? null)
+          : null;
 
       return {
+        verified,
         covered: forMe?.council != null,
         custodian: councils.length > 0,
         pending: councils.reduce(
@@ -395,7 +432,7 @@ export function EncryptionSettings({
     return () => {
       cancelled = true;
     };
-  }, [keysExist, getIdToken]);
+  }, [keysExist, getIdToken, councilVault]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -1087,10 +1124,17 @@ export function EncryptionSettings({
               <SettingsRow
                 title={t('council.row_title')}
                 description={t('council.row_description')}
+                status={council.verified === null ? null : council.verified ? 'verified' : 'unverified'}
                 action={
-                  <Button size="nano" variant="bordered" color="neutral" onClick={onOpenRecoveryCouncil}>
-                    {t('council.row_open')}
-                  </Button>
+                  council.verified === false && onVerifyRecoveryCouncil ? (
+                    <Button size="nano" variant="bordered" color="warning" onClick={onVerifyRecoveryCouncil}>
+                      {t('council.verify_open')}
+                    </Button>
+                  ) : (
+                    <Button size="nano" variant="bordered" color="neutral" onClick={onOpenRecoveryCouncil}>
+                      {t('council.row_open')}
+                    </Button>
+                  )
                 }
               />
             )}

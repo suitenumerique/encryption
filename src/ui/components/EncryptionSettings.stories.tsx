@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
@@ -14,7 +14,7 @@ import {
   handleGetApiPublicKeysNext,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
-import { custodianCouncil, forMe } from '@encryption/src/ui/testing/council-stories';
+import { custodianCouncil, forMe, vaultCheckingEscrow } from '@encryption/src/ui/testing/council-stories';
 import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
 
 type ComponentType = typeof EncryptionSettings;
@@ -125,8 +125,37 @@ HomeWithCouncilStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('council.row_title'));
   await canvas.findByText(i18n.t('council.custodian_row_pending', { count: 1 }));
   expect(canvas.getAllByRole('button', { name: i18n.t('council.row_open') })).toHaveLength(1);
+  // Joined without verifying: the row says so.
+  await canvas.findByText(i18n.t('council.chip_unverified'));
 };
 export const HomeWithCouncil = prepareStory(HomeWithCouncilStory);
+
+// An unverified council: the row offers its verification rather than opening the council.
+const HomeCouncilUnverifiedStory = Template.bind({});
+HomeCouncilUnverifiedStory.args = {
+  ...HomeWithCouncilStory.args,
+  onVerifyRecoveryCouncil: fn(),
+};
+HomeCouncilUnverifiedStory.parameters = HomeWithCouncilStory.parameters;
+HomeCouncilUnverifiedStory.play = async ({ canvasElement, args }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.chip_unverified'));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.verify_open')));
+  expect(args.onVerifyRecoveryCouncil).toHaveBeenCalledOnce();
+  expect(canvas.queryByRole('button', { name: i18n.t('council.row_open') })).toBeNull();
+};
+export const HomeCouncilUnverified = prepareStory(HomeCouncilUnverifiedStory);
+
+const HomeCouncilVerifiedStory = Template.bind({});
+HomeCouncilVerifiedStory.args = HomeCouncilUnverifiedStory.args;
+HomeCouncilVerifiedStory.parameters = { ...HomeWithCouncilStory.parameters, encryption: { request: vaultCheckingEscrow('ok', true) } };
+HomeCouncilVerifiedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.chip_verified'));
+  expect(canvas.queryByRole('button', { name: i18n.t('council.verify_open') })).toBeNull();
+  canvas.getByRole('button', { name: i18n.t('council.row_open') });
+};
+export const HomeCouncilVerified = prepareStory(HomeCouncilVerifiedStory);
 
 // From the home, a flow comes back to it; the story ends on the flow, opened again.
 const HomeToVerificationCodeStory = Template.bind({});

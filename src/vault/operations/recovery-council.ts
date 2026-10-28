@@ -16,13 +16,16 @@
 import { z } from 'zod';
 
 import {
+  councilFingerprint,
   departedSince,
+  ephemeralKeyHash,
   requestFingerprint,
-  rosterFingerprint,
   rosterHash,
   signRoster,
+  verifyContribution,
   verifyEscrow,
   verifyRosterChain,
+  wrappedSharesHash,
 } from '@encryption/src/crypto/council';
 import type { RosterRecord } from '@encryption/src/crypto/council';
 import {
@@ -45,10 +48,11 @@ import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import { type MnemonicLanguage, keyToMnemonic } from '@encryption/src/crypto/mnemonic';
 import { randomScalar } from '@encryption/src/crypto/shamir';
 import { activeIdentity } from '@encryption/src/crypto/vault-state';
-import { STORE_COUNCIL_REQUEST } from '@encryption/src/shared/constants';
+import { STORE_COUNCIL_REQUEST, STORE_COUNCIL_VERIFIED } from '@encryption/src/shared/constants';
 import { genesisPeer } from '@encryption/src/shared/council-quorum';
 import { normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
 import {
+  CouncilAttestationWireSchema,
   CouncilCapsuleWireSchema,
   type CouncilCheckBatch,
   CouncilCheckBatchSchema,
@@ -154,13 +158,81 @@ async function membersKeys(userId: string, roster: RosterRecord): Promise<Map<nu
 // ----- The user ------------------------------------------------------------------
 
 /** The head of a council and the 40 digits its organization publishes for it. */
-export async function handleVerifyCouncilRoster(
-  _userId: string,
-  payload: { councilId: string; chain: RosterVersionWire[]; anchorHash?: string }
-): Promise<{ version: number; fingerprint: string }> {
-  const head = await verifiedHead(payload.councilId, payload.chain, payload.anchorHash);
+export interface CouncilIdentity {
+  /** The council's code (its version 1), what its organization publishes. */
+  fingerprint: string;
+  /** Checked by this user on this browser: by the code, or through a custodian of version 1 they verified. */
+  verified: boolean;
+}
 
-  return { version: head.version, fingerprint: await rosterFingerprint(head) };
+interface StoredCouncilVerification {
+  genesisHash: string;
+  verifiedAtMillis: number;
+}
+
+const verificationKey = (userId: string, councilId: string) => `${userId}:${councilId}`;
+
+/**
+ * What the user can know of a council by themselves, never from the server: its
+ * code, and whether they checked it. Verified by the code they compared, or
+ * through a custodian of version 1 whose identity they verified: every member of
+ * version 1 checked the next one before signing it (the circle), so one real
+ * person vouches for the whole list. A council presented with another version 1
+ * than the one the user verified is another council: refused.
+ */
+async function councilIdentity(userId: string, genesis: RosterRecord): Promise<CouncilIdentity> {
+  const db = await getEncryptionDB();
+  const stored = (await db.get(STORE_COUNCIL_VERIFIED, verificationKey(userId, genesis.councilId))) as StoredCouncilVerification | undefined;
+  const genesisHash = uint8ToBase64(await rosterHash(genesis));
+
+  if (stored && stored.genesisHash !== genesisHash) {
+    throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'This is not the council you verified: its first membership differs.');
+  }
+
+  const fingerprint = await councilFingerprint(genesis);
+  if (stored) return { fingerprint, verified: true };
+
+  const others = genesis.members.filter((m) => m.userId !== userId);
+  if (others.length === 0) return { fingerprint, verified: false };
+
+  const fingerprints = Object.fromEntries(
+    await Promise.all(others.map(async (m) => [m.userId, await computeKeyFingerprint(uint8ToBase64(m.identityPublicKeyWire))]))
+  );
+  const { results } = await handleCheckFingerprints(userId, { userFingerprints: fingerprints }, { record: false });
+
+  return { fingerprint, verified: results.some((r) => r.status === 'trusted') };
+}
+
+/** The head of a council, its code, and whether this user checked it. */
+export async function handleVerifyCouncilRoster(
+  userId: string,
+  payload: { councilId: string; chain: RosterVersionWire[]; anchorHash?: string }
+): Promise<{ version: number } & CouncilIdentity> {
+  const { head, versions } = await verifiedChain(payload.councilId, payload.chain, payload.anchorHash);
+  // The code needs version 1 itself: without an anchor the chain starts there.
+  const genesis = payload.anchorHash ? (await verifiedChain(payload.councilId, payload.chain)).versions[0] : versions[0];
+
+  return { version: head.version, ...(await councilIdentity(userId, genesis)) };
+}
+
+/** The user compared the council's code with the one their organization published. */
+export async function handleMarkCouncilVerified(
+  userId: string,
+  payload: { councilId: string; chain: RosterVersionWire[] }
+): Promise<CouncilIdentity> {
+  const { versions } = await verifiedChain(payload.councilId, payload.chain);
+  const genesis = versions[0];
+  // Refuses a chain whose version 1 differs from one verified before.
+  const before = await councilIdentity(userId, genesis);
+
+  const db = await getEncryptionDB();
+  await db.put(
+    STORE_COUNCIL_VERIFIED,
+    { genesisHash: uint8ToBase64(await rosterHash(genesis)), verifiedAtMillis: Date.now() } satisfies StoredCouncilVerification,
+    verificationKey(userId, payload.councilId)
+  );
+
+  return { fingerprint: before.fingerprint, verified: true };
 }
 
 /**
@@ -211,7 +283,7 @@ export type CouncilEscrowCheck = 'ok' | 'tampered' | 'chain-broken';
 export async function handleCheckCouncilEscrow(
   userId: string,
   payload: { record: CouncilEscrowRecordWire; chain: RosterVersionWire[] }
-): Promise<{ status: CouncilEscrowCheck; headFingerprint: string | null; renewalDue: boolean }> {
+): Promise<{ status: CouncilEscrowCheck; renewalDue: boolean; council: CouncilIdentity | null }> {
   const { loaded } = await loadWithIdentity(userId);
   const identity = activeIdentity(loaded.state)!;
   const wire = parse(CouncilEscrowRecordWireSchema, payload.record);
@@ -221,16 +293,23 @@ export async function handleCheckCouncilEscrow(
     base64ToUint8(wire.escrow_signature),
     base64ToUint8(identity.signaturePublicKey)
   );
-  if (!signed) return { status: 'tampered', headFingerprint: null, renewalDue: false };
+  if (!signed) return { status: 'tampered', renewalDue: false, council: null };
 
   const chain = await verifyRosterChain(
     parse(ChainSchema, payload.chain).map((v) => signedVersionFromWire(wire.council_id, v)),
     base64ToUint8(wire.roster_hash)
   );
-  if (!chain.ok) return { status: 'chain-broken', headFingerprint: null, renewalDue: false };
+  if (!chain.ok) return { status: 'chain-broken', renewalDue: false, council: null };
 
-  // The anchor is the version the secret was split on: the first verified one.
-  return { status: 'ok', headFingerprint: await rosterFingerprint(chain.head), renewalDue: departedSince(chain.versions[0], chain.head).length > 0 };
+  // The code is version 1's: the whole chain must verify from there too.
+  const full = await verifyRosterChain(parse(ChainSchema, payload.chain).map((v) => signedVersionFromWire(wire.council_id, v)));
+
+  return {
+    status: 'ok',
+    // The anchor is the version the secret was split on: the first verified one.
+    renewalDue: departedSince(chain.versions[0], chain.head).length > 0,
+    council: full.ok ? await councilIdentity(userId, full.versions[0]) : null,
+  };
 }
 
 // ----- The locked-out browser --------------------------------------------------
@@ -367,14 +446,45 @@ const CustodianRequestDetailSchema = z.object({
   escrow: CouncilEscrowRecordWireSchema,
   capsule: CouncilCapsuleWireSchema,
   chain: ChainSchema,
+  attestation: CouncilAttestationWireSchema.nullable(),
 });
 
 export type CustodianRequestDetail = z.infer<typeof CustodianRequestDetailSchema>;
 
 /**
+ * Whether the request's key was checked in person: the share handed over at the
+ * meeting, signed by the custodian the verified roster names at its slot, for
+ * this very request and key, and not by the caller. It is what keeps a server
+ * from opening a request of its own and collecting remote shares for it.
+ */
+async function attestedInPerson(detail: CustodianRequestDetail, versions: RosterRecord[], callerId: string): Promise<boolean> {
+  const attestation = detail.attestation;
+  if (!attestation || attestation.custodian_user_id === callerId) return false;
+
+  const attester = versions.flatMap((v) => v.members).find((m) => m.slot === attestation.slot && m.userId === attestation.custodian_user_id);
+  if (!attester) return false;
+
+  return verifyContribution(
+    {
+      requestId: detail.id,
+      userId: detail.user_id,
+      councilId: detail.council_id,
+      slot: attestation.slot,
+      custodianUserId: attestation.custodian_user_id,
+      ephemeralPublicKeyHash: await ephemeralKeyHash(base64ToUint8(detail.ephemeral_public_key)),
+      wrappedSharesHash: await wrappedSharesHash([base64ToUint8(attestation.wrapped_share)]),
+      inPerson: true,
+    },
+    base64ToUint8(attestation.signature),
+    attester.identityPublicKeyWire
+  );
+}
+
+/**
  * Hand over this custodian's share. In person, the share goes only to the key
  * whose code the custodian read on the person's screen: a key swapped by the
- * server, or a request opened by someone else, is refused here.
+ * server, or a request opened by someone else, is refused here. Remotely, only
+ * to a key another custodian already attested that way (attestedInPerson).
  */
 export async function handleCouncilContribute(
   userId: string,
@@ -396,6 +506,10 @@ export async function handleCouncilContribute(
   const { versions } = await verifiedChain(detail.council_id, detail.chain);
   if (!namesMeAt(versions, detail.capsule.slot, userId, base64ToUint8(activeIdentity(loaded.state)!.signaturePublicKey))) {
     throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The council does not name you at this slot.');
+  }
+
+  if (!payload.inPerson && !(await attestedInPerson(detail, versions, userId))) {
+    throw new VaultError(VaultErrorCode.COUNCIL_MEETING_FIRST, 'No custodian of the council has checked this request in person yet.');
   }
 
   const record = await verifiedEscrow(userId, detail.user_id, detail.escrow);

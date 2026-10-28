@@ -96,6 +96,12 @@ export const VaultErrorCode = {
    */
   UNTRUSTED_RECIPIENT: 'UNTRUSTED_RECIPIENT',
   /**
+   * A remote council share was asked for a request no custodian has attested in
+   * person yet, or whose attestation does not verify under a custodian the
+   * verified roster names: the share is not released.
+   */
+  COUNCIL_MEETING_FIRST: 'COUNCIL_MEETING_FIRST',
+  /**
    * A write-through change (e.g. a TOFU decision) could not be pushed to the
    * server, so it was NOT kept locally either — the caller should surface a
    * "couldn't save, retry" and the local state is unchanged. Distinct from a

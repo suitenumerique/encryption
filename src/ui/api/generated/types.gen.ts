@@ -2415,6 +2415,12 @@ export type GetApiCouncilRecoveryRequestsByIdCustodianResponses = {
         signature: string;
       }>;
     }>;
+    attestation: {
+      slot: number;
+      custodian_user_id: string;
+      wrapped_share: string;
+      signature: string;
+    } | null;
   };
 };
 

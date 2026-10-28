@@ -110,6 +110,17 @@ export const CouncilContributionBodySchema = z.object({
 
 export type CouncilContributionBody = z.infer<typeof CouncilContributionBodySchema>;
 
+// The share a custodian handed over at the meeting, as remote custodians' vaults
+// receive it: its signed record attests the request's key was checked in person.
+export const CouncilAttestationWireSchema = z.object({
+  slot,
+  custodian_user_id: z.string().uuid(),
+  wrapped_share: wrap,
+  signature: b64,
+});
+
+export type CouncilAttestationWire = z.infer<typeof CouncilAttestationWireSchema>;
+
 // What the locked-out user's vault receives once the request is released.
 export const CouncilReleasedSharesSchema = z.object({
   request_id: z.string().uuid(),

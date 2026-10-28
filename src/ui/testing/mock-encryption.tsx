@@ -8,6 +8,7 @@ import {
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_MARK_VERIFIED,
   MSG_VAULT_COUNCIL_REQUEST_KEY,
   MSG_VAULT_COUNCIL_RESHARE_BATCH,
   MSG_VAULT_COUNCIL_SIGN_ROSTER,
@@ -88,9 +89,11 @@ export const defaultVaultRequest = async (type: string, payload?: unknown): Prom
       return { signature: samplePublicKey.key_binding_signature };
     // The recovery council: the vault verifies, signs and splits; stories see the outcome.
     case MSG_VAULT_COUNCIL_VERIFY_ROSTER:
-      return { version: 1, fingerprint: sampleCouncilFingerprint };
+      return { version: 1, fingerprint: sampleCouncilFingerprint, verified: false };
     case MSG_VAULT_COUNCIL_CHECK_ESCROW:
-      return { status: 'ok', headFingerprint: sampleCouncilFingerprint };
+      return { status: 'ok', renewalDue: false, council: { fingerprint: sampleCouncilFingerprint, verified: false } };
+    case MSG_VAULT_COUNCIL_MARK_VERIFIED:
+      return { fingerprint: sampleCouncilFingerprint, verified: true };
     case MSG_VAULT_COUNCIL_CREATE_ESCROW:
       return sampleCouncilEscrowBody;
     case MSG_VAULT_COUNCIL_START_REQUEST:

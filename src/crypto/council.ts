@@ -122,6 +122,17 @@ export function rosterFingerprint(record: RosterRecord): Promise<string> {
   return computeDecimalFingerprint(DOMAIN_COUNCIL_FINGERPRINT, encodeRosterPayload(record));
 }
 
+/**
+ * The council's code: the fingerprint of its version 1, which never changes.
+ * Every later version descends from it through signed links the vault checks,
+ * so an organization publishes it once, and another chain shows another code.
+ */
+export function councilFingerprint(genesis: RosterRecord): Promise<string> {
+  if (genesis.version !== 1) throw new Error('A council code is the fingerprint of its version 1');
+
+  return rosterFingerprint(genesis);
+}
+
 export function signRoster(record: RosterRecord, identitySecretKey: SignatureSecretKey): Promise<Uint8Array> {
   return signDetached(encodeRosterPayload(record), identitySecretKey);
 }

@@ -76,17 +76,34 @@ const cases: Case[] = [
   },
   {
     name: 'CouncilRecoveryToApprove',
-    subject: councilRecoveryToApproveSubject,
+    subject: (locale: string) => councilRecoveryToApproveSubject(locale, 'approve'),
     make: (locale) =>
       CouncilRecoveryToApproveEmail({
         locale,
         requester: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
         council: 'Équipe sécurité DINUM',
+        step: 'approve',
         productUrl: 'http://localhost:7201',
       }),
     expected: {
-      fr: ['Jean Dupont', 'Équipe sécurité DINUM'],
-      en: ['Jean Dupont', 'Équipe sécurité DINUM'],
+      fr: ['Jean Dupont', 'Équipe sécurité DINUM', 'approuver à distance'],
+      en: ['Jean Dupont', 'Équipe sécurité DINUM', 'approve it remotely'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryToApprove (meet first)',
+    subject: (locale: string) => councilRecoveryToApproveSubject(locale, 'meet'),
+    make: (locale) =>
+      CouncilRecoveryToApproveEmail({
+        locale,
+        requester: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
+        council: 'Équipe sécurité DINUM',
+        step: 'meet',
+        productUrl: 'http://localhost:7201',
+      }),
+    expected: {
+      fr: ['Jean Dupont', 'Rien ne peut être approuvé à distance'],
+      en: ['Jean Dupont', 'Nothing can be approved remotely'],
     },
   },
   {

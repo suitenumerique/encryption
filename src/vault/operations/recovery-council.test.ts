@@ -5,20 +5,24 @@ import { type RosterRecord, requestFingerprint, rosterHash, signRoster } from '@
 import { escrowRecordFromWire } from '@encryption/src/crypto/council-protocol';
 import { generateUserKeyPair } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, exportPublicKeyAsBase64, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
+import { getEncryptionDB } from '@encryption/src/crypto/encryption-db';
 import { mnemonicToKey } from '@encryption/src/crypto/mnemonic';
 import { type SignatureKeyPair, generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import { signAuthPublicKeyBinding } from '@encryption/src/crypto/vault-unlock';
+import { STORE_COUNCIL_VERIFIED } from '@encryption/src/shared/constants';
 import type { CouncilEscrowBody, RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 import { VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import { handleCheckFingerprints } from '@encryption/src/vault/operations/fingerprint-registry';
 import { deriveKeyring, loadWithIdentity } from '@encryption/src/vault/operations/onboarding';
 import {
+  type CustodianRequestDetail,
   handleCheckCouncilEscrow,
   handleCheckCouncilShares,
   handleCouncilContribute,
   handleCouncilReshareBatch,
   handleCreateCouncilEscrow,
+  handleMarkCouncilVerified,
   handleSignCouncilRoster,
   handleStartCouncilRequest,
   handleVerifyCouncilRoster,
@@ -147,6 +151,97 @@ beforeEach(async () => {
     };
   });
   (handleFetchPublicKeys as Mock).mockResolvedValue(directory([me, a, b, c]));
+  (handleCheckFingerprints as Mock).mockResolvedValue({ results: [] });
+  await (await getEncryptionDB()).clear(STORE_COUNCIL_VERIFIED);
+});
+
+describe('council code and verification', () => {
+  // v2 replaces c by d, signed by a and b (a majority of three) and by d.
+  async function grown() {
+    const v1 = await genesis([a, b, c], 2);
+    const d = await person(5);
+    const record: RosterRecord = {
+      councilId: COUNCIL,
+      version: 2,
+      threshold: 2,
+      previousRosterHash: await rosterHash(v1.record),
+      members: [...v1.record.members.slice(0, 2), { slot: 4, userId: d.id, identityPublicKeyWire: base64ToUint8(wireB64(d.identity)) }],
+    };
+    const v2 = versionWire(
+      record,
+      await Promise.all([a, b, d].map(async (p) => ({ identity: p.identity, signature: await signRoster(record, p.identity.secretKey) })))
+    );
+
+    return { v1, v2 };
+  }
+
+  it('shows the code of version 1, which a later version does not change', async () => {
+    const { v1, v2 } = await grown();
+
+    const first = await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire] });
+    const later = await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire, v2] });
+    expect(later).toMatchObject({ version: 2, fingerprint: first.fingerprint, verified: false });
+    expect(first.fingerprint).toMatch(/^1\d{39}$/);
+  });
+
+  it('is verified once the user compared the code, on this browser', async () => {
+    const { v1, v2 } = await grown();
+
+    expect(await handleMarkCouncilVerified(ME, { councilId: COUNCIL, chain: [v1.wire] })).toMatchObject({ verified: true });
+    expect((await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire, v2] })).verified).toBe(true);
+  });
+
+  // The circle: every member of version 1 checked the next before signing, so
+  // one real member the user verified vouches for the whole list.
+  it('is verified through a custodian of version 1 the user verified, and only of version 1', async () => {
+    const { v1, v2 } = await grown();
+    (handleCheckFingerprints as Mock).mockImplementation(async (_u: string, { userFingerprints }: { userFingerprints: Record<string, string> }) => ({
+      results: Object.keys(userFingerprints).map((id) => ({ userId: id, status: id === b.id ? 'trusted' : 'unknown' })),
+    }));
+
+    expect((await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire, v2] })).verified).toBe(true);
+    // Only version 1's members are asked about: a newcomer never checked the others.
+    expect(Object.keys((handleCheckFingerprints as Mock).mock.calls.at(-1)![1].userFingerprints).sort()).toEqual([a.id, b.id, c.id].sort());
+
+    (handleCheckFingerprints as Mock).mockResolvedValue({ results: [{ userId: a.id, status: 'unknown' }] });
+    expect((await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire, v2] })).verified).toBe(false);
+  });
+
+  it('refuses another council presented under the same id once one was verified', async () => {
+    const { v1 } = await grown();
+    await handleMarkCouncilVerified(ME, { councilId: COUNCIL, chain: [v1.wire] });
+    const forged = await genesis([a, b, await person(9)], 2);
+
+    await expect(handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [forged.wire] })).rejects.toMatchObject({
+      code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
+    });
+    await expect(handleMarkCouncilVerified(ME, { councilId: COUNCIL, chain: [forged.wire] })).rejects.toMatchObject({
+      code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
+    });
+  });
+
+  it('marks nothing on a chain that does not verify', async () => {
+    const { v1 } = await grown();
+
+    await expect(
+      handleMarkCouncilVerified(ME, { councilId: COUNCIL, chain: [{ ...v1.wire, signatures: v1.wire.signatures.slice(1) }] })
+    ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED });
+    expect((await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire] })).verified).toBe(false);
+  });
+
+  it('reports the code and the verification with the escrow audit', async () => {
+    const { v1 } = await grown();
+    const body = await handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: [v1.wire] });
+    const record = await recordOf(body, v1.wire);
+    const { fingerprint } = await handleVerifyCouncilRoster(ME, { councilId: COUNCIL, chain: [v1.wire] });
+
+    expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire] })).toMatchObject({
+      status: 'ok',
+      council: { fingerprint, verified: false },
+    });
+    await handleMarkCouncilVerified(ME, { councilId: COUNCIL, chain: [v1.wire] });
+    expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire] })).toMatchObject({ council: { fingerprint, verified: true } });
+  });
 });
 
 describe('enrollment', () => {
@@ -313,16 +408,92 @@ describe('contribution', () => {
         escrow: record,
         capsule: { kind: 'direct' as const, generation: 1, slot, wrapped_share: body.shares[slot - 1].wrapped_share },
         chain: [wire],
+        attestation: null as CustodianRequestDetail['attestation'],
       },
+      body,
       code: await requestFingerprint(base64ToUint8(exportPublicKeyAsBase64(ephemeral.publicKey))),
     };
   }
 
-  it('hands the share over remotely, or in person to the key whose code was read', async () => {
+  it('hands the share over in person to the key whose code was read', async () => {
     const { detail, code } = await requestFor(a);
 
-    expect((await handleCouncilContribute(a.id, { detail, inPerson: false })).in_person).toBe(false);
     expect((await handleCouncilContribute(a.id, { detail, inPerson: true, meetingCode: code.replace(/(\d{5})/g, '$1 ') })).in_person).toBe(true);
+  });
+
+  describe('remotely, only after the meeting', () => {
+    // b meets the person and hands over in person: the signed share is the attestation.
+    async function metBy(attester: Person) {
+      const { detail, code, body } = await requestFor(attester);
+      const handed = await handleCouncilContribute(attester.id, { detail, inPerson: true, meetingCode: code });
+      const attestation = { slot: handed.slot, custodian_user_id: attester.id, wrapped_share: handed.wrapped_share, signature: handed.signature };
+
+      // a's view of the same request.
+      loadAs(a);
+      return { detail: { ...detail, capsule: { ...detail.capsule, slot: 1, wrapped_share: body.shares[0].wrapped_share } }, attestation };
+    }
+
+    it('releases a remote share to a key another custodian attested in person', async () => {
+      const { detail, attestation } = await metBy(b);
+
+      expect((await handleCouncilContribute(a.id, { detail: { ...detail, attestation }, inPerson: false })).in_person).toBe(false);
+    });
+
+    it('refuses a remote share before anyone met the person', async () => {
+      const { detail } = await metBy(b);
+
+      await expect(handleCouncilContribute(a.id, { detail, inPerson: false })).rejects.toMatchObject({ code: VaultErrorCode.COUNCIL_MEETING_FIRST });
+    });
+
+    // The server's own request: it can make up a key, never a custodian's signature over it.
+    it('refuses an attestation of another key, a forged one, one by a stranger, or one by the caller', async () => {
+      const { detail, attestation } = await metBy(b);
+      const otherKey = exportPublicKeyAsBase64((await generateUserKeyPair()).publicKey);
+      const stranger = await person(9);
+      const refused = async (changed: Partial<CustodianRequestDetail>) =>
+        expect(handleCouncilContribute(a.id, { detail: { ...detail, attestation, ...changed }, inPerson: false })).rejects.toMatchObject({
+          code: VaultErrorCode.COUNCIL_MEETING_FIRST,
+        });
+
+      await refused({ ephemeral_public_key: otherKey });
+      await refused({ attestation: { ...attestation, signature: uint8ToBase64(new Uint8Array(64)) } });
+      await refused({ attestation: { ...attestation, custodian_user_id: stranger.id } });
+      await refused({ attestation: { ...attestation, slot: 3 } });
+      await refused({ attestation: { ...attestation, custodian_user_id: a.id } });
+      await refused({ id: 'b9f1c6a2-0000-4000-8000-000000000001' });
+    });
+
+    it('refuses an attestation that was not handed over in person', async () => {
+      const { detail, code } = await requestFor(b);
+      // A remote share by b, made as if b had been attested: its record says remote.
+      const fake = await handleCouncilContribute(b.id, { detail, inPerson: true, meetingCode: code });
+      const { signContribution, ephemeralKeyHash: hashKey, wrappedSharesHash: hashShares } = await import('@encryption/src/crypto/council');
+      const remoteSignature = await signContribution(
+        {
+          requestId: detail.id,
+          userId: ME,
+          councilId: COUNCIL,
+          slot: 2,
+          custodianUserId: b.id,
+          ephemeralPublicKeyHash: await hashKey(base64ToUint8(detail.ephemeral_public_key)),
+          wrappedSharesHash: await hashShares([base64ToUint8(fake.wrapped_share)]),
+          inPerson: false,
+        },
+        b.identity.secretKey
+      );
+      loadAs(a);
+
+      await expect(
+        handleCouncilContribute(a.id, {
+          detail: {
+            ...detail,
+            capsule: { ...detail.capsule, slot: 1 },
+            attestation: { slot: 2, custodian_user_id: b.id, wrapped_share: fake.wrapped_share, signature: uint8ToBase64(remoteSignature) },
+          },
+          inPerson: false,
+        })
+      ).rejects.toMatchObject({ code: VaultErrorCode.COUNCIL_MEETING_FIRST });
+    });
   });
 
   it('refuses the in-person share when the code on the screen is another one', async () => {
@@ -337,7 +508,7 @@ describe('contribution', () => {
   // Another escrow's share at the same slot, wrapped for the same custodian:
   // only the Pedersen check against the signed commitments tells them apart.
   it('refuses a share that does not lie on the commitments the user signed', async () => {
-    const { detail } = await requestFor(a);
+    const { detail, code } = await requestFor(a);
     loadAs(me);
     const { wire } = await genesis([a, b, c], 2);
     const other = await handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: [wire] });
@@ -346,32 +517,33 @@ describe('contribution', () => {
     await expect(
       handleCouncilContribute(a.id, {
         detail: { ...detail, capsule: { kind: 'direct', generation: 1, slot: 1, wrapped_share: other.shares[0].wrapped_share } },
-        inPerson: false,
+        inPerson: true,
+        meetingCode: code,
       })
     ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED });
   });
 
   it('refuses a slot the verified council does not give this custodian', async () => {
-    const { detail } = await requestFor(a);
+    const { detail, code } = await requestFor(a);
 
     await expect(
-      handleCouncilContribute(a.id, { detail: { ...detail, capsule: { ...detail.capsule, slot: 2 } }, inPerson: false })
+      handleCouncilContribute(a.id, { detail: { ...detail, capsule: { ...detail.capsule, slot: 2 } }, inPerson: true, meetingCode: code })
     ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED });
   });
 
   it('refuses malformed data from the server before touching any key', async () => {
-    const { detail } = await requestFor(a);
+    const { detail, code } = await requestFor(a);
 
     await expect(
-      handleCouncilContribute(a.id, { detail: { ...detail, capsule: { ...detail.capsule, slot: 0 } }, inPerson: false })
+      handleCouncilContribute(a.id, { detail: { ...detail, capsule: { ...detail.capsule, slot: 0 } }, inPerson: true, meetingCode: code })
     ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED, message: expect.stringContaining('malformed') });
   });
 
   it('refuses an escrow the person asking did not sign', async () => {
-    const { detail } = await requestFor(b);
+    const { detail, code } = await requestFor(b);
 
     await expect(
-      handleCouncilContribute(b.id, { detail: { ...detail, escrow: { ...detail.escrow, threshold: 1 } }, inPerson: false })
+      handleCouncilContribute(b.id, { detail: { ...detail, escrow: { ...detail.escrow, threshold: 1 } }, inPerson: true, meetingCode: code })
     ).rejects.toMatchObject({
       code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
     });

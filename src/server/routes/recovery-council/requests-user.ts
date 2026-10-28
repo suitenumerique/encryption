@@ -7,7 +7,7 @@ import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-
 import { prisma } from '@encryption/src/prisma/client';
 import { configuredCouncils, councilLabel, escrowRecordWire, serializable, sha256 } from '@encryption/src/server/council-core';
 import { closeRequest, escrowForRecovery, healthOf, liveSlots, openRequestOf, settleRequest } from '@encryption/src/server/council-requests-core';
-import { sendCouncilRecoveryRequested, sendCouncilRecoveryToApprove } from '@encryption/src/server/email/council';
+import { sendCouncilRecoveryMeeting, sendCouncilRecoveryRequested, sendCouncilRecoveryToApprove } from '@encryption/src/server/email/council';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import { COUNCIL_DEFAULT_REQUEST_TTL_DAYS, configuredCouncil } from '@encryption/src/server/recovery-councils';
@@ -98,7 +98,18 @@ export function userRequestRoutes(app: FastifyInstance): void {
         throw err;
       }
 
-      for (const { member } of await liveSlots(escrow)) {
+      // The meeting comes first: the user learns at once who to go and see, and
+      // the custodians that one of them must meet the person before any approval.
+      const live = await liveSlots(escrow);
+      sendCouncilRecoveryMeeting({
+        recipient: user.email,
+        locale: user.locale,
+        council: label,
+        custodians: live.map((s) => userFullName(s.member.user) ?? s.member.user.email).join(', '),
+        productUrl,
+      }).catch(logEmailFailure(app, 'meeting'));
+
+      for (const { member } of live) {
         const custodian = await emergencyRecipient(member.userId);
         if (custodian)
           sendCouncilRecoveryToApprove({
@@ -106,16 +117,17 @@ export function userRequestRoutes(app: FastifyInstance): void {
             locale: custodian.locale,
             requester: user.labelWithEmail,
             council: label,
+            step: 'meet',
             productUrl,
-          }).catch(logEmailFailure(app, 'to approve'));
+          }).catch(logEmailFailure(app, 'to meet'));
       }
 
       return { id: created.id, expires_at_millis: created.expiresAt.getTime() };
     }
   );
 
-  // The user's own view: "in progress", then "go and see one of these people".
-  // No count and no names before that point. The request key's code lets the
+  // The user's own view: "go and see one of these people", then "in progress"
+  // once a custodian met them. Never a count. The request key's code lets the
   // browser tell whether the request is its own.
   app.withTypeProvider<ZodTypeProvider>().get(
     '/api/council-recovery/requests/mine',

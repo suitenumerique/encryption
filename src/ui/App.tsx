@@ -190,6 +190,8 @@ function InterfaceScreens({
   // vault operates under and what binding signatures embed; components wait on
   // it (nullable userId props).
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
+  // The settings' "verify my council" opens the council screen on its verification.
+  const [verifyCouncil, setVerifyCouncil] = useState(false);
 
   // Set auth info on the encryption context FIRST — the vault needs this before
   // we can make any requests (including token restoration). Re-sent when the
@@ -527,12 +529,19 @@ function InterfaceScreens({
   };
 
   function recoveryCouncil(direct: boolean) {
+    const leave = () => {
+      setVerifyCouncil(false);
+      setRouteOverride(null);
+    };
+
     return (
       <RecoveryCouncil
         {...councilAuth}
         getIdToken={getValidIdToken}
-        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
-        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
+        userId={internalUserId}
+        startVerifying={verifyCouncil}
+        onBack={overlaid && !direct ? leave : undefined}
+        onClose={overlaid && !direct ? leave : handleClose}
       />
     );
   }
@@ -655,6 +664,10 @@ function InterfaceScreens({
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
           onOpenRecoveryCouncil={() => setRouteOverride('recovery-council')}
+          onVerifyRecoveryCouncil={() => {
+            setVerifyCouncil(true);
+            setRouteOverride('recovery-council');
+          }}
           onOpenCustodian={() => setRouteOverride('council-custodian')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}

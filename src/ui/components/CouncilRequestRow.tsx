@@ -40,6 +40,9 @@ export function CouncilRequestRow({
         {' · '}
         {t('council.request_expires', { date: new Date(request.expires_at_millis) })}
       </p>
+      {request.can_contribute && request.stage === 'awaiting_meeting' && (
+        <p className={styles.hint}>{t('council.waiting_for_meeting', { name: request.user_name ?? request.user_email })}</p>
+      )}
       {request.my_contribution !== 'none' && (
         <Chip tone="success" icon="trusted">
           {t(request.my_contribution === 'in_person' ? 'council.my_contribution_in_person' : 'council.my_contribution_remote')}

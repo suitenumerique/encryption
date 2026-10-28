@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { rosterFingerprint, verifyRosterChain } from '@encryption/src/crypto/council';
 import { signRoster } from '@encryption/src/crypto/council';
-import { requestFingerprint } from '@encryption/src/crypto/council';
+import { ephemeralKeyHash, requestFingerprint, verifyContribution, wrappedSharesHash } from '@encryption/src/crypto/council';
 import {
   buildContribution,
   buildCouncilEscrow,
@@ -24,14 +24,19 @@ import { encodeShare, randomScalar } from '@encryption/src/crypto/shamir';
 import { type SignatureKeyPair, generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import { DEFAULT_KDF_PARAMS, signAuthPublicKeyBinding, signVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
-import { syncConfiguredCouncils } from '@encryption/src/server/council-sync';
-import { sendCouncilRecoveryRequested, sendCouncilRosterToSign } from '@encryption/src/server/email/council';
+import { syncConfiguredCouncils, unconfiguredCouncilsWithEscrows } from '@encryption/src/server/council-sync';
+import {
+  sendCouncilRecoveryMeeting,
+  sendCouncilRecoveryRequested,
+  sendCouncilRecoveryToApprove,
+  sendCouncilRosterToSign,
+} from '@encryption/src/server/email/council';
 import { recoveryCouncilsSchema } from '@encryption/src/server/recovery-councils';
 import { recoveryCouncilRoute } from '@encryption/src/server/routes/recovery-council';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import {
   API_ERROR_COUNCIL_ESCROW_INVALID,
-  API_ERROR_COUNCIL_MEETING_REQUIRED,
+  API_ERROR_COUNCIL_MEETING_FIRST,
   API_ERROR_COUNCIL_NOT_COVERED,
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
   API_ERROR_COUNCIL_OWN_REQUEST,
@@ -506,6 +511,25 @@ describe('enrollment', () => {
     expect((await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } })).id).toBe(escrows[0].id);
   });
 
+  // A council is its id: a rename starts a new one and leaves the users on the old.
+  it('names a council that still holds escrows once it left the configuration', async () => {
+    await bootstrap([alice, bruno, chloe], 2);
+    const { body } = await enroll(ursula, [alice, bruno, chloe]);
+    await call(ursula, 'POST', '/api/councils/escrow', body, { signed: true });
+    expect(await unconfiguredCouncilsWithEscrows()).toEqual([]);
+
+    env.RECOVERY_COUNCILS = recoveryCouncilsSchema.parse([
+      {
+        id: 'dinum-renamed',
+        label: 'Équipe sécurité DINUM',
+        domains: ['numerique.gouv.fr'],
+        custodians: [alice, bruno, chloe].map((c) => ({ userId: c.id, email: c.email })),
+        threshold: 2,
+      },
+    ]);
+    expect(await unconfiguredCouncilsWithEscrows()).toEqual([{ councilId: COUNCIL, escrows: 1 }]);
+  });
+
   it('shows the council and the organization’s fingerprint to compare', async () => {
     await bootstrap([alice, bruno, chloe], 2);
     const forMe = (await call<{ council: { chain: RosterVersionWire[]; label: string } }>(ursula, 'GET', '/api/councils/for-me')).json;
@@ -534,27 +558,66 @@ describe('recovery', () => {
     return { id: res.json.id, ephemeral: { publicKey: ephemeralWire, secretKey: ephemeral.secretKey } };
   }
 
-  it('gives the vault back after remote approvals and one share handed over in person', async () => {
+  it('gives the vault back after a meeting, then remote approvals', async () => {
     const { secret, auth } = await enrolled();
     const { id, ephemeral } = await ask();
     expect(sendCouncilRecoveryRequested).toHaveBeenCalledOnce();
+    // The meeting comes first: the user is told who to see, each custodian that one of them must meet her.
+    expect(sendCouncilRecoveryMeeting).toHaveBeenCalledWith(expect.objectContaining({ custodians: 'Alice Martin, Bruno Petit, Chloé Durand' }));
+    expect(vi.mocked(sendCouncilRecoveryToApprove).mock.calls.map(([p]) => p.step)).toEqual(['meet', 'meet', 'meet']);
 
-    // The user only learns "in progress": no count, no names.
-    expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toMatchObject({ request: { stage: 'in_progress', meet: [] } });
-
-    expect((await contribute(alice, id, false)).json.stage).toBe('awaiting_meeting');
     expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toMatchObject({
-      request: { stage: 'meet', meet: [{ name: 'Bruno Petit' }, { name: 'Chloé Durand' }] },
+      request: { stage: 'meet', meet: [{ name: 'Alice Martin' }, { name: 'Bruno Petit' }, { name: 'Chloé Durand' }] },
     });
 
-    // A second remote approval would let a stolen login finish alone.
-    expect((await contribute(bruno, id, false)).json).toMatchObject({ code: API_ERROR_COUNCIL_MEETING_REQUIRED });
-    expect((await contribute(bruno, id, true)).json.stage).toBe('released');
+    // No remote approval before the meeting: nobody has checked the key yet.
+    expect((await contribute(alice, id, false)).json).toMatchObject({ code: API_ERROR_COUNCIL_MEETING_FIRST });
+    const before = (await call<{ attestation: unknown; meeting_required: boolean }>(alice, 'GET', `/api/council-recovery/requests/${id}/custodian`))
+      .json;
+    expect(before).toMatchObject({ attestation: null, meeting_required: true });
+
+    vi.mocked(sendCouncilRecoveryToApprove).mockClear();
+    expect((await contribute(bruno, id, true)).json.stage).toBe('collecting');
+    // The others may now approve remotely, and are told so.
+    expect(vi.mocked(sendCouncilRecoveryToApprove).mock.calls.map(([p]) => [p.recipient, p.step])).toEqual([
+      ['alice@numerique.gouv.fr', 'approve'],
+      ['chloe@numerique.gouv.fr', 'approve'],
+    ]);
+    expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toMatchObject({ request: { stage: 'in_progress', meet: [] } });
+
+    // What Alice's vault checks before releasing anything: Bruno's signed in-person share for this very key.
+    const after = (
+      await call<{ attestation: { slot: number; custodian_user_id: string; wrapped_share: string; signature: string }; meeting_required: boolean }>(
+        alice,
+        'GET',
+        `/api/council-recovery/requests/${id}/custodian`
+      )
+    ).json;
+    expect(after.meeting_required).toBe(false);
+    expect(after.attestation).toMatchObject({ slot: 2, custodian_user_id: bruno.id });
+    expect(
+      await verifyContribution(
+        {
+          requestId: id,
+          userId: ursula.id,
+          councilId: COUNCIL,
+          slot: 2,
+          custodianUserId: bruno.id,
+          ephemeralPublicKeyHash: await ephemeralKeyHash(ephemeral.publicKey),
+          wrappedSharesHash: await wrappedSharesHash([base64ToUint8(after.attestation.wrapped_share)]),
+          inPerson: true,
+        },
+        base64ToUint8(after.attestation.signature),
+        wire(bruno.identity)
+      )
+    ).toBe(true);
+
+    expect((await contribute(alice, id, false)).json.stage).toBe('released');
 
     const released = (await call<Parameters<typeof recoverCouncilSecret>[0]>(ursula, 'GET', `/api/council-recovery/requests/${id}/shares`)).json;
     const recovered = await recoverCouncilSecret(released, ephemeral, wire(ursula.identity));
     expect(recovered.secret).toEqual(secret);
-    expect(recovered.contributors.map((c) => c.inPerson)).toEqual([false, true]);
+    expect(recovered.contributors.map((c) => c.inPerson).sort()).toEqual([false, true]);
 
     // The released council credential now opens the vault.
     const challenge = (await call<{ challenge_id: string; nonce: string }>(ursula, 'POST', '/api/vault/challenge')).json;
@@ -591,8 +654,8 @@ describe('recovery', () => {
   it('lets the phrase change leave the council when its setup cannot be renewed', async () => {
     await enrolled();
     const { id } = await ask();
-    await contribute(alice, id, false);
     await contribute(bruno, id, true);
+    await contribute(alice, id, false);
 
     const auth = await generateSignatureKeyPair();
     const keyring = {
@@ -632,23 +695,47 @@ describe('recovery', () => {
       inPerson: false,
       identitySecretKey: alice.identity.secretKey,
     });
-    expect((await call(alice, 'POST', `/api/council-recovery/requests/${id}/contribute`, forged, { signed: true })).status).toBe(200);
-    expect((await contribute(bruno, id, true)).json.stage).toBe('released');
+    expect((await contribute(bruno, id, true)).json.stage).toBe('collecting');
+    expect((await call(alice, 'POST', `/api/council-recovery/requests/${id}/contribute`, forged, { signed: true })).json).toMatchObject({
+      stage: 'released',
+    });
 
     const released = (await call<Parameters<typeof recoverCouncilSecret>[0]>(ursula, 'GET', `/api/council-recovery/requests/${id}/shares`)).json;
     await expect(recoverCouncilSecret(released, ephemeral, wire(ursula.identity))).rejects.toThrow('Not enough valid shares');
   });
 
-  it('does not release without an in-person share, however many approvals', async () => {
+  it('accepts no remote approval before the meeting, and k - 1 of them after it', async () => {
     await bootstrap([alice, bruno, chloe, denis], 3);
     const enrollment = await enroll(ursula, [alice, bruno, chloe, denis]);
     await call(ursula, 'POST', '/api/councils/escrow', enrollment.body, { signed: true });
     const { id } = await ask();
 
+    for (const custodian of [alice, bruno, chloe]) {
+      expect((await contribute(custodian, id, false)).json).toMatchObject({ code: API_ERROR_COUNCIL_MEETING_FIRST });
+    }
+    expect(await testPrisma.councilContribution.count()).toBe(0);
+
+    expect((await contribute(denis, id, true)).json.stage).toBe('collecting');
     expect((await contribute(alice, id, false)).json.stage).toBe('collecting');
-    expect((await contribute(bruno, id, false)).json.stage).toBe('awaiting_meeting');
-    expect((await contribute(chloe, id, false)).json).toMatchObject({ code: API_ERROR_COUNCIL_MEETING_REQUIRED });
     expect((await call(ursula, 'GET', `/api/council-recovery/requests/${id}/shares`)).status).toBe(400);
+    expect((await contribute(bruno, id, false)).json.stage).toBe('released');
+    // Released at k: a fourth share is not needed and not taken.
+    expect((await call(chloe, 'GET', `/api/council-recovery/requests/${id}/custodian`)).json).toMatchObject({
+      code: API_ERROR_COUNCIL_REQUEST_CLOSED,
+    });
+  });
+
+  it('releases on the meeting alone with a threshold of 1', async () => {
+    await bootstrap([alice, bruno], 1);
+    const enrollment = await enroll(ursula, [alice, bruno]);
+    await call(ursula, 'POST', '/api/councils/escrow', enrollment.body, { signed: true });
+    const { id, ephemeral } = await ask();
+
+    expect((await contribute(alice, id, false)).json).toMatchObject({ code: API_ERROR_COUNCIL_MEETING_FIRST });
+    expect((await contribute(bruno, id, true)).json.stage).toBe('released');
+
+    const released = (await call<Parameters<typeof recoverCouncilSecret>[0]>(ursula, 'GET', `/api/council-recovery/requests/${id}/shares`)).json;
+    expect((await recoverCouncilSecret(released, ephemeral, wire(ursula.identity))).secret).toEqual(enrollment.secret);
   });
 
   it('keeps one request at a time, and lets the user refuse it', async () => {
@@ -661,7 +748,7 @@ describe('recovery', () => {
       code: API_ERROR_COUNCIL_REQUEST_EXISTS,
     });
 
-    await contribute(alice, id, false);
+    await contribute(alice, id, true);
     expect((await call(ursula, 'POST', `/api/council-recovery/requests/${id}/refuse`)).status).toBe(200);
     expect(await testPrisma.councilContribution.count()).toBe(0);
     expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toEqual({ request: null });
@@ -714,8 +801,8 @@ describe('recovery', () => {
       code: API_ERROR_COUNCIL_OWN_REQUEST,
     });
 
-    const detailed = await contribute(bruno, json.id, false);
-    expect(detailed.json.stage).toBe('awaiting_meeting');
+    const detailed = await contribute(bruno, json.id, true);
+    expect(detailed.json.stage).toBe('collecting');
     await call(alice, 'POST', `/api/council-recovery/requests/${json.id}/refuse`);
     expect(await testPrisma.councilContribution.count()).toBe(0);
     expect((await call(chloe, 'GET', `/api/council-recovery/requests/${json.id}/custodian`)).json).toMatchObject({
@@ -732,15 +819,15 @@ describe('recovery', () => {
     const { id } = await ask();
 
     config.cooldownMinutes = 0;
-    await contribute(alice, id, false);
-    expect((await contribute(bruno, id, true)).json.stage).toBe('cooldown');
+    await contribute(bruno, id, true);
+    expect((await contribute(alice, id, false)).json.stage).toBe('cooldown');
   });
 
   it('expires a request and closes the released credential with it', async () => {
     const { auth } = await enrolled();
     const { id } = await ask();
-    await contribute(alice, id, false);
     await contribute(bruno, id, true);
+    await contribute(alice, id, false);
 
     await testPrisma.councilRequest.update({ where: { id }, data: { expiresAt: new Date(Date.now() - 1000) } });
 
@@ -853,8 +940,8 @@ describe('resharing', () => {
     const { json } = await call<{ id: string }>(ursula, 'POST', '/api/council-recovery/requests', {
       ephemeral_public_key: uint8ToBase64(ephemeralWire),
     });
-    expect((await contribute(alice, json.id, false)).json.stage).toBe('awaiting_meeting');
-    expect((await contribute(denis, json.id, true)).json.stage).toBe('released');
+    expect((await contribute(denis, json.id, true)).json.stage).toBe('collecting');
+    expect((await contribute(alice, json.id, false)).json.stage).toBe('released');
 
     const released = (await call<Parameters<typeof recoverCouncilSecret>[0]>(ursula, 'GET', `/api/council-recovery/requests/${json.id}/shares`)).json;
     expect(
@@ -1097,15 +1184,15 @@ describe('resharing', () => {
     const { json } = await call<{ id: string }>(ursula, 'POST', '/api/council-recovery/requests', {
       ephemeral_public_key: exportPublicKeyAsBase64(ephemeral.publicKey),
     });
-    expect((await contribute(alice, json.id, false)).json.stage).toBe('awaiting_meeting');
+    expect((await contribute(bruno, json.id, true)).json.stage).toBe('collecting');
 
     await help(alice, sessionId);
     await help(bruno, sessionId);
     expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(ursula.id)! } })).generation).toBe(1);
     expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(victor.id)! } })).generation).toBe(2);
 
-    // Bruno's in-person share still belongs to the split Alice's remote one came from.
-    expect((await contribute(bruno, json.id, true)).json.stage).toBe('released');
+    // Alice's remote share still belongs to the split Bruno's in-person one came from.
+    expect((await contribute(alice, json.id, false)).json.stage).toBe('released');
 
     await call(ursula, 'POST', `/api/council-recovery/requests/${json.id}/refuse`);
     expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(ursula.id)! } })).generation).toBe(2);

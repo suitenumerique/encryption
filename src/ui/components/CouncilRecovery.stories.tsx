@@ -76,7 +76,7 @@ IntroStory.play = async ({ canvasElement }) => {
 };
 export const Ask = prepareStory(IntroStory);
 
-// After asking: nothing about who approved, or how many.
+// After the meeting, while the others approve remotely: nothing about who, or how many.
 const InProgressStory = Template.bind({});
 InProgressStory.args = baseArgs;
 InProgressStory.parameters = { msw: { handlers: [handleGetApiCouncilRecoveryRequestsMine({ body: { request: request() } })] } };
@@ -84,13 +84,14 @@ InProgressStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.in_progress_title'));
   canvas.getByText(i18n.t('council.in_progress_description', { council: COUNCIL_LABEL }));
+  canvas.getByText(i18n.t('council.in_progress_email'));
   await playFindButton(canvasElement, i18n.t('council.refuse_request'));
   expect(canvas.queryByText('Alice Martin')).toBeNull();
 };
 export const InProgress = prepareStory(InProgressStory);
 
-// Remote approvals are in: the names of who can hand over the last share, and
-// the code they check on this screen.
+// Right after asking: the names of who can hand over the first share, and the
+// code they check on this screen. Remote approvals only come after.
 const MeetStory = Template.bind({});
 MeetStory.args = baseArgs;
 MeetStory.parameters = {
@@ -108,6 +109,7 @@ MeetStory.play = async ({ canvasElement }) => {
   canvas.getByText('Bruno Petit');
   canvas.getByText('Chloé Durand');
   await canvas.findByLabelText(sampleFingerprint.match(/\d{5}/g)!.join(' '));
+  canvas.getByText(i18n.t('council.meet_code_hint'));
   await canvas.findByRole('img', { name: i18n.t('council.meet_qr_label') });
 };
 export const GoAndSee = prepareStory(MeetStory);

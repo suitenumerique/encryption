@@ -52,6 +52,11 @@ export const STORE_DEVICE_ACTIVITY = 'deviceActivity';
 // Its secret half never leaves this store, and is deleted once the vault is back.
 export const STORE_COUNCIL_REQUEST = 'councilRequest';
 
+// The councils a user verified on this browser by their code: per user and
+// council, the hash of the version 1 they compared. A council presented later
+// with another version 1 is another council, refused.
+export const STORE_COUNCIL_VERIFIED = 'councilVerified';
+
 // ============================================================================
 // Trusted Types policy names
 // ============================================================================
@@ -112,6 +117,7 @@ export const MSG_VAULT_COUNCIL_CONTRIBUTE = 'vault:council-contribute';
 export const MSG_VAULT_COUNCIL_SIGN_ROSTER = 'vault:council-sign-roster';
 export const MSG_VAULT_COUNCIL_RESHARE_BATCH = 'vault:council-reshare-batch';
 export const MSG_VAULT_COUNCIL_CHECK_SHARES = 'vault:council-check-shares';
+export const MSG_VAULT_COUNCIL_MARK_VERIFIED = 'vault:council-mark-verified';
 // --- Vault product requests: fingerprint registry ---
 export const MSG_VAULT_CHECK_FINGERPRINTS = 'vault:check-fingerprints';
 export const MSG_VAULT_ACCEPT_FINGERPRINT = 'vault:accept-fingerprint';

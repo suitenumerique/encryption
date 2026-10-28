@@ -55,7 +55,7 @@ const request = {
   can_contribute: true,
 };
 
-const handlers = (stage: 'awaiting_meeting' | 'released') => ({
+const handlers = (stage: 'collecting' | 'released') => ({
   msw: {
     handlers: [
       handleGetApiCouncilRecoveryRequestsByIdCustodian({
@@ -71,6 +71,7 @@ const handlers = (stage: 'awaiting_meeting' | 'released') => ({
           escrow: sampleCouncilEscrowRecord,
           capsule: { kind: 'direct', generation: 1, slot: 1, wrapped_share: samplePublicKey.key_binding_signature },
           chain: [sampleRosterVersion()],
+          attestation: null,
         },
       }),
       handlePostApiCouncilRecoveryRequestsByIdContribute({ body: { stage } }),
@@ -88,7 +89,7 @@ const baseArgs = {
 
 const RemoteStory = Template.bind({});
 RemoteStory.args = { ...baseArgs, mode: 'remote' };
-RemoteStory.parameters = handlers('awaiting_meeting');
+RemoteStory.parameters = handlers('collecting');
 RemoteStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('council.remote_title'));
   await within(canvasElement).findByText(i18n.t('council.remote_worthless_alone'));
@@ -110,6 +111,7 @@ async function typeCode(canvasElement: HTMLElement, code: string) {
 
 // In person, typing the code read on the person's screen (no camera here). A
 // matching code hands nothing over yet: the custodian confirms the person first.
+// A threshold of 1: this share alone releases.
 const InPersonStory = Template.bind({});
 InPersonStory.args = { ...baseArgs, mode: 'in-person' };
 InPersonStory.parameters = handlers('released');
@@ -127,6 +129,19 @@ InPersonStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('council.handed_over_released', { name: request.user_name }));
 };
 export const HandOverInPerson = prepareStory(InPersonStory);
+
+// The usual case: the meeting comes first, and the other custodians approve remotely after it.
+const MeetingFirstStory = Template.bind({});
+MeetingFirstStory.args = { ...baseArgs, mode: 'in-person' };
+MeetingFirstStory.parameters = handlers('collecting');
+MeetingFirstStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await typeCode(canvasElement, await requestCode());
+  await userEvent.click(await canvas.findByRole('checkbox', { name: i18n.t('council.identity_checked', { name: request.user_name }) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.in_person_button')));
+  await canvas.findByText(i18n.t('council.handed_over_met', { name: request.user_name }));
+};
+export const MeetingFirst = prepareStory(MeetingFirstStory);
 
 // The code is not the request's: refused before anything reaches the vault.
 const MismatchStory = Template.bind({});

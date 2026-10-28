@@ -1,6 +1,13 @@
 import { type IDBPDatabase, openDB } from 'idb';
 
-import { DB_NAME, STORE_COUNCIL_REQUEST, STORE_DEVICE_ACTIVITY, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import {
+  DB_NAME,
+  STORE_COUNCIL_REQUEST,
+  STORE_COUNCIL_VERIFIED,
+  STORE_DEVICE_ACTIVITY,
+  STORE_USER_ALIAS,
+  STORE_VAULT_CACHE,
+} from '@encryption/src/shared/constants';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -38,6 +45,10 @@ export const MIGRATIONS: ReadonlyArray<(db: IDBPDatabase) => void> = [
   // v4 — the ephemeral key of a running recovery request to the user's council.
   (db) => {
     if (!db.objectStoreNames.contains(STORE_COUNCIL_REQUEST)) db.createObjectStore(STORE_COUNCIL_REQUEST);
+  },
+  // v5 — the version 1 of each council a user verified by its code.
+  (db) => {
+    if (!db.objectStoreNames.contains(STORE_COUNCIL_VERIFIED)) db.createObjectStore(STORE_COUNCIL_VERIFIED);
   },
 ];
 

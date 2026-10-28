@@ -12,8 +12,10 @@ import { type EscrowHealth, type Tx, activeIdentityIdsOf, councilHead, escrowHea
 import { afterRequestClosed } from '@encryption/src/server/council-reshare-core';
 
 // How a request looks from the outside. Between `open` and `released`, the
-// progress is derived from the contributions; the locked-out user only ever sees
-// "in progress" or "go and see one of these people", never a count.
+// progress is derived from the contributions: first the meeting (one share
+// handed over in person, the attestation every remote vault requires), then the
+// remote approvals. The locked-out user only ever sees "go and see one of these
+// people", then "in progress", never a count.
 export const RequestStageSchema = z.enum(['collecting', 'awaiting_meeting', 'cooldown', 'released', 'completed', 'aborted', 'expired']);
 export type RequestStage = z.infer<typeof RequestStageSchema>;
 
@@ -83,12 +85,12 @@ export function requestStage({ request, threshold, contributions }: RequestFacts
   if (request.expiresAt.getTime() <= nowMs) return 'expired';
   if (request.status === 'released') return 'released';
 
-  const inPerson = contributions.filter((c) => c.inPerson).length;
-  const remote = contributions.length - inPerson;
+  const inPerson = contributions.some((c) => c.inPerson);
 
-  if (contributions.length >= threshold && inPerson >= 1) return request.releaseNotBefore.getTime() <= nowMs ? 'released' : 'cooldown';
+  if (!inPerson) return 'awaiting_meeting';
+  if (contributions.length >= threshold) return request.releaseNotBefore.getTime() <= nowMs ? 'released' : 'cooldown';
 
-  return remote >= threshold - 1 && inPerson === 0 ? 'awaiting_meeting' : 'collecting';
+  return 'collecting';
 }
 
 /** Lock the request row until the transaction ends. False when there is no such request. */

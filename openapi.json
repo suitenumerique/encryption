@@ -6177,6 +6177,34 @@
                         "required": ["version", "threshold", "previous_roster_hash", "members", "signatures"],
                         "additionalProperties": false
                       }
+                    },
+                    "attestation": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "slot": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 255
+                        },
+                        "custodian_user_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "wrapped_share": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        },
+                        "signature": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        }
+                      },
+                      "required": ["slot", "custodian_user_id", "wrapped_share", "signature"],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -6190,7 +6218,8 @@
                     "meeting_required",
                     "escrow",
                     "capsule",
-                    "chain"
+                    "chain",
+                    "attestation"
                   ],
                   "additionalProperties": false
                 }

@@ -16,6 +16,7 @@ import {
   uploadSharesChecked,
 } from '@encryption/src/ui/api/council-client';
 import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
+import { CouncilCode } from '@encryption/src/ui/components/CouncilCode';
 import { CouncilHandOver } from '@encryption/src/ui/components/CouncilHandOver';
 import { CouncilRequestRow } from '@encryption/src/ui/components/CouncilRequestRow';
 import { CouncilReshareStart } from '@encryption/src/ui/components/CouncilReshareStart';
@@ -313,6 +314,7 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
 
             {council.role === 'custodian' && (
               <>
+                {council.chain.length > 0 && <CouncilCode councilId={council.council_id} chain={council.chain} />}
                 <HealthLine council={council} />
                 {council.faulty_reshares.map((faulty) => (
                   <Notice key={faulty.helper_name} type={VariantType.ERROR}>

@@ -16,6 +16,7 @@ import {
   subject as councilRecoveryRequestedSubject,
 } from '@encryption/src/server/email/templates/CouncilRecoveryRequested';
 import {
+  type CouncilRecoveryStep,
   CouncilRecoveryToApproveEmail,
   subject as councilRecoveryToApproveSubject,
 } from '@encryption/src/server/email/templates/CouncilRecoveryToApprove';
@@ -45,11 +46,12 @@ export async function sendCouncilRecoveryToApprove(params: {
   locale: string;
   requester: string;
   council: string;
+  step: CouncilRecoveryStep;
   productUrl: string;
 }): Promise<void> {
   await send(params.locale, {
     recipients: [params.recipient],
-    subject: councilRecoveryToApproveSubject(params.locale),
+    subject: councilRecoveryToApproveSubject(params.locale, params.step),
     emailComponent: CouncilRecoveryToApproveEmail(params),
   });
 }

@@ -7,6 +7,7 @@ import {
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_MARK_VERIFIED,
   MSG_VAULT_COUNCIL_REACTIVATE,
   MSG_VAULT_COUNCIL_REQUEST_KEY,
   MSG_VAULT_COUNCIL_RESHARE_BATCH,
@@ -29,7 +30,7 @@ import type {
 } from '@encryption/src/shared/schemas/recovery-council';
 import type { CustodianRequestDetail, RequestSigner } from '@encryption/src/ui/api/council-client';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
-import type { CouncilEscrowCheck } from '@encryption/src/vault/operations/recovery-council';
+import type { CouncilEscrowCheck, CouncilIdentity } from '@encryption/src/vault/operations/recovery-council';
 
 /** The recovery council's vault operations, typed (all privileged: the interface's own). */
 export function useCouncilVault() {
@@ -43,14 +44,16 @@ export function useCouncilVault() {
         return signature;
       }) satisfies RequestSigner,
       verifyRoster: (councilId: string, chain: RosterVersionWire[], anchorHash?: string) =>
-        request(MSG_VAULT_COUNCIL_VERIFY_ROSTER, { councilId, chain, anchorHash }) as Promise<{ version: number; fingerprint: string }>,
+        request(MSG_VAULT_COUNCIL_VERIFY_ROSTER, { councilId, chain, anchorHash }) as Promise<{ version: number } & CouncilIdentity>,
+      markVerified: (councilId: string, chain: RosterVersionWire[]) =>
+        request(MSG_VAULT_COUNCIL_MARK_VERIFIED, { councilId, chain }) as Promise<CouncilIdentity>,
       createEscrow: (councilId: string, chain: RosterVersionWire[], lang: MnemonicLanguage, anchorHash?: string) =>
         request(MSG_VAULT_COUNCIL_CREATE_ESCROW, { councilId, chain, anchorHash, lang }) as Promise<CouncilEscrowBody>,
       checkEscrow: (record: CouncilEscrowRecordWire, chain: RosterVersionWire[]) =>
         request(MSG_VAULT_COUNCIL_CHECK_ESCROW, { record, chain }) as Promise<{
           status: CouncilEscrowCheck;
-          headFingerprint: string | null;
           renewalDue: boolean;
+          council: CouncilIdentity | null;
         }>,
       startRequest: () => request(MSG_VAULT_COUNCIL_START_REQUEST) as Promise<{ ephemeralPublicKey: string; fingerprint: string }>,
       requestKey: (serverFingerprint?: string | null) =>

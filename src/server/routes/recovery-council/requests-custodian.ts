@@ -18,7 +18,7 @@ import {
   settleRequest,
 } from '@encryption/src/server/council-requests-core';
 import { afterRequestClosed, capsuleWire } from '@encryption/src/server/council-reshare-core';
-import { sendCouncilRecoveryAborted, sendCouncilRecoveryMeeting } from '@encryption/src/server/email/council';
+import { sendCouncilRecoveryAborted, sendCouncilRecoveryToApprove } from '@encryption/src/server/email/council';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import { emergencyRecipient } from '@encryption/src/server/routes/emergency-core';
@@ -28,13 +28,14 @@ import { SKIP_SIG, assertUserId } from '@encryption/src/server/routes/transport-
 import { userFullName } from '@encryption/src/server/user-name';
 import {
   API_ERROR_COUNCIL_ALREADY_CONTRIBUTED,
-  API_ERROR_COUNCIL_MEETING_REQUIRED,
+  API_ERROR_COUNCIL_MEETING_FIRST,
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
   API_ERROR_COUNCIL_OWN_REQUEST,
   API_ERROR_COUNCIL_REQUEST_CLOSED,
   API_ERROR_COUNCIL_REQUEST_NOT_FOUND,
 } from '@encryption/src/shared/error-codes';
 import {
+  CouncilAttestationWireSchema,
   CouncilCapsuleWireSchema,
   CouncilContributionBodySchema,
   CouncilEscrowRecordWireSchema,
@@ -86,6 +87,9 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
             escrow: CouncilEscrowRecordWireSchema,
             capsule: CouncilCapsuleWireSchema,
             chain: z.array(RosterVersionWireSchema),
+            // The share handed over at the meeting, signed: what a remote
+            // custodian's vault checks before releasing anything to this key.
+            attestation: CouncilAttestationWireSchema.nullable(),
           }),
           ...errorResponses(400, 403, 404),
         },
@@ -110,7 +114,11 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
       const capsule = custodianCapsule(row.escrow.capsules, row.escrow.generation, custodian.member, custodian.identity.id);
       if (!capsule) return reply.status(403).send({ code: API_ERROR_COUNCIL_NOT_CUSTODIAN });
 
-      const remote = settled.facts.contributions.filter((c) => !c.inPerson).length;
+      const attestation = await prisma.councilContribution.findFirst({
+        where: { requestId: row.id, inPerson: true },
+        include: { custodianIdentity: true },
+        orderBy: { createdAt: 'asc' },
+      });
 
       return {
         id: row.id,
@@ -120,19 +128,27 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
         user_email: row.user.email,
         ephemeral_public_key: uint8ToBase64(new Uint8Array(row.ephemeralPublicKey)),
         stage: settled.stage,
-        meeting_required: remote >= row.escrow.threshold - 1,
+        meeting_required: settled.stage === 'awaiting_meeting',
         escrow: escrowRecordWire(row.escrow, sha256(new Uint8Array(row.escrow.credential.authPublicKey))),
         capsule: await capsuleWire(capsule, row.escrowId),
         chain: (await councilChain(row.escrow.councilId)).map(rosterVersionWire),
+        attestation: attestation
+          ? {
+              slot: attestation.slot,
+              custodian_user_id: attestation.custodianIdentity.userId,
+              wrapped_share: attestation.wrappedShare,
+              signature: uint8ToBase64(new Uint8Array(attestation.signature)),
+            }
+          : null,
       };
     }
   );
 
-  // Hand over one share. Identity-signed with a fresh authentication. Remote
-  // contributions stop at threshold - 1: the last share is always one a custodian
-  // handed over after checking the code on the person's own screen. The checks
-  // and the insert run under a lock on the request, so two custodians clicking at
-  // once cannot both pass the remote cap, nor a share land after a refusal.
+  // Hand over one share. Identity-signed with a fresh authentication. The first
+  // share is always one a custodian handed over after checking the code on the
+  // person's own screen; remote approvals come after it, and their vaults release
+  // nothing to a key that share does not attest. The checks and the insert run
+  // under a lock on the request, so a share never lands after a refusal.
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/council-recovery/requests/:id/contribute',
     {
@@ -185,8 +201,7 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
           if ((await tx.councilContribution.count({ where: { requestId: row.id, slot: body.slot } })) > 0)
             return { ok: false, status: 409, code: API_ERROR_COUNCIL_ALREADY_CONTRIBUTED };
 
-          const remote = before.facts.contributions.filter((c) => !c.inPerson).length;
-          if (!body.in_person && remote >= escrow.threshold - 1) return { ok: false, status: 409, code: API_ERROR_COUNCIL_MEETING_REQUIRED };
+          if (!body.in_person && before.stage === 'awaiting_meeting') return { ok: false, status: 409, code: API_ERROR_COUNCIL_MEETING_FIRST };
 
           await tx.councilContribution.create({
             data: {
@@ -213,21 +228,22 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
         return reply.status(outcome.status).send({ code: outcome.code });
       }
 
-      // Reaching the meeting step is when the user learns who to go and see.
-      if (outcome.after === 'awaiting_meeting' && outcome.before !== 'awaiting_meeting') {
-        const user = await emergencyRecipient(row.userId);
-        const names = (await liveSlots(outcome.escrow))
-          .filter((s) => !outcome.contributed.has(s.slot))
-          .map((s) => userFullName(s.member.user) ?? s.member.user.email)
-          .join(', ');
-        if (user)
-          sendCouncilRecoveryMeeting({
-            recipient: user.email,
-            locale: user.locale,
-            council: councilLabel(outcome.escrow.councilId),
-            custodians: names,
-            productUrl,
-          }).catch(logEmailFailure(app, 'meeting'));
+      // Met in person: the other custodians may now approve remotely.
+      if (outcome.before === 'awaiting_meeting' && outcome.after === 'collecting') {
+        const requester = await emergencyRecipient(row.userId);
+        for (const { member } of await liveSlots(outcome.escrow)) {
+          if (outcome.contributed.has(member.slot)) continue;
+          const custodian = await emergencyRecipient(member.userId);
+          if (custodian && requester)
+            sendCouncilRecoveryToApprove({
+              recipient: custodian.email,
+              locale: custodian.locale,
+              requester: requester.labelWithEmail,
+              council: councilLabel(outcome.escrow.councilId),
+              step: 'approve',
+              productUrl,
+            }).catch(logEmailFailure(app, 'to approve'));
+        }
       }
 
       return { stage: outcome.after };

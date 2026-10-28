@@ -1,6 +1,6 @@
 import { MSG_VAULT_COUNCIL_CHECK_ESCROW } from '@encryption/src/shared/constants';
 import type { CouncilForMe, CustodianCouncil } from '@encryption/src/ui/api/council-client';
-import { sampleCouncilEscrowRecord, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
+import { sampleCouncilEscrowRecord, sampleCouncilFingerprint, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
 import { defaultVaultRequest } from '@encryption/src/ui/testing/mock-encryption';
 
 // Shared states of the recovery council stories: what the server answers for a
@@ -27,10 +27,12 @@ export function forMe(overrides: { escrow?: Partial<NonNullable<CouncilForMe['es
   };
 }
 
-/** The vault stub, answering the escrow audit with `status`. */
-export function vaultCheckingEscrow(status: 'ok' | 'tampered' | 'chain-broken') {
+/** The vault stub, answering the escrow audit with `status`, and whether the user verified the council. */
+export function vaultCheckingEscrow(status: 'ok' | 'tampered' | 'chain-broken', verified = false) {
   return async (type: string, payload?: unknown) =>
-    type === MSG_VAULT_COUNCIL_CHECK_ESCROW ? { status, headFingerprint: null } : defaultVaultRequest(type, payload);
+    type === MSG_VAULT_COUNCIL_CHECK_ESCROW
+      ? { status, renewalDue: false, council: status === 'ok' ? { fingerprint: sampleCouncilFingerprint, verified } : null }
+      : defaultVaultRequest(type, payload);
 }
 
 export function custodianCouncil(overrides: Partial<CustodianCouncil> = {}): CustodianCouncil {

@@ -127,7 +127,9 @@ export function CouncilHandOver({ getIdToken, councilLabel, request, mode, onBac
             ? t('council.handed_over_released', { name })
             : done === 'cooldown'
               ? t('council.handed_over_cooldown', { name })
-              : t('council.handed_over_waiting', { name })
+              : mode === 'in-person'
+                ? t('council.handed_over_met', { name })
+                : t('council.handed_over_waiting', { name })
         }
         actions={<Button onClick={onDone}>{t('settings.done')}</Button>}
       />

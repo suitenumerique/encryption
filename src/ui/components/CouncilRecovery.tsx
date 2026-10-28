@@ -19,9 +19,10 @@ import type { CouncilAuthProps } from '@encryption/src/ui/hooks/useCouncilErrors
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
 
-// Only the meeting screen polls: that is where the person waits for the custodian
-// in front of them to hand over the last share.
+// The meeting screen polls fast (the custodian in front of the person hands over
+// the first share), the in-progress one slowly (the remote approvals follow).
 const MEETING_POLL_MS = 4000;
+const APPROVALS_POLL_MS = 30_000;
 
 export interface CouncilRecoveryResult {
   publicKey: string;
@@ -57,10 +58,10 @@ async function qrFor(fingerprint: string): Promise<string | null> {
 
 /**
  * A locked-out user asks their council (architecture.md F.3). They are told little on
- * purpose: "in progress", then "go and see one of these people", whose names
- * appear only once the remote approvals are in. The last custodian reads the
- * code this browser shows before handing over the last share; the shares meet
- * here, and nowhere else.
+ * purpose: "go and see one of these people", then "in progress" while the
+ * others approve remotely. The custodian they meet reads the code this browser
+ * shows before handing over the first share, which every remote vault requires;
+ * the shares meet here, and nowhere else.
  */
 export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: CouncilRecoveryProps) {
   const { t } = useTranslation('common');
@@ -141,14 +142,15 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
     })();
   }, [load]);
 
-  // A check when the page comes back, and short polling while the person is at
-  // the meeting: no push needed.
+  // A check when the page comes back, short polling while the person is at the
+  // meeting, slower while the remote approvals come in: no push needed.
   useEffect(() => {
     const onFocus = () => void load();
     window.addEventListener('focus', onFocus);
 
-    const meeting = view.kind === 'request' && view.request.stage === 'meet';
-    const timer = meeting ? window.setInterval(() => void load(), MEETING_POLL_MS) : undefined;
+    const stage = view.kind === 'request' ? view.request.stage : null;
+    const every = stage === 'meet' ? MEETING_POLL_MS : stage === 'in_progress' ? APPROVALS_POLL_MS : null;
+    const timer = every ? window.setInterval(() => void load(), every) : undefined;
 
     return () => {
       window.removeEventListener('focus', onFocus);
