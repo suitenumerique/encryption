@@ -69,7 +69,8 @@ Not final, but the discussion converged on these, and the rest of the document b
 7. **Membership changes never reconstruct `E`**: users' vaults re-arm silently on their next visit, and custodians can reshare for the users who do not come back ([§11](#lifecycle)).
 8. **Custodians must use MFA**, checked from the token claims, with a fresh authentication before every custodian action ([§12](#mfa)).
 9. **The frontend never receives the list of custodians' user ids**: a user learns "you are a custodian of these councils", nothing about the others unless they are one ([§8](#visibility)).
-10. **The configuration mirrors `MAINTENANCE_ESCROW_KEYS`** (proposed): a list of entries, each with the email `domains` it covers and what is assigned to them, matched by the same code ([§4.1](#config-shared)).
+10. **The configuration mirrors `MAINTENANCE_ESCROW_KEYS`**: a list of entries, each with the email `domains` it covers and what is assigned to them, matched by the same code ([§4.1](#config-shared)). Two variables, not one.
+11. **Every council decision is a manual action in the interface**: accepting a council (the user), accepting the role, signing a roster version, contributing, aborting, resharing (custodians). They are privileged vault operations, reachable only from the interface origin, after an explicit click and, for custodians, a fresh authentication. A product, even compromised, cannot trigger any of them ([§10.1](#manual)). The only thing a product page can cause is the silent re-arm, which follows a roster already signed by `k` custodians and cannot pick one ([§11.1](#rearm)).
 
 <a id="config"></a>
 
@@ -111,15 +112,19 @@ RECOVERY_COUNCILS='[
 
 Both variables answer the same question, "which group of the organization does this email belong to, and what is attached to that group", so they should share one implementation rather than two copies drifting apart:
 
-```
-src/server/email-domain-groups.ts          (new, extracted from maintenance-escrow.ts)
-├── emailDomainSchema                      lowercase punycode labels, or "*"
-├── refineDomainGroups(entries, ctx)       a domain listed twice → boot error
-├── domainGroupForEmail(entries, email)    longest label-boundary match, else "*", else null
-└── jsonEnv(schema, hint)                  the JSON.parse preprocess of env-schema.ts
-
-maintenance-escrow.ts   entries: { domains, publicKey }               → a public key
-recovery-councils.ts    entries: { id, label, domains, custodians, … } → a council
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart LR
+  subgraph SH[src/server/email-domain-groups.ts, extracted from maintenance-escrow.ts]
+    D1[emailDomainSchema<br/>punycode labels, or *]
+    D2[refineDomainGroups<br/>a domain listed twice: boot error]
+    D3[domainGroupForEmail<br/>longest label-boundary match, else *, else null]
+    D4[jsonEnv<br/>JSON.parse preprocess for env-schema.ts]
+  end
+  M[MAINTENANCE_ESCROW_KEYS<br/>domains + publicKey] --> SH
+  R[RECOVERY_COUNCILS<br/>id, label, domains, custodians, threshold] --> SH
+  SH -->|owner's email| MK[a maintenance public key]
+  SH -->|user's email| CO[a council to propose]
 ```
 
 `maintenanceEscrowKeyForEmail` becomes `domainGroupForEmail(entries, email)?.publicKey`, with its tests moved to the shared module, so the matching rules of [Appendix E](architecture.md#appendix-e) are written and tested once. Other parts can follow the same pattern:
@@ -175,6 +180,45 @@ Why split `E` and not something else:
 - **Not the VRK.** The VRK is constant for the life of the vault (there is no VRK rotation, [architecture.md §4.4](architecture.md#s4-4)): once reconstructed somewhere, it stays a valid key to every item forever, and nothing can revoke it short of re-encrypting the whole vault. `E` is only a way in: it is useless while its credential is dormant (the server refuses the unlock proof outside an approved session, and serves the vault only to the user's own login), and it is revoked for good by deleting its credential, which the forced phrase change does right after recovery. It also reuses the ordinary cold unlock ([architecture.md §7.2](architecture.md#s7-2)), so recovery adds no new way to open a vault. Against a database leak, `E` is as strong as the VRK (it unwraps the credential's wrapped VRK), so the gain is revocability and server gating, not secrecy.
 - **Not the user's phrase `R`.** It dies at every phrase change, and the user would have to give it away.
 - **One fresh secret per user**, so a reconstruction exposes one person, never the council's power over everyone (that is what [P4](#p4) gets wrong).
+
+<a id="shamir-figure"></a>
+
+### 5.1 Shamir in one figure
+
+`E` is 32 bytes, and Shamir treats each byte separately, the same way. For one byte and a threshold `k = 2`:
+
+```
+  value
+    │                 ● share of C (x = 3)
+    │            ● share of B (x = 2)
+    │       ● share of A (x = 1)
+    │  ○  ← the secret byte = where the line crosses x = 0
+    └──────────────────────────────── x
+```
+
+- Draw a **line** crossing the vertical axis at the secret, with a **random slope**. Each custodian gets **one point** of it: `x` is their slot number, `y` the line's value there.
+- **One point says nothing.** Through it pass lines reaching every possible secret, each exactly as likely. This is not "hard to guess", it is information-theoretically empty.
+- **Any two points fix the line**, hence the secret (Lagrange interpolation at `x = 0`).
+- For a threshold `k`, the line becomes a curve of degree `k - 1` with random coefficients: `k` points fix it, `k - 1` leave every secret equally possible.
+
+The computation runs in GF(2^8), where every value stays a byte and addition is a XOR, with an independent random curve for each of the 32 bytes. A share is therefore 32 bytes plus its `x`, as large as the secret, and up to 255 custodians are possible. Each user has their own `E` and their own curves, so a custodian's shares of two users are unrelated.
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart LR
+  E[E, 32 bytes<br/>user's vault] -->|random curve of degree k-1| SPLIT((split))
+  SPLIT --> S1[share A]
+  SPLIT --> S2[share B]
+  SPLIT --> S3[share C]
+  SPLIT --> S4[share D]
+  S2 --> K2{any k = 2 shares}
+  S3 --> K2
+  K2 -->|Lagrange at x = 0| E2[E]
+  S1 --> K1{k - 1 = 1 share}
+  K1 -->|every E equally possible| NIL[nothing learned]
+```
+
+In the recommended flow nobody reads, types or dictates a share: shares only travel wrapped from one vault to another.
 
 **Why not split the 24 words themselves** (each custodian gets 6 words): that is not Shamir. It needs **all** pieces (no threshold, one departure blocks everything), each piece reveals part of the secret (three colluders holding 18 words have far less left to guess), and the user must know which words go where. A real Shamir share is as large as the secret: 32 bytes plus an index, about 25 words each. SLIP-39 does exactly that, and a "dictated shares" variant is possible ([P3-bis](#p3bis)).
 
@@ -320,6 +364,18 @@ A custodian can also **open** a request on behalf of a user who called them (ide
 
 ### 7.2 What the user sees
 
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart TD
+  L[I lost access] -->|escrow exists| ASK[Ask my organization's recovery council<br/>vault draws the ephemeral key]
+  ASK --> PROG[Request in progress<br/>no count, no names]
+  PROG -->|k - 1 remote approvals| MEET[Go and see one of these people: C, D<br/>QR + 40 digits of the ephemeral key]
+  MEET -->|C checks the screen in person<br/>and gives the last share| UNL[Unlocked<br/>shares combined in this browser]
+  UNL --> NEW[Choose a new phrase, print the new Kit<br/>council escrow re-armed]
+  PROG -->|not me: refuse link in the email| AB[Request aborted, shares discarded]
+  MEET -->|refuse| AB
+```
+
 1. **"I lost access"** ([architecture.md §7.8](architecture.md#s7-8)) offers "ask your organization's recovery council" when an escrow exists. The vault generates the ephemeral key pair (private key in the vault's IndexedDB, never in the interface) and opens the request.
 2. **"Request in progress."** No count, no names of who approved. An email confirms the request to the user's address (if it was not them, the email has a link to refuse, which needs only a login, fail-safe as in [architecture.md §8.2](architecture.md#s8-2)).
 3. **"Go and see one of these people: C, D."** Shown at `awaiting_meeting`, listing the custodians who have **not** contributed yet (only they can give the last share). It reveals by complement who approved, which is acceptable. The screen also shows the ephemeral key's QR and 40 digits.
@@ -386,11 +442,23 @@ The frontend never receives the list of custodians' user ids. Each client gets e
 | Who | Endpoint | Receives | Never receives |
 | --- | --- | --- | --- |
 | Any user | `GET /api/councils/mine` | the councils where **they** are custodian or invited: id, label, role (`custodian` / `invited`), `k`, `n` | anything about councils they are not part of |
-| A custodian, for their councils | same response, custodian part | the other custodians (name, email, fingerprint, status: active, reset, invited), the council's health ([§11.4](#margin)), the pending change to sign, the open requests | |
-| A user being onboarded or re-arming | `GET /api/councils/for-me` | the council matching their email: id, label, `k`, roster version and fingerprint, and for each **slot** the custodian's identity and encryption public keys with their binding signatures (what the vault needs to wrap the shares), plus the roster chain signatures | user ids, names, emails of custodians |
+| A custodian, for their councils | same response, custodian part | the other custodians (name, email, fingerprint, status: active, reset, invited), the council's health ([§11.5](#margin)), the pending change to sign, the open requests | |
+| A user accepting a council or re-arming | `GET /api/councils/for-me` | the council matching their email: id, label, `k`, roster version and fingerprint, and for each **slot** the custodian's display name, identity and encryption public keys with their binding signatures (what the vault needs to wrap the shares), plus the roster chain signatures | user ids, emails of custodians |
 | A user with an open request | `GET /council-recovery/requests/mine` | status; at `awaiting_meeting`, the names of the custodians who have not contributed yet | the count of approvals before that point, who approved |
 
-An empty `/api/councils/mine` means "not a custodian", and the interface hides the whole custodian section. The public keys in `for-me` are keyed by slot, not by user id; reversing them would need a directory lookup per user id, which nobody can enumerate.
+An empty `/api/councils/mine` means "not a custodian", and the interface hides the whole custodian section. The **names** of a council's custodians are shown to the users it covers, because they accept the council knowing who is in it and will have to go and see them ([§11.6](#late-council)); organizations usually publish the list anyway. What stays server-side is the user ids.
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart TD
+  ME[GET /api/councils/mine] --> Q1{user in the head of<br/>a council's roster chain?}
+  Q1 -->|yes| CU[role custodian<br/>card: members, health, change to sign<br/>+ open requests in the inbox]
+  Q1 -->|no| Q2{named by the configuration<br/>in a change not yet signed?}
+  Q2 -->|yes| IN[role invited<br/>Accept or refuse the role]
+  Q2 -->|no| NONE[empty list<br/>custodian section hidden]
+```
+
+The public keys in `for-me` are keyed by slot, not by user id; reversing them would need a directory lookup per user id, which nobody can enumerate.
 
 **Custodian of several councils.** Allowed and expected (a ministry's RSSI on the councils of several directorates). The interface keeps it simple:
 
@@ -457,17 +525,113 @@ sequenceDiagram
   Note over API: users' vaults re-arm to v2 at their next visit (11.1)
 ```
 
+A **proposed roster version** goes through these states:
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'fontSize':'15px','primaryColor':'#3b5bdb','primaryTextColor':'#fff','primaryBorderColor':'#2942b8','lineColor':'#5b6ee0','tertiaryColor':'#fff','labelBackgroundColor':'#ffffff','edgeLabelBackground':'#ffffff','transitionColor':'#5b6ee0','transitionLabelColor':'#33406b','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800'},'themeCSS':'.edgeLabel p{background-color:#fff;padding:4px 10px;border-radius:5px;margin:0;} .edgeLabel .labelBkg{background:transparent;} .statediagram-state .nodeLabel p{font-size:15px;padding:5px 12px;margin:0;}','stateDiagram':{'nodeSpacing':70,'rankSpacing':110,'padding':14,'useMaxWidth':true}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> proposed: configuration differs<br/>from the chain head
+  proposed --> accepted: every newcomer accepted<br/>(interface, fresh MFA)
+  accepted --> head: k custodians of the<br/>previous version signed
+  proposed --> refused: a newcomer refused<br/>(configuration mistake)
+  proposed --> superseded: configuration changed again
+  accepted --> superseded: configuration changed again
+  head --> [*]
+  refused --> [*]
+  superseded --> [*]
+```
+
+A proposal has no expiry: it waits for its signatures. A configuration that changes again replaces it, and the signatures already given are discarded, since they covered another roster.
+
+<a id="manual"></a>
+
+### 10.1 Manual actions only
+
+A compromised product (Docs, Drive, or a script injected into one) talks to the vault with the product origin. Every council decision is therefore a **privileged vault operation**, refused to any origin but the interface's (`PRIVILEGED_OPERATIONS`), and the interface performs it only after an explicit click on a screen that names the council and the people concerned. Custodian actions also require a fresh authentication ([§12](#mfa)) and are signed by the custodian's identity key, which lives in the vault.
+
+| Action | Who | Where | Can a compromised product trigger it? |
+| --- | --- | --- | --- |
+| Accept a council, compare its fingerprint | user | interface, privileged | no |
+| Ask for a recovery, refuse one | user | interface | no (the user's own login, outside any product) |
+| Accept or refuse the custodian role | custodian | interface, privileged, fresh MFA | no |
+| Sign a roster version (promotion, replacement, re-admission after a reset) | custodian | interface, privileged, fresh MFA | no |
+| Contribute a share, abort a request | custodian | interface, privileged, fresh MFA | no |
+| Reshare escrows to a new roster | custodian | interface, privileged, fresh MFA | no |
+| Re-arm one's own escrow to the chain head | user's vault | vault, background | it can **cause** it (a page load), not **steer** it: the vault re-arms only to a version reached from its pinned roster by `k` signatures at each step |
+
+The configuration, the server and the products can propose; only people, in the interface, decide.
+
 <a id="lifecycle"></a>
 
 ## 11. Lifecycle
 
 **Changing membership never reconstructs a secret.** There is no council-wide key; each user has their own `E`. Two mechanisms move escrows to a new roster, and neither rebuilds `E` anywhere.
 
+**Rotation at a glance**, for "G replaces D" in a council of 2 of 4:
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart TD
+  CFG[Operator edits RECOVERY_COUNCILS<br/>G replaces D] --> PEND[Proposed version v2<br/>nothing applied]
+  PEND --> ACC[G accepts the role<br/>interface, fresh MFA]
+  ACC --> SIG[k custodians of v1 sign v2<br/>after checking G's fingerprint]
+  SIG --> HEAD[v2 becomes the head<br/>server deletes D's capsules at once]
+  HEAD --> ESC{each user's escrow<br/>still on v1}
+  ESC -->|user opens Docs or Drive| REARM[11.1 silent re-arm<br/>fresh E', split over v2, old credential burned]
+  ESC -->|user does not come back| RESH[11.2 resharing by k custodians<br/>same E, new shares for v2]
+  ESC -->|neither yet| WAIT[stays on v1<br/>recoverable while k of v1 remain live]
+  WAIT -.->|health alert when v1's margin reaches 0| RESH
+  REARM --> DONE[escrow on v2]
+  RESH --> DONE
+```
+
+Seen from one user's escrow:
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'fontSize':'15px','primaryColor':'#3b5bdb','primaryTextColor':'#fff','primaryBorderColor':'#2942b8','lineColor':'#5b6ee0','tertiaryColor':'#fff','labelBackgroundColor':'#ffffff','edgeLabelBackground':'#ffffff','transitionColor':'#5b6ee0','transitionLabelColor':'#33406b','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800'},'themeCSS':'.edgeLabel p{background-color:#fff;padding:4px 10px;border-radius:5px;margin:0;} .edgeLabel .labelBkg{background:transparent;} .statediagram-state .nodeLabel p{font-size:15px;padding:5px 12px;margin:0;}','stateDiagram':{'nodeSpacing':70,'rankSpacing':110,'padding':14,'useMaxWidth':true}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> on_v1: escrow split over v1
+  on_v1 --> on_v2: silent re-arm (user visit)<br/>or resharing (custodians)
+  on_v1 --> at_risk: departures leave exactly<br/>k live custodians of v1
+  at_risk --> on_v2: re-arm or resharing
+  at_risk --> lost: one more departure
+  on_v2 --> [*]
+  note right of lost
+    Fewer than k shares exist:
+    the council cannot recover this user.
+    The Kit and trusted contacts still can.
+  end note
+```
+
 <a id="rearm"></a>
 
 ### 11.1 Silent re-arm by the user's vault (default)
 
 Re-arming needs an **open vault**, not the user's phrase, and every enrolled device has one. At the next page load in Docs or Drive, the vault sees that its escrow targets an older roster version, walks the chain ([§9](#roster)), draws a fresh `E'`, splits it over the new roster, and replaces the old credential and capsules in one write (as trusted contacts are re-armed, [architecture.md §8.6](architecture.md#s8-6)). No screen, no click: ten thousand users are not disturbed, their escrow updates on their next visit.
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant P as Docs or Drive page
+  participant V as User's vault (iframe)
+  participant API as Encryption server
+  P->>V: any operation (page load)
+  V->>API: GET /api/councils/for-me (background tier, identity-signed)
+  API-->>V: head v2, chain v1 to v2, slot public keys
+  V->>V: walk the chain from the pinned v1:<br/>v2 signed by k custodians of v1?
+  alt chain valid
+    V->>V: draw E', derive a new dormant credential,<br/>split E' k of n over v2, wrap one capsule per slot
+    V->>API: one atomic write: new credential + capsules + escrow signature (v2),<br/>delete the v1 credential and capsules
+    V->>V: pin v2
+  else chain broken
+    V->>V: no re-arm, warning in the settings:<br/>"the council's membership could not be verified"
+  end
+```
+
+The product only causes the vault to run; it sees nothing of the exchange and cannot choose the roster. Since the old credential is deleted in the same write, every share of the old `E` (including those a departed custodian might have kept) becomes worthless.
 
 <a id="reshare"></a>
 
@@ -481,9 +645,68 @@ Users who never return keep an escrow on an old roster version. It stays recover
 
 Nobody ever sees `E`. It runs as a batch in the custodian's vault: for 10,000 users, a few X-Wing operations per user per participant, on the order of a minute (to measure).
 
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant A as Custodian A (v1 and v2)
+  participant B as Custodian B (v1 and v2)
+  participant API as Encryption server
+  participant G as G (new in v2)
+  Note over API: escrows of inactive users still on v1
+  A->>API: "reshare to v2" (interface, fresh MFA)
+  API-->>A: A's v1 capsules for those escrows
+  A->>A: per escrow: unwrap s_A, multiply by its Lagrange coefficient,<br/>split the result k of n over v2,<br/>wrap sub-share j to custodian j of v2, sign
+  A->>API: store sub-shares
+  B->>API: same, from s_B
+  Note over API: each v2 slot holds k sub-shares per escrow<br/>v1 capsules deleted, escrow now on v2
+  Note over G: G does not need to be online:<br/>when G contributes to a recovery later,<br/>G's vault sums its k sub-shares into its share
+```
+
+**New custodians stay passive.** A new custodian's share is the sum of the `k` sub-shares they received, and nothing requires that sum to be computed during the resharing: their vault adds them up when they contribute to a recovery. Only the `k` resharing custodians must act.
+
+**Lost hashes.** The user signed the hash of each original share; resharing produces shares the user never saw, so the combiner can no longer check them one by one, only the final result against the user-signed commitment on `E`'s auth key. Hence the caveat below.
+
 **Caveat.** A dishonest or buggy old custodian sending wrong sub-shares corrupts **every** new share of that escrow, discovered only at recovery (the final check against the user-signed commitment fails). Two answers: **simple**, keep the previous generation (minus the departed custodian's capsules) until the user's vault re-arms; **robust**, do Shamir over a prime field with Feldman commitments, which makes every sub-share verifiable. The second is more work and not needed for a first version.
 
-### 11.3 Events
+<a id="handover"></a>
+
+### 11.3 Why a departing custodian cannot simply hand over their share
+
+The intuitive passation is "D gives their part to G": D's vault unwraps D's capsules and wraps the same shares to G. It is easy, but:
+
+- **Nothing is revoked.** The shares are unchanged and D has had each of them in clear in their vault; whatever D kept still combines with `k - 1` other shares of the **current** split.
+- **It needs D**, present and cooperative, which a departure (or a dismissal, an illness) often rules out.
+- **It touches every escrow anyway**: D holds one capsule per user, so a handover is as much a batch as a resharing.
+
+A real passation must change the shares themselves:
+
+| Mechanism | Needs D | Needs the user | D's old share afterwards | Reaches inactive users |
+| --- | --- | --- | --- | --- |
+| Handover (D to G) | yes | no | **still valid** with `k - 1` current shares | yes |
+| Resharing ([§11.2](#reshare)) | no | no | combines only with `k - 1` **old** shares, which the server deleted | yes |
+| Silent re-arm ([§11.1](#rearm)) | no | a visit | **worthless** (`E` burned) | no |
+
+The handover is therefore not offered. Resharing plus re-arm cover the same need without D and revoke D's share.
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart LR
+  subgraph H[Handover]
+    D1[D's share s_D] -->|same value| G1[G holds s_D]
+    D1 -.->|D still knows it| X1[valid with k-1 current shares]
+  end
+  subgraph R[Resharing]
+    AB[k custodians of v1] -->|new curve, same E| G2[G holds a new share]
+    D2[D's old share] -.->|old curve, deleted elsewhere| X2[needs k-1 old shares]
+  end
+  subgraph RA[Re-arm]
+    U[user's vault] -->|fresh E'| G3[G holds a share of E']
+    D3[D's old share] -.->|E burned| X3[worthless]
+  end
+```
+
+### 11.4 Events
 
 - **A custodian leaves.** Roster change ([§10](#governance)). The server deletes their capsules at once, so they can no longer obtain a share. Escrows stay recoverable through the margin, and [§11.1](#rearm) moves them to the new roster. A departed custodian who saved an unwrapped share earlier still needs `k - 1` others from the **same** split, which re-arming invalidates.
 - **A custodian resets their vault** (lost everything, starts over, [architecture.md §7.8](architecture.md#s7-8)). Same user id, **new identity**: their capsules target keys that no longer exist, so they are **lost to the council while still in the configuration**. The server detects a new identity without continuity link for a custodian's user id and notifies the other custodians: "B reset their vault, their shares are lost, margin now 1". Re-admission needs no configuration change, since it is the same person: a new roster version "new key for B", signed by `k` others after checking B's new fingerprint. Then [§11.1](#rearm) or [§11.2](#reshare) give B fresh shares.
@@ -494,14 +717,66 @@ Nobody ever sees `E`. It runs as a batch in the custodian's vault: for 10,000 us
 - **The user starts over.** Like trusted contacts, the escrow stays on the dormant vault (anti-lockout against a stolen session); the new vault gets a new escrow at onboarding.
 - **The user leaves the council's domain.** Nothing automatic: the escrow names its council. The settings show it and offer to switch when another council matches.
 
+The custodian reset, step by step:
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant B as Custodian B
+  participant API as Encryption server
+  participant A as Custodian A
+  participant C as Custodian C
+  B->>API: starts over (new vault, new identity, no continuity link)
+  Note over API: B's slot targets a key that no longer exists:<br/>B's shares are lost, margin of every version down by one
+  API-->>A: email: B reset their vault, margin now 1
+  API-->>C: email: B reset their vault, margin now 1
+  API-->>B: interface: you are custodian of DINUM, re-admission needed
+  A->>B: call: compare B's new fingerprint
+  A->>API: sign roster v3 "new key for B" (interface, fresh MFA)
+  C->>API: sign roster v3 (after the same check)
+  Note over API: v3 is the head, re-arms and resharing<br/>give B fresh shares, margin restored
+```
+
 <a id="margin"></a>
 
-### 11.4 Margin and health
+### 11.5 Margin and health
 
 - **Boot rule**: `n >= k + 1` mandatory, `n >= k + 2` recommended. With 2 of 4, two departures are absorbed.
 - **Health, visible to custodians** for each roster version still in use: how many escrows, and how many of their slots still target live keys. An alert when a version's margin reaches 0: "one more departure would make the recovery of X users impossible". The fix is a replacement, then the re-arms.
 - **An absence of unknown length** (long illness, extended leave) is handled the same way: replace ahead of time rather than wait.
 - **Two departures at once** with a margin of 1: the users who re-armed since the first departure are safe; the others are recoverable only by a reshare done **before** the second departure, which is exactly what the health alert is for.
+
+<a id="late-council"></a>
+
+### 11.6 A council created after the user
+
+A council can be set up, or a user's domain covered, long after the user's onboarding. Joining it needs an **open vault**, as a re-arm does, but the **first** acceptance is a decision: it is the moment the user trusts the council, so it is never silent and never done from a product.
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant OP as Operator
+  participant API as Encryption server
+  participant CU as Custodians
+  participant P as Docs or Drive page
+  participant UI as Interface + vault (user)
+  OP->>API: deploy RECOVERY_COUNCILS with a new council
+  CU->>API: accept the role, sign v1 (bootstrap, 10)
+  Note over CU: the organization publishes v1's fingerprint
+  P->>UI: vault sees a matching council, not accepted:<br/>"recovery council available" flag in has-keys
+  P->>UI: product shows a badge, on click openSettings('recovery-council')
+  UI-->>UI: "Your organization set up a recovery council:<br/>A, B, C, D (2 of 4). Fingerprint 1234 5678 ...<br/>compare it with the one it published"
+  UI->>UI: user clicks Accept: vault op accept-council (privileged):<br/>verify v1's signatures, pin v1, draw E, split, wrap capsules
+  UI->>API: credential + capsules + escrow signature
+  Note over UI,API: later membership changes: silent re-arm (11.1),<br/>a mention in the settings, no new prompt
+```
+
+- **One prompt, once.** "Later" keeps a badge in the product and an entry in the settings; whether "never" exists depends on [question 1](#open) (mandatory or proposed).
+- **The names are shown** at that moment, as at onboarding: the user is about to rely on these people.
+- **The product only opens the interface.** It learns from the vault that a council is available (one flag, no names), and the acceptance itself is a privileged operation ([§10.1](#manual)).
+- A user who **moves to another council's domain** gets the same prompt for the new council; their old escrow stays valid until they accept the new one.
 
 <a id="mfa"></a>
 
@@ -512,6 +787,7 @@ Custodian actions (contribute, abort, accept the role, sign a roster version) re
 - **Checked by the server** from the token claims: `amr` (for example `mfa`, `otp`, `hwk`) or a minimum `acr`, configured per council (`requiredAmr`, `requiredAcr`).
 - **Fresh authentication**: before each of these actions the interface asks for a new login with `acr_values` and `max_age=300`, and the server checks `auth_time`, so a session from the day before is not enough.
 - **Per identity provider**: Keycloak supports step-up natively. For ProConnect, which `acr` and `amr` values are actually exposed must be checked before relying on them.
+- **LaSuite Accounts, today**, reports no second factor, ignores the requested `acr` and never renews `auth_time` ([suitenumerique/accounts#141](https://github.com/suitenumerique/accounts/issues/141)), which is why the identity step-up is off by default (`OIDC_STEP_UP_ENABLED`, [architecture.md §2.1](architecture.md#s2-1)). Councils would start in the degraded mode below on such a deployment, and reuse the same step-up code once Accounts handles it.
 - **When the provider exposes nothing**, the server cannot be sure. The council then runs in a degraded mode, with a warning at boot and in the custodians' interface, rather than pretending.
 - **Honest limit**: the claim is issued by the identity provider, often run by the same RSSI. MFA protects against a stolen password, not against collusion. Custodian actions are also signed by the identity key of an open vault ([architecture.md §6.4](architecture.md#s6-4)), which already adds a device factor; MFA mostly hardens the login part.
 
@@ -525,6 +801,7 @@ The locked-out **user** is not required to use MFA to open a request: the reques
 | --- | --- |
 | Stolen user login | Can open a request and collect up to `k - 1` remote approvals, which reveal nothing. Gets the last share only if a custodian, facing the person, sees the attacker's key on the real user's screen, which cannot happen. The user is emailed at once and can refuse. |
 | Compromised encryption server | Cannot combine shares (each is wrapped to a custodian, then to the ephemeral key). Can substitute the ephemeral key, but the in-person custodian compares its fingerprint with the user's screen. Can substitute the roster only before the user pinned it ([§9](#roster)); after that, a forged version fails the chain. Can release the credential without real approvals but still needs `E`, which it never sees; the user's vault detects missing contribution signatures afterwards. |
+| Compromised product (Docs, Drive) | Cannot accept a council, accept a role, sign a roster, contribute or reshare: privileged operations, interface only ([§10.1](#manual)). Can cause a re-arm, which follows only a chain signed by custodians. |
 | Broken or tampered configuration | Proposes a change, applies nothing: membership changes need `k` custodian signatures ([§10](#governance)). |
 | One custodian | A single share is information-theoretically worthless. |
 | `k` colluding custodians | Reconstruct `E` (each unwraps their own share). Still need the user's login to fetch the vault ([architecture.md §8.1](architecture.md#s8-1)). **If the same people control the identity provider** (an RSSI often does), they can mint that login: `k` colluding custodians with control of the identity provider open the vault. This is inherent to any organizational recovery and must be stated plainly to deploying organizations: pick custodians from separate functions (security, DPO, management) and keep `k >= 2`. |
@@ -541,6 +818,7 @@ The locked-out **user** is not required to use MFA to open a request: the reques
 - **New signed messages**, framed like the others: `council-escrow/v1` (user identity key: user id, council id, roster version and hash, `k`, SHA-256 of the credential auth key, capsule and share hashes in slot order), `council-share/v1` (custodian identity key, [§7.4](#flow)), `council-roster/v1` (custodians' identity keys, [§9](#roster)).
 - **Tables.** `council_rosters` (council id, version, `k`, slots with identity id, signatures), `council_escrows` (user, council, roster version, credential id, escrow signature), `council_capsules` (escrow, slot, capsule, key version), `council_requests` (user, ephemeral public key, status, timestamps), `council_contributions` (request, slot, wrapped share, in-person flag, signature).
 - **Routes and tiers** ([architecture.md §6.4](architecture.md#s6-4)): contribute, abort, accept the role and sign a roster version are **identity-signed with fresh MFA**; open a request, fetch the wrapped shares and refuse are **JWT only** for the user (they have no vault left), and safe because nothing they reach releases key material without a meeting. Admitting the council credential in the unlock proof recomputes "`k` valid contributions, at least one in person, cooldown elapsed" at release time, like the lazy wait arithmetic of trusted contacts.
+- **Vault operations.** Privileged (interface only): `accept-council`, `council-open-request`, `council-contribute`, `council-abort`, `council-accept-role`, `council-sign-roster`, `council-reshare`. Background (identity-signed, no interface): `council-rearm`. `has-keys` gains a `councilAvailable` flag so a product can show its badge.
 - **Ephemeral private key** lives in the vault's IndexedDB, never in the interface, and is deleted when the request ends. A reloaded tab keeps the request; another browser does not, which is acceptable (refuse and ask again).
 - **Expiry of a user's recovery request**: 7 days by default, configurable per council (`requestTtlDays`), so holidays do not kill a request: any `k - 1` custodians can approve remotely, and the meeting needs only one of the approvers' remaining colleagues. A long-open request costs little, since `k - 1` shares open nothing without the meeting. Refused or expired requests delete their contributions. A **proposed roster version** ([§10](#governance)) has no expiry: it waits for its signatures until signed or superseded by a newer proposal.
 - **Onboarding UI.** When a council matches, the trusted-contact step proposes it first: "Your organization has a recovery council (2 of 4). Compare its fingerprint with the one published by your organization." A trusted contact stays available as an addition, not a replacement.
@@ -553,10 +831,11 @@ The locked-out **user** is not required to use MFA to open a request: the reques
 1. **Mandatory or proposed?** An organization may want every user escrowed. The server can refuse the first keyring commit without a council escrow row and check its signature and capsule count, but it cannot check that the shares are correct (they are encrypted). A dishonest client can always opt out; the question is whether honest users may skip.
 2. **Is P2 needed**, for a user who cannot sit at a computer? If the user is in hospital, it is a succession case, out of scope for both this route and trusted contacts.
 3. **Roster trust in the first version**: fingerprint comparison plus chain ([§9](#roster)), or the weaker "accept the displayed council" with a documented limitation?
-4. **Names at onboarding**: should the user see who the custodians are when accepting the council, or only at `awaiting_meeting`? Organizations often publish the list anyway.
+4. **Names at acceptance**: recommended yes ([§8](#visibility), [§11.6](#late-council)); the user ids stay server-side. To confirm.
 5. **Video call for the last share**: accepted as "in person" (recognizing a colleague on camera), or a physical meeting only?
 6. **Cooldown default**: 0 (the meeting is the protection) or a short value so the email to the user always arrives before release.
 7. **Resharing in the first version** ([§11.2](#reshare)), or only silent re-arm plus the health alert?
 8. **Relation with the maintenance escrow**: the configuration and its code are shared ([§4.1](#config-shared)); the keys stay fully separate (one is a per-person routine, the other a sealed, temporary batch tool). The open part is the people: Appendix E recommends splitting the maintenance phrase between the security officer, the DPO and a service owner, who are likely the council's custodians. Should the maintenance tool offer to split its phrase (SLIP-39 style, offline) and document the council as its natural holders, or keep the two groups unrelated on paper?
 9. **Domains optional?** Every entry lists `domains` (with `*` for "everyone"), as maintenance keys do. Another way would be a council attached to users explicitly (a list, or a group of the identity provider) instead of by email domain; not needed while organizations map to domains, and the same question would then apply to maintenance keys.
 10. **First roster**: signed by all its custodians, or active from `k + 1` acceptances ([§10](#governance))?
+11. **Entry point for a council created later** ([§11.6](#late-council)): a badge in each product plus a `recovery-council` settings section (also usable from the Accounts encryption page), or a prompt the interface shows by itself the next time it opens?
