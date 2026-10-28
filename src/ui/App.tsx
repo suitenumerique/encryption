@@ -422,6 +422,11 @@ function InterfaceScreens({
     // Waiting for the sign-in tab. No deadline, and no "the tab was closed": the
     // iframe cannot see the tab once a provider page cut the link, so the user
     // decides, by opening the sign-in again or cancelling.
+    // Back from the sign-in tab: its result is being fetched, nothing to reopen.
+    if (oidcAuth.isAuthenticating && oidcAuth.isConfirming) {
+      return frameGate(<LoadingScreen label={t('auth.confirming')} />);
+    }
+
     if (oidcAuth.isAuthenticating) {
       return frameGate(
         <Screen

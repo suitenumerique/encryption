@@ -43,6 +43,12 @@ interface OidcAuthState {
   idTokenSet: IdTokenSet | null;
   /** Whether the user currently holds an ID token */
   isAuthenticated: boolean;
+  /**
+   * Whether the user came back to this window during a sign-in and the server is
+   * being asked for its result: most likely they just finished in the sign-in
+   * tab, so this is shown as "finishing", not as "complete it in the tab".
+   */
+  isConfirming: boolean;
   /** Whether auth is needed but not yet initiated by the user */
   needsAuth: boolean;
   /** Whether a sign-in tab is out and the iframe is waiting for its result */
@@ -94,6 +100,7 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
   const [idTokenSet, setIdTokenSet] = useState<IdTokenSet | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wrongUser, setWrongUser] = useState(false);
   // Ends the sign-in in flight: its tab handshake and its polling.
@@ -102,6 +109,7 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
   const stopAttempt = useCallback(() => {
     stopAttemptRef.current?.();
     stopAttemptRef.current = null;
+    setIsConfirming(false);
   }, []);
 
   useEffect(() => stopAttempt, [stopAttempt]);
@@ -197,10 +205,14 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
 
             return;
           }
+
+          // Not deposited yet: the user came back without finishing.
+          setIsConfirming(false);
         } catch (err) {
           // The server never answered this one (network, a proxy, too many
           // requests): the next check asks again.
           if (!isFinalExchangeError(err)) {
+            setIsConfirming(false);
             scheduleCheck(EXCHANGE_POLL_INTERVAL_MS);
 
             return;
@@ -229,8 +241,9 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
       };
 
       const onReturn = () => {
-        if (document.visibilityState !== 'visible' || inFlight) return;
+        if (document.visibilityState !== 'visible' || inFlight || !signIn) return;
 
+        setIsConfirming(true);
         scheduleCheck(Math.max(0, lastCheckAt + EXCHANGE_MIN_GAP_MS - Date.now()));
       };
 
@@ -290,6 +303,7 @@ export function useOidcAuth(expectedSuiteUserId: string | null): OidcAuthState {
     isAuthenticated: idTokenSet !== null,
     needsAuth,
     isAuthenticating,
+    isConfirming,
     error,
     wrongUser,
     requestAuth,

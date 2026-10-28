@@ -483,6 +483,7 @@
     "required_title": "Authentication required",
     "required_explanation": "To access your encryption settings, you need to authenticate. A new tab will open for you to sign in securely. Once signed in, come back here: this window continues on its own.",
     "continue": "Continue",
+    "confirming": "Finishing the sign-in…",
     "authenticating": "Complete the sign-in in the tab that opened. This window continues on its own once you are signed in. Closed that tab, or cannot find it? Open the sign-in again.",
     "failed": "Authentication failed: {{error}}",
     "retry": "Retry",

@@ -483,6 +483,7 @@
     "required_title": "Authentification requise",
     "required_explanation": "Pour accéder à vos paramètres de chiffrement, vous devez vous authentifier. Un nouvel onglet va s'ouvrir pour vous connecter de manière sécurisée. Une fois connecté, revenez ici : cette fenêtre continue d'elle-même.",
     "continue": "Continuer",
+    "confirming": "Finalisation de la connexion…",
     "authenticating": "Terminez la connexion dans l'onglet qui s'est ouvert. Cette fenêtre continue d'elle-même une fois que vous êtes connecté. Vous avez fermé cet onglet, ou ne le trouvez plus ? Rouvrez la connexion.",
     "failed": "L'authentification a échoué : {{error}}",
     "retry": "Réessayer",

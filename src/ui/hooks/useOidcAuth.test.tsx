@@ -216,6 +216,34 @@ describe('useOidcAuth', () => {
     expect(exchangeSignIn).toHaveBeenCalledTimes(4);
   });
 
+  it('says the sign-in is finishing while it checks after the user comes back, and waiting again when nothing is there yet', async () => {
+    let answer: (value: IdTokenSet | null) => void = () => {};
+    (exchangeSignIn as Mock).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+
+    await act(async () => latest.requestAuth());
+    await tabAsks(tabs[0]);
+    await handedOnce(tabs[0]);
+    expect(latest.isConfirming).toBe(false);
+
+    // Back without having finished: confirming until the server says "not yet".
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(latest.isConfirming).toBe(true);
+    await tick(1000);
+    await act(async () => answer(null));
+    expect(latest.isConfirming).toBe(false);
+    expect(latest.isAuthenticating).toBe(true);
+
+    // Back after finishing: confirming until the ID token is there.
+    await tick(1000);
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(latest.isConfirming).toBe(true);
+    await tick(0);
+    await act(async () => answer(idTokenSet));
+    expect(latest.isConfirming).toBe(false);
+    expect(latest.isAuthenticating).toBe(false);
+    expect(latest.idTokenSet).toEqual(idTokenSet);
+  });
+
   it('skips a check our server did not answer (network, gateway, rate limit) and asks again at the next one', async () => {
     (exchangeSignIn as Mock)
       .mockRejectedValueOnce(new ApiError(0, 'unknown'))
