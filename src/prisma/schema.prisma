@@ -444,7 +444,7 @@ enum CouncilRosterStatus {
   superseded
 }
 
-/// One version of a recovery council's membership (shamir.md §9-10). The council
+/// One version of a recovery council's membership (architecture.md F.2). The council
 /// itself is configured (RECOVERY_COUNCILS); what is in force is this signed
 /// chain: version 1 signed by every custodian it names, each later version by
 /// `threshold` custodians of the previous one and every custodian it adds. The
@@ -583,10 +583,14 @@ enum CouncilRequestStatus {
   aborted
 }
 
-/// A locked-out user's request to their council (shamir.md §7). The browser that
+/// A locked-out user's request to their council (architecture.md F.3). The browser that
 /// opened it holds the ephemeral key every share is wrapped for; the server
 /// releases the council credential only once `threshold` shares arrived, one of
 /// them handed over in person, and the cooldown elapsed.
+///
+/// At most one `open` or `released` request per user: a partial unique index
+/// in the migration (`council_requests_one_live_per_user`), which Prisma cannot
+/// express.
 model CouncilRequest {
   id                 String               @id @default(uuid()) @db.Uuid
   userId             String               @map("user_id") @db.Uuid
@@ -595,6 +599,7 @@ model CouncilRequest {
   status             CouncilRequestStatus @map("status")
   createdAt          DateTime             @default(now()) @map("created_at")
   expiresAt          DateTime             @map("expires_at")
+  releaseNotBefore   DateTime             @map("release_not_before") /// creation + the council's cooldown, fixed when asked
   releasedAt         DateTime?            @map("released_at")
   closedAt           DateTime?            @map("closed_at") /// completed or aborted
 
@@ -632,7 +637,7 @@ enum CouncilReshareStatus {
   cancelled
 }
 
-/// A resharing (shamir.md §11.2): `helperSlots`, custodians of the source
+/// A resharing (architecture.md F.4): `helperSlots`, custodians of the source
 /// version, move the escrows still split over it to the target version, in
 /// batches from their own vaults, without any user and without rebuilding a
 /// secret. An escrow moves once every helper has sealed its sub-shares for it.
@@ -659,6 +664,7 @@ model CouncilReshareSession {
 }
 
 /// The transfer key one helper wraps for one new custodian, signed by the helper.
+/// Written once per helper and session: moved capsules depend on it.
 model CouncilReshareKey {
   id                 String @id @default(uuid()) @db.Uuid
   sessionId          String @map("session_id") @db.Uuid
@@ -707,4 +713,16 @@ model CouncilReshareCommitment {
   @@unique([sessionId, escrowId, helperSlot])
   @@index([escrowId])
   @@map("council_reshare_commitments")
+}
+
+/// A proposal content (roster hash) whose members and custodians were already
+/// emailed, so a proposal that comes back after a flip of the configuration does
+/// not email them again.
+model CouncilProposalNotice {
+  councilId  String   @map("council_id")
+  rosterHash Bytes    @map("roster_hash")
+  notifiedAt DateTime @default(now()) @map("notified_at")
+
+  @@id([councilId, rosterHash])
+  @@map("council_proposal_notices")
 }

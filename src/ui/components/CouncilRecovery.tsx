@@ -14,7 +14,8 @@ import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { type CouncilAuthProps, useCouncilErrors } from '@encryption/src/ui/hooks/useCouncilErrors';
+import { useCouncilAction } from '@encryption/src/ui/hooks/useCouncilAction';
+import type { CouncilAuthProps } from '@encryption/src/ui/hooks/useCouncilErrors';
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { toTrustedMarkup } from '@encryption/src/ui/trusted-markup';
 
@@ -55,7 +56,7 @@ async function qrFor(fingerprint: string): Promise<string | null> {
 }
 
 /**
- * A locked-out user asks their council (shamir.md §7). They are told little on
+ * A locked-out user asks their council (architecture.md F.3). They are told little on
  * purpose: "in progress", then "go and see one of these people", whose names
  * appear only once the remote approvals are in. The last custodian reads the
  * code this browser shows before handing over the last share; the shares meet
@@ -64,9 +65,9 @@ async function qrFor(fingerprint: string): Promise<string | null> {
 export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: CouncilRecoveryProps) {
   const { t } = useTranslation('common');
   const vault = useCouncilVault();
-  const { banner, fail, clear } = useCouncilErrors(auth);
+  const { banner, fail, busy: running, run } = useCouncilAction(auth);
+  const busy = running !== null;
   const [view, setView] = useState<View>({ kind: 'loading' });
-  const [busy, setBusy] = useState(false);
   const recovering = useRef(false);
 
   const recover = useCallback(
@@ -95,6 +96,8 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
       const request = await withFreshIdToken(getIdToken, fetchMyCouncilRequest);
 
       if (!request) {
+        // No request open: a key this browser kept from an earlier one is stale.
+        await vault.requestKey(null);
         const { council, escrow } = await withFreshIdToken(getIdToken, fetchCouncilForMe);
         setView(council && escrow && escrow.health.status !== 'lost' ? { kind: 'intro', council: council.label } : { kind: 'unavailable' });
 
@@ -107,7 +110,8 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
         return;
       }
 
-      const key = await vault.requestKey();
+      // A key that is not the open request's means the request was opened elsewhere.
+      const key = await vault.requestKey(request.ephemeral_fingerprint);
       if (!key) {
         setView({ kind: 'other-browser', request });
 
@@ -152,36 +156,23 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
     };
   }, [load, view]);
 
-  const ask = useCallback(async () => {
-    setBusy(true);
-    clear();
-
-    try {
-      const { ephemeralPublicKey } = await vault.startRequest();
-      await withFreshIdToken(getIdToken, (idToken) => askCouncilRecovery(idToken, ephemeralPublicKey));
-      await load();
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [vault, getIdToken, load, fail, clear]);
+  const ask = useCallback(
+    () =>
+      run(async () => {
+        const { ephemeralPublicKey } = await vault.startRequest();
+        await withFreshIdToken(getIdToken, (idToken) => askCouncilRecovery(idToken, ephemeralPublicKey));
+        await load();
+      }),
+    [run, vault, getIdToken, load]
+  );
 
   const refuse = useCallback(
-    async (requestId: string) => {
-      setBusy(true);
-      clear();
-
-      try {
+    (requestId: string) =>
+      run(async () => {
         await withFreshIdToken(getIdToken, (idToken) => refuseCouncilRequest(idToken, requestId));
         await load();
-      } catch (err) {
-        fail(err);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [getIdToken, load, fail, clear]
+      }),
+    [run, getIdToken, load]
   );
 
   const back = onBack ? { label: t('onboarding.btn_back'), onClick: onBack, disabled: busy } : undefined;

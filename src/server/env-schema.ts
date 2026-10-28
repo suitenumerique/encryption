@@ -174,7 +174,7 @@ const envFields = z.object({
     jsonEnvironmentValue('must be a JSON list of { "domains": [...], "publicKey": "..." }'),
     maintenanceEscrowKeysSchema.optional()
   ),
-  // Optional recovery councils (shamir.md): a JSON list of councils, each with the
+  // Optional recovery councils (architecture.md Appendix F): a JSON list of councils, each with the
   // email domains of the users it covers, its custodians and its threshold
   // (src/server/recovery-councils.ts). The variable only PROPOSES a membership:
   // what is in force is the roster signed by the custodians themselves, so an

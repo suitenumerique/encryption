@@ -1847,6 +1847,11 @@ export type GetApiCouncilsMineResponses = {
         my_contribution: 'none' | 'remote' | 'in_person';
         can_contribute: boolean;
       }>;
+      shares_to_check: number;
+      faulty_reshares: Array<{
+        helper_name: string;
+        escrows: number;
+      }>;
       reshare: {
         session_id: string;
         source_version: number;
@@ -2048,6 +2053,16 @@ export type PostApiCouncilsEscrowErrors = {
   /**
    * Default Response
    */
+  403: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
   404: {
     code: string;
     params?: {
@@ -2167,6 +2182,7 @@ export type GetApiCouncilRecoveryRequestsMineResponses = {
       meet: Array<{
         name: string;
       }>;
+      ephemeral_fingerprint: string | null;
     } | null;
   };
 };
@@ -2256,7 +2272,7 @@ export type GetApiCouncilRecoveryRequestsByIdSharesResponses = {
     generation: number;
     threshold: number;
     share_commitments: string;
-    lang: string;
+    lang: 'french' | 'english';
     escrow: {
       council_id: string;
       roster_version: number;
@@ -2384,6 +2400,21 @@ export type GetApiCouncilRecoveryRequestsByIdCustodianResponses = {
             commitments_signature: string;
           }>;
         };
+    chain: Array<{
+      version: number;
+      threshold: number;
+      previous_roster_hash: string;
+      members: Array<{
+        slot: number;
+        user_id: string;
+        identity_public_key: string;
+        name: string | null;
+      }>;
+      signatures: Array<{
+        identity_public_key: string;
+        signature: string;
+      }>;
+    }>;
   };
 };
 
@@ -2738,7 +2769,27 @@ export type PostApiCouncilsReshareBySessionIdKeysErrors = {
   /**
    * Default Response
    */
+  401: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
   403: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  409: {
     code: string;
     params?: {
       [key: string]: unknown;
@@ -2795,6 +2846,16 @@ export type PostApiCouncilsReshareBySessionIdSubSharesErrors = {
   /**
    * Default Response
    */
+  401: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
   403: {
     code: string;
     params?: {
@@ -2833,6 +2894,16 @@ export type PostApiCouncilsReshareBySessionIdCancelErrors = {
   /**
    * Default Response
    */
+  401: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
   403: {
     code: string;
     params?: {
@@ -2866,3 +2937,153 @@ export type PostApiCouncilsReshareBySessionIdCancelResponses = {
 
 export type PostApiCouncilsReshareBySessionIdCancelResponse =
   PostApiCouncilsReshareBySessionIdCancelResponses[keyof PostApiCouncilsReshareBySessionIdCancelResponses];
+
+export type GetApiCouncilsByCouncilIdSharesToCheckData = {
+  body?: never;
+  path: {
+    councilId: string;
+  };
+  query?: never;
+  url: '/api/councils/{councilId}/shares-to-check';
+};
+
+export type GetApiCouncilsByCouncilIdSharesToCheckErrors = {
+  /**
+   * Default Response
+   */
+  403: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type GetApiCouncilsByCouncilIdSharesToCheckError =
+  GetApiCouncilsByCouncilIdSharesToCheckErrors[keyof GetApiCouncilsByCouncilIdSharesToCheckErrors];
+
+export type GetApiCouncilsByCouncilIdSharesToCheckResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    council_id: string;
+    chain: Array<{
+      version: number;
+      threshold: number;
+      previous_roster_hash: string;
+      members: Array<{
+        slot: number;
+        user_id: string;
+        identity_public_key: string;
+        name: string | null;
+      }>;
+      signatures: Array<{
+        identity_public_key: string;
+        signature: string;
+      }>;
+    }>;
+    escrows: Array<{
+      escrow_id: string;
+      user_id: string;
+      record: {
+        council_id: string;
+        roster_version: number;
+        roster_hash: string;
+        threshold: number;
+        escrow_created_at_millis: number;
+        credential_auth_public_key_hash: string;
+        secret_commitment: string;
+        share_commitments: string;
+        shares: Array<{
+          slot: number;
+          capsule_hash: string;
+        }>;
+        escrow_signature: string;
+      };
+      capsule:
+        | {
+            kind: 'direct';
+            generation: number;
+            slot: number;
+            wrapped_share: string;
+          }
+        | {
+            kind: 'reshared';
+            generation: number;
+            slot: number;
+            session_id: string;
+            escrow_id: string;
+            target_roster_version: number;
+            helpers: Array<{
+              helper_slot: number;
+              helper_identity_public_key: string;
+              wrapped_transfer_key: string;
+              binding_signature: string;
+              sealed_sub_share: string;
+              commitments: string;
+              commitments_signature: string;
+            }>;
+          };
+    }>;
+    remaining: number;
+  };
+};
+
+export type GetApiCouncilsByCouncilIdSharesToCheckResponse =
+  GetApiCouncilsByCouncilIdSharesToCheckResponses[keyof GetApiCouncilsByCouncilIdSharesToCheckResponses];
+
+export type PostApiCouncilsByCouncilIdSharesCheckedData = {
+  body: {
+    results: Array<{
+      escrow_id: string;
+      valid: boolean;
+      faulty_helper_slot: number | null;
+    }>;
+  };
+  path: {
+    councilId: string;
+  };
+  query?: never;
+  url: '/api/councils/{councilId}/shares-checked';
+};
+
+export type PostApiCouncilsByCouncilIdSharesCheckedErrors = {
+  /**
+   * Default Response
+   */
+  401: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  403: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type PostApiCouncilsByCouncilIdSharesCheckedError =
+  PostApiCouncilsByCouncilIdSharesCheckedErrors[keyof PostApiCouncilsByCouncilIdSharesCheckedErrors];
+
+export type PostApiCouncilsByCouncilIdSharesCheckedResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    checked: number;
+    invalid: number;
+  };
+};
+
+export type PostApiCouncilsByCouncilIdSharesCheckedResponse =
+  PostApiCouncilsByCouncilIdSharesCheckedResponses[keyof PostApiCouncilsByCouncilIdSharesCheckedResponses];

@@ -15,6 +15,7 @@ import { handleCheckFingerprints } from '@encryption/src/vault/operations/finger
 import { deriveKeyring, loadWithIdentity } from '@encryption/src/vault/operations/onboarding';
 import {
   handleCheckCouncilEscrow,
+  handleCheckCouncilShares,
   handleCouncilContribute,
   handleCouncilReshareBatch,
   handleCreateCouncilEscrow,
@@ -193,6 +194,83 @@ describe('enrollment', () => {
     expect((await handleCheckCouncilEscrow(ME, { record: { ...record, threshold: 1 }, chain: [wire] })).status).toBe('tampered');
     expect((await handleCheckCouncilEscrow(ME, { record, chain: [{ ...wire, threshold: 3 }] })).status).toBe('chain-broken');
   });
+
+  describe('renewal of the emergency secret', () => {
+    // A version 2 of the council signed by a and b (a majority of three) and by
+    // every member it adds or re-keys.
+    async function next(v1: RosterRecord, members: RosterRecord['members'], newcomers: Person[]): Promise<RosterVersionWire> {
+      const record: RosterRecord = { councilId: COUNCIL, version: 2, threshold: 2, previousRosterHash: await rosterHash(v1), members };
+      const signers = [a, b, ...newcomers];
+
+      return versionWire(
+        record,
+        await Promise.all(signers.map(async (p) => ({ identity: p.identity, signature: await signRoster(record, p.identity.secretKey) })))
+      );
+    }
+
+    async function enrolled() {
+      const v1 = await genesis([a, b, c], 2);
+      const body = await handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: [v1.wire] });
+
+      return { v1, record: await recordOf(body, v1.wire) };
+    }
+
+    const keyOf = (p: Person) => base64ToUint8(wireB64(p.identity));
+
+    it('is not due while every custodian of the split is still there', async () => {
+      const { v1, record } = await enrolled();
+      const d = await person(5);
+      // Adding a custodian takes nothing from anyone: no renewal.
+      const grown = await next(v1.record, [...v1.record.members, { slot: 4, userId: d.id, identityPublicKeyWire: keyOf(d) }], [d]);
+
+      expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire] })).toMatchObject({ status: 'ok', renewalDue: false });
+      expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire, grown] })).toMatchObject({ status: 'ok', renewalDue: false });
+    });
+
+    it('is due once a custodian of the split has left', async () => {
+      const { v1, record } = await enrolled();
+      const d = await person(5);
+      const replaced = await next(v1.record, [...v1.record.members.slice(0, 2), { slot: 4, userId: d.id, identityPublicKeyWire: keyOf(d) }], [d]);
+
+      expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire, replaced] })).toMatchObject({ status: 'ok', renewalDue: true });
+    });
+
+    it('is due once a custodian of the split changed identity key', async () => {
+      const { v1, record } = await enrolled();
+      const rekeyed = { ...c, identity: await generateSignatureKeyPair() };
+      const members = v1.record.members.map((m) => (m.userId === c.id ? { ...m, slot: 5, identityPublicKeyWire: keyOf(rekeyed) } : m));
+
+      expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire, await next(v1.record, members, [rekeyed])] })).toMatchObject({
+        status: 'ok',
+        renewalDue: true,
+      });
+    });
+
+    it('is never due on an escrow or a chain that does not verify', async () => {
+      const { v1, record } = await enrolled();
+
+      expect(await handleCheckCouncilEscrow(ME, { record: { ...record, threshold: 1 }, chain: [v1.wire] })).toMatchObject({ renewalDue: false });
+      expect(await handleCheckCouncilEscrow(ME, { record, chain: [{ ...v1.wire, threshold: 3 }] })).toMatchObject({ renewalDue: false });
+    });
+
+    it('is no longer due once the new secret is split on the current head', async () => {
+      const { v1 } = await enrolled();
+      const d = await person(5);
+      const v2 = await next(v1.record, [...v1.record.members.slice(0, 2), { slot: 4, userId: d.id, identityPublicKeyWire: keyOf(d) }], [d]);
+      (handleFetchPublicKeys as Mock).mockResolvedValue(directory([me, a, b, c, d]));
+
+      const renewed = await handleCreateCouncilEscrow(ME, {
+        councilId: COUNCIL,
+        chain: [v1.wire, v2],
+        anchorHash: (await enrolled()).record.roster_hash,
+      });
+      expect(renewed.roster_version).toBe(2);
+      expect(renewed.shares.map((sh) => sh.slot)).toEqual([1, 2, 4]);
+
+      const record = await recordOf(renewed, v2);
+      expect(await handleCheckCouncilEscrow(ME, { record, chain: [v1.wire, v2] })).toMatchObject({ status: 'ok', renewalDue: false });
+    });
+  });
 });
 
 async function recordOf(body: CouncilEscrowBody, head: RosterVersionWire) {
@@ -234,6 +312,7 @@ describe('contribution', () => {
         ephemeral_public_key: exportPublicKeyAsBase64(ephemeral.publicKey),
         escrow: record,
         capsule: { kind: 'direct' as const, generation: 1, slot, wrapped_share: body.shares[slot - 1].wrapped_share },
+        chain: [wire],
       },
       code: await requestFingerprint(base64ToUint8(exportPublicKeyAsBase64(ephemeral.publicKey))),
     };
@@ -272,6 +351,22 @@ describe('contribution', () => {
     ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED });
   });
 
+  it('refuses a slot the verified council does not give this custodian', async () => {
+    const { detail } = await requestFor(a);
+
+    await expect(
+      handleCouncilContribute(a.id, { detail: { ...detail, capsule: { ...detail.capsule, slot: 2 } }, inPerson: false })
+    ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED });
+  });
+
+  it('refuses malformed data from the server before touching any key', async () => {
+    const { detail } = await requestFor(a);
+
+    await expect(
+      handleCouncilContribute(a.id, { detail: { ...detail, capsule: { ...detail.capsule, slot: 0 } }, inPerson: false })
+    ).rejects.toMatchObject({ code: VaultErrorCode.VAULT_INTEGRITY_FAILED, message: expect.stringContaining('malformed') });
+  });
+
   it('refuses an escrow the person asking did not sign', async () => {
     const { detail } = await requestFor(b);
 
@@ -285,12 +380,75 @@ describe('contribution', () => {
   });
 });
 
+describe('checking received shares', () => {
+  it('judges each share against the signed commitments, and skips a record the owner did not sign', async () => {
+    const { wire } = await genesis([a, b, c], 2);
+    const body = await handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: [wire] });
+    const other = await handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: [wire] });
+    const record = await recordOf(body, wire);
+    loadAs(a);
+
+    const entry = (escrowId: string, wrapped: string, signedRecord = record) => ({
+      escrow_id: escrowId,
+      user_id: ME,
+      record: signedRecord,
+      capsule: { kind: 'direct' as const, generation: 1, slot: 1, wrapped_share: wrapped },
+    });
+    const ids = ['e5c0e5c0-0000-4000-8000-000000000001', 'e5c0e5c0-0000-4000-8000-000000000002', 'e5c0e5c0-0000-4000-8000-000000000003'];
+
+    const { results } = await handleCheckCouncilShares(a.id, {
+      batch: {
+        council_id: COUNCIL,
+        chain: [wire],
+        remaining: 3,
+        escrows: [
+          entry(ids[0], body.shares[0].wrapped_share),
+          entry(ids[1], other.shares[0].wrapped_share),
+          entry(ids[2], body.shares[0].wrapped_share, { ...record, threshold: 1 }),
+        ],
+      },
+    });
+
+    expect(results).toEqual([
+      { escrow_id: ids[0], valid: true, faulty_helper_slot: null },
+      { escrow_id: ids[1], valid: false, faulty_helper_slot: null },
+    ]);
+  });
+});
+
 describe('signing a roster', () => {
-  it('signs a first version that names me with my own key', async () => {
+  it('signs a first version that names me with my own key, once the next member is checked', async () => {
     loadAs(a);
     const { record } = await genesis([a, b, c], 2);
+    const sign = () => handleSignCouncilRoster(a.id, { councilId: COUNCIL, chain: [], proposal: versionWire(record, []) });
 
-    expect((await handleSignCouncilRoster(a.id, { councilId: COUNCIL, chain: [], proposal: versionWire(record, []) })).signature).toBeTruthy();
+    (handleCheckFingerprints as Mock).mockResolvedValue({ results: [{ userId: b.id, status: 'unknown' }] });
+    await expect(sign()).rejects.toMatchObject({ code: VaultErrorCode.UNTRUSTED_RECIPIENT });
+
+    (handleCheckFingerprints as Mock).mockResolvedValue({ results: [{ userId: b.id, status: 'trusted' }] });
+    expect((await sign()).signature).toBeTruthy();
+    // a (slot 1) vouches for b (slot 2) only.
+    expect(Object.keys((handleCheckFingerprints as Mock).mock.calls.at(-1)![1].userFingerprints)).toEqual([b.id]);
+  });
+
+  // The attack the circle stops: real custodians would otherwise sign a first
+  // version in which the server put its own keys under familiar names.
+  it('makes the last member check the first, closing the circle', async () => {
+    loadAs(c);
+    const { record } = await genesis([a, b, c], 2);
+    (handleCheckFingerprints as Mock).mockResolvedValue({ results: [{ userId: a.id, status: 'trusted' }] });
+
+    await handleSignCouncilRoster(c.id, { councilId: COUNCIL, chain: [], proposal: versionWire(record, []) });
+    expect(Object.keys((handleCheckFingerprints as Mock).mock.calls.at(-1)![1].userFingerprints)).toEqual([a.id]);
+  });
+
+  it('refuses to sign a first version that does not name me', async () => {
+    loadAs(me);
+    const { record } = await genesis([a, b, c], 2);
+
+    await expect(handleSignCouncilRoster(ME, { councilId: COUNCIL, chain: [], proposal: versionWire(record, []) })).rejects.toMatchObject({
+      code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
+    });
   });
 
   it('refuses a version that names me with another key', async () => {
@@ -342,6 +500,15 @@ describe('locked-out browser', () => {
 
     expect(started.fingerprint).toBe(await requestFingerprint(base64ToUint8(started.ephemeralPublicKey)));
   });
+
+  it('forgets its request key once the open request is not the one it opened', async () => {
+    const { handleCouncilRequestKey } = await import('@encryption/src/vault/operations/recovery-council');
+    const started = await handleStartCouncilRequest(ME);
+
+    expect(await handleCouncilRequestKey(ME, { serverFingerprint: started.fingerprint })).toMatchObject({ fingerprint: started.fingerprint });
+    expect(await handleCouncilRequestKey(ME, { serverFingerprint: '1'.repeat(40) })).toBeNull();
+    expect(await handleCouncilRequestKey(ME)).toBeNull();
+  });
 });
 
 describe('resharing', () => {
@@ -366,6 +533,64 @@ describe('resharing', () => {
     expect((await handleCouncilReshareBatch(a.id, { batch: { ...batch, transfer_keys_done: true } })).keys).toBeNull();
 
     await expect(handleCouncilReshareBatch(a.id, { batch: { ...batch, target_roster_version: 2 } })).rejects.toMatchObject({
+      code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
+    });
+  });
+
+  // A reload loses nothing: the keys derive from the VRK, so the server never
+  // has to take a second set from the same helper.
+  it('derives the same transfer keys after a reload', async () => {
+    loadAs(a);
+    const { wire } = await genesis([a, b, c], 2);
+    const { default: sodium } = await import('libsodium-wrappers-sumo');
+    const { openTransferKey } = await import('@encryption/src/crypto/council');
+    const batch = {
+      session_id: 'c1f1c6a2-0000-4000-8000-000000000000',
+      council_id: COUNCIL,
+      helper_slots: [1, 2],
+      my_slot: 1,
+      target_roster_version: 1,
+      target_threshold: 2,
+      chain: [wire],
+      transfer_keys_done: false,
+      escrows: [],
+      remaining: 0,
+    };
+
+    const [first, second] = [(await handleCouncilReshareBatch(a.id, { batch })).keys!, (await handleCouncilReshareBatch(a.id, { batch })).keys!];
+    const forB = (keys: typeof first) => openTransferKey(base64ToUint8(keys.keys[1].wrapped_transfer_key), [b.kem.secretKey]);
+
+    expect(sodium.to_hex(await forB(first))).toBe(sodium.to_hex(await forB(second)));
+  });
+
+  // The attack this guards against: a server shows honest helpers a chain it
+  // made up (its own genesis, its own keys), and collects their sub-shares.
+  it('refuses to reshare onto a chain that does not name this helper', async () => {
+    loadAs(a);
+    const [x, y] = await Promise.all([person(8), person(9)]);
+    const { wire: forged } = await genesis([x, y, b], 2);
+    (handleFetchPublicKeys as Mock).mockResolvedValue(directory([me, a, b, c, x, y]));
+
+    const batch = {
+      session_id: 'c1f1c6a2-0000-4000-8000-000000000000',
+      council_id: COUNCIL,
+      helper_slots: [1, 2],
+      my_slot: 1,
+      target_roster_version: 1,
+      target_threshold: 2,
+      chain: [forged],
+      transfer_keys_done: false,
+      escrows: [],
+      remaining: 0,
+    };
+
+    await expect(handleCouncilReshareBatch(a.id, { batch })).rejects.toMatchObject({
+      code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
+      message: expect.stringContaining('helper'),
+    });
+    await expect(
+      handleCouncilReshareBatch(a.id, { batch: { ...batch, chain: [(await genesis([a, b, c], 2)).wire], helper_slots: [2, 3] } })
+    ).rejects.toMatchObject({
       code: VaultErrorCode.VAULT_INTEGRITY_FAILED,
     });
   });

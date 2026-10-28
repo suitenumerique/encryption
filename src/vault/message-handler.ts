@@ -8,6 +8,7 @@ import {
   MSG_VAULT_COMMIT_STAGED,
   MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
   MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_CHECK_SHARES,
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
@@ -78,6 +79,7 @@ import { handleChangeRecoveryPhrase, handlePrepareOnboarding } from '@encryption
 import { resolveTrustedRecipientKeys } from '@encryption/src/vault/operations/recipient-trust';
 import {
   handleCheckCouncilEscrow,
+  handleCheckCouncilShares,
   handleCompleteCouncilRecovery,
   handleCouncilContribute,
   handleCouncilRequestKey,
@@ -270,7 +272,7 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_COUNCIL_START_REQUEST:
       return handleStartCouncilRequest(userId);
     case MSG_VAULT_COUNCIL_REQUEST_KEY:
-      return handleCouncilRequestKey(userId);
+      return handleCouncilRequestKey(userId, payload as { serverFingerprint?: string | null });
     case MSG_VAULT_COUNCIL_COMPLETE_RECOVERY:
       return handleCompleteCouncilRecovery(userId, payload as Parameters<typeof handleCompleteCouncilRecovery>[1]);
     case MSG_VAULT_COUNCIL_REACTIVATE:
@@ -281,6 +283,8 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       return handleSignCouncilRoster(userId, payload as Parameters<typeof handleSignCouncilRoster>[1]);
     case MSG_VAULT_COUNCIL_RESHARE_BATCH:
       return handleCouncilReshareBatch(userId, payload as Parameters<typeof handleCouncilReshareBatch>[1]);
+    case MSG_VAULT_COUNCIL_CHECK_SHARES:
+      return handleCheckCouncilShares(userId, payload as Parameters<typeof handleCheckCouncilShares>[1]);
   }
 }
 

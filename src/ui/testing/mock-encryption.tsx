@@ -4,6 +4,7 @@ import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_CHECK_SHARES,
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
@@ -109,6 +110,8 @@ export const defaultVaultRequest = async (type: string, payload?: unknown): Prom
       return { signature: samplePublicKey.key_binding_signature };
     case MSG_VAULT_COUNCIL_RESHARE_BATCH:
       return { keys: null, subShares: null };
+    case MSG_VAULT_COUNCIL_CHECK_SHARES:
+      return { results: [] };
     default:
       return undefined;
   }

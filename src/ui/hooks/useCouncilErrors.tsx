@@ -2,6 +2,7 @@ import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
 import { type ReactNode, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import { SessionExpiredError, StepUpRequiredError } from '@encryption/src/ui/auth/session-expired';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { Notice } from '@encryption/src/ui/components/layout/Screen';
@@ -15,6 +16,29 @@ export interface CouncilAuthProps {
   isAuthenticating?: boolean;
   onCancelAuth?: () => void;
   currentIdToken?: string | null;
+}
+
+type CouncilVaultErrorKey =
+  | 'errors.vault.council_integrity_failed'
+  | 'errors.vault.council_untrusted'
+  | 'errors.vault.council_code_mismatch'
+  | 'errors.vault.council_no_request'
+  | 'errors.unknown';
+
+/** The vault's message is English and meant for logs: the person reads a translation of its code. */
+export function councilVaultErrorKey(code: VaultErrorCode): CouncilVaultErrorKey {
+  switch (code) {
+    case VaultErrorCode.VAULT_INTEGRITY_FAILED:
+      return 'errors.vault.council_integrity_failed';
+    case VaultErrorCode.UNTRUSTED_RECIPIENT:
+      return 'errors.vault.council_untrusted';
+    case VaultErrorCode.INVALID_KEY_BINDING:
+      return 'errors.vault.council_code_mismatch';
+    case VaultErrorCode.NOT_INITIALIZED:
+      return 'errors.vault.council_no_request';
+    default:
+      return 'errors.unknown';
+  }
 }
 
 /**
@@ -38,9 +62,10 @@ export function useCouncilErrors({ onReconnect, onStepUp, isAuthenticating = fal
     (err: unknown) => {
       if (err instanceof SessionExpiredError) markSessionExpired();
       else if (err instanceof StepUpRequiredError) setStepUp(true);
+      else if (isVaultError(err)) setMessage(t(councilVaultErrorKey(err.code)));
       else setMessage(err instanceof Error ? err.message : String(err));
     },
-    [markSessionExpired]
+    [markSessionExpired, t]
   );
 
   let banner: ReactNode = null;

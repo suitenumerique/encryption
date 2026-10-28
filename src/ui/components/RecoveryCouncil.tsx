@@ -9,7 +9,8 @@ import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { Chip, FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { type CouncilAuthProps, useCouncilErrors } from '@encryption/src/ui/hooks/useCouncilErrors';
+import { useCouncilAction } from '@encryption/src/ui/hooks/useCouncilAction';
+import type { CouncilAuthProps } from '@encryption/src/ui/hooks/useCouncilErrors';
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 import type { CouncilEscrowCheck } from '@encryption/src/vault/operations/recovery-council';
@@ -44,7 +45,7 @@ function Members({ roster }: { roster: RosterVersionWire }) {
 }
 
 /**
- * The user's side of their organization's recovery council (shamir.md §7-11):
+ * The user's side of their organization's recovery council (architecture.md F.3-F.4):
  * accepting it once, after comparing its fingerprint with the one the
  * organization published, and its state afterwards. Changes of membership need
  * nothing from the user; only an escrow that too few custodians can still open
@@ -53,10 +54,10 @@ function Members({ roster }: { roster: RosterVersionWire }) {
 export function RecoveryCouncil({ getIdToken, onBack, onClose, ...auth }: RecoveryCouncilProps) {
   const { t, i18n } = useTranslation('common');
   const vault = useCouncilVault();
-  const { banner, fail, clear } = useCouncilErrors(auth);
+  const { banner, fail, busy: running, run } = useCouncilAction(auth);
+  const busy = running !== null;
   const [view, setView] = useState<View>({ kind: 'loading' });
   const [compared, setCompared] = useState(false);
-  const [busy, setBusy] = useState(false);
 
   useModalSize('medium');
 
@@ -110,10 +111,8 @@ export function RecoveryCouncil({ getIdToken, onBack, onClose, ...auth }: Recove
     if (view.kind !== 'accept' || !view.forMe.council) return;
 
     const { council, escrow } = view.forMe;
-    setBusy(true);
-    clear();
 
-    try {
+    await run(async () => {
       const body = await vault.createEscrow(
         council.council_id,
         council.chain,
@@ -122,12 +121,8 @@ export function RecoveryCouncil({ getIdToken, onBack, onClose, ...auth }: Recove
       );
       await withFreshIdToken(getIdToken, (idToken) => enrollCouncilEscrow(idToken, vault.sign, body));
       setView({ kind: 'done', label: council.label });
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [view, vault, getIdToken, i18n.language, fail, clear]);
+    });
+  }, [view, vault, getIdToken, i18n.language, run]);
 
   const back = onBack ? { label: t('onboarding.btn_back'), onClick: onBack } : undefined;
 

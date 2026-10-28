@@ -17,6 +17,8 @@ import type { VaultRegisteredUser } from '@encryption/src/ui/components/verify-r
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
 
+export type CouncilRenewal = { councilRearm?: CouncilEscrowBody; councilDrop?: boolean };
+
 /**
  * Commit a re-wrapped keyring (recovery-phrase change) to the server, with the
  * emergency burn + re-arm the server enforces: while a recovery is granted the
@@ -29,12 +31,33 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
   const { request, buildEmergencyRearms } = useEncryptionContext();
   const councilVault = useCouncilVault();
 
+  /**
+   * After a council recovery the released credential is burned and the council's
+   * setup renewed over its current members. It is left (and the user told) only
+   * when the council is gone or its membership no longer verifies; any other
+   * failure (network, session) is the caller's to retry.
+   */
+  const renewCouncil = useCallback(
+    async (lang: MnemonicLanguage): Promise<CouncilRenewal> => {
+      const forMe = await withFreshIdToken(getIdToken, fetchCouncilForMe);
+      if (!forMe.council || !forMe.escrow) return { councilDrop: true };
+
+      try {
+        return {
+          councilRearm: await councilVault.createEscrow(forMe.council.council_id, forMe.council.chain, lang, forMe.escrow.record.roster_hash),
+        };
+      } catch (err) {
+        if (isVaultError(err) && (err.code === VaultErrorCode.VAULT_INTEGRITY_FAILED || err.code === VaultErrorCode.UNTRUSTED_RECIPIENT)) {
+          return { councilDrop: true };
+        }
+        throw err;
+      }
+    },
+    [getIdToken, councilVault]
+  );
+
   const commitKeyring = useCallback(
-    async (
-      keyring: VaultKeyringWire,
-      lang: MnemonicLanguage,
-      council?: { councilRearm?: CouncilEscrowBody; councilDrop?: boolean }
-    ): Promise<void> => {
+    async (keyring: VaultKeyringWire, lang: MnemonicLanguage, council?: CouncilRenewal): Promise<{ councilDropped: boolean }> => {
       const { contacts } = await withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken));
       const rows = grantedRearmRows(contacts, Date.now());
 
@@ -84,27 +107,25 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
 
       try {
         await put(body);
+
+        return { councilDropped: council?.councilDrop === true };
       } catch (err) {
         // A council recovery released this vault's council credential and the user
         // left the forced change before it ended: whichever flow changes the phrase
-        // next burns it, renewing the council's setup (or leaving it, when its
-        // membership no longer verifies).
+        // next burns it, renewing the council's setup.
         if (council || !(err instanceof ApiError) || err.code !== API_ERROR_COUNCIL_REARM_REQUIRED) throw err;
 
-        let renewal: Pick<VaultKeyringUpdateBody, 'council_rearm' | 'council_drop'>;
-        try {
-          const forMe = await withFreshIdToken(getIdToken, fetchCouncilForMe);
-          renewal = {
-            council_rearm: await councilVault.createEscrow(forMe.council!.council_id, forMe.council!.chain, lang, forMe.escrow!.record.roster_hash),
-          };
-        } catch {
-          renewal = { council_drop: true };
-        }
+        const renewal = await renewCouncil(lang);
+        await put({
+          ...body,
+          ...(renewal.councilRearm ? { council_rearm: renewal.councilRearm } : {}),
+          ...(renewal.councilDrop ? { council_drop: true } : {}),
+        });
 
-        await put({ ...body, ...renewal });
+        return { councilDropped: renewal.councilDrop === true };
       }
     },
-    [getIdToken, request, buildEmergencyRearms, councilVault]
+    [getIdToken, request, buildEmergencyRearms, renewCouncil]
   );
 
   /**
@@ -149,5 +170,5 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
     [getIdToken]
   );
 
-  return { commitKeyring, findBlockedContacts, revokeContacts };
+  return { commitKeyring, renewCouncil, findBlockedContacts, revokeContacts };
 }

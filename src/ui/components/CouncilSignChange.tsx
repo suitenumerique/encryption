@@ -4,13 +4,15 @@ import { useTranslation } from 'react-i18next';
 
 import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import { MSG_VAULT_ACCEPT_FINGERPRINT, MSG_VAULT_GET_KNOWN_FINGERPRINTS } from '@encryption/src/shared/constants';
+import { changeQuorum, genesisPeer } from '@encryption/src/shared/council-quorum';
 import type { RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 import { type CustodianCouncil, signCouncilVersion } from '@encryption/src/ui/api/council-client';
 import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { type CouncilAuthProps, useCouncilErrors } from '@encryption/src/ui/hooks/useCouncilErrors';
+import { useCouncilAction } from '@encryption/src/ui/hooks/useCouncilAction';
+import type { CouncilAuthProps } from '@encryption/src/ui/hooks/useCouncilErrors';
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
@@ -43,7 +45,7 @@ function changeOf(member: RosterVersionWire['members'][number], head: RosterVers
 }
 
 /**
- * Review and sign a change of a council's membership (shamir.md §10). Signing is
+ * Review and sign a change of a council's membership (architecture.md F.2). Signing is
  * what makes it take effect, never the configuration: the custodian checks, with
  * each newcomer directly, the fingerprint shown here, and the vault refuses to
  * sign until every newcomer is marked checked. A first version is accepted by
@@ -53,10 +55,11 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
   const { t } = useTranslation('common');
   const vault = useCouncilVault();
   const { request } = useEncryptionContext();
-  const { banner, fail, clear } = useCouncilErrors(auth);
+  const { banner, fail, clear, busy: running, run } = useCouncilAction(auth);
+  const busy = running !== null;
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
 
   useModalSize('medium');
 
@@ -91,7 +94,11 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
             .map((r) => r.userId)
         )
       );
-    })().catch(fail);
+    })().catch((err: unknown) => {
+      if (cancelled) return;
+      fail(err);
+      setLoadFailed(true);
+    });
 
     return () => {
       cancelled = true;
@@ -111,28 +118,34 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
     [request, fail, clear]
   );
 
-  const sign = useCallback(async () => {
-    setBusy(true);
-    clear();
+  const sign = useCallback(
+    () =>
+      run(async () => {
+        const { signature } = await vault.signRoster(council.council_id, council.chain, proposal);
+        const { activated } = await withFreshIdToken(getIdToken, (idToken) =>
+          signCouncilVersion(idToken, vault.sign, council.council_id, proposal.version, signature)
+        );
+        onSigned(activated);
+      }),
+    [run, vault, council, proposal, getIdToken, onSigned]
+  );
 
-    try {
-      const { signature } = await vault.signRoster(council.council_id, council.chain, proposal);
-      const { activated } = await withFreshIdToken(getIdToken, (idToken) =>
-        signCouncilVersion(idToken, vault.sign, council.council_id, proposal.version, signature)
-      );
-      onSigned(activated);
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [vault, council, proposal, getIdToken, onSigned, fail, clear]);
+  if (!rows && loadFailed) {
+    return (
+      <Screen
+        back={{ label: t('onboarding.btn_back'), onClick: onBack }}
+        title={t('council.sign_title', { council: council.label })}
+        banner={banner}
+      />
+    );
+  }
 
   if (!rows) return <LoadingScreen />;
 
-  // A first version: everyone vouches for themselves. After that, only newcomers
-  // need checking, by the custodians who approve them.
-  const toCheck = head ? rows.filter((r) => r.change === 'new' || r.change === 'new-key') : [];
+  // A first version: each member checks the next one by slot (the circle the
+  // vault enforces). After that, only newcomers, by the custodians who approve them.
+  const peer = head ? null : genesisPeer(rows, userId ?? '');
+  const toCheck = head ? rows.filter((r) => r.change === 'new' || r.change === 'new-key') : peer ? [peer] : [];
   const ready = toCheck.every((r) => checked.has(r.userId));
   const first = head === null;
 
@@ -147,7 +160,9 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
               ? t('council.sign_first_description', { threshold: proposal.threshold, count: proposal.members.length })
               : t('council.sign_description', { threshold: proposal.threshold, count: proposal.members.length })}
           </p>
-          {toCheck.length > 0 && <p>{t('council.sign_check_newcomers')}</p>}
+          {head && <p>{t('council.sign_quorum', { quorum: changeQuorum(head), count: head.members.length })}</p>}
+          {peer && <p>{t('council.sign_check_peer', { name: peer.name })}</p>}
+          {head && toCheck.length > 0 && <p>{t('council.sign_check_newcomers')}</p>}
         </>
       }
       banner={

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
+import { mnemonicLanguageSchema } from '@encryption/src/shared/schemas/mnemonic-language';
 import { VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
 import '@encryption/src/shared/zod-jitless';
 
-// Wire schemas of the recovery council (shamir.md) whose types the vault and the
+// Wire schemas of the recovery council (architecture.md Appendix F) whose types the vault and the
 // interface need: the roster chain they verify, the escrow the user's vault
 // builds, and what a custodian's or a locked-out user's vault opens. Binary
 // values are base64; the server verifies the signatures over them, never opens
@@ -121,7 +122,7 @@ export const CouncilReleasedSharesSchema = z.object({
   share_commitments: b64,
   // The wordlist the dormant phrase was written in: the phrase string, not only
   // its entropy, derives the credential.
-  lang: z.string(),
+  lang: mnemonicLanguageSchema,
   escrow: CouncilEscrowRecordWireSchema,
   contributions: z.array(
     z.object({
@@ -155,6 +156,27 @@ export const CouncilReshareBatchSchema = z.object({
 });
 
 export type CouncilReshareBatch = z.infer<typeof CouncilReshareBatchSchema>;
+
+// A new custodian's reshared shares to check, and what its vault found.
+export const CouncilCheckBatchSchema = z.object({
+  council_id: z.string(),
+  chain: z.array(RosterVersionWireSchema),
+  escrows: z.array(
+    z.object({ escrow_id: z.string().uuid(), user_id: z.string().uuid(), record: CouncilEscrowRecordWireSchema, capsule: CouncilCapsuleWireSchema })
+  ),
+  remaining: z.number().int().nonnegative(),
+});
+
+export type CouncilCheckBatch = z.infer<typeof CouncilCheckBatchSchema>;
+
+export const CouncilCheckResultsBodySchema = z.object({
+  results: z
+    .array(z.object({ escrow_id: z.string().uuid(), valid: z.boolean(), faulty_helper_slot: slot.nullable() }))
+    .min(1)
+    .max(200),
+});
+
+export type CouncilCheckResultsBody = z.infer<typeof CouncilCheckResultsBodySchema>;
 
 export const CouncilReshareKeysBodySchema = z.object({
   keys: z

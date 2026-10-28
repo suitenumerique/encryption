@@ -1,5 +1,5 @@
 /**
- * The deployment's recovery councils (shamir.md): for each group of users, by
+ * The deployment's recovery councils (architecture.md Appendix F): for each group of users, by
  * email domain, the custodians who can together give one of them their vault
  * back, and how many of them it takes.
  *

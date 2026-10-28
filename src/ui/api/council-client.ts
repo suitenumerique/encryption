@@ -3,6 +3,7 @@ import {
   getApiCouncilRecoveryRequestsByIdCustodian,
   getApiCouncilRecoveryRequestsByIdShares,
   getApiCouncilRecoveryRequestsMine,
+  getApiCouncilsByCouncilIdSharesToCheck,
   getApiCouncilsForMe,
   getApiCouncilsMine,
   getApiCouncilsReshareBySessionIdBatch,
@@ -11,6 +12,7 @@ import {
   postApiCouncilRecoveryRequestsByIdContribute,
   postApiCouncilRecoveryRequestsByIdRefuse,
   postApiCouncilsByCouncilIdReshare,
+  postApiCouncilsByCouncilIdSharesChecked,
   postApiCouncilsByCouncilIdVersionsByVersionSign,
   postApiCouncilsEscrow,
   postApiCouncilsReshareBySessionIdCancel,
@@ -23,6 +25,7 @@ import type {
   GetApiCouncilsForMeResponses,
   GetApiCouncilsMineResponses,
   PostApiCouncilRecoveryRequestsByIdContributeData,
+  PostApiCouncilsByCouncilIdSharesCheckedData,
   PostApiCouncilsEscrowData,
   PostApiCouncilsReshareBySessionIdKeysData,
   PostApiCouncilsReshareBySessionIdSubSharesData,
@@ -191,6 +194,29 @@ export async function cancelCouncilReshare(idToken: string, sign: RequestSigner,
     ...apiDefaults,
     headers: signedHeaders(idToken, xSignature),
     path: { sessionId },
+  });
+
+  return data;
+}
+
+export async function fetchSharesToCheck(idToken: string, councilId: string) {
+  const { data } = await getApiCouncilsByCouncilIdSharesToCheck({ ...apiDefaults, headers: authHeaders(idToken), path: { councilId } });
+
+  return data;
+}
+
+export async function uploadSharesChecked(
+  idToken: string,
+  sign: RequestSigner,
+  councilId: string,
+  body: PostApiCouncilsByCouncilIdSharesCheckedData['body']
+) {
+  const xSignature = await sign('POST', `/api/councils/${encodeURIComponent(councilId)}/shares-checked`, JSON.stringify(body));
+  const { data } = await postApiCouncilsByCouncilIdSharesChecked({
+    ...apiDefaults,
+    headers: signedHeaders(idToken, xSignature),
+    path: { councilId },
+    body,
   });
 
   return data;

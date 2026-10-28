@@ -46,6 +46,8 @@ export function custodianCouncil(overrides: Partial<CustodianCouncil> = {}): Cus
     health: { escrows: 128, ok: 128, at_risk: 0, lost: 0, outdated: [] },
     requests: [],
     reshare: null,
+    shares_to_check: 0,
+    faulty_reshares: [],
     ...overrides,
   };
 }

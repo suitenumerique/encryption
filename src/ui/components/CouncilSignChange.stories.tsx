@@ -4,6 +4,7 @@ import { expect, userEvent, within } from 'storybook/test';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
+import { genesisPeer } from '@encryption/src/shared/council-quorum';
 import { handlePostApiCouncilsByCouncilIdVersionsByVersionSign } from '@encryption/src/ui/api/generated/msw.gen';
 import { CouncilSignChange } from '@encryption/src/ui/components/CouncilSignChange';
 import { COUNCIL_LABEL, custodianCouncil } from '@encryption/src/ui/testing/council-stories';
@@ -40,7 +41,7 @@ const replacement = custodianCouncil({
       members: [...sampleCouncilMembers.slice(0, 3), newcomer],
       signatures: [],
     }),
-    quorum_missing: 2,
+    quorum_missing: 3,
     pending_members: [{ slot: 5, name: newcomer.name }],
     signed_by_me: false,
     may_sign: true,
@@ -64,6 +65,8 @@ ReplacementStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.sign_title', { council: COUNCIL_LABEL }));
   await canvas.findByText(i18n.t('council.sign_removed', { names: 'David Moreau', count: 1 }));
+  // Four custodians with a threshold of 2: a change still needs a majority, 3.
+  canvas.getByText(i18n.t('council.sign_quorum', { quorum: 3, count: 4 }));
   canvas.getByText(i18n.t('council.change_new'));
   const sign = await playFindButton(canvasElement, i18n.t('council.sign_button'));
   expect(sign).toBeDisabled();
@@ -73,7 +76,7 @@ ReplacementStory.play = async ({ canvasElement }) => {
 };
 export const Replacement = prepareStory(ReplacementStory);
 
-// The first version: everyone vouches for their own key, nothing to check on others.
+// The first version: each member vouches for their own key and checks the next one by slot.
 const FirstVersionStory = Template.bind({});
 FirstVersionStory.args = {
   ...baseArgs,
@@ -85,8 +88,18 @@ FirstVersionStory.args = {
 };
 FirstVersionStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('council.sign_first_title', { council: COUNCIL_LABEL }));
-  await within(canvasElement).findByText(i18n.t('council.change_me'));
-  expect(await playFindButton(canvasElement, i18n.t('council.sign_first_button'))).toBeEnabled();
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.change_me'));
+  const members = sampleRosterVersion().members.map((m) => ({ slot: m.slot, userId: m.user_id, name: m.name ?? `#${m.slot}` }));
+  const peer = genesisPeer(members, baseArgs.userId!)!;
+  canvas.getByText(i18n.t('council.sign_check_peer', { name: peer.name }));
+  // Only that one colleague is to check: a single button.
+  const sign = await playFindButton(canvasElement, i18n.t('council.sign_first_button'));
+  expect(sign).toBeDisabled();
+  expect(canvas.getAllByRole('button', { name: i18n.t('council.mark_checked') })).toHaveLength(1);
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.mark_checked')));
+  await canvas.findByText(i18n.t('council.checked'));
+  expect(sign).toBeEnabled();
 };
 export const FirstVersion = prepareStory(FirstVersionStory);
 

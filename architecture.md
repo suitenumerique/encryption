@@ -74,6 +74,7 @@ Terms are defined at first use and in the glossary just below. A passage marked 
 - [Appendix C: Product backend request authorization (explored, not adopted)](#appendix-c)
 - [Appendix D: Auditing and monitoring](#appendix-d)
 - [Appendix E: Maintenance escrow (a deployment option)](#appendix-e)
+- [Appendix F: Recovery council (a deployment option)](#appendix-f)
 
 ---
 
@@ -1722,7 +1723,7 @@ The cryptography detects most server-side tampering only at the moment a user's 
 
 A deployment can keep, for every encrypted resource, one extra wrapped copy of the resource key for an **operator-held maintenance key**, one per organization sharing the deployment. It is a deployment option, off unless `MAINTENANCE_ESCROW_KEYS` is set, and each operator of this open-source service decides for themselves whether to run it and for how long. It is worth running when the operator is not yet confident in the deployment (after a general failure of the encryption in a product, the stored content can still be recovered **from the stored data**, without shipping a client patch and waiting for every user to open every document from an enrolled device), and when the operator wants a guaranteed way out later, such as an organization that stops encrypting or a migration of the stored content to another tool. The escrow lets the content be decrypted offline in batch, then written back in plaintext; users never take part.
 
-**A temporary mode.** The escrow is meant to run for a defined period and then be turned off; it is not a permanent part of the encryption. It answers a **massive** loss (a technical failure of the encryption in a product, an organization stopping it), where waiting for every user to open every document is not an option. A single user losing their keys is a different problem with its own answers, none of which lets anyone else read: the recovery phrase, the trusted contacts of emergency access ([Section 8](#s8)), and later a recovery council holding a split of each user's key (Shamir). Most deployments serve one organization and configure a single key covering every user (`*`); one key per organization is for a deployment several organizations share.
+**A temporary mode.** The escrow is meant to run for a defined period and then be turned off; it is not a permanent part of the encryption. It answers a **massive** loss (a technical failure of the encryption in a product, an organization stopping it), where waiting for every user to open every document is not an option. A single user losing their keys is a different problem with its own answers, none of which lets anyone else read: the recovery phrase, the trusted contacts of emergency access ([Section 8](#s8)), and a recovery council holding a split of a dormant second credential ([Appendix F](#appendix-f)). Most deployments serve one organization and configure a single key covering every user (`*`); one key per organization is for a deployment several organizations share.
 
 **The trade-off, stated plainly.** With the escrow, the content is readable by whoever holds the maintenance secret key, so end-to-end encryption is lowered by exactly that one holder. This is largely acceptable when the key is kept the way the custody section below describes, because the property that matters most is preserved: a leak of the product database, of its backups, or of the encryption server yields ciphertext and wrapped copies that nobody on the network side can open, since the secret key exists only offline. What the escrow gives up is the guarantee that the operator themselves cannot read; what it keeps is the protection against every party that is not the custodian of that key.
 
@@ -1745,3 +1746,122 @@ A deployment can keep, for every encrypted resource, one extra wrapped copy of t
 **Custody and lifecycle.** The phrase is the single most valuable secret of the deployment and is treated accordingly: generated offline on an isolated computer, never typed into a connected one, a server, a CI system, or a shared drive. The recommended custody is a **physical vault under the responsibility of the security officer (RSSI / CISO)**, and better still a **split** of the phrase across several people (the security officer, the data protection officer, a service owner) so that no single person can read content alone and a recovery is a deliberate, witnessed act. Each organization's phrase has its own custodians. When the operator no longer wants the option, unsetting the variable (or an organization's entry) stops new copies, dropping the column removes the existing ones, and destroying the phrase is what actually closes the window, since a copy that still exists stays decryptable by whoever holds it.
 
 **Alternatives that were considered.** For the tool: a command-line program needs Node.js and its dependencies installed on the isolated computer, and a self-contained binary is an opaque artefact to vet; a single HTML file runs in the browser every computer already has, from the same reviewable code the vault runs. A key file instead of a phrase would have to be carried on a drive and could not be split by hand. For telling organizations apart: a column naming the key would have to be added and kept right by every product, and the owner's email domain stored beside the content would say nothing cryptographic (several domains share a key, the mapping changes over time); the key id inside the copy is what the tool has to check anyway. For the escrow itself: a pseudo-recipient added by the product (a reserved user id) would go through the recipient trust gate and the verification modal like any person, and could be dropped by any product. Storing the copies on the encryption server would add a network write to every creation, put per-document metadata on a server that otherwise knows nothing about documents, and keep the copy away from the ciphertext it is needed with. A key handed to the SDK by the product is exactly the raw key injection the trust gate forbids. Escrowing the VRK instead (a third way into each vault) would cover past content too, but would give the operator each user's identity and signing power, far beyond reading content.
+
+---
+
+<a id="appendix-f"></a>
+
+## Appendix F: Recovery council (a deployment option)
+
+A **recovery council** (collège de recouvrement) is a group of people an organization mandates (security officer, DPO, IT management) who can, **together and at once**, give one locked-out user their vault back, without any of them ever seeing a key. It is the third way back into a vault, after the recovery phrase and the trusted contacts of [Section 8](#s8): a contact can leave and makes the user wait by design, a council does neither, because its protection is a quorum of people plus a meeting in person instead of a delay. It is not the maintenance escrow of [Appendix E](#appendix-e), which recovers content in batch without users. Off unless `RECOVERY_COUNCILS` is set; operator guide in the README, "Recovery councils".
+
+<a id="f-1"></a>
+
+### F.1 What is split, and where the shares meet
+
+Each user who accepts their council gets a **dormant second credential** of their own vault, exactly like a trusted-contact escrow ([8.1](#s8-1)): a fresh 24-word phrase `E` derives its own KEK and auth key, which wrap the same VRK. `E` is then **split**, `k` of `n`, between the council's custodians, each share wrapped (X-Wing) for one custodian: a **capsule**. `E` and the shares are discarded. The user's identity signs the escrow record: council, roster version and hash, threshold, a hash of the credential's auth key, a hash of `E`, the hash of each capsule, and the **commitments** of the split.
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'lineColor':'#5b6ee0','edgeLabelBackground':'#ffffff','clusterBkg':'#f5f7ff','clusterBorder':'#9aa7e8','titleColor':'#1a1a2e'},'themeCSS':'.edgeLabel p{background-color:#ffffff;color:#444;font-style:italic;border:1px solid #b5b5b5;padding:2px 8px;border-radius:10px;margin:0;} .edgeLabel .labelBkg{background:transparent;}'}}%%
+flowchart LR
+  VRK[VRK of the user's vault] -->|wrapped under KEK_R| P[Primary credential<br/>the user's phrase]
+  VRK -->|wrapped under KEK_E| C[Council credential<br/>dormant]
+  E[Phrase E<br/>never stored] -.->|derives| C
+  E -->|split k of n| S1[share 1] -->|wrap| K1[capsule, custodian 1]
+  E -->|split k of n| S2[share 2] -->|wrap| K2[capsule, custodian 2]
+  E -->|split k of n| S3[share 3] -->|wrap| K3[capsule, custodian 3]
+```
+
+- **Why `E` and not the VRK.** The VRK never changes ([4.4](#s4-4)); once rebuilt somewhere it opens every item forever. `E` only opens a credential the server serves while a recovery is released, and that credential is burned by the forced phrase change right after. One fresh `E` per user, so a recovery exposes one person, never the council's power over everyone.
+- **Verifiable Shamir (Pedersen).** The split runs over the scalars of the ristretto255 group; besides the shares, the dealer publishes one commitment per coefficient, `a_j·G + b_j·H`, so anyone can check that a share lies on the committed curve. Pedersen and not Feldman: Feldman's commitments contain `E·G`, which a quantum computer would turn back into `E` from a copy of the database, whereas Pedersen's blinding reveals nothing against any attacker. Every operation is libsodium's (`crypto_core_ristretto255_*`, `crypto_scalarmult_ristretto255*`), `H` is hashed to the group from a domain label; `src/crypto/shamir.ts` only arranges them. The hash of `E` in the signed record stays as a last check after combining.
+- **Shares meet only in the locked-out user's browser.** No custodian, and not the server, ever holds more than their own share.
+
+<a id="f-2"></a>
+
+### F.2 The configuration proposes, the custodians decide
+
+`RECOVERY_COUNCILS` has the shape of `MAINTENANCE_ESCROW_KEYS` and the same domain matching (`src/server/email-domain-groups.ts`): per group of email domains, 2 to 12 custodians (`userId` + `email`) and a threshold `k` of at most `n - 1`, so that one absence never blocks every recovery (`k = 1` is allowed with a boot warning). Optional `requestTtlDays` (7 by default, up to 30) and `cooldownMinutes`.
+
+The variable only **proposes**. What is in force is a **chain of roster versions** signed by the custodians, each version listing slots, user ids, pinned identity keys and `k`:
+
+- **Version 1** is signed by every person it names, each vouching for their own key, and each first checking the 40-digit code of **one** colleague, the next by slot (the last checks the first). Without that circle, a server could put its own keys under familiar names next to real custodians, who would sign a list they cannot tell apart; with it, a foreign key anywhere falls to a real custodian's check, at one check per person (the vault refuses to sign until that colleague is marked trusted).
+- **Every later version** needs the signatures of a **strict majority of the previous version, never fewer than its `k`** (a recovery touches one person, a change every user's future shares), plus every newcomer or re-keyed custodian. Signers check each newcomer's 40-digit code with them first; the vault refuses to sign until that identity is marked trusted.
+- A slot number is never given to another person or key.
+- Every vault verifies the chain before wrapping anything for a custodian, from version 1 or from the version the user's own signed escrow pins. A user accepting a council compares the head's 40-digit fingerprint with the one the organization published.
+
+So a compromised server cannot slip its own key into a council, and a broken, emptied or removed entry **deletes nothing**: the council stays as signed, and its custodians are told no change is possible.
+
+<a id="f-3"></a>
+
+### F.3 Recovery
+
+```mermaid
+%%{init: {'theme':'base','look':'classic','themeVariables':{'actorBkg':'#3b5bdb','actorTextColor':'#fff','actorBorder':'#2942b8','signalColor':'#5b6ee0','signalTextColor':'#5b6ee0','noteBkgColor':'#ffe08a','noteTextColor':'#1a1a2e','noteBorderColor':'#e0a800','sequenceNumberColor':'#fff'}}}%%
+sequenceDiagram
+  autonumber
+  participant U as Locked-out browser
+  participant API as Encryption server
+  participant A as Custodian A (remote)
+  participant B as Custodian B (in person)
+  U->>U: fresh ephemeral X-Wing key, kept in this browser
+  U->>API: request + ephemeral public key
+  API-->>A: email
+  A->>API: share wrapped for the ephemeral key, signed
+  Note over API: k - 1 shares in: the user is told whom to go and see
+  U-->>B: meeting, the browser shows a code and a QR
+  B->>B: scans or types the code, the vault compares it with the request's key
+  B->>API: last share, signed, in person
+  API-->>U: released shares
+  U->>U: checks each share against the commitments, combines k, checks the hash of E
+  U->>API: unlocks with E, then the forced phrase change burns the credential and re-arms
+```
+
+- **At most `k - 1` remote approvals.** The last share is always handed over by a custodian who recognizes the person, face to face or on a video call, against the 40-digit code of the browser's ephemeral key: a stolen login can open a request and collect `k - 1` shares, which reveal nothing, but never the last one. The user is emailed at once and can refuse.
+- **The user is told little**: "in progress", then "go and see one of these people". One open request at a time, three a day at most, expiring after `requestTtlDays`.
+- **After the recovery**, the user must choose a new phrase; that rewrite burns the council credential and carries a fresh escrow (`council_rearm` on `PUT /api/vault/keyring`), or leaves the council when it can no longer be verified (`council_drop`).
+
+<a id="f-4"></a>
+
+### F.4 Membership changes: the council moves the escrows
+
+A user's vault draws a new `E` only after a council recovery, or when the user explicitly sets the council up again because too few custodians can still open their escrow (judged from the signed head, never from the variable). Membership changes never need the users: `k` custodians of the old version **reshare** (Desmedt-Jajodia) from their own vaults, in batches. Each checks its own share, multiplies it by its Lagrange weight, splits that again for the new version with commitments it signs, and seals one sub-share per new custodian; each new share is the sum of what its custodian received. `E` is never rebuilt.
+
+- **The server refuses a wrong helper** before anything moves: each helper's first commitment must equal its Lagrange weight times the current commitments evaluated at its slot, and the helpers' first commitments add up to the one the **user** signed.
+- **New custodians check what they received** in the background each time they open their space (no click: a check, not a decision). A share found invalid stops counting in the escrow's health, and the council sees which helper sent it. Only escrows signed by their owner are judged, so a server cannot get an honest helper blamed.
+- **Old capsules are deleted at once.** Database backups still hold them: limit their retention.
+- **What a resharing does not revoke.** `k` holders of the same old generation who kept their copies can still rebuild that `E`. Removing a custodian is not a cryptographic revocation of what they already held. So an active user's vault draws a fresh `E` on their next visit to the interface once a custodian of the version their `E` was split on has left or changed key (`renewalDue` of the escrow audit, then the same anchored enrollment as setting up again, which replaces the old credential and capsules in one write); a user who never comes back keeps the reshared escrow.
+
+<a id="f-5"></a>
+
+### F.5 Who decides
+
+Every council decision is a click in the interface: accepting a council (the user), accepting the role, signing a version, handing over a share, stopping a request, resharing (custodians). Each is a privileged vault operation (`MSG_VAULT_COUNCIL_*`), so a product page, even compromised, triggers none of them. Custodian routes require the step-up ([2.1](#s2-1)); while it is off (LaSuite Accounts reports no second factor today), the custodian space says so. Users a council covers see its members' names; `/api/councils/mine` tells anyone else only "custodian" or "invited".
+
+<a id="f-6"></a>
+
+### F.6 Threats
+
+| Attacker                               | Outcome                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stolen user login                      | Collects at most `k - 1` shares; the last needs a custodian facing the real user's screen. The user is emailed and can refuse.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Impostor on a video call               | A video call is allowed for the last share, so a convincing impostor (or a deepfake) in front of a custodian who does not know the person well is the weakest point. The custodian must recognize the person and read the code on their own screen; an organization can require meetings face to face in its own instructions.                                                                                                                                                                                                                                                                                                                                                                                   |
+| Compromised encryption server          | Never combines in the normal flow (shares are wrapped to custodians, then to the ephemeral key). A swapped ephemeral key fails the in-person code; a forged roster fails the chain; forged helpers or commitments fail the user-signed constant term. **Not covered:** the `k - 1` limit on remote approvals is the server's own rule, so a compromised server can open a request with a key of its own and collect a share from every custodian who approves without contacting the person; `k` such approvals give it `E`, and with the database, the vault. Remote approvers are asked to contact the person first; a signed attestation of the meeting that remote vaults would require is considered (F.7). |
+| Compromised product                    | Causes nothing: every council operation is privileged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Broken or tampered configuration       | Proposes, applies nothing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| One custodian, or a corrupted share    | One share is worthless; a wrong one fails its commitment and is left out, at recovery or at the custodian's next visit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `k` colluding custodians               | Rebuild `E`, and still need the user's login to fetch the vault. If the same people control the identity provider, they open it: pick custodians from separate functions and keep `k >= 2`. Inherent to any organizational recovery.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| An organization wanting to read a user | Out of scope: recovery needs the user's own browser. The maintenance escrow is the tool for that case, with its own custody.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+<a id="f-7"></a>
+
+### F.7 Considered, and still open
+
+**Considered and not built:** approvals without Shamir (the quorum would be server policy only); one custodian combining the shares (would let the council open a vault without the user); one council-wide key (a single reconstruction exposes everyone); dictated shares in SLIP-39 style; plain Shamir over GF(2^8) (no way to check a share; the first version); Feldman commitments (not quantum-hiding); a silent re-arm by every user's vault on each change (touches everyone, from product pages); a contest delay on changes (absent non-signers make it moot, the majority is the guarantee); computing one extra point for a newcomer (resharing covers it and also revokes); a badge in each product.
+
+**Open:** how users who already have keys learn about a council created later (the organization's channel, a `notifyUsers` flag, or that flag drained by a job at a fixed rate; today, a row in their encryption settings and the `recovery-council` section, and onboarding for new users); a signed attestation of the meeting, without which remote vaults would release nothing (it takes the collection of remote shares away from a compromised server, at the cost of remote approvals coming after the meeting); whether a council may be mandatory; a per-council second-factor policy.
+
+<a id="f-8"></a>
+
+### F.8 Code map
+
+Configuration `src/server/recovery-councils.ts` (+ `email-domain-groups.ts`, `npm run council:resolve`); cryptography `src/crypto/shamir.ts`, `src/crypto/council.ts` (signed records, chain verification), `src/crypto/council-protocol.ts` (what a vault does, without storage or network), the change quorum in `src/shared/council-quorum.ts`; server state `src/server/council-*.ts`, routes `src/server/routes/recovery-council/`; vault `src/vault/operations/recovery-council.ts`; screens `RecoveryCouncil`, `CouncilRecovery`, `CouncilCustodian`, `CouncilSignChange`, `CouncilHandOver`, each state in Storybook. The protocol is tested end to end on PGlite with real cryptography (`src/server/routes/recovery-council.test.ts`).

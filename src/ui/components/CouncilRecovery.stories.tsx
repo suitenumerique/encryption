@@ -53,6 +53,7 @@ function request(overrides: Partial<MyCouncilRequest> = {}): MyCouncilRequest {
     created_at_millis: NOW,
     expires_at_millis: NOW + 7 * 24 * 60 * 60 * 1000,
     meet: [],
+    ephemeral_fingerprint: sampleFingerprint,
     ...overrides,
   };
 }

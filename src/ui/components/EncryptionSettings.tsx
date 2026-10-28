@@ -135,6 +135,8 @@ export function EncryptionSettings({
   const [newRecoveryPhrase, setNewRecoveryPhrase] = useState<string | null>(null);
   const [isChangingPhrase, setIsChangingPhrase] = useState(false);
   const [changeError, setChangeError] = useState<string | null>(null);
+  // The phrase change also burned a council recovery's credential, and the council's setup could not be renewed.
+  const [councilDropped, setCouncilDropped] = useState(false);
   // Session-expired banner state (mirrors the onboarding modal). The commit step
   // can run minutes after generating (the user is saving their phrase), so the
   // ID token may have lapsed by then; show the reconnect banner instead of a raw
@@ -198,7 +200,8 @@ export function EncryptionSettings({
     setRearmBlocked(null);
 
     try {
-      await commitKeyring(pendingKeyring, mnemonicLanguageForLocale(i18n.language));
+      const { councilDropped: dropped } = await commitKeyring(pendingKeyring, mnemonicLanguageForLocale(i18n.language));
+      setCouncilDropped(dropped);
       setPendingKeyring(null);
       setNewRecoveryPhrase(null);
       setChangePhraseStep('done');
@@ -919,6 +922,7 @@ export function EncryptionSettings({
           illustration="shield-check"
           title={t('settings.change_phrase_done_title')}
           description={t('settings.change_phrase_committed')}
+          banner={councilDropped && <Notice type={VariantType.WARNING}>{t('council.rotation_dropped')}</Notice>}
           actions={<Button onClick={leaveView}>{t('settings.done')}</Button>}
         />
       );

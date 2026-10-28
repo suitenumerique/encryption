@@ -1,5 +1,5 @@
 /**
- * Recovery council vault operations (shamir.md). All privileged (interface only):
+ * Recovery council vault operations (architecture.md Appendix F). All privileged (interface only):
  * each one is a decision a person takes on a screen of the interface, never
  * something a product page can trigger.
  *
@@ -13,9 +13,20 @@
  * - the locked-out browser's ephemeral key, for the last share, only when it
  *   matches the code the custodian read on the person's own screen.
  */
-import { requestFingerprint, rosterFingerprint, rosterHash, signRoster, verifyEscrow, verifyRosterChain } from '@encryption/src/crypto/council';
+import { z } from 'zod';
+
+import {
+  departedSince,
+  requestFingerprint,
+  rosterFingerprint,
+  rosterHash,
+  signRoster,
+  verifyEscrow,
+  verifyRosterChain,
+} from '@encryption/src/crypto/council';
 import type { RosterRecord } from '@encryption/src/crypto/council';
 import {
+  CouncilShareError,
   buildContribution,
   buildCouncilEscrow,
   buildReshareKeys,
@@ -23,6 +34,7 @@ import {
   escrowRecordFromWire,
   openCustodianShare,
   recoverCouncilSecret,
+  reshareTransferKeys,
   rosterRecordFromWire,
   signedVersionFromWire,
 } from '@encryption/src/crypto/council-protocol';
@@ -34,19 +46,28 @@ import { type MnemonicLanguage, keyToMnemonic } from '@encryption/src/crypto/mne
 import { randomScalar } from '@encryption/src/crypto/shamir';
 import { activeIdentity } from '@encryption/src/crypto/vault-state';
 import { STORE_COUNCIL_REQUEST } from '@encryption/src/shared/constants';
+import { genesisPeer } from '@encryption/src/shared/council-quorum';
 import { normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
-import type {
-  CouncilCapsuleWire,
-  CouncilContributionBody,
-  CouncilEscrowBody,
-  CouncilEscrowRecordWire,
-  CouncilReleasedShares,
-  CouncilReshareBatch,
-  CouncilReshareKeysBody,
-  CouncilReshareSubSharesBody,
-  RosterVersionWire,
+import {
+  CouncilCapsuleWireSchema,
+  type CouncilCheckBatch,
+  CouncilCheckBatchSchema,
+  type CouncilCheckResultsBody,
+  type CouncilContributionBody,
+  type CouncilEscrowBody,
+  type CouncilEscrowRecordWire,
+  CouncilEscrowRecordWireSchema,
+  type CouncilReleasedShares,
+  CouncilReleasedSharesSchema,
+  type CouncilReshareBatch,
+  CouncilReshareBatchSchema,
+  type CouncilReshareKeysBody,
+  type CouncilReshareSubSharesBody,
+  type RosterVersionWire,
+  RosterVersionWireSchema,
 } from '@encryption/src/shared/schemas/recovery-council';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
+import '@encryption/src/shared/zod-jitless';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import { handleCheckFingerprints } from '@encryption/src/vault/operations/fingerprint-registry';
 import { deriveKeyring, loadWithIdentity } from '@encryption/src/vault/operations/onboarding';
@@ -56,9 +77,24 @@ function equal(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
-async function verifiedHead(councilId: string, chain: RosterVersionWire[], anchorHash?: string): Promise<RosterRecord> {
+// Everything below arrives from the server through the interface: parsed here,
+// before any of it reaches a signature check or a key.
+function parse<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The council data from the server is malformed.');
+
+  return result.data;
+}
+
+const ChainSchema = z.array(RosterVersionWireSchema).max(1000);
+
+async function verifiedChain(
+  councilId: string,
+  chain: RosterVersionWire[],
+  anchorHash?: string
+): Promise<{ head: RosterRecord; versions: RosterRecord[] }> {
   const result = await verifyRosterChain(
-    chain.map((v) => signedVersionFromWire(councilId, v)),
+    parse(ChainSchema, chain).map((v) => signedVersionFromWire(councilId, v)),
     anchorHash ? base64ToUint8(anchorHash) : undefined
   );
 
@@ -66,7 +102,35 @@ async function verifiedHead(councilId: string, chain: RosterVersionWire[], ancho
     throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, `The council's membership could not be verified (${result.reason}).`);
   }
 
-  return result.head;
+  return { head: result.head, versions: result.versions };
+}
+
+async function verifiedHead(councilId: string, chain: RosterVersionWire[], anchorHash?: string): Promise<RosterRecord> {
+  return (await verifiedChain(councilId, chain, anchorHash)).head;
+}
+
+/** Whether a verified chain names this custodian, with their own identity key, at `slot`. */
+function namesMeAt(versions: RosterRecord[], slot: number, userId: string, identityWire: Uint8Array): boolean {
+  return versions.some((v) => v.members.some((m) => m.slot === slot && m.userId === userId && equal(m.identityPublicKeyWire, identityWire)));
+}
+
+async function encryptionSecretKeys(userId: string) {
+  const { loaded } = await loadWithIdentity(userId);
+
+  return [...loaded.state.encryptionKeys].sort((a, b) => b.version - a.version).map((k) => base64ToUint8(k.secretKey));
+}
+
+/** An escrow record the server attributes to `ownerId`, accepted only under that person's verified directory identity. */
+async function verifiedEscrow(userId: string, ownerId: string, wire: CouncilEscrowRecordWire) {
+  const { users } = await handleFetchPublicKeys(userId, { userIds: [ownerId] });
+  const owner = users[ownerId];
+  const record = escrowRecordFromWire(ownerId, wire);
+
+  if (!owner || !owner.verified || !(await verifyEscrow(record, base64ToUint8(wire.escrow_signature), new Uint8Array(owner.signaturePublicKey)))) {
+    return null;
+  }
+
+  return record;
 }
 
 /** Each member's encryption key, accepted only when its directory binding verifies under the identity the roster pins. */
@@ -139,28 +203,34 @@ export type CouncilEscrowCheck = 'ok' | 'tampered' | 'chain-broken';
  * Audit what the server says of the user's escrow: signed by their identity, and
  * the council's current head reachable from the version it pins. A broken chain
  * means a membership nobody legitimately signed: nothing is re-armed onto it.
+ *
+ * `renewalDue`: a custodian of the version the secret was split on has left (or
+ * changed key) since. A resharing moved their share, but a copy they kept still
+ * counts towards that secret: the interface then draws a fresh one.
  */
 export async function handleCheckCouncilEscrow(
   userId: string,
   payload: { record: CouncilEscrowRecordWire; chain: RosterVersionWire[] }
-): Promise<{ status: CouncilEscrowCheck; headFingerprint: string | null }> {
+): Promise<{ status: CouncilEscrowCheck; headFingerprint: string | null; renewalDue: boolean }> {
   const { loaded } = await loadWithIdentity(userId);
   const identity = activeIdentity(loaded.state)!;
+  const wire = parse(CouncilEscrowRecordWireSchema, payload.record);
 
   const signed = await verifyEscrow(
-    escrowRecordFromWire(userId, payload.record),
-    base64ToUint8(payload.record.escrow_signature),
+    escrowRecordFromWire(userId, wire),
+    base64ToUint8(wire.escrow_signature),
     base64ToUint8(identity.signaturePublicKey)
   );
-  if (!signed) return { status: 'tampered', headFingerprint: null };
+  if (!signed) return { status: 'tampered', headFingerprint: null, renewalDue: false };
 
   const chain = await verifyRosterChain(
-    payload.chain.map((v) => signedVersionFromWire(payload.record.council_id, v)),
-    base64ToUint8(payload.record.roster_hash)
+    parse(ChainSchema, payload.chain).map((v) => signedVersionFromWire(wire.council_id, v)),
+    base64ToUint8(wire.roster_hash)
   );
-  if (!chain.ok) return { status: 'chain-broken', headFingerprint: null };
+  if (!chain.ok) return { status: 'chain-broken', headFingerprint: null, renewalDue: false };
 
-  return { status: 'ok', headFingerprint: await rosterFingerprint(chain.head) };
+  // The anchor is the version the secret was split on: the first verified one.
+  return { status: 'ok', headFingerprint: await rosterFingerprint(chain.head), renewalDue: departedSince(chain.versions[0], chain.head).length > 0 };
 }
 
 // ----- The locked-out browser --------------------------------------------------
@@ -193,12 +263,27 @@ export async function handleStartCouncilRequest(userId: string): Promise<{ ephem
   return { ephemeralPublicKey: publicKey, fingerprint: await requestFingerprint(base64ToUint8(publicKey)) };
 }
 
-/** The key of the request this browser opened, for the meeting screen (null on another browser). */
-export async function handleCouncilRequestKey(userId: string): Promise<{ ephemeralPublicKey: string; fingerprint: string } | null> {
+/**
+ * The key of the request this browser opened, for the meeting screen (null on
+ * another browser). With `serverFingerprint` (the open request's, or null when
+ * none is open), a key that is not that request's is stale: it is forgotten, so
+ * a request opened elsewhere never shows this browser's old code.
+ */
+export async function handleCouncilRequestKey(
+  userId: string,
+  payload: { serverFingerprint?: string | null } = {}
+): Promise<{ ephemeralPublicKey: string; fingerprint: string } | null> {
   const stored = await readRequestKey(userId);
   if (!stored) return null;
 
-  return { ephemeralPublicKey: stored.publicKey, fingerprint: await requestFingerprint(base64ToUint8(stored.publicKey)) };
+  const fingerprint = await requestFingerprint(base64ToUint8(stored.publicKey));
+  if (payload.serverFingerprint !== undefined && payload.serverFingerprint !== fingerprint) {
+    await deleteRequestKey(userId);
+
+    return null;
+  }
+
+  return { ephemeralPublicKey: stored.publicKey, fingerprint };
 }
 
 // Held between a recovery that unlocked a superseded vault and the user's
@@ -223,6 +308,9 @@ export async function handleCompleteCouncilRecovery(
   const stored = await readRequestKey(userId);
   if (!stored) throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'This browser did not open the recovery request.');
 
+  const released = parse(CouncilReleasedSharesSchema, payload.released);
+  if (released.user_id !== userId) throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The released shares are someone else’s.');
+
   const { users } = await handleFetchPublicKeys(userId, { userIds: [userId] });
   const self = users[userId];
   if (!self || !self.verified) throw new VaultError(VaultErrorCode.INVALID_KEY_BINDING, 'Your own directory record does not verify.');
@@ -230,7 +318,7 @@ export async function handleCompleteCouncilRecovery(
   let recovered;
   try {
     recovered = await recoverCouncilSecret(
-      payload.released,
+      released,
       { publicKey: base64ToUint8(stored.publicKey), secretKey: stored.secretKey },
       new Uint8Array(self.signaturePublicKey)
     );
@@ -238,7 +326,7 @@ export async function handleCompleteCouncilRecovery(
     throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, (err as Error).message);
   }
 
-  const phrase = keyToMnemonic(recovered.secret, payload.released.lang as MnemonicLanguage);
+  const phrase = keyToMnemonic(recovered.secret, released.lang);
   recovered.secret.fill(0);
 
   const restored = await handleRestoreFromPhrase(userId, { recoveryPhrase: phrase, idToken: payload.idToken });
@@ -271,14 +359,17 @@ export async function handleReactivateCouncilVault(
 
 // ----- A custodian ----------------------------------------------------------------
 
-export interface CustodianRequestDetail {
-  id: string;
-  council_id: string;
-  user_id: string;
-  ephemeral_public_key: string;
-  escrow: CouncilEscrowRecordWire;
-  capsule: CouncilCapsuleWire;
-}
+const CustodianRequestDetailSchema = z.object({
+  id: z.string().uuid(),
+  council_id: z.string(),
+  user_id: z.string().uuid(),
+  ephemeral_public_key: z.string().min(1).max(4096),
+  escrow: CouncilEscrowRecordWireSchema,
+  capsule: CouncilCapsuleWireSchema,
+  chain: ChainSchema,
+});
+
+export type CustodianRequestDetail = z.infer<typeof CustodianRequestDetailSchema>;
 
 /**
  * Hand over this custodian's share. In person, the share goes only to the key
@@ -290,7 +381,7 @@ export async function handleCouncilContribute(
   payload: { detail: CustodianRequestDetail; inPerson: boolean; meetingCode?: string }
 ): Promise<CouncilContributionBody> {
   const { loaded, identitySecret } = await loadWithIdentity(userId);
-  const { detail } = payload;
+  const detail = parse(CustodianRequestDetailSchema, payload.detail);
   const ephemeral = base64ToUint8(detail.ephemeral_public_key);
 
   if (payload.inPerson) {
@@ -300,22 +391,23 @@ export async function handleCouncilContribute(
     }
   }
 
-  // The escrow is the user's: it must verify under their directory identity.
-  const { users } = await handleFetchPublicKeys(userId, { userIds: [detail.user_id] });
-  const owner = users[detail.user_id];
-  const record = escrowRecordFromWire(detail.user_id, detail.escrow);
-  if (
-    !owner ||
-    !owner.verified ||
-    !(await verifyEscrow(record, base64ToUint8(detail.escrow.escrow_signature), new Uint8Array(owner.signaturePublicKey)))
-  ) {
-    throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The escrow is not signed by the person asking.');
+  if (detail.user_id === userId) throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'A custodian cannot hand a share to their own request.');
+
+  const { versions } = await verifiedChain(detail.council_id, detail.chain);
+  if (!namesMeAt(versions, detail.capsule.slot, userId, base64ToUint8(activeIdentity(loaded.state)!.signaturePublicKey))) {
+    throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The council does not name you at this slot.');
   }
 
-  const secretKeys = [...loaded.state.encryptionKeys].sort((a, b) => b.version - a.version).map((k) => base64ToUint8(k.secretKey));
+  const record = await verifiedEscrow(userId, detail.user_id, detail.escrow);
+  if (!record) throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The escrow is not signed by the person asking.');
+
   let share: Uint8Array;
   try {
-    share = await openCustodianShare(detail.capsule, record, { userId: detail.user_id, councilId: detail.council_id, secretKeys });
+    share = await openCustodianShare(detail.capsule, record, {
+      councilId: detail.council_id,
+      versions,
+      secretKeys: await encryptionSecretKeys(userId),
+    });
   } catch (err) {
     throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, (err as Error).message);
   }
@@ -349,7 +441,7 @@ export async function handleSignCouncilRoster(
 ): Promise<{ signature: string }> {
   const { loaded, identitySecret } = await loadWithIdentity(userId);
   const myWire = base64ToUint8(activeIdentity(loaded.state)!.signaturePublicKey);
-  const proposal = rosterRecordFromWire(payload.councilId, payload.proposal);
+  const proposal = rosterRecordFromWire(payload.councilId, parse(RosterVersionWireSchema, payload.proposal));
 
   let previous: RosterRecord | null = null;
   if (payload.chain.length > 0) {
@@ -366,46 +458,58 @@ export async function handleSignCouncilRoster(
     throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The proposal names you with a key that is not yours.');
   }
 
+  // Who must have been checked out of band: every newcomer of a later version,
+  // or, for version 1, the one colleague the circle gives this custodian.
+  let toCheck: RosterRecord['members'];
   if (previous) {
-    const newcomers = proposal.members.filter(
+    toCheck = proposal.members.filter(
       (m) =>
         m.userId !== userId &&
         !previous!.members.some((p) => p.slot === m.slot && p.userId === m.userId && equal(p.identityPublicKeyWire, m.identityPublicKeyWire))
     );
+  } else {
+    const peer = genesisPeer(proposal.members, userId);
+    if (!me || !peer) throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'A council’s first membership is signed by the people it names.');
+    toCheck = [peer];
+  }
 
-    if (newcomers.length > 0) {
-      const fingerprints = Object.fromEntries(
-        await Promise.all(newcomers.map(async (m) => [m.userId, await computeKeyFingerprint(uint8ToBase64(m.identityPublicKeyWire))]))
-      );
-      const { results } = await handleCheckFingerprints(userId, { userFingerprints: fingerprints }, { record: false });
+  if (toCheck.length > 0) {
+    const fingerprints = Object.fromEntries(
+      await Promise.all(toCheck.map(async (m) => [m.userId, await computeKeyFingerprint(uint8ToBase64(m.identityPublicKeyWire))]))
+    );
+    const { results } = await handleCheckFingerprints(userId, { userFingerprints: fingerprints }, { record: false });
 
-      if (results.some((r) => r.status !== 'trusted')) {
-        throw new VaultError(VaultErrorCode.UNTRUSTED_RECIPIENT, 'Check the identity of every newcomer before signing.');
-      }
+    if (results.length !== toCheck.length || results.some((r) => r.status !== 'trusted')) {
+      throw new VaultError(VaultErrorCode.UNTRUSTED_RECIPIENT, 'Check the identity of every person you vouch for before signing.');
     }
   }
 
   return { signature: uint8ToBase64(await signRoster(proposal, identitySecret)) };
 }
 
-// Transfer keys of a resharing session, held while the helper works through it.
-const sessionTransferKeys = new Map<string, Map<number, Uint8Array>>();
-
 /**
- * One batch of a resharing, helper side: the target custodians' keys checked
- * against the verified chain, then a sub-share of this helper's share of each
- * escrow for each of them. Returns new transfer keys when this vault has none
- * for the session (first batch, or after a reload).
+ * One batch of a resharing, helper side. The target must be the head of a chain
+ * that names this helper at its slot with its own key: getting into a chain
+ * takes your own signature, so a chain the server made up without you is
+ * refused, and the sub-shares only ever go to custodians that chain names. Each
+ * escrow must verify under its owner's identity and be split on a version of
+ * that chain. Transfer keys derive from the VRK, so a reload resumes the same
+ * session with the same keys; they are sent once, when the server has none.
  */
 export async function handleCouncilReshareBatch(
   userId: string,
   payload: { batch: CouncilReshareBatch }
 ): Promise<{ keys: CouncilReshareKeysBody | null; subShares: CouncilReshareSubSharesBody | null }> {
   const { loaded, identitySecret } = await loadWithIdentity(userId);
-  const { batch } = payload;
-  const target = await verifiedHead(batch.council_id, batch.chain);
+  const batch = parse(CouncilReshareBatchSchema, payload.batch);
+  const { head: target, versions } = await verifiedChain(batch.council_id, batch.chain);
   if (target.version !== batch.target_roster_version) {
     throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The resharing targets another membership than the council’s current one.');
+  }
+
+  const myIdentity = base64ToUint8(activeIdentity(loaded.state)!.signaturePublicKey);
+  if (!batch.helper_slots.includes(batch.my_slot) || !namesMeAt(versions, batch.my_slot, userId, myIdentity)) {
+    throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The council does not name you as a helper of this resharing.');
   }
 
   const context = {
@@ -414,44 +518,85 @@ export async function handleCouncilReshareBatch(
     target,
     helperSlots: batch.helper_slots,
     mySlot: batch.my_slot,
+    vrk: loaded.vrk,
     identitySecretKey: identitySecret,
   };
-  let keys: CouncilReshareKeysBody | null = null;
-  let transferKeys = sessionTransferKeys.get(batch.session_id);
 
-  // The server holds none of ours (first batch, or an earlier upload failed), or
-  // this vault lost them (reload): new ones, which supersede any sent before.
-  if (!transferKeys || !batch.transfer_keys_done) {
+  let keys: CouncilReshareKeysBody | null = null;
+  let transferKeys: Map<number, Uint8Array>;
+  if (batch.transfer_keys_done) {
+    transferKeys = await reshareTransferKeys(context);
+  } else {
     const built = await buildReshareKeys({ ...context, recipientKeys: await membersKeys(userId, target) });
     transferKeys = built.transferKeys;
     keys = built.body;
-    sessionTransferKeys.set(batch.session_id, transferKeys);
   }
 
-  if (batch.escrows.length === 0) return { keys, subShares: null };
+  try {
+    if (batch.escrows.length === 0) return { keys, subShares: null };
 
-  const secretKeys = [...loaded.state.encryptionKeys].sort((a, b) => b.version - a.version).map((k) => base64ToUint8(k.secretKey));
-  const escrows = [];
+    const secretKeys = await encryptionSecretKeys(userId);
+    const versionNumbers = new Set(versions.map((v) => v.version));
+    const escrows = [];
+
+    for (const entry of batch.escrows) {
+      const record = await verifiedEscrow(userId, entry.user_id, entry.record);
+      if (!record || record.councilId !== batch.council_id || !versionNumbers.has(record.rosterVersion)) {
+        throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'An escrow of the batch does not verify under its owner’s identity.');
+      }
+      if (entry.capsule.slot !== batch.my_slot) throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, 'The capsule is not this helper’s.');
+
+      // A share that does not verify is never reshared: the rest of the council
+      // would inherit it.
+      let share: Uint8Array;
+      try {
+        share = await openCustodianShare(entry.capsule, record, { councilId: batch.council_id, versions, secretKeys });
+      } catch (err) {
+        throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, (err as Error).message);
+      }
+      try {
+        escrows.push(await buildReshareSubShares(context, transferKeys, entry.escrow_id, share));
+      } finally {
+        share.fill(0);
+      }
+    }
+
+    return { keys, subShares: { escrows } };
+  } finally {
+    for (const key of transferKeys.values()) key.fill(0);
+  }
+}
+
+/**
+ * A new custodian's check of the shares a resharing gave them, run when they
+ * open their space rather than at a recovery: a helper that sealed values other
+ * than the ones it committed to is named while the council can still act. Only
+ * escrows that verify under their owner's identity are judged, so a server
+ * cannot get an honest helper blamed with a forged record.
+ */
+export async function handleCheckCouncilShares(
+  userId: string,
+  payload: { batch: CouncilCheckBatch }
+): Promise<{ results: CouncilCheckResultsBody['results'] }> {
+  const batch = parse(CouncilCheckBatchSchema, payload.batch);
+  if (batch.escrows.length === 0) return { results: [] };
+
+  const { versions } = await verifiedChain(batch.council_id, batch.chain);
+  const secretKeys = await encryptionSecretKeys(userId);
+  const results: CouncilCheckResultsBody['results'] = [];
 
   for (const entry of batch.escrows) {
-    // A share that does not verify is never reshared: the rest of the council
-    // would inherit it.
-    let share: Uint8Array;
+    const record = await verifiedEscrow(userId, entry.user_id, entry.record);
+    if (!record) continue;
+
     try {
-      share = await openCustodianShare(entry.capsule, escrowRecordFromWire(entry.user_id, entry.record), {
-        userId: entry.user_id,
-        councilId: batch.council_id,
-        secretKeys,
-      });
-    } catch (err) {
-      throw new VaultError(VaultErrorCode.VAULT_INTEGRITY_FAILED, (err as Error).message);
-    }
-    try {
-      escrows.push(await buildReshareSubShares(context, transferKeys, entry.escrow_id, share));
-    } finally {
+      const share = await openCustodianShare(entry.capsule, record, { councilId: batch.council_id, versions, secretKeys });
       share.fill(0);
+      results.push({ escrow_id: entry.escrow_id, valid: true, faulty_helper_slot: null });
+    } catch (err) {
+      results.push({ escrow_id: entry.escrow_id, valid: false, faulty_helper_slot: err instanceof CouncilShareError ? err.helperSlot : null });
     }
   }
 
-  return { keys, subShares: { escrows } };
+  return { results };
 }

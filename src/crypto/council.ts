@@ -1,11 +1,12 @@
 /**
- * The recovery council's signed records and wraps (shamir.md).
+ * The recovery council's signed records and wraps (architecture.md Appendix F).
  *
  * - A **roster version** lists a council's custodians (slot, user id, pinned
  *   identity key) and its threshold. Version 1 is signed by every custodian it
- *   names, each vouching for their own key; every later version by `k` custodians
- *   of the previous one plus every custodian it adds or re-keys. Users verify that
- *   chain, so the server alone can never put a key of its own in a council.
+ *   names, each vouching for their own key; every later version by a strict
+ *   majority of the previous one (never fewer than its `k`) plus every custodian
+ *   it adds or re-keys. Users verify that chain, so the server alone can never
+ *   put a key of its own in a council.
  * - A user's **escrow** splits the entropy of a dormant emergency phrase between
  *   the custodians of one roster version; the user's identity signs what was
  *   split (Pedersen commitments and a hash, never the secret) and over which
@@ -28,6 +29,7 @@ import {
   concat,
   decryptContent,
   decryptSymmetricKeyForUser,
+  deriveSubkey,
   encryptContent,
   encryptSymmetricKeyForUsers,
   ensureSodium,
@@ -36,6 +38,7 @@ import {
   writeUint64LE,
 } from '@encryption/src/crypto/encryption';
 import { type SignatureSecretKey, signDetached, verifyDetached } from '@encryption/src/crypto/signature';
+import { changeQuorum } from '@encryption/src/shared/council-quorum';
 import {
   DOMAIN_COUNCIL_CONTRIBUTION,
   DOMAIN_COUNCIL_ESCROW,
@@ -46,6 +49,7 @@ import {
   DOMAIN_COUNCIL_ROSTER,
   DOMAIN_COUNCIL_SECRET_COMMITMENT,
   DOMAIN_COUNCIL_SUBSHARE,
+  DOMAIN_COUNCIL_TRANSFER_KEY,
   DOMAIN_KEM_COUNCIL_RESHARE_KEY,
   DOMAIN_KEM_COUNCIL_SHARE,
   DOMAIN_KEM_COUNCIL_TRANSFER,
@@ -156,15 +160,29 @@ async function signersAmong(version: SignedRosterVersion, candidates: RosterMemb
 function wellFormed(record: RosterRecord): boolean {
   const slots = new Set(record.members.map((m) => m.slot));
   const users = new Set(record.members.map((m) => m.userId));
+  // One key on two slots would count its signature twice and hold two shares.
+  const keys = new Set(record.members.map((m) => uint8Hex(m.identityPublicKeyWire)));
 
   return (
     record.members.length >= 1 &&
     slots.size === record.members.length &&
     users.size === record.members.length &&
+    keys.size === record.members.length &&
     record.members.every((m) => Number.isInteger(m.slot) && m.slot >= 1 && m.slot <= 255) &&
     Number.isInteger(record.threshold) &&
     record.threshold >= 1 &&
     record.threshold <= record.members.length
+  );
+}
+
+/**
+ * Custodians of `pinned` (the version an emergency secret was split on) that
+ * `head` no longer holds as they were: gone, or holding another key. Each of
+ * them may have kept a share of that secret, which a resharing does not revoke.
+ */
+export function departedSince(pinned: RosterRecord, head: RosterRecord): RosterMember[] {
+  return pinned.members.filter(
+    (m) => !head.members.some((h) => h.slot === m.slot && h.userId === m.userId && equalBytes(h.identityPublicKeyWire, m.identityPublicKeyWire))
   );
 }
 
@@ -175,7 +193,14 @@ function isNewcomer(member: RosterMember, previous: RosterRecord): boolean {
   return !before || before.userId !== member.userId || !equalBytes(before.identityPublicKeyWire, member.identityPublicKeyWire);
 }
 
-export type RosterChainResult = { ok: true; head: RosterRecord; headHash: Uint8Array } | { ok: false; reason: string; brokenAtVersion: number };
+export type RosterChainResult =
+  | {
+      ok: true;
+      head: RosterRecord;
+      headHash: Uint8Array;
+      /** The verified versions, from the anchor (or version 1) to the head. */ versions: RosterRecord[];
+    }
+  | { ok: false; reason: string; brokenAtVersion: number };
 
 /**
  * Verify a chain of roster versions, oldest first.
@@ -229,7 +254,7 @@ export async function verifyRosterChain(chain: SignedRosterVersion[], trustedHas
     }
 
     const quorum = await signersAmong(current, previous.members);
-    if (quorum.size < previous.threshold) return { ok: false, reason: 'no-quorum', brokenAtVersion: record.version };
+    if (quorum.size < changeQuorum(previous)) return { ok: false, reason: 'no-quorum', brokenAtVersion: record.version };
 
     const newcomers = record.members.filter((m) => isNewcomer(m, previous));
     const vouched = await signersAmong(current, newcomers);
@@ -240,7 +265,7 @@ export async function verifyRosterChain(chain: SignedRosterVersion[], trustedHas
 
   const head = chain[chain.length - 1].record;
 
-  return { ok: true, head, headHash: await rosterHash(head) };
+  return { ok: true, head, headHash: await rosterHash(head), versions: chain.slice(start).map((v) => v.record) };
 }
 
 function uint8Hex(bytes: Uint8Array): string {
@@ -492,14 +517,28 @@ export async function verifyReshareCommitments(
   }
 }
 
-/** A fresh transfer key for one (helper, new custodian) pair of a resharing session, and its wrap. */
-export async function createTransferKey(recipientPublicKey: HybridPublicKey): Promise<{ transferKey: Uint8Array; wrapped: Uint8Array }> {
+/**
+ * The transfer key of one (helper, new custodian) pair of a resharing session,
+ * derived from the helper's VRK: a reload mid-session gives back the same key,
+ * so sub-shares already sealed stay readable and the server never has to accept
+ * a second key from the same helper.
+ */
+export async function deriveTransferKey(
+  vrk: Uint8Array,
+  where: { sessionId: string; councilId: string; targetRosterVersion: number; recipientSlot: number }
+): Promise<Uint8Array> {
   await ensureSodium();
 
-  const transferKey = sodium.randombytes_buf(sodium.crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
-  const wrapped = (await encryptSymmetricKeyForUsers(transferKey, { recipient: recipientPublicKey }, DOMAIN_KEM_COUNCIL_RESHARE_KEY)).recipient;
+  return deriveSubkey(vrk, DOMAIN_COUNCIL_TRANSFER_KEY, sodium.crypto_aead_xchacha20poly1305_ietf_KEYBYTES, [
+    text(where.sessionId),
+    text(where.councilId),
+    writeUint32LE(where.targetRosterVersion),
+    writeUint32LE(where.recipientSlot),
+  ]);
+}
 
-  return { transferKey, wrapped };
+export async function wrapTransferKey(transferKey: Uint8Array, recipientPublicKey: HybridPublicKey): Promise<Uint8Array> {
+  return (await encryptSymmetricKeyForUsers(transferKey, { recipient: recipientPublicKey }, DOMAIN_KEM_COUNCIL_RESHARE_KEY)).recipient;
 }
 
 export function openTransferKey(wrapped: Uint8Array, recipientSecretKeys: HybridSecretKey[]): Promise<Uint8Array> {

@@ -8,6 +8,7 @@ import type {
   GetApiCouncilRecoveryRequestsByIdCustodianResponses,
   GetApiCouncilRecoveryRequestsByIdSharesResponses,
   GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsByCouncilIdSharesToCheckResponses,
   GetApiCouncilsForMeResponses,
   GetApiCouncilsMineResponses,
   GetApiCouncilsReshareBySessionIdBatchResponses,
@@ -38,6 +39,8 @@ import type {
   PostApiCouncilRecoveryRequestsResponses,
   PostApiCouncilsByCouncilIdReshareData,
   PostApiCouncilsByCouncilIdReshareResponses,
+  PostApiCouncilsByCouncilIdSharesCheckedData,
+  PostApiCouncilsByCouncilIdSharesCheckedResponses,
   PostApiCouncilsByCouncilIdVersionsByVersionSignData,
   PostApiCouncilsByCouncilIdVersionsByVersionSignResponses,
   PostApiCouncilsEscrowData,
@@ -2183,6 +2186,98 @@ export function handlePostApiCouncilsReshareBySessionIdCancel(
   );
 }
 
+export type HandleGetApiCouncilsByCouncilIdSharesToCheckResponse = {
+  body: GetApiCouncilsByCouncilIdSharesToCheckResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/councils/{councilId}/shares-to-check` operation.
+ */
+export function handleGetApiCouncilsByCouncilIdSharesToCheck(
+  response?:
+    | HandleGetApiCouncilsByCouncilIdSharesToCheckResponse
+    | HttpResponseResolver<
+        {
+          councilId: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<
+    {
+      councilId: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/:councilId/shares-to-check`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
+export type HandlePostApiCouncilsByCouncilIdSharesCheckedResponse = {
+  body: PostApiCouncilsByCouncilIdSharesCheckedResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `POST /api/councils/{councilId}/shares-checked` operation.
+ */
+export function handlePostApiCouncilsByCouncilIdSharesChecked(
+  response?:
+    | HandlePostApiCouncilsByCouncilIdSharesCheckedResponse
+    | HttpResponseResolver<
+        {
+          councilId: string;
+        },
+        PostApiCouncilsByCouncilIdSharesCheckedData['body']
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.post<
+    {
+      councilId: string;
+    },
+    PostApiCouncilsByCouncilIdSharesCheckedData['body']
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/:councilId/shares-checked`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
 export type MswHandlerFactories = {
   /**
    * Handler for the `GET /api/version` operation.
@@ -2396,6 +2491,14 @@ export type MswHandlerFactories = {
    * Handler for the `POST /api/councils/reshare/{sessionId}/cancel` operation.
    */
   postApiCouncilsReshareBySessionIdCancel: typeof handlePostApiCouncilsReshareBySessionIdCancel;
+  /**
+   * Handler for the `GET /api/councils/{councilId}/shares-to-check` operation.
+   */
+  getApiCouncilsByCouncilIdSharesToCheck: typeof handleGetApiCouncilsByCouncilIdSharesToCheck;
+  /**
+   * Handler for the `POST /api/councils/{councilId}/shares-checked` operation.
+   */
+  postApiCouncilsByCouncilIdSharesChecked: typeof handlePostApiCouncilsByCouncilIdSharesChecked;
 };
 
 export type CreateMswHandlersResult = {
@@ -2466,6 +2569,8 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     postApiCouncilsReshareBySessionIdKeys: wrap(handlePostApiCouncilsReshareBySessionIdKeys),
     postApiCouncilsReshareBySessionIdSubShares: wrap(handlePostApiCouncilsReshareBySessionIdSubShares),
     postApiCouncilsReshareBySessionIdCancel: wrap(handlePostApiCouncilsReshareBySessionIdCancel),
+    getApiCouncilsByCouncilIdSharesToCheck: wrap(handleGetApiCouncilsByCouncilIdSharesToCheck),
+    postApiCouncilsByCouncilIdSharesChecked: wrap(handlePostApiCouncilsByCouncilIdSharesChecked),
   };
   const all: CreateMswHandlersResult['all'] = (options = {}) => {
     type OverrideValue<R> = R | [response?: R, options?: RequestHandlerOptions];
@@ -2500,6 +2605,8 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdReject, overrides.postApiEmergencyAccessByIdReject),
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
       invoke(pick.postApiCouncilsByCouncilIdReshare, overrides.postApiCouncilsByCouncilIdReshare),
+      invoke(pick.getApiCouncilsByCouncilIdSharesToCheck, overrides.getApiCouncilsByCouncilIdSharesToCheck),
+      invoke(pick.postApiCouncilsByCouncilIdSharesChecked, overrides.postApiCouncilsByCouncilIdSharesChecked),
       invoke(pick.postApiAuthRelay, overrides.postApiAuthRelay),
       invoke(pick.postApiAuthToken, overrides.postApiAuthToken),
       invoke(pick.getApiPublicKeysNext, overrides.getApiPublicKeysNext),

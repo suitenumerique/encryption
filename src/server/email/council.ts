@@ -21,7 +21,7 @@ import {
 } from '@encryption/src/server/email/templates/CouncilRecoveryToApprove';
 import { CouncilRosterToSignEmail, subject as councilRosterToSignSubject } from '@encryption/src/server/email/templates/CouncilRosterToSign';
 
-// The recovery council's notifications (shamir.md §7, §10). Same sender and
+// The recovery council's notifications (architecture.md F.3, F.2). Same sender and
 // layout as every other email of the service.
 function send(locale: string, options: Omit<SendOptions, 'sender'>): Promise<void> {
   return mailer.send({ ...options, sender: senderFor(locale) });

@@ -1,8 +1,7 @@
-import { Button, Checkbox, VariantType } from '@gouvfr-lasuite/ui-components';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 import {
   type CouncilRequestSummary,
   type CouncilsMine,
@@ -10,17 +9,24 @@ import {
   abortCouncilRequest,
   fetchMyCouncils,
   fetchReshareBatch,
+  fetchSharesToCheck,
   startCouncilReshare,
   uploadReshareKeys,
   uploadReshareSubShares,
+  uploadSharesChecked,
 } from '@encryption/src/ui/api/council-client';
 import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { CouncilHandOver } from '@encryption/src/ui/components/CouncilHandOver';
+import { CouncilRequestRow } from '@encryption/src/ui/components/CouncilRequestRow';
+import { CouncilReshareStart } from '@encryption/src/ui/components/CouncilReshareStart';
 import { CouncilSignChange } from '@encryption/src/ui/components/CouncilSignChange';
-import { Chip, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
+import { rosterHead } from '@encryption/src/ui/components/council-roster';
+import { Chip } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { type CouncilAuthProps, useCouncilErrors } from '@encryption/src/ui/hooks/useCouncilErrors';
+import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useCouncilAction } from '@encryption/src/ui/hooks/useCouncilAction';
+import type { CouncilAuthProps } from '@encryption/src/ui/hooks/useCouncilErrors';
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 
@@ -37,14 +43,25 @@ type View =
   | { kind: 'hand-over'; councilId: string; request: CouncilRequestSummary; mode: 'remote' | 'in-person' }
   | { kind: 'reshare'; councilId: string; sourceVersion: number };
 
-const STAGE_TONE = { collecting: 'neutral', awaiting_meeting: 'warning', cooldown: 'info', released: 'success' } as const;
+// A server that never runs out of batches must not keep a vault busy forever.
+const MAX_BATCHES = 10_000;
 
-function headOf(council: CustodianCouncil): RosterVersionWire | null {
-  return council.chain.length > 0 ? council.chain[council.chain.length - 1] : null;
+/** False once the remaining count stops going down, or after MAX_BATCHES. */
+function untilStalled(): (remaining: number) => boolean {
+  let previous = Infinity;
+  let batches = 0;
+
+  return (remaining) => {
+    batches += 1;
+    const progressing = remaining < previous && batches <= MAX_BATCHES;
+    previous = remaining;
+
+    return progressing;
+  };
 }
 
 /**
- * The custodian space (shamir.md §8): one card per council the user sits in, or
+ * The custodian space (architecture.md F.5): one card per council the user sits in, or
  * is invited to, with what waits on them. Several councils share one page, and
  * every action names the council it acts on. Each action is the person's own
  * click here, signed by their vault, with a fresh authentication where the
@@ -53,14 +70,19 @@ function headOf(council: CustodianCouncil): RosterVersionWire | null {
 export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth }: CouncilCustodianProps) {
   const { t } = useTranslation('common');
   const vault = useCouncilVault();
-  const { banner, fail, clear } = useCouncilErrors(auth);
+  const { banner, fail, busy, run } = useCouncilAction(auth);
   const [data, setData] = useState<CouncilsMine | null>(null);
   const [view, setView] = useState<View>({ kind: 'home' });
-  const [busy, setBusy] = useState<string | null>(null);
   const [confirmAbort, setConfirmAbort] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [closeBlocked, setCloseBlocked] = useState(false);
 
   useModalSize('large', view.kind === 'home');
+
+  // Closing between the upload of the transfer keys and the sub-shares leaves
+  // the batch to redo: the product's close control waits for the run to end.
+  const resharing = progress !== null;
+  useCloseGuard(resharing, () => setCloseBlocked(true));
 
   const load = useCallback(async () => {
     try {
@@ -79,42 +101,67 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
     })();
   }, [load]);
 
+  // The shares a resharing gave this custodian, checked in the background on
+  // each visit: a helper that sent invalid ones is named while the council can
+  // still act, not on the day someone needs a recovery.
+  const checkStarted = useRef(false);
+  useEffect(() => {
+    const councilIds = data?.councils.filter((c) => c.role === 'custodian' && c.shares_to_check > 0).map((c) => c.council_id) ?? [];
+    if (councilIds.length === 0 || checkStarted.current) return;
+    checkStarted.current = true;
+
+    void (async () => {
+      try {
+        await withFreshIdToken(getIdToken, async (idToken) => {
+          for (const councilId of councilIds) {
+            const progressing = untilStalled();
+
+            for (;;) {
+              const batch = await fetchSharesToCheck(idToken, councilId);
+              if (batch.escrows.length === 0 || !progressing(batch.remaining)) break;
+
+              // Nothing judged (no record verified): the rest waits for the next visit.
+              const { results } = await vault.checkShares(batch);
+              if (results.length === 0) break;
+
+              await uploadSharesChecked(idToken, vault.sign, councilId, { results });
+            }
+          }
+        });
+        await load();
+      } catch {
+        // Not a decision of the custodian's: retried on the next visit.
+      }
+    })();
+  }, [data, getIdToken, vault, load]);
+
   const home = useCallback(() => {
     setView({ kind: 'home' });
     void load();
   }, [load]);
 
   const abort = useCallback(
-    async (requestId: string) => {
-      setBusy(requestId);
-      clear();
-
-      try {
+    (requestId: string) =>
+      run(async () => {
         await withFreshIdToken(getIdToken, (idToken) => abortCouncilRequest(idToken, vault.sign, requestId));
         setConfirmAbort(null);
         await load();
-      } catch (err) {
-        fail(err);
-      } finally {
-        setBusy(null);
-      }
-    },
-    [getIdToken, vault, load, fail, clear]
+      }, requestId),
+    [run, getIdToken, vault, load]
   );
 
   // A helper's part of a resharing: batch after batch from this vault, until the
-  // server has nothing left for it.
-  const processReshare = useCallback(
+  // server has nothing left for it, or stops taking any.
+  const reshareFromVault = useCallback(
     async (sessionId: string) => {
-      setBusy(sessionId);
-      clear();
-
       try {
         await withFreshIdToken(getIdToken, async (idToken) => {
+          const progressing = untilStalled();
           let total: number | null = null;
 
           for (;;) {
             const batch = await fetchReshareBatch(idToken, sessionId);
+            if (!progressing(batch.remaining)) throw new Error(t('council.reshare_stalled'));
             total ??= batch.remaining;
             setProgress({ done: total - batch.remaining, total });
 
@@ -126,35 +173,27 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
           }
         });
         await load();
-      } catch (err) {
-        fail(err);
       } finally {
-        setBusy(null);
         setProgress(null);
+        setCloseBlocked(false);
       }
     },
-    [getIdToken, vault, load, fail, clear]
+    [getIdToken, vault, load, t]
   );
 
-  const startReshare = useCallback(
-    async (council: CustodianCouncil, sourceVersion: number, helperSlots: number[]) => {
-      setBusy(council.council_id);
-      clear();
+  const processReshare = useCallback((sessionId: string) => run(() => reshareFromVault(sessionId), sessionId), [run, reshareFromVault]);
 
-      try {
+  const startReshare = useCallback(
+    (council: CustodianCouncil, sourceVersion: number, helperSlots: number[]) =>
+      run(async () => {
         const { session_id } = await withFreshIdToken(getIdToken, (idToken) =>
           startCouncilReshare(idToken, vault.sign, council.council_id, sourceVersion, helperSlots)
         );
         setView({ kind: 'home' });
-        if (council.my_slot !== null && helperSlots.includes(council.my_slot)) await processReshare(session_id);
+        if (council.my_slot !== null && helperSlots.includes(council.my_slot)) await reshareFromVault(session_id);
         else await load();
-      } catch (err) {
-        fail(err);
-      } finally {
-        setBusy(null);
-      }
-    },
-    [getIdToken, vault, processReshare, load, fail, clear]
+      }, council.council_id),
+    [run, getIdToken, vault, reshareFromVault, load]
   );
 
   if (!data) return <LoadingScreen />;
@@ -181,7 +220,7 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
 
   if (view.kind === 'reshare') {
     return (
-      <ReshareStart
+      <CouncilReshareStart
         council={councilOf(view.councilId)}
         sourceVersion={view.sourceVersion}
         busy={busy !== null}
@@ -194,7 +233,7 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
 
   return (
     <Screen
-      back={onBack ? { label: t('onboarding.btn_back'), onClick: onBack } : undefined}
+      back={onBack ? { label: t('onboarding.btn_back'), onClick: onBack, disabled: resharing } : undefined}
       title={t('council.custodian_title')}
       description={t('council.custodian_description')}
       banner={
@@ -202,17 +241,18 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
           {banner}
           {!data.mfa_enforced && <Notice type={VariantType.WARNING}>{t('council.mfa_not_enforced')}</Notice>}
           {progress && <Notice type={VariantType.INFO}>{t('council.reshare_progress', progress)}</Notice>}
+          {progress && closeBlocked && <Notice type={VariantType.WARNING}>{t('council.reshare_close_blocked')}</Notice>}
         </>
       }
       actions={
-        <Button variant="bordered" color="neutral" onClick={onClose}>
+        <Button variant="bordered" color="neutral" onClick={onClose} disabled={resharing}>
           {t('settings.done')}
         </Button>
       }
     >
       {data.councils.length === 0 && <p className={styles.empty}>{t('council.custodian_none')}</p>}
       {data.councils.map((council) => {
-        const head = headOf(council);
+        const head = rosterHead(council.chain);
 
         return (
           <div key={council.council_id} className={`${styles.card} ${styles.section}`}>
@@ -274,6 +314,13 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
             {council.role === 'custodian' && (
               <>
                 <HealthLine council={council} />
+                {council.faulty_reshares.map((faulty) => (
+                  <Notice key={faulty.helper_name} type={VariantType.ERROR}>
+                    <strong>{t('council.faulty_reshare_title', { name: faulty.helper_name, count: faulty.escrows })}</strong>
+                    <br />
+                    {t('council.faulty_reshare_description')}
+                  </Notice>
+                ))}
                 {council.health.outdated.map((entry) => (
                   <div key={entry.version} className={styles.settingsRow}>
                     <div className={styles.settingsRowText}>
@@ -314,7 +361,7 @@ export function CouncilCustodian({ getIdToken, userId, onBack, onClose, ...auth 
                 <p className={styles.sectionTitle}>{t('council.requests_title')}</p>
                 {council.requests.length === 0 && <p className={styles.hint}>{t('council.requests_none')}</p>}
                 {council.requests.map((request) => (
-                  <RequestRow
+                  <CouncilRequestRow
                     key={request.id}
                     request={request}
                     busy={busy === request.id}
@@ -353,146 +400,5 @@ function HealthLine({ council }: { council: CustodianCouncil }) {
         )}
       </div>
     </div>
-  );
-}
-
-function RequestRow({
-  request,
-  busy,
-  confirmingAbort,
-  onRemote,
-  onInPerson,
-  onAbort,
-  onCancelAbort,
-}: {
-  request: CouncilRequestSummary;
-  busy: boolean;
-  confirmingAbort: boolean;
-  onRemote: () => void;
-  onInPerson: () => void;
-  onAbort: () => void;
-  onCancelAbort: () => void;
-}) {
-  const { t } = useTranslation('common');
-  const stage = request.stage as keyof typeof STAGE_TONE;
-  const contributors = request.contributors.map((c) => (c.in_person ? t('council.contributor_in_person', { name: c.name }) : c.name)).join(', ');
-
-  return (
-    <div className={styles.card}>
-      <div className={styles.cardHeader}>
-        <Identity name={request.user_name ?? request.user_email} email={request.user_email} />
-        <Chip tone={STAGE_TONE[stage] ?? 'neutral'}>{t(`council.stage_${stage}` as 'council.stage_collecting')}</Chip>
-      </div>
-      <p className={styles.hint}>
-        {request.contributors.length > 0 ? t('council.request_contributors', { names: contributors }) : t('council.request_no_contributor')}
-        {' · '}
-        {t('council.request_expires', { date: new Date(request.expires_at_millis) })}
-      </p>
-      {request.my_contribution !== 'none' && (
-        <Chip tone="success" icon="trusted">
-          {t(request.my_contribution === 'in_person' ? 'council.my_contribution_in_person' : 'council.my_contribution_remote')}
-        </Chip>
-      )}
-      <div className={`${styles.actions} ${styles.actionsRow}`}>
-        {confirmingAbort ? (
-          <>
-            <Button size="nano" variant="bordered" color="neutral" onClick={onCancelAbort} disabled={busy}>
-              {t('onboarding.btn_cancel')}
-            </Button>
-            <Button size="nano" color="error" onClick={onAbort} disabled={busy}>
-              {t('council.abort_confirm')}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button size="nano" variant="tertiary" color="error" onClick={onAbort} disabled={busy}>
-              {t('council.abort')}
-            </Button>
-            {request.can_contribute && request.stage === 'collecting' && (
-              <Button size="nano" variant="bordered" onClick={onRemote} disabled={busy}>
-                {t('council.approve_remotely')}
-              </Button>
-            )}
-            {request.can_contribute && (
-              <Button size="nano" onClick={onInPerson} disabled={busy}>
-                {t('council.hand_over_in_person')}
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Choosing who moves the escrows still split over an older version: exactly as
- * many custodians as that version's threshold, all still in the council with
- * the same key. Each then processes the escrows from their own vault.
- */
-function ReshareStart({
-  council,
-  sourceVersion,
-  busy,
-  banner,
-  onBack,
-  onStart,
-}: {
-  council: CustodianCouncil;
-  sourceVersion: number;
-  busy: boolean;
-  banner: ReactNode;
-  onBack: () => void;
-  onStart: (helperSlots: number[]) => void;
-}) {
-  const { t } = useTranslation('common');
-  const source = council.chain.find((v) => v.version === sourceVersion)!;
-  const head = headOf(council)!;
-  const eligible = source.members.filter((m) => head.members.some((h) => h.slot === m.slot && h.identity_public_key === m.identity_public_key));
-  const [chosen, setChosen] = useState<number[]>(() => {
-    const mine = eligible.filter((m) => m.slot === council.my_slot).map((m) => m.slot);
-    const others = eligible.filter((m) => m.slot !== council.my_slot).map((m) => m.slot);
-
-    return [...mine, ...others].slice(0, source.threshold);
-  });
-
-  const toggle = (slot: number) =>
-    setChosen((previous) =>
-      previous.includes(slot) ? previous.filter((s) => s !== slot) : previous.length < source.threshold ? [...previous, slot] : previous
-    );
-
-  return (
-    <Screen
-      back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: busy }}
-      title={t('council.reshare_title', { from: sourceVersion, to: head.version })}
-      description={
-        <>
-          <p>{t('council.reshare_description', { threshold: source.threshold })}</p>
-          <p>{t('council.reshare_nobody_sees')}</p>
-        </>
-      }
-      banner={
-        <>
-          {banner}
-          {eligible.length < source.threshold && <Notice type={VariantType.ERROR}>{t('council.reshare_impossible')}</Notice>}
-        </>
-      }
-      actions={
-        <Button onClick={() => onStart(chosen)} disabled={busy || chosen.length !== source.threshold}>
-          {busy ? t('council.reshare_starting') : t('council.reshare_start')}
-        </Button>
-      }
-    >
-      <div className={styles.section}>
-        {eligible.map((member) => (
-          <Checkbox
-            key={member.slot}
-            label={member.slot === council.my_slot ? t('council.reshare_me', { name: member.name }) : (member.name ?? `#${member.slot}`)}
-            checked={chosen.includes(member.slot)}
-            onChange={() => toggle(member.slot)}
-          />
-        ))}
-      </div>
-    </Screen>
   );
 }

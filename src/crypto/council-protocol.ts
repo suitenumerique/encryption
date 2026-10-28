@@ -1,5 +1,5 @@
 /**
- * The recovery council protocol as the vault runs it (shamir.md §5-11), kept free
+ * The recovery council protocol as the vault runs it (architecture.md Appendix F), kept free
  * of storage and network so it can be tested end to end: building a user's
  * escrow, a custodian's contribution, a helper's resharing, and the locked-out
  * browser's reconstruction.
@@ -18,7 +18,7 @@ import {
   type RosterRecord,
   type SignedRosterVersion,
   capsuleHash,
-  createTransferKey,
+  deriveTransferKey,
   ephemeralKeyHash,
   openSubShare,
   openTransferKey,
@@ -37,6 +37,7 @@ import {
   verifyReshareKeyBinding,
   wrapShareForCustodian,
   wrapShareForRequest,
+  wrapTransferKey,
   wrappedSharesHash,
 } from '@encryption/src/crypto/council';
 import { type HybridPublicKey, type HybridSecretKey, ensureSodium } from '@encryption/src/crypto/encryption';
@@ -168,11 +169,27 @@ export async function buildCouncilEscrow(input: EscrowInput): Promise<CouncilEsc
 
 // ----- A custodian's share ------------------------------------------------------
 
+/** A share that does not verify, with the helper whose sub-share failed when the share was reshared. */
+export class CouncilShareError extends Error {
+  constructor(
+    message: string,
+    readonly helperSlot: number | null = null
+  ) {
+    super(message);
+    this.name = 'CouncilShareError';
+  }
+}
+
 export interface CapsuleContext {
-  userId: string;
   councilId: string;
+  /** The council's verified roster versions (verifyRosterChain), which name every helper and target. */
+  versions: RosterRecord[];
   /** The custodian's encryption secret keys, newest first. */
   secretKeys: HybridSecretKey[];
+}
+
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -185,16 +202,28 @@ export interface CapsuleContext {
  */
 export async function openCustodianShare(capsule: CouncilCapsuleWire, escrow: CouncilEscrowRecord, context: CapsuleContext): Promise<Uint8Array> {
   const signed = decodeCommitments(escrow.shareCommitments);
+  if (signed.length !== escrow.threshold) throw new CouncilShareError('The signed split does not have the threshold the user signed');
 
   if (capsule.kind === 'direct') {
     const encoded = await unwrapCapsule(base64ToUint8(capsule.wrapped_share), context.secretKeys);
     const share = decodeShare(encoded);
-    if (share.x !== capsule.slot) throw new Error('The capsule holds the share of another slot');
-    if (!verifyShare(share, signed)) throw new Error('The share does not match the commitments the user signed');
+    if (share.x !== capsule.slot) throw new CouncilShareError('The capsule holds the share of another slot');
+    if (!verifyShare(share, signed)) throw new CouncilShareError('The share does not match the commitments the user signed');
     wipeShare(share);
 
     return encoded;
   }
+
+  // A slot keeps one owner along a verified chain, so a helper is the custodian
+  // the chain names at its slot, whatever version the escrow was split on.
+  const slotKeys = new Map<number, string>();
+  for (const version of context.versions) for (const m of version.members) slotKeys.set(m.slot, hex(m.identityPublicKeyWire));
+
+  const target = context.versions.find((v) => v.version === capsule.target_roster_version);
+  if (!target || !target.members.some((m) => m.slot === capsule.slot))
+    throw new CouncilShareError('The resharing targets a membership the council never signed');
+  if (capsule.helpers.length === 0 || new Set(capsule.helpers.map((h) => h.helper_slot)).size !== capsule.helpers.length)
+    throw new CouncilShareError('The resharing does not name distinct helpers');
 
   const subShares: ShamirShare[] = [];
   const perHelper: Commitments[] = [];
@@ -202,6 +231,9 @@ export async function openCustodianShare(capsule: CouncilCapsuleWire, escrow: Co
   try {
     for (const helper of capsule.helpers) {
       const helperKey = base64ToUint8(helper.helper_identity_public_key);
+      if (slotKeys.get(helper.helper_slot) !== hex(helperKey))
+        throw new CouncilShareError(`Helper slot ${helper.helper_slot} is not the custodian the council names there`, helper.helper_slot);
+
       const wrapped = base64ToUint8(helper.wrapped_transfer_key);
       const bound = await verifyReshareKeyBinding(
         {
@@ -215,7 +247,8 @@ export async function openCustodianShare(capsule: CouncilCapsuleWire, escrow: Co
         base64ToUint8(helper.binding_signature),
         helperKey
       );
-      if (!bound) throw new Error(`The transfer key of helper slot ${helper.helper_slot} is not signed by that helper`);
+      if (!bound)
+        throw new CouncilShareError(`The transfer key of helper slot ${helper.helper_slot} is not signed by that helper`, helper.helper_slot);
 
       const commitmentBytes = base64ToUint8(helper.commitments);
       const committed = await verifyReshareCommitments(
@@ -230,30 +263,40 @@ export async function openCustodianShare(capsule: CouncilCapsuleWire, escrow: Co
         base64ToUint8(helper.commitments_signature),
         helperKey
       );
-      if (!committed) throw new Error(`The commitments of helper slot ${helper.helper_slot} are not signed by that helper`);
-      const commitments = decodeCommitments(commitmentBytes);
+      if (!committed)
+        throw new CouncilShareError(`The commitments of helper slot ${helper.helper_slot} are not signed by that helper`, helper.helper_slot);
 
-      const transferKey = await openTransferKey(wrapped, context.secretKeys);
-      const opened = await openSubShare(transferKey, base64ToUint8(helper.sealed_sub_share), {
-        sessionId: capsule.session_id,
-        escrowId: capsule.escrow_id,
-        helperSlot: helper.helper_slot,
-        recipientSlot: capsule.slot,
-      }).catch(() => {
-        throw new Error('A sub-share does not open for this escrow');
-      });
-      const subShare = decodeShare(opened);
-      opened.fill(0);
+      let subShare: ShamirShare;
+      let commitments: Commitments;
+      try {
+        commitments = decodeCommitments(commitmentBytes);
+        const transferKey = await openTransferKey(wrapped, context.secretKeys);
+        const opened = await openSubShare(transferKey, base64ToUint8(helper.sealed_sub_share), {
+          sessionId: capsule.session_id,
+          escrowId: capsule.escrow_id,
+          helperSlot: helper.helper_slot,
+          recipientSlot: capsule.slot,
+        });
+        subShare = decodeShare(opened);
+        opened.fill(0);
+      } catch {
+        throw new CouncilShareError(`The sub-share of helper slot ${helper.helper_slot} does not open for this escrow`, helper.helper_slot);
+      }
 
-      if (subShare.x !== capsule.slot || !verifyShare(subShare, commitments))
-        throw new Error(`The sub-share of helper slot ${helper.helper_slot} does not match the commitments it signed`);
+      if (subShare.x !== capsule.slot || commitments.length !== target.threshold || !verifyShare(subShare, commitments)) {
+        wipeShare(subShare);
+        throw new CouncilShareError(
+          `The sub-share of helper slot ${helper.helper_slot} does not match the commitments it signed`,
+          helper.helper_slot
+        );
+      }
 
       subShares.push(subShare);
       perHelper.push(commitments);
     }
 
     if (perHelper.length === 0 || !equalPoints(sumCommitments(perHelper)[0], signed[0]))
-      throw new Error('The resharing does not carry the secret the user split');
+      throw new CouncilShareError('The resharing does not carry the secret the user split');
 
     const share = sumSubShares(capsule.slot, subShares);
     const encoded = encodeShare(share);
@@ -392,23 +435,50 @@ export interface ReshareTarget {
   target: RosterRecord;
   helperSlots: number[];
   mySlot: number;
-  /** The target custodians' encryption keys, checked against the target's identities. */
-  recipientKeys: Map<number, HybridPublicKey>;
+  /** The helper's VRK, which its transfer keys derive from. */
+  vrk: Uint8Array;
   identitySecretKey: SignatureSecretKey;
 }
 
-/** One transfer key per target custodian, signed; the keys stay with the helper for the session. */
-export async function buildReshareKeys(input: ReshareTarget): Promise<{ body: CouncilReshareKeysBody; transferKeys: Map<number, Uint8Array> }> {
+/** This helper's transfer key for every target custodian of the session. */
+export async function reshareTransferKeys(
+  input: Pick<ReshareTarget, 'sessionId' | 'councilId' | 'target' | 'vrk'>
+): Promise<Map<number, Uint8Array>> {
   const transferKeys = new Map<number, Uint8Array>();
+
+  for (const member of input.target.members) {
+    transferKeys.set(
+      member.slot,
+      await deriveTransferKey(input.vrk, {
+        sessionId: input.sessionId,
+        councilId: input.councilId,
+        targetRosterVersion: input.target.version,
+        recipientSlot: member.slot,
+      })
+    );
+  }
+
+  return transferKeys;
+}
+
+/**
+ * The transfer keys wrapped for each target custodian and signed, sent once per
+ * helper and session.
+ */
+export async function buildReshareKeys(
+  input: ReshareTarget & {
+    /** The target custodians' encryption keys, checked against the target's identities. */
+    recipientKeys: Map<number, HybridPublicKey>;
+  }
+): Promise<{ body: CouncilReshareKeysBody; transferKeys: Map<number, Uint8Array> }> {
+  const transferKeys = await reshareTransferKeys(input);
   const keys = [];
 
   for (const member of input.target.members) {
     const recipientKey = input.recipientKeys.get(member.slot);
     if (!recipientKey) throw new Error(`No verified encryption key for council slot ${member.slot}`);
 
-    const { transferKey, wrapped } = await createTransferKey(recipientKey);
-    transferKeys.set(member.slot, transferKey);
-
+    const wrapped = await wrapTransferKey(transferKeys.get(member.slot)!, recipientKey);
     const signature = await signReshareKeyBinding(
       {
         sessionId: input.sessionId,

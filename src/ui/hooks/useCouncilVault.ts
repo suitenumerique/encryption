@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import type { MnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import {
   MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_CHECK_SHARES,
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
@@ -15,6 +16,8 @@ import {
   MSG_VAULT_SIGN_REQUEST,
 } from '@encryption/src/shared/constants';
 import type {
+  CouncilCheckBatch,
+  CouncilCheckResultsBody,
   CouncilContributionBody,
   CouncilEscrowBody,
   CouncilEscrowRecordWire,
@@ -44,9 +47,14 @@ export function useCouncilVault() {
       createEscrow: (councilId: string, chain: RosterVersionWire[], lang: MnemonicLanguage, anchorHash?: string) =>
         request(MSG_VAULT_COUNCIL_CREATE_ESCROW, { councilId, chain, anchorHash, lang }) as Promise<CouncilEscrowBody>,
       checkEscrow: (record: CouncilEscrowRecordWire, chain: RosterVersionWire[]) =>
-        request(MSG_VAULT_COUNCIL_CHECK_ESCROW, { record, chain }) as Promise<{ status: CouncilEscrowCheck; headFingerprint: string | null }>,
+        request(MSG_VAULT_COUNCIL_CHECK_ESCROW, { record, chain }) as Promise<{
+          status: CouncilEscrowCheck;
+          headFingerprint: string | null;
+          renewalDue: boolean;
+        }>,
       startRequest: () => request(MSG_VAULT_COUNCIL_START_REQUEST) as Promise<{ ephemeralPublicKey: string; fingerprint: string }>,
-      requestKey: () => request(MSG_VAULT_COUNCIL_REQUEST_KEY) as Promise<{ ephemeralPublicKey: string; fingerprint: string } | null>,
+      requestKey: (serverFingerprint?: string | null) =>
+        request(MSG_VAULT_COUNCIL_REQUEST_KEY, { serverFingerprint }) as Promise<{ ephemeralPublicKey: string; fingerprint: string } | null>,
       completeRecovery: (released: CouncilReleasedShares, idToken: string) =>
         request(MSG_VAULT_COUNCIL_COMPLETE_RECOVERY, { released, idToken }) as Promise<{
           publicKey: string;
@@ -61,6 +69,8 @@ export function useCouncilVault() {
         request(MSG_VAULT_COUNCIL_CONTRIBUTE, { detail, inPerson, meetingCode }) as Promise<CouncilContributionBody>,
       signRoster: (councilId: string, chain: RosterVersionWire[], proposal: RosterVersionWire) =>
         request(MSG_VAULT_COUNCIL_SIGN_ROSTER, { councilId, chain, proposal }) as Promise<{ signature: string }>,
+      checkShares: (batch: CouncilCheckBatch) =>
+        request(MSG_VAULT_COUNCIL_CHECK_SHARES, { batch }) as Promise<{ results: CouncilCheckResultsBody['results'] }>,
       reshareBatch: (batch: CouncilReshareBatch) =>
         request(MSG_VAULT_COUNCIL_RESHARE_BATCH, { batch }) as Promise<{
           keys: CouncilReshareKeysBody | null;

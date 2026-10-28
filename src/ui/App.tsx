@@ -25,7 +25,9 @@ import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile
 import { RecoveryCouncil } from '@encryption/src/ui/components/RecoveryCouncil';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { renewsOn } from '@encryption/src/ui/council-renewal';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useCouncilRenewal } from '@encryption/src/ui/hooks/useCouncilRenewal';
 import { ModalSizeProvider } from '@encryption/src/ui/hooks/useModalSize';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
 import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
@@ -411,6 +413,8 @@ function InterfaceScreens({
   const handleClose = useCallback(() => {
     notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
   }, [parentContext.parentOrigin]);
+
+  useCouncilRenewal(getValidIdToken, internalUserId, Boolean(oidcAuth.idToken) && renewsOn(activeRoute));
 
   // All hooks declared above — conditional returns are safe below this point.
   // Show a loader while trying to restore a token from the vault.

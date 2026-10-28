@@ -100,7 +100,7 @@ export const MSG_VAULT_CREATE_EMERGENCY_ESCROW = 'vault:create-emergency-escrow'
 export const MSG_VAULT_BUILD_EMERGENCY_REARMS = 'vault:build-emergency-rearms';
 export const MSG_VAULT_VERIFY_ESCROWS = 'vault:verify-escrows';
 export const MSG_VAULT_REVEAL_EMERGENCY_PHRASE = 'vault:reveal-emergency-phrase';
-// --- Recovery council (shamir.md) ---
+// --- Recovery council (architecture.md Appendix F) ---
 export const MSG_VAULT_COUNCIL_VERIFY_ROSTER = 'vault:council-verify-roster';
 export const MSG_VAULT_COUNCIL_CREATE_ESCROW = 'vault:council-create-escrow';
 export const MSG_VAULT_COUNCIL_CHECK_ESCROW = 'vault:council-check-escrow';
@@ -111,6 +111,7 @@ export const MSG_VAULT_COUNCIL_REACTIVATE = 'vault:council-reactivate';
 export const MSG_VAULT_COUNCIL_CONTRIBUTE = 'vault:council-contribute';
 export const MSG_VAULT_COUNCIL_SIGN_ROSTER = 'vault:council-sign-roster';
 export const MSG_VAULT_COUNCIL_RESHARE_BATCH = 'vault:council-reshare-batch';
+export const MSG_VAULT_COUNCIL_CHECK_SHARES = 'vault:council-check-shares';
 // --- Vault product requests: fingerprint registry ---
 export const MSG_VAULT_CHECK_FINGERPRINTS = 'vault:check-fingerprints';
 export const MSG_VAULT_ACCEPT_FINGERPRINT = 'vault:accept-fingerprint';

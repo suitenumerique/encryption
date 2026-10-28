@@ -27,8 +27,9 @@ import { Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
+import { councilVaultErrorKey } from '@encryption/src/ui/hooks/useCouncilErrors';
 import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
-import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
+import { type CouncilRenewal, useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useStepUp } from '@encryption/src/ui/hooks/useStepUp';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
@@ -47,6 +48,7 @@ type OnboardingStep =
   | 'backup'
   | 'done'
   | 'council-recovery'
+  | 'council-unfinished'
   | 'forced-rotation'
   | 'forced-rotation-done';
 
@@ -244,6 +246,10 @@ export function ModalEncryptionOnboarding({
   const [councilAvailable, setCouncilAvailable] = useState(false);
   const [councilUnlock, setCouncilUnlock] = useState(false);
   const [councilDropped, setCouncilDropped] = useState(false);
+  // What a council recovery still needs once the vault is open: bringing back the
+  // superseded vault it unlocked, or the forced phrase change. Kept so a failure or
+  // a cancel lands on a screen that can resume it.
+  const [councilPending, setCouncilPending] = useState<{ kind: 'reactivate'; date: string } | { kind: 'rotate'; publicKey: string } | null>(null);
   const councilVault = useCouncilVault();
 
   useEffect(() => {
@@ -287,7 +293,7 @@ export function ModalEncryptionOnboarding({
   const [rotationBusy, setRotationBusy] = useState(false);
   const [rotationError, setRotationError] = useState<string | null>(null);
   const [rotationBlocked, setRotationBlocked] = useState<BlockedContact[] | null>(null);
-  const { commitKeyring, findBlockedContacts, revokeContacts } = useKeyringCommit(getIdToken);
+  const { commitKeyring, renewCouncil, findBlockedContacts, revokeContacts } = useKeyringCommit(getIdToken);
   // The key the rotation reports once done, kept while a blocked contact holds it back.
   const [rotationPublicKey, setRotationPublicKey] = useState<string | null>(null);
 
@@ -724,11 +730,14 @@ export function ModalEncryptionOnboarding({
     if (reactivatePrompt?.council) {
       try {
         const reactivated = await withFreshIdToken(getIdToken, (idToken) => councilVault.reactivate(idToken));
+        setCouncilPending({ kind: 'rotate', publicKey: reactivated.publicKey });
         setReactivatePrompt(null);
         await startForcedRotation(reactivated.publicKey);
       } catch (err) {
+        // The prompt closes onto the screen that resumes the recovery, where the banner shows.
+        setReactivatePrompt(null);
         if (err instanceof SessionExpiredError) markSessionExpired();
-        else setError(t(unlockErrorKey(err)));
+        else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
       } finally {
         setIsPending(false);
       }
@@ -763,21 +772,51 @@ export function ModalEncryptionOnboarding({
   const handleCouncilRecovered = useCallback(
     async (result: CouncilRecoveryResult) => {
       setCouncilUnlock(true);
+      setError(null);
+      // Behind the prompt or after a failure, this screen resumes what is left.
+      setStep('council-unfinished');
 
       if (!result.isActiveVault) {
-        setReactivatePrompt({ date: new Intl.DateTimeFormat(i18n.language).format(new Date(result.vaultCreatedAtMillis)), council: true });
+        const date = new Intl.DateTimeFormat(i18n.language).format(new Date(result.vaultCreatedAtMillis));
+        setCouncilPending({ kind: 'reactivate', date });
+        setReactivatePrompt({ date, council: true });
 
         return;
       }
 
+      setCouncilPending({ kind: 'rotate', publicKey: result.publicKey });
       try {
         await startForcedRotation(result.publicKey);
       } catch (err) {
-        setError((err as Error).message);
+        if (err instanceof SessionExpiredError) markSessionExpired();
+        else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
       }
     },
-    [startForcedRotation, i18n.language]
+    [startForcedRotation, i18n.language, markSessionExpired, t]
   );
+
+  const handleCouncilContinue = useCallback(async () => {
+    if (!councilPending) return;
+
+    setError(null);
+    clearSessionExpired();
+
+    if (councilPending.kind === 'reactivate') {
+      setReactivatePrompt({ date: councilPending.date, council: true });
+
+      return;
+    }
+
+    setIsPending(true);
+    try {
+      await startForcedRotation(councilPending.publicKey);
+    } catch (err) {
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
+    } finally {
+      setIsPending(false);
+    }
+  }, [councilPending, startForcedRotation, markSessionExpired, clearSessionExpired, t]);
 
   // Commit the rotated keyring: the moment the escrowed phrase (and the old
   // primary one) dies. The shared flow burns + re-arms every granted
@@ -792,24 +831,15 @@ export function ModalEncryptionOnboarding({
 
     try {
       const lang = mnemonicLanguageForLocale(i18n.language);
-      let council: { councilRearm?: Awaited<ReturnType<typeof councilVault.createEscrow>>; councilDrop?: boolean } | undefined;
+      let council: CouncilRenewal | undefined;
 
       // The council's setup is renewed with a fresh dormant phrase over its
       // current members; if that cannot be built (its membership no longer
       // verifies), the user leaves it and is told to set it up again.
-      if (councilUnlock) {
-        try {
-          const forMe = await withFreshIdToken(getIdToken, fetchCouncilForMe);
-          council = {
-            councilRearm: await councilVault.createEscrow(forMe.council!.council_id, forMe.council!.chain, lang, forMe.escrow!.record.roster_hash),
-          };
-        } catch {
-          council = { councilDrop: true };
-        }
-      }
+      if (councilUnlock) council = await renewCouncil(lang);
 
-      await commitKeyring(forcedRotation.keyring, lang, council);
-      setCouncilDropped(council?.councilDrop === true);
+      const { councilDropped: dropped } = await commitKeyring(forcedRotation.keyring, lang, council);
+      setCouncilDropped(dropped);
       onSuccess?.(forcedRotation.publicKey);
       setForcedRotation(null);
       setStep('forced-rotation-done');
@@ -820,7 +850,7 @@ export function ModalEncryptionOnboarding({
     } finally {
       setRotationBusy(false);
     }
-  }, [forcedRotation, commitKeyring, i18n.language, onSuccess, markSessionExpired, clearSessionExpired, councilUnlock, councilVault, getIdToken]);
+  }, [forcedRotation, commitKeyring, renewCouncil, i18n.language, onSuccess, markSessionExpired, clearSessionExpired, councilUnlock]);
 
   // A granted contact is no longer trusted, so their mandatory re-arm cannot be
   // built: revoke exactly those relationships (user-approved), then go on with
@@ -1102,6 +1132,20 @@ export function ModalEncryptionOnboarding({
             </div>
           )}
         </Screen>
+      )}
+
+      {step === 'council-unfinished' && (
+        <Screen
+          illustration="shield-restore"
+          title={t('council.unfinished_title')}
+          description={t('council.unfinished_description')}
+          banner={banner}
+          actions={
+            <Button onClick={handleCouncilContinue} disabled={isPending || councilPending === null}>
+              {t('onboarding.btn_continue')}
+            </Button>
+          }
+        />
       )}
 
       {step === 'council-recovery' && (

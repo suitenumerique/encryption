@@ -16,6 +16,8 @@ import {
 import { verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
 import { satisfiesStepUp, sendStepUpChallenge } from '@encryption/src/server/auth/step-up';
+import { councilLabel } from '@encryption/src/server/council-core';
+import { CouncilHeadChangedError, checkEscrowSubmission, writeEscrow } from '@encryption/src/server/council-escrow';
 import { sendCouncilRecoveryCompleted, sendCouncilRecoveryCompletedCustodian } from '@encryption/src/server/email/council';
 import { errorResponses } from '@encryption/src/server/error-response';
 import {
@@ -25,7 +27,6 @@ import {
   verifyEscrowSubmission,
 } from '@encryption/src/server/routes/emergency-core';
 import { kdfParamsAllowed } from '@encryption/src/server/routes/kdf-params';
-import { checkEscrowSubmission, councilLabel, writeEscrow } from '@encryption/src/server/routes/recovery-council';
 import {
   type CompleteTxResult,
   activateRegistration,
@@ -43,6 +44,7 @@ import { configureZodValidation } from '@encryption/src/server/zod-validation';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
   API_ERROR_COUNCIL_REARM_REQUIRED,
+  API_ERROR_COUNCIL_ROSTER_CHANGED,
   API_ERROR_EMERGENCY_ESCROW_INVALID,
   API_ERROR_EMERGENCY_REARM_REQUIRED,
   API_ERROR_RATE_LIMIT_APPROVALS,
@@ -1004,6 +1006,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           { isolationLevel: 'Serializable' }
         );
       } catch (err) {
+        if (err instanceof CouncilHeadChangedError) return reply.status(409).send({ code: API_ERROR_COUNCIL_ROSTER_CHANGED });
         if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
         throw err;
       }

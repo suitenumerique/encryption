@@ -1,14 +1,24 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent, within } from 'storybook/test';
+import { HttpResponse } from 'msw';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
+import { MSG_VAULT_COUNCIL_CHECK_SHARES, MSG_VAULT_COUNCIL_RESHARE_BATCH } from '@encryption/src/shared/constants';
+import type { CouncilCheckResultsBody } from '@encryption/src/shared/schemas/recovery-council';
 import type { CouncilsMine } from '@encryption/src/ui/api/council-client';
-import { handleGetApiCouncilsMine } from '@encryption/src/ui/api/generated/msw.gen';
+import {
+  handleGetApiCouncilsByCouncilIdSharesToCheck,
+  handleGetApiCouncilsMine,
+  handleGetApiCouncilsReshareBySessionIdBatch,
+  handlePostApiCouncilsByCouncilIdSharesChecked,
+  handlePostApiCouncilsReshareBySessionIdSubShares,
+} from '@encryption/src/ui/api/generated/msw.gen';
 import { CouncilCustodian } from '@encryption/src/ui/components/CouncilCustodian';
 import { COUNCIL_LABEL, custodianCouncil } from '@encryption/src/ui/testing/council-stories';
-import { sampleCouncilMembers, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
+import { sampleCouncilEscrowRecord, sampleCouncilMembers, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
+import { defaultVaultRequest } from '@encryption/src/ui/testing/mock-encryption';
 
 type ComponentType = typeof CouncilCustodian;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
@@ -170,28 +180,67 @@ OutdatedStory.play = async ({ canvasElement }) => {
 };
 export const MoveSetups = prepareStory(OutdatedStory);
 
+// A helper's part of a resharing, not processed yet.
+const runningCouncil = custodianCouncil({
+  chain: [sampleRosterVersion(), sampleRosterVersion({ version: 2 })],
+  health: { escrows: 128, ok: 40, at_risk: 88, lost: 0, outdated: [{ version: 1, escrows: 88 }] },
+  reshare: {
+    session_id: '0c0c0c0c-0000-4000-8000-000000000001',
+    source_version: 1,
+    target_version: 2,
+    helper_slots: [1, 2],
+    i_am_helper: true,
+    remaining_for_me: 88,
+    remaining: 88,
+  },
+});
+
 const ReshareRunningStory = Template.bind({});
 ReshareRunningStory.args = baseArgs;
-ReshareRunningStory.parameters = mine([
-  custodianCouncil({
-    chain: [sampleRosterVersion(), sampleRosterVersion({ version: 2 })],
-    health: { escrows: 128, ok: 40, at_risk: 88, lost: 0, outdated: [{ version: 1, escrows: 88 }] },
-    reshare: {
-      session_id: '0c0c0c0c-0000-4000-8000-000000000001',
-      source_version: 1,
-      target_version: 2,
-      helper_slots: [1, 2],
-      i_am_helper: true,
-      remaining_for_me: 88,
-      remaining: 88,
-    },
-  }),
-]);
+ReshareRunningStory.parameters = mine([runningCouncil]);
 ReshareRunningStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('council.reshare_my_part', { count: 88 }));
   await playFindButton(canvasElement, i18n.t('council.reshare_process'));
 };
 export const MySharePartWaiting = prepareStory(ReshareRunningStory);
+
+// A server that keeps returning the same batch: the vault stops instead of
+// looping, and says so.
+const RESHARE_SESSION = '0c0c0c0c-0000-4000-8000-000000000001';
+const ReshareStalledStory = Template.bind({});
+ReshareStalledStory.args = baseArgs;
+ReshareStalledStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiCouncilsMine({ body: { mfa_enforced: true, councils: [runningCouncil] } }),
+      handleGetApiCouncilsReshareBySessionIdBatch({
+        body: {
+          session_id: RESHARE_SESSION,
+          council_id: 'dinum',
+          helper_slots: [1, 2],
+          my_slot: 1,
+          target_roster_version: 2,
+          target_threshold: 2,
+          chain: [sampleRosterVersion(), sampleRosterVersion({ version: 2 })],
+          transfer_keys_done: true,
+          escrows: [],
+          remaining: 88,
+        },
+      }),
+      handlePostApiCouncilsReshareBySessionIdSubShares({ body: { moved: 0, remaining: 88 } }),
+    ],
+  },
+  encryption: {
+    request: async (type: string, payload?: unknown) =>
+      type === MSG_VAULT_COUNCIL_RESHARE_BATCH ? { keys: null, subShares: { escrows: [] } } : defaultVaultRequest(type, payload),
+  },
+};
+ReshareStalledStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.reshare_process')));
+  await within(canvasElement).findByText(i18n.t('council.reshare_stalled'));
+  await expect(await playFindButton(canvasElement, i18n.t('settings.done'))).toBeEnabled();
+};
+export const ReshareStalled = prepareStory(ReshareStalledStory);
 
 // A broken or emptied configuration deletes nothing; it only stops changes.
 const NotConfiguredStory = Template.bind({});
@@ -227,3 +276,88 @@ SeveralStory.play = async ({ canvasElement }) => {
   expect(canvas.getAllByText(i18n.t('council.health_ok'))).toHaveLength(2);
 };
 export const SeveralCouncils = prepareStory(SeveralStory);
+
+// After a resharing, a helper sent parts that do not match what it committed
+// to: the custodians who received them refused them, and the council is told who.
+const FaultyStory = Template.bind({});
+FaultyStory.args = baseArgs;
+FaultyStory.parameters = mine([
+  custodianCouncil({
+    health: { escrows: 128, ok: 0, at_risk: 125, lost: 3, outdated: [] },
+    faulty_reshares: [{ helper_name: 'Bruno Petit', escrows: 3 }],
+  }),
+]);
+FaultyStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.faulty_reshare_title', { name: 'Bruno Petit', count: 3 }));
+  canvas.getByText(i18n.t('council.health_lost', { count: 3 }));
+};
+export const InvalidPartsFromAHelper = prepareStory(FaultyStory);
+
+// A new custodian opens their space: their vault checks, in the background, the
+// parts a resharing gave them, and the result shows once the server has it.
+const escrowIds = ['e5c0e5c0-0000-4000-8000-000000000001', 'e5c0e5c0-0000-4000-8000-000000000002'];
+let uploaded: CouncilCheckResultsBody['results'] = [];
+
+const CheckStory = Template.bind({});
+CheckStory.args = baseArgs;
+CheckStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiCouncilsMine(() =>
+        HttpResponse.json({
+          mfa_enforced: true,
+          councils: [
+            uploaded.length === 0
+              ? custodianCouncil({ shares_to_check: 2 })
+              : custodianCouncil({
+                  health: { escrows: 128, ok: 127, at_risk: 1, lost: 0, outdated: [] },
+                  faulty_reshares: [{ helper_name: 'Bruno Petit', escrows: 1 }],
+                }),
+          ],
+        })
+      ),
+      handleGetApiCouncilsByCouncilIdSharesToCheck(() =>
+        HttpResponse.json({
+          council_id: 'dinum',
+          escrows:
+            uploaded.length === 0
+              ? escrowIds.map((id) => ({
+                  escrow_id: id,
+                  user_id: sampleCouncilMembers[1].user_id,
+                  record: sampleCouncilEscrowRecord,
+                  capsule: { kind: 'direct' as const, generation: 1, slot: 1, wrapped_share: sampleCouncilEscrowRecord.escrow_signature },
+                }))
+              : [],
+          remaining: uploaded.length === 0 ? 2 : 0,
+        })
+      ),
+      handlePostApiCouncilsByCouncilIdSharesChecked(async ({ request }) => {
+        uploaded = ((await request.json()) as CouncilCheckResultsBody).results;
+
+        return HttpResponse.json({ checked: uploaded.length, invalid: uploaded.filter((r) => !r.valid).length });
+      }),
+    ],
+  },
+  encryption: {
+    request: async (type: string, payload?: unknown) =>
+      type === MSG_VAULT_COUNCIL_CHECK_SHARES
+        ? {
+            results: [
+              { escrow_id: escrowIds[0], valid: true, faulty_helper_slot: null },
+              { escrow_id: escrowIds[1], valid: false, faulty_helper_slot: 2 },
+            ],
+          }
+        : defaultVaultRequest(type, payload),
+  },
+};
+CheckStory.beforeEach = () => {
+  uploaded = [];
+};
+CheckStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+
+  await canvas.findByText(i18n.t('council.faulty_reshare_title', { name: 'Bruno Petit', count: 1 }));
+  await waitFor(() => expect(uploaded).toEqual([expect.objectContaining({ valid: true }), expect.objectContaining({ faulty_helper_slot: 2 })]));
+};
+export const ChecksReceivedParts = prepareStory(CheckStory);

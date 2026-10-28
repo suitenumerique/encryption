@@ -16,6 +16,9 @@ import type {
   GetApiCouncilRecoveryRequestsByIdSharesResponses,
   GetApiCouncilRecoveryRequestsMineData,
   GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsByCouncilIdSharesToCheckData,
+  GetApiCouncilsByCouncilIdSharesToCheckErrors,
+  GetApiCouncilsByCouncilIdSharesToCheckResponses,
   GetApiCouncilsForMeData,
   GetApiCouncilsForMeResponses,
   GetApiCouncilsMineData,
@@ -78,6 +81,9 @@ import type {
   PostApiCouncilsByCouncilIdReshareData,
   PostApiCouncilsByCouncilIdReshareErrors,
   PostApiCouncilsByCouncilIdReshareResponses,
+  PostApiCouncilsByCouncilIdSharesCheckedData,
+  PostApiCouncilsByCouncilIdSharesCheckedErrors,
+  PostApiCouncilsByCouncilIdSharesCheckedResponses,
   PostApiCouncilsByCouncilIdVersionsByVersionSignData,
   PostApiCouncilsByCouncilIdVersionsByVersionSignErrors,
   PostApiCouncilsByCouncilIdVersionsByVersionSignResponses,
@@ -641,4 +647,24 @@ export const postApiCouncilsReshareBySessionIdCancel = <ThrowOnError extends boo
   (options.client ?? client).post<PostApiCouncilsReshareBySessionIdCancelResponses, PostApiCouncilsReshareBySessionIdCancelErrors, ThrowOnError>({
     url: '/api/councils/reshare/{sessionId}/cancel',
     ...options,
+  });
+
+export const getApiCouncilsByCouncilIdSharesToCheck = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilsByCouncilIdSharesToCheckData, ThrowOnError>
+): RequestResult<GetApiCouncilsByCouncilIdSharesToCheckResponses, GetApiCouncilsByCouncilIdSharesToCheckErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilsByCouncilIdSharesToCheckResponses, GetApiCouncilsByCouncilIdSharesToCheckErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/shares-to-check',
+    ...options,
+  });
+
+export const postApiCouncilsByCouncilIdSharesChecked = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsByCouncilIdSharesCheckedData, ThrowOnError>
+): RequestResult<PostApiCouncilsByCouncilIdSharesCheckedResponses, PostApiCouncilsByCouncilIdSharesCheckedErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilsByCouncilIdSharesCheckedResponses, PostApiCouncilsByCouncilIdSharesCheckedErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/shares-checked',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
   });

@@ -1,6 +1,6 @@
 /**
  * Verifiable Shamir secret sharing (Pedersen) over the ristretto255 group, for
- * the recovery council (shamir.md §5.1).
+ * the recovery council (architecture.md F.1).
  *
  * The secret is a scalar `s`. The dealer draws two random polynomials of degree
  * `k - 1`, `f` with `f(0) = s` and a blinding `g`, gives each custodian the pair

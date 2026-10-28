@@ -1,5 +1,5 @@
 /**
- * Recovery council state on the server (shamir.md §9-11): the roster chain the
+ * Recovery council state on the server (architecture.md F.2, F.4): the roster chain the
  * custodians sign, the change the configuration proposes, and the health of
  * every escrow split over it.
  *
@@ -9,12 +9,18 @@
  * escrow because the configuration changed or disappeared; the only deletion is
  * of the capsules of a custodian a SIGNED version removed or re-keyed.
  */
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
+import { createHash } from 'node:crypto';
+
 import { type RosterRecord, rosterHash } from '@encryption/src/crypto/council';
 import { uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
-import type { Prisma } from '@encryption/src/generated/prisma/client';
+import { Prisma } from '@encryption/src/generated/prisma/client';
 import { prisma } from '@encryption/src/prisma/client';
-import type { RecoveryCouncilConfig } from '@encryption/src/server/recovery-councils';
+import { databaseSchema } from '@encryption/src/prisma/database-schema';
+import { env } from '@encryption/src/server/env';
+import { type RecoveryCouncilConfig, configuredCouncil } from '@encryption/src/server/recovery-councils';
 import { userFullName } from '@encryption/src/server/user-name';
+import { changeQuorum } from '@encryption/src/shared/council-quorum';
 import type { CouncilEscrowRecordWire, RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 
 export const ROSTER_INCLUDE = {
@@ -24,7 +30,48 @@ export const ROSTER_INCLUDE = {
 
 export type RosterVersionRow = Prisma.CouncilRosterVersionGetPayload<{ include: typeof ROSTER_INCLUDE }>;
 
-type Tx = Prisma.TransactionClient;
+export type Tx = Prisma.TransactionClient;
+type Db = Tx | typeof prisma;
+
+export function configuredCouncils(): RecoveryCouncilConfig[] {
+  return env.RECOVERY_COUNCILS ?? [];
+}
+
+export function councilLabel(councilId: string): string {
+  return configuredCouncil(configuredCouncils(), councilId)?.label ?? councilId;
+}
+
+export function sha256(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(createHash('sha256').update(bytes).digest());
+}
+
+/** A table name for a raw query, qualified with the schema the client uses (raw SQL gets no search_path). */
+export function rawTable(name: string): Prisma.Sql {
+  return Prisma.raw(`"${databaseSchema(process.env.DATABASE_URL)}"."${name}"`);
+}
+
+const SERIALIZATION_FAILURE = 'P2034';
+const SERIALIZABLE_ATTEMPTS = 4;
+
+/** A Serializable transaction, run again when Postgres aborts it for a concurrent write. */
+export async function serializable<T>(run: (tx: Tx) => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await prisma.$transaction(run, { isolationLevel: 'Serializable' });
+    } catch (err) {
+      if (attempt >= SERIALIZABLE_ATTEMPTS || !(err instanceof PrismaClientKnownRequestError) || err.code !== SERIALIZATION_FAILURE) throw err;
+    }
+  }
+}
+
+/** The caller as a custodian of the council's head, with their current identity. */
+export async function custodianOf(councilId: string, userId: string, db: Db = prisma) {
+  const head = await councilHead(councilId, db);
+  const identity = await db.identity.findFirst({ where: { userId, disabledAt: null }, orderBy: { generation: 'desc' } });
+  const member = head?.members.find((m) => m.userId === userId && m.identityId === identity?.id) ?? null;
+
+  return member && identity && head ? { head, member, identity } : null;
+}
 
 export function rosterRecordOf(row: RosterVersionRow): RosterRecord {
   return {
@@ -54,17 +101,17 @@ export function rosterVersionWire(row: RosterVersionRow): RosterVersionWire {
   };
 }
 
-export function councilHead(councilId: string, db: Tx | typeof prisma = prisma): Promise<RosterVersionRow | null> {
+export function councilHead(councilId: string, db: Db = prisma): Promise<RosterVersionRow | null> {
   return db.councilRosterVersion.findFirst({ where: { councilId, status: 'active' }, include: ROSTER_INCLUDE });
 }
 
-export function councilProposal(councilId: string, db: Tx | typeof prisma = prisma): Promise<RosterVersionRow | null> {
+export function councilProposal(councilId: string, db: Db = prisma): Promise<RosterVersionRow | null> {
   return db.councilRosterVersion.findFirst({ where: { councilId, status: 'proposed' }, include: ROSTER_INCLUDE });
 }
 
 /** The signed chain users and custodians verify: every version that was ever in force, oldest first. */
-export async function councilChain(councilId: string): Promise<RosterVersionRow[]> {
-  return prisma.councilRosterVersion.findMany({
+export async function councilChain(councilId: string, db: Db = prisma): Promise<RosterVersionRow[]> {
+  return db.councilRosterVersion.findMany({
     where: { councilId, status: { in: ['active', 'superseded'] } },
     include: ROSTER_INCLUDE,
     orderBy: { version: 'asc' },
@@ -82,17 +129,17 @@ export interface BlockedCustodian {
 }
 
 /** A configured custodian can sit in a roster once they have an identity, an encryption key and a vault. */
-async function custodianIdentity(userId: string, email: string): Promise<{ identityId: string } | { blocked: BlockedCustodianReason }> {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+async function custodianIdentity(db: Db, userId: string, email: string): Promise<{ identityId: string } | { blocked: BlockedCustodianReason }> {
+  const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) return { blocked: 'unknown-user' };
   // The email guards against a mistyped user id: a council never names someone
   // the operator did not mean.
   if (user.email.trim().toLowerCase() !== email) return { blocked: 'email-mismatch' };
 
   const [identity, key, vault] = await Promise.all([
-    prisma.identity.findFirst({ where: { userId, disabledAt: null }, orderBy: { generation: 'desc' } }),
-    prisma.encryptionKey.findFirst({ where: { userId, disabledAt: null } }),
-    prisma.vaultKeyring.findFirst({ where: { userId, disabledAt: null } }),
+    db.identity.findFirst({ where: { userId, disabledAt: null }, orderBy: { generation: 'desc' } }),
+    db.encryptionKey.findFirst({ where: { userId, disabledAt: null } }),
+    db.vaultKeyring.findFirst({ where: { userId, disabledAt: null } }),
   ]);
   if (!identity || !key || !vault) return { blocked: 'not-onboarded' };
 
@@ -104,32 +151,43 @@ export interface CouncilSyncResult {
   proposal: RosterVersionRow | null;
 }
 
+/** Who the configuration names, pinned to their current identity, and who cannot be pinned yet. Read only. */
+export async function desiredRoster(
+  config: RecoveryCouncilConfig,
+  db: Db = prisma
+): Promise<{ desired: Array<{ userId: string; identityId: string }>; blocked: BlockedCustodian[] }> {
+  const desired: Array<{ userId: string; identityId: string }> = [];
+  const blocked: BlockedCustodian[] = [];
+
+  for (const custodian of config.custodians) {
+    const outcome = await custodianIdentity(db, custodian.userId, custodian.email);
+
+    if ('blocked' in outcome) blocked.push({ userId: custodian.userId, email: custodian.email, reason: outcome.blocked });
+    else desired.push({ userId: custodian.userId, identityId: outcome.identityId });
+  }
+
+  return { desired, blocked };
+}
+
 /**
  * Bring the proposed version of one council in line with the configuration and
  * with its custodians' current identities (a custodian who started over needs a
  * version with their new key). No-op when the head already matches.
  *
  * A proposal is replaced, signatures included, as soon as what it says differs
- * from what is asked: a signature covers one exact roster.
+ * from what is asked: a signature covers one exact roster. Runs in the caller's
+ * transaction, which holds the sync lock (council-sync.ts).
  */
-export async function syncCouncilProposal(config: RecoveryCouncilConfig): Promise<CouncilSyncResult> {
-  const desired: Array<{ userId: string; identityId: string }> = [];
-  const blocked: BlockedCustodian[] = [];
+export async function syncCouncilProposal(config: RecoveryCouncilConfig, tx: Tx): Promise<CouncilSyncResult> {
+  const { desired, blocked } = await desiredRoster(config, tx);
 
-  for (const custodian of config.custodians) {
-    const outcome = await custodianIdentity(custodian.userId, custodian.email);
-
-    if ('blocked' in outcome) blocked.push({ userId: custodian.userId, email: custodian.email, reason: outcome.blocked });
-    else desired.push({ userId: custodian.userId, identityId: outcome.identityId });
-  }
-
-  const head = await councilHead(config.id);
-  const existing = await councilProposal(config.id);
+  const head = await councilHead(config.id, tx);
+  const existing = await councilProposal(config.id, tx);
 
   // Someone the configuration names cannot be pinned yet: nothing to sign. A
   // proposal made from an older configuration no longer says what is asked.
   if (blocked.length > 0) {
-    if (existing) await prisma.councilRosterVersion.delete({ where: { id: existing.id } });
+    if (existing) await tx.councilRosterVersion.delete({ where: { id: existing.id } });
 
     return { blocked, proposal: null };
   }
@@ -141,55 +199,50 @@ export async function syncCouncilProposal(config: RecoveryCouncilConfig): Promis
     desired.every((d) => row.members.some((m) => m.userId === d.userId && m.identityId === d.identityId));
 
   if (sameAs(head)) {
-    if (existing) await prisma.councilRosterVersion.delete({ where: { id: existing.id } });
+    if (existing) await tx.councilRosterVersion.delete({ where: { id: existing.id } });
 
     return { blocked, proposal: null };
   }
 
   if (sameAs(existing)) return { blocked, proposal: existing };
 
-  const proposal = await prisma.$transaction(
-    async (tx) => {
-      if (existing) await tx.councilRosterVersion.delete({ where: { id: existing.id } });
+  if (existing) await tx.councilRosterVersion.delete({ where: { id: existing.id } });
 
-      // A slot is never given again: a newcomer, or a custodian with a new key,
-      // takes the next number never used in this council.
-      const usedSlots = await tx.councilRosterMember.findMany({ where: { rosterVersion: { councilId: config.id } }, select: { slot: true } });
-      let nextSlot = usedSlots.reduce((max, m) => Math.max(max, m.slot), 0) + 1;
+  // A slot is never given again: a newcomer, or a custodian with a new key,
+  // takes the next number never used in this council.
+  const usedSlots = await tx.councilRosterMember.findMany({ where: { rosterVersion: { councilId: config.id } }, select: { slot: true } });
+  let nextSlot = usedSlots.reduce((max, m) => Math.max(max, m.slot), 0) + 1;
 
-      const members = desired.map((d) => {
-        const kept = head?.members.find((m) => m.userId === d.userId && m.identityId === d.identityId);
+  const members = desired.map((d) => {
+    const kept = head?.members.find((m) => m.userId === d.userId && m.identityId === d.identityId);
 
-        return { userId: d.userId, identityId: d.identityId, slot: kept ? kept.slot : nextSlot++ };
-      });
+    return { userId: d.userId, identityId: d.identityId, slot: kept ? kept.slot : nextSlot++ };
+  });
 
-      const identities = await tx.identity.findMany({ where: { id: { in: members.map((m) => m.identityId) } } });
-      const wireOf = new Map(identities.map((i) => [i.id, new Uint8Array(i.signaturePublicKey)]));
+  const identities = await tx.identity.findMany({ where: { id: { in: members.map((m) => m.identityId) } } });
+  const wireOf = new Map(identities.map((i) => [i.id, new Uint8Array(i.signaturePublicKey)]));
 
-      const previousRosterHash = head ? new Uint8Array(head.rosterHash) : new Uint8Array(0);
-      const record: RosterRecord = {
-        councilId: config.id,
-        version: (head?.version ?? 0) + 1,
-        threshold: config.threshold,
-        previousRosterHash,
-        members: members.map((m) => ({ slot: m.slot, userId: m.userId, identityPublicKeyWire: wireOf.get(m.identityId)! })),
-      };
+  const previousRosterHash = head ? new Uint8Array(head.rosterHash) : new Uint8Array(0);
+  const record: RosterRecord = {
+    councilId: config.id,
+    version: (head?.version ?? 0) + 1,
+    threshold: config.threshold,
+    previousRosterHash,
+    members: members.map((m) => ({ slot: m.slot, userId: m.userId, identityPublicKeyWire: wireOf.get(m.identityId)! })),
+  };
 
-      return tx.councilRosterVersion.create({
-        data: {
-          councilId: config.id,
-          version: record.version,
-          threshold: record.threshold,
-          status: 'proposed',
-          previousRosterHash: Buffer.from(previousRosterHash),
-          rosterHash: Buffer.from(await rosterHash(record)),
-          members: { create: members },
-        },
-        include: ROSTER_INCLUDE,
-      });
+  const proposal = await tx.councilRosterVersion.create({
+    data: {
+      councilId: config.id,
+      version: record.version,
+      threshold: record.threshold,
+      status: 'proposed',
+      previousRosterHash: Buffer.from(previousRosterHash),
+      rosterHash: Buffer.from(await rosterHash(record)),
+      members: { create: members },
     },
-    { isolationLevel: 'Serializable' }
-  );
+    include: ROSTER_INCLUDE,
+  });
 
   return { blocked, proposal };
 }
@@ -215,54 +268,9 @@ export function proposalProgress(proposal: RosterVersionRow, head: RosterVersion
     .filter((m) => isNewcomer(m, head) && !signedBy.has(m.identityId))
     .map((m) => ({ userId: m.userId, slot: m.slot }));
   const quorum = head ? head.members.filter((m) => signedBy.has(m.identityId)).length : 0;
-  const quorumMissing = head ? Math.max(0, head.threshold - quorum) : 0;
+  const quorumMissing = head ? Math.max(0, changeQuorum(head) - quorum) : 0;
 
   return { quorumMissing, pendingMembers, ready: quorumMissing === 0 && pendingMembers.length === 0 };
-}
-
-/**
- * Make a fully signed proposal the head. In the same transaction, the capsules
- * of every slot the new version no longer holds with the same key are deleted:
- * a removed custodian can no longer obtain a share, and a custodian who started
- * over holds nothing their new key opens anyway.
- */
-export async function activateIfReady(councilId: string): Promise<RosterVersionRow | null> {
-  return prisma.$transaction(
-    async (tx) => {
-      const proposal = await councilProposal(councilId, tx);
-      if (!proposal) return null;
-
-      const head = await councilHead(councilId, tx);
-      if (!proposalProgress(proposal, head).ready) return null;
-
-      if (head) await tx.councilRosterVersion.update({ where: { id: head.id }, data: { status: 'superseded' } });
-
-      const activated = await tx.councilRosterVersion.update({
-        where: { id: proposal.id },
-        data: { status: 'active', activatedAt: new Date() },
-        include: ROSTER_INCLUDE,
-      });
-
-      const kept = activated.members.map((m) => ({ slot: m.slot, identityId: m.identityId }));
-      await tx.councilCapsule.deleteMany({ where: { escrow: { councilId }, NOT: { OR: kept } } });
-      // Sub-shares a resharing sealed for a slot the new version no longer holds:
-      // nobody may add them up any more.
-      await tx.councilSubShare.deleteMany({ where: { escrow: { councilId }, recipientSlot: { notIn: kept.map((k) => k.slot) } } });
-
-      // A resharing in progress targeted the previous head: its sub-shares would
-      // land on a roster no longer in force.
-      const stale = await tx.councilReshareSession.findMany({ where: { councilId, status: 'open' }, select: { id: true } });
-      if (stale.length > 0) {
-        const ids = stale.map((s) => s.id);
-        await tx.councilSubShare.deleteMany({ where: { sessionId: { in: ids } } });
-        await tx.councilReshareKey.deleteMany({ where: { sessionId: { in: ids } } });
-        await tx.councilReshareSession.updateMany({ where: { id: { in: ids } }, data: { status: 'cancelled', closedAt: new Date() } });
-      }
-
-      return activated;
-    },
-    { isolationLevel: 'Serializable' }
-  );
 }
 
 // ----- Health -----------------------------------------------------------------
@@ -281,14 +289,14 @@ export interface EscrowHealth {
  * How many custodians of the head can still hand over their share of this
  * escrow. Computed from the SIGNED head and the custodians' current identities,
  * never from the configuration, so a broken or empty variable never makes an
- * escrow look lost.
+ * escrow look lost. A share its custodian's vault found invalid does not count.
  */
 export function escrowHealth(
   escrow: {
     rosterVersionId: string;
     threshold: number;
     generation: number;
-    capsules: Array<{ slot: number; identityId: string; generation: number }>;
+    capsules: Array<{ slot: number; identityId: string; generation: number; invalid: boolean }>;
   },
   head: RosterVersionRow | null,
   activeIdentityIds: Set<string>
@@ -296,6 +304,7 @@ export function escrowHealth(
   const live = escrow.capsules.filter(
     (c) =>
       c.generation === escrow.generation &&
+      !c.invalid &&
       activeIdentityIds.has(c.identityId) &&
       (head?.members.some((m) => m.slot === c.slot && m.identityId === c.identityId) ?? false)
   ).length;

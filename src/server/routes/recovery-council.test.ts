@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { rosterFingerprint, verifyRosterChain } from '@encryption/src/crypto/council';
 import { signRoster } from '@encryption/src/crypto/council';
+import { requestFingerprint } from '@encryption/src/crypto/council';
 import {
   buildContribution,
   buildCouncilEscrow,
@@ -12,6 +13,7 @@ import {
   escrowRecordFromWire,
   openCustodianShare,
   recoverCouncilSecret,
+  reshareTransferKeys,
   rosterRecordFromWire,
   signedVersionFromWire,
 } from '@encryption/src/crypto/council-protocol';
@@ -22,6 +24,7 @@ import { encodeShare, randomScalar } from '@encryption/src/crypto/shamir';
 import { type SignatureKeyPair, generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import { DEFAULT_KDF_PARAMS, signAuthPublicKeyBinding, signVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
+import { syncConfiguredCouncils } from '@encryption/src/server/council-sync';
 import { sendCouncilRecoveryRequested, sendCouncilRosterToSign } from '@encryption/src/server/email/council';
 import { recoveryCouncilsSchema } from '@encryption/src/server/recovery-councils';
 import { recoveryCouncilRoute } from '@encryption/src/server/routes/recovery-council';
@@ -29,14 +32,19 @@ import { vaultRoute } from '@encryption/src/server/routes/vault';
 import {
   API_ERROR_COUNCIL_ESCROW_INVALID,
   API_ERROR_COUNCIL_MEETING_REQUIRED,
+  API_ERROR_COUNCIL_NOT_COVERED,
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
+  API_ERROR_COUNCIL_OWN_REQUEST,
   API_ERROR_COUNCIL_REARM_REQUIRED,
+  API_ERROR_COUNCIL_REQUEST_CLOSED,
   API_ERROR_COUNCIL_REQUEST_EXISTS,
   API_ERROR_COUNCIL_RESHARE_INVALID,
+  API_ERROR_COUNCIL_RESHARE_KEYS_SENT,
   API_ERROR_COUNCIL_ROSTER_CHANGED,
+  API_ERROR_INSUFFICIENT_USER_AUTHENTICATION,
   API_ERROR_RATE_LIMIT_COUNCIL,
 } from '@encryption/src/shared/error-codes';
-import type { CouncilCapsuleWire, CouncilEscrowBody, RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
+import type { CouncilCapsuleWire, CouncilCheckBatch, CouncilEscrowBody, RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 
 const env = vi.hoisted(() => ({
   EMAIL_PRODUCT_URL: 'http://localhost:7201',
@@ -67,6 +75,8 @@ interface Person {
   encryption: HybridKeyPair;
   vaultId: string;
   identityId: string;
+  /** Stands in for the VRK a helper's transfer keys derive from. */
+  vrk: Uint8Array;
 }
 
 const wire = (identity: SignatureKeyPair) => base64ToUint8(exportPublicKeyAsBase64(identity.publicKey));
@@ -102,7 +112,7 @@ async function seedPerson(n: number, email: string, name: string): Promise<Perso
     },
   });
 
-  return { id, email, name, identity, encryption, vaultId: keyring.id, identityId: identityRow.id };
+  return { id, email, name, identity, encryption, vaultId: keyring.id, identityId: identityRow.id, vrk: new Uint8Array(randomBytes(32)) };
 }
 
 function buildApp(): FastifyInstance {
@@ -145,7 +155,12 @@ async function call<T = Record<string, unknown>>(
   return { status: res.statusCode, json: res.json() as T };
 }
 
-function configure(custodians: Person[], threshold: number) {
+/** What the boot and the periodic sync do: turn the configuration into a proposal. */
+async function sync() {
+  await syncConfiguredCouncils(app.log);
+}
+
+async function configure(custodians: Person[], threshold: number) {
   env.RECOVERY_COUNCILS = recoveryCouncilsSchema.parse([
     {
       id: COUNCIL,
@@ -155,6 +170,7 @@ function configure(custodians: Person[], threshold: number) {
       threshold,
     },
   ]);
+  await sync();
 }
 
 interface MineCouncil {
@@ -188,6 +204,10 @@ async function signProposal(as: Person): Promise<{ status: number; activated: bo
   );
 
   return { status: res.status, activated: res.json.activated };
+}
+
+function versionsOf(chain: RosterVersionWire[]) {
+  return chain.map((v) => rosterRecordFromWire(COUNCIL, v));
 }
 
 async function keysBySlot(roster: RosterVersionWire, people: Person[]) {
@@ -235,12 +255,13 @@ async function contribute(as: Person, requestId: string, inPerson: boolean) {
       ephemeral_public_key: string;
       escrow: Parameters<typeof escrowRecordFromWire>[1];
       capsule: CouncilCapsuleWire;
+      chain: RosterVersionWire[];
     }>(as, 'GET', `/api/council-recovery/requests/${requestId}/custodian`)
   ).json;
 
   const share = await openCustodianShare(detail.capsule, escrowRecordFromWire(detail.user_id, detail.escrow), {
-    userId: detail.user_id,
     councilId: detail.council_id,
+    versions: versionsOf(detail.chain),
     secretKeys: [as.encryption.secretKey],
   });
 
@@ -264,6 +285,7 @@ let bruno: Person; // custodian
 let chloe: Person; // custodian
 let denis: Person; // newcomer
 let ursula: Person; // the user
+let victor: Person; // another user
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -273,16 +295,18 @@ beforeEach(async () => {
   chloe = await seedPerson(3, 'chloe@numerique.gouv.fr', 'Chloé Durand');
   denis = await seedPerson(4, 'denis@numerique.gouv.fr', 'Denis Moreau');
   ursula = await seedPerson(5, 'ursula@numerique.gouv.fr', 'Ursula Roux');
+  victor = await seedPerson(6, 'victor@numerique.gouv.fr', 'Victor Leroy');
+  env.OIDC_STEP_UP_ENABLED = false;
 });
 
 async function bootstrap(custodians: Person[], threshold: number) {
-  configure(custodians, threshold);
+  await configure(custodians, threshold);
   for (const custodian of custodians) await signProposal(custodian);
 }
 
 describe('roster governance', () => {
   it('proposes the configured council, which takes effect once every custodian vouched for their own key', async () => {
-    configure([alice, bruno, chloe], 2);
+    await configure([alice, bruno, chloe], 2);
 
     const [invited] = await mine(alice);
     expect(invited.role).toBe('invited');
@@ -297,6 +321,41 @@ describe('roster governance', () => {
     expect(council.role).toBe('custodian');
     expect(council.proposal).toBeNull();
     expect((await verifyRosterChain(council.chain.map((v) => signedVersionFromWire(COUNCIL, v)))).ok).toBe(true);
+  });
+
+  // A read never replaces a proposal nor emails: only the sync does, and it emails
+  // a given roster once, however often the configuration flips back to it.
+  it('proposes from the sync only, and emails a proposal once per content', async () => {
+    env.RECOVERY_COUNCILS = recoveryCouncilsSchema.parse([
+      {
+        id: COUNCIL,
+        label: 'DINUM',
+        domains: ['numerique.gouv.fr'],
+        custodians: [alice, bruno].map((c) => ({ userId: c.id, email: c.email })),
+        threshold: 1,
+      },
+    ]);
+    expect(await mine(alice)).toEqual([]);
+    expect(sendCouncilRosterToSign).not.toHaveBeenCalled();
+
+    await sync();
+    expect(sendCouncilRosterToSign).toHaveBeenCalledTimes(2);
+
+    await configure([alice, bruno, chloe], 2);
+    expect(sendCouncilRosterToSign).toHaveBeenCalledTimes(5);
+
+    env.RECOVERY_COUNCILS = recoveryCouncilsSchema.parse([
+      {
+        id: COUNCIL,
+        label: 'DINUM',
+        domains: ['numerique.gouv.fr'],
+        custodians: [alice, bruno].map((c) => ({ userId: c.id, email: c.email })),
+        threshold: 1,
+      },
+    ]);
+    await sync();
+    await sync();
+    expect(sendCouncilRosterToSign).toHaveBeenCalledTimes(5);
   });
 
   it('tells nothing to someone who is not in a council', async () => {
@@ -318,6 +377,7 @@ describe('roster governance', () => {
         threshold: 1,
       },
     ]);
+    await sync();
 
     expect(await mine(alice)).toEqual([]);
     expect(await testPrisma.councilRosterVersion.count()).toBe(0);
@@ -328,7 +388,7 @@ describe('roster governance', () => {
     const { body } = await enroll(ursula, [alice, bruno, chloe]);
     expect((await call(ursula, 'POST', '/api/councils/escrow', body, { signed: true })).status).toBe(200);
 
-    configure([alice, bruno, denis], 2);
+    await configure([alice, bruno, denis], 2);
     const [proposed] = await mine(denis);
     expect(proposed.role).toBe('invited');
     // Denis gets a slot never used before: Chloé's share stays on slot 3.
@@ -346,7 +406,7 @@ describe('roster governance', () => {
   });
 
   it('refuses a signature over another roster than the one proposed', async () => {
-    configure([alice, bruno, chloe], 2);
+    await configure([alice, bruno, chloe], 2);
     const [council] = await mine(alice);
     const forged = { ...rosterRecordFromWire(COUNCIL, council.proposal!.roster), threshold: 1 };
 
@@ -385,6 +445,7 @@ describe('roster governance', () => {
     const fresh = await generateSignatureKeyPair();
     await testPrisma.identity.updateMany({ where: { userId: bruno.id }, data: { disabledAt: new Date() } });
     await testPrisma.identity.create({ data: { userId: bruno.id, generation: 2, signaturePublicKey: Buffer.from(wire(fresh)) } });
+    await sync();
 
     const [council] = await mine(alice);
     expect(council.health).toMatchObject({ at_risk: 1 });
@@ -406,6 +467,43 @@ describe('enrollment', () => {
     expect(
       (await call(ursula, 'POST', '/api/councils/escrow', { ...body, escrow_signature: uint8ToBase64(new Uint8Array(64)) }, { signed: true })).json
     ).toMatchObject({ code: API_ERROR_COUNCIL_ESCROW_INVALID });
+  });
+
+  it('refuses an escrow for a council that does not cover the user', async () => {
+    await bootstrap([alice, bruno, chloe], 2);
+    const outsider = await seedPerson(7, 'olga@example.org', 'Olga Petrov');
+    const { body } = await enroll(ursula, [alice, bruno, chloe]);
+
+    expect((await call(outsider, 'POST', '/api/councils/escrow', body, { signed: true })).json).toMatchObject({
+      code: API_ERROR_COUNCIL_NOT_COVERED,
+    });
+  });
+
+  // The renewal after a custodian left: a fresh secret replaces the old one in
+  // one write, so no share of the old secret opens anything any more.
+  it('replaces the previous escrow, its credential and its capsules, unless a recovery is in progress', async () => {
+    await bootstrap([alice, bruno, chloe], 2);
+    const first = await enroll(ursula, [alice, bruno, chloe]);
+    await call(ursula, 'POST', '/api/councils/escrow', first.body, { signed: true });
+    const before = await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } });
+
+    const second = await enroll(ursula, [alice, bruno, chloe]);
+    expect((await call(ursula, 'POST', '/api/councils/escrow', second.body, { signed: true })).status).toBe(200);
+
+    const escrows = await testPrisma.councilEscrow.findMany({ where: { userId: ursula.id } });
+    expect(escrows).toHaveLength(1);
+    expect(escrows[0].id).not.toBe(before.id);
+    expect(await testPrisma.vaultCredential.count({ where: { id: before.credentialId } })).toBe(0);
+    expect(await testPrisma.councilCapsule.count({ where: { escrowId: before.id } })).toBe(0);
+
+    await call(ursula, 'POST', '/api/council-recovery/requests', {
+      ephemeral_public_key: exportPublicKeyAsBase64((await generateUserKeyPair()).publicKey),
+    });
+    const third = await enroll(ursula, [alice, bruno, chloe]);
+    expect((await call(ursula, 'POST', '/api/councils/escrow', third.body, { signed: true })).json).toMatchObject({
+      code: API_ERROR_COUNCIL_REQUEST_EXISTS,
+    });
+    expect((await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } })).id).toBe(escrows[0].id);
   });
 
   it('shows the council and the organization’s fingerprint to compare', async () => {
@@ -595,6 +693,49 @@ describe('recovery', () => {
     expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toEqual({ request: null });
   });
 
+  it('tells the user which key the request waits for, so a browser can recognize its own', async () => {
+    await enrolled();
+    const { ephemeral } = await ask();
+
+    const mineRes = (await call<{ request: { ephemeral_fingerprint: string } }>(ursula, 'GET', '/api/council-recovery/requests/mine')).json;
+    expect(mineRes.request.ephemeral_fingerprint).toBe(await requestFingerprint(ephemeral.publicKey));
+  });
+
+  it('refuses a share after the request was refused, and a custodian’s share to their own request', async () => {
+    await bootstrap([alice, bruno, chloe], 2);
+    const { body } = await enroll(alice, [alice, bruno, chloe]);
+    await call(alice, 'POST', '/api/councils/escrow', body, { signed: true });
+
+    const ephemeral = await generateUserKeyPair();
+    const { json } = await call<{ id: string }>(alice, 'POST', '/api/council-recovery/requests', {
+      ephemeral_public_key: exportPublicKeyAsBase64(ephemeral.publicKey),
+    });
+    expect((await call(alice, 'GET', `/api/council-recovery/requests/${json.id}/custodian`)).json).toMatchObject({
+      code: API_ERROR_COUNCIL_OWN_REQUEST,
+    });
+
+    const detailed = await contribute(bruno, json.id, false);
+    expect(detailed.json.stage).toBe('awaiting_meeting');
+    await call(alice, 'POST', `/api/council-recovery/requests/${json.id}/refuse`);
+    expect(await testPrisma.councilContribution.count()).toBe(0);
+    expect((await call(chloe, 'GET', `/api/council-recovery/requests/${json.id}/custodian`)).json).toMatchObject({
+      code: API_ERROR_COUNCIL_REQUEST_CLOSED,
+    });
+  });
+
+  it('keeps the cooldown a request was created with', async () => {
+    await bootstrap([alice, bruno, chloe], 2);
+    const config = (env.RECOVERY_COUNCILS as Array<{ cooldownMinutes: number }>)[0];
+    config.cooldownMinutes = 60;
+    const enrollment = await enroll(ursula, [alice, bruno, chloe]);
+    await call(ursula, 'POST', '/api/councils/escrow', enrollment.body, { signed: true });
+    const { id } = await ask();
+
+    config.cooldownMinutes = 0;
+    await contribute(alice, id, false);
+    expect((await contribute(bruno, id, true)).json.stage).toBe('cooldown');
+  });
+
   it('expires a request and closes the released credential with it', async () => {
     const { auth } = await enrolled();
     const { id } = await ask();
@@ -615,7 +756,7 @@ describe('resharing', () => {
     const { body, secret } = await enroll(ursula, [alice, bruno, chloe]);
     await call(ursula, 'POST', '/api/councils/escrow', body, { signed: true });
 
-    configure([alice, bruno, denis], 2);
+    await configure([alice, bruno, denis], 2);
     await mine(denis);
     await signProposal(denis);
     await signProposal(alice);
@@ -651,6 +792,7 @@ describe('resharing', () => {
         target: verified.head,
         helperSlots: batch.helper_slots,
         mySlot: batch.my_slot,
+        vrk: helper.vrk,
         identitySecretKey: helper.identity.secretKey,
       };
       const { body: keys, transferKeys } = await buildReshareKeys({
@@ -662,8 +804,8 @@ describe('resharing', () => {
       const escrows = [];
       for (const entry of batch.escrows) {
         const share = await openCustodianShare(entry.capsule, escrowRecordFromWire(entry.user_id, entry.record), {
-          userId: entry.user_id,
           councilId: COUNCIL,
+          versions: versionsOf(batch.chain),
           secretKeys: [helper.encryption.secretKey],
         });
         escrows.push(await buildReshareSubShares(target, transferKeys, entry.escrow_id, share));
@@ -676,6 +818,34 @@ describe('resharing', () => {
     expect(escrow.generation).toBe(2);
     expect(escrow.rosterVersion.version).toBe(2);
     expect(escrow.capsules.map((c) => c.slot).sort()).toEqual([1, 2, 4]);
+
+    // Denis's vault checks, on his next visit, what the resharing gave him.
+    type Mine = { councils: Array<{ shares_to_check: number; faulty_reshares: unknown[]; health: { ok: number; at_risk: number } }> };
+    expect((await call<Mine>(denis, 'GET', '/api/councils/mine')).json.councils[0].shares_to_check).toBe(1);
+    const toCheck = (await call<CouncilCheckBatch>(denis, 'GET', `/api/councils/${COUNCIL}/shares-to-check`)).json;
+    expect(toCheck.escrows).toHaveLength(1);
+    await openCustodianShare(toCheck.escrows[0].capsule, escrowRecordFromWire(ursula.id, toCheck.escrows[0].record), {
+      councilId: COUNCIL,
+      versions: versionsOf(toCheck.chain),
+      secretKeys: [denis.encryption.secretKey],
+    });
+    const valid = { results: [{ escrow_id: toCheck.escrows[0].escrow_id, valid: true, faulty_helper_slot: null }] };
+    expect((await call(denis, 'POST', `/api/councils/${COUNCIL}/shares-checked`, valid, { signed: true })).json).toEqual({ checked: 1, invalid: 0 });
+    expect((await call<Mine>(denis, 'GET', '/api/councils/mine')).json.councils[0]).toMatchObject({ shares_to_check: 0, faulty_reshares: [] });
+
+    // Bruno's vault finds Alice's sub-share invalid: his share stops counting, and
+    // the council is told who sent it. A second report changes nothing.
+    const invalid = { results: [{ escrow_id: toCheck.escrows[0].escrow_id, valid: false, faulty_helper_slot: 1 }] };
+    expect((await call(bruno, 'POST', `/api/councils/${COUNCIL}/shares-checked`, invalid, { signed: true })).json).toEqual({
+      checked: 1,
+      invalid: 1,
+    });
+    expect((await call(bruno, 'POST', `/api/councils/${COUNCIL}/shares-checked`, valid, { signed: true })).json).toEqual({ checked: 0, invalid: 0 });
+    expect((await call<Mine>(alice, 'GET', '/api/councils/mine')).json.councils[0]).toMatchObject({
+      faulty_reshares: [{ helper_name: 'Alice Martin', escrows: 1 }],
+      health: { ok: 0, at_risk: 1 },
+    });
+    expect((await call(chloe, 'GET', `/api/councils/${COUNCIL}/shares-to-check`)).status).toBe(403);
 
     // Denis, who was never given anything by the user, now helps recover her.
     const ephemeral = await generateUserKeyPair();
@@ -697,7 +867,7 @@ describe('resharing', () => {
     const { body } = await enroll(ursula, [alice, bruno, chloe]);
     await call(ursula, 'POST', '/api/councils/escrow', body, { signed: true });
 
-    configure([alice, bruno, denis], 2);
+    await configure([alice, bruno, denis], 2);
     await mine(denis);
     await signProposal(denis);
     await signProposal(alice);
@@ -728,6 +898,7 @@ describe('resharing', () => {
       target: verified.head,
       helperSlots: batch.helper_slots,
       mySlot: batch.my_slot,
+      vrk: alice.vrk,
       identitySecretKey: alice.identity.secretKey,
     };
     const { body: keys, transferKeys } = await buildReshareKeys({
@@ -758,7 +929,7 @@ describe('resharing', () => {
 
   it('refuses helpers that are not threshold custodians of the source still in the head', async () => {
     await bootstrap([alice, bruno, chloe], 2);
-    configure([alice, bruno, denis], 2);
+    await configure([alice, bruno, denis], 2);
     await mine(denis);
     await signProposal(denis);
     await signProposal(alice);
@@ -773,5 +944,183 @@ describe('resharing', () => {
     expect(
       (await call(alice, 'POST', `/api/councils/${COUNCIL}/reshare`, { source_version: 2, helper_slots: [1, 2] }, { signed: true })).status
     ).toBe(400);
+  });
+
+  /** Two users enrolled on version 1, then Chloé replaced by Denis (version 2), and a resharing from 1 started by Alice. */
+  async function startedResharing(): Promise<{ sessionId: string; escrows: Map<string, string> }> {
+    await bootstrap([alice, bruno, chloe], 2);
+    for (const user of [ursula, victor]) {
+      const { body } = await enroll(user, [alice, bruno, chloe]);
+      await call(user, 'POST', '/api/councils/escrow', body, { signed: true });
+    }
+
+    await configure([alice, bruno, denis], 2);
+    await signProposal(denis);
+    await signProposal(alice);
+    await signProposal(bruno);
+
+    const start = await call<{ session_id: string }>(
+      alice,
+      'POST',
+      `/api/councils/${COUNCIL}/reshare`,
+      { source_version: 1, helper_slots: [1, 2] },
+      { signed: true }
+    );
+    const rows = await testPrisma.councilEscrow.findMany();
+
+    return { sessionId: start.json.session_id, escrows: new Map(rows.map((e) => [e.userId, e.id])) };
+  }
+
+  /** What a helper's vault does with one batch: keys once, then sub-shares of the escrows asked for (all by default). */
+  async function help(helper: Person, sessionId: string, only?: string[]) {
+    const batch = (
+      await call<{
+        chain: RosterVersionWire[];
+        helper_slots: number[];
+        my_slot: number;
+        transfer_keys_done: boolean;
+        escrows: Array<{ escrow_id: string; user_id: string; record: Parameters<typeof escrowRecordFromWire>[1]; capsule: CouncilCapsuleWire }>;
+      }>(helper, 'GET', `/api/councils/reshare/${sessionId}/batch`)
+    ).json;
+    const verified = await verifyRosterChain(batch.chain.map((v) => signedVersionFromWire(COUNCIL, v)));
+    if (!verified.ok) throw new Error('chain refused');
+
+    const target = {
+      sessionId,
+      councilId: COUNCIL,
+      target: verified.head,
+      helperSlots: batch.helper_slots,
+      mySlot: batch.my_slot,
+      vrk: helper.vrk,
+      identitySecretKey: helper.identity.secretKey,
+    };
+    let transferKeys;
+    if (batch.transfer_keys_done) {
+      transferKeys = await reshareTransferKeys(target);
+    } else {
+      const built = await buildReshareKeys({
+        ...target,
+        recipientKeys: await keysBySlot(batch.chain[batch.chain.length - 1], [alice, bruno, denis]),
+      });
+      expect((await call(helper, 'POST', `/api/councils/reshare/${sessionId}/keys`, built.body, { signed: true })).status).toBe(200);
+      transferKeys = built.transferKeys;
+    }
+
+    const escrows = [];
+    for (const entry of batch.escrows.filter((e) => !only || only.includes(e.escrow_id))) {
+      const share = await openCustodianShare(entry.capsule, escrowRecordFromWire(entry.user_id, entry.record), {
+        councilId: COUNCIL,
+        versions: versionsOf(batch.chain),
+        secretKeys: [helper.encryption.secretKey],
+      });
+      escrows.push(await buildReshareSubShares(target, transferKeys, entry.escrow_id, share));
+    }
+    if (escrows.length === 0) return null;
+
+    return call<{ moved: number; remaining: number }>(helper, 'POST', `/api/councils/reshare/${sessionId}/sub-shares`, { escrows }, { signed: true });
+  }
+
+  /** Denis opens the share a resharing gave him of this user's escrow. */
+  async function denisOpens(userId: string) {
+    const toCheck = (await call<CouncilCheckBatch>(denis, 'GET', `/api/councils/${COUNCIL}/shares-to-check`)).json;
+    const entry = toCheck.escrows.find((e) => e.user_id === userId)!;
+
+    return openCustodianShare(entry.capsule, escrowRecordFromWire(userId, entry.record), {
+      councilId: COUNCIL,
+      versions: versionsOf(toCheck.chain),
+      secretKeys: [denis.encryption.secretKey],
+    });
+  }
+
+  // The escrows a resharing already moved open only through its keys and
+  // sub-shares: stopping it, or a new version taking effect, must not take them.
+  it('keeps the escrows already moved when the resharing is stopped', async () => {
+    const { sessionId, escrows } = await startedResharing();
+    await help(alice, sessionId);
+    await help(bruno, sessionId, [escrows.get(ursula.id)!]);
+
+    expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(ursula.id)! } })).generation).toBe(2);
+    expect((await call(alice, 'POST', `/api/councils/reshare/${sessionId}/cancel`, undefined, { signed: true })).json).toEqual({ cancelled: true });
+
+    await denisOpens(ursula.id);
+    const victorEscrow = await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(victor.id)! } });
+    expect(victorEscrow.generation).toBe(1);
+    expect(await testPrisma.councilSubShare.count({ where: { escrowId: victorEscrow.id } })).toBe(0);
+  });
+
+  it('keeps the escrows already moved when a new version takes effect', async () => {
+    const { sessionId, escrows } = await startedResharing();
+    await help(alice, sessionId);
+    await help(bruno, sessionId, [escrows.get(ursula.id)!]);
+
+    await configure([alice, bruno, denis, chloe], 2);
+    await signProposal(alice);
+    await signProposal(bruno);
+    expect((await signProposal(chloe)).activated).toBe(true);
+
+    expect((await testPrisma.councilReshareSession.findUniqueOrThrow({ where: { id: sessionId } })).status).toBe('completed');
+    await denisOpens(ursula.id);
+  });
+
+  it('takes a helper’s transfer keys once, and a reloaded vault carries on with the same ones', async () => {
+    const { sessionId, escrows } = await startedResharing();
+    await help(alice, sessionId, [escrows.get(ursula.id)!]);
+
+    const batch = (await call<{ chain: RosterVersionWire[] }>(alice, 'GET', `/api/councils/reshare/${sessionId}/batch`)).json;
+    const verified = await verifyRosterChain(batch.chain.map((v) => signedVersionFromWire(COUNCIL, v)));
+    if (!verified.ok) throw new Error('chain refused');
+    const again = await buildReshareKeys({
+      sessionId,
+      councilId: COUNCIL,
+      target: verified.head,
+      helperSlots: [1, 2],
+      mySlot: 1,
+      vrk: alice.vrk,
+      identitySecretKey: alice.identity.secretKey,
+      recipientKeys: await keysBySlot(batch.chain[batch.chain.length - 1], [alice, bruno, denis]),
+    });
+    expect((await call(alice, 'POST', `/api/councils/reshare/${sessionId}/keys`, again.body, { signed: true })).json).toMatchObject({
+      code: API_ERROR_COUNCIL_RESHARE_KEYS_SENT,
+    });
+
+    // Alice's second batch uses the keys derived again, as after a reload.
+    await help(alice, sessionId);
+    await help(bruno, sessionId);
+    await denisOpens(ursula.id);
+    await denisOpens(victor.id);
+    expect((await testPrisma.councilReshareSession.findUniqueOrThrow({ where: { id: sessionId } })).status).toBe('completed');
+  });
+
+  it('holds back an escrow with a recovery in progress, and moves it once the request ends', async () => {
+    const { sessionId, escrows } = await startedResharing();
+    const ephemeral = await generateUserKeyPair();
+    const { json } = await call<{ id: string }>(ursula, 'POST', '/api/council-recovery/requests', {
+      ephemeral_public_key: exportPublicKeyAsBase64(ephemeral.publicKey),
+    });
+    expect((await contribute(alice, json.id, false)).json.stage).toBe('awaiting_meeting');
+
+    await help(alice, sessionId);
+    await help(bruno, sessionId);
+    expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(ursula.id)! } })).generation).toBe(1);
+    expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(victor.id)! } })).generation).toBe(2);
+
+    // Bruno's in-person share still belongs to the split Alice's remote one came from.
+    expect((await contribute(bruno, json.id, true)).json.stage).toBe('released');
+
+    await call(ursula, 'POST', `/api/council-recovery/requests/${json.id}/refuse`);
+    expect((await testPrisma.councilEscrow.findUniqueOrThrow({ where: { id: escrows.get(ursula.id)! } })).generation).toBe(2);
+    expect((await testPrisma.councilReshareSession.findUniqueOrThrow({ where: { id: sessionId } })).status).toBe('completed');
+  });
+
+  it('asks for a fresh authentication to send, stop or check a resharing', async () => {
+    const { sessionId } = await startedResharing();
+    env.OIDC_STEP_UP_ENABLED = true;
+
+    const refused = { code: API_ERROR_INSUFFICIENT_USER_AUTHENTICATION };
+    expect((await call(alice, 'POST', `/api/councils/reshare/${sessionId}/cancel`, undefined, { signed: true })).json).toMatchObject(refused);
+    const keys = { keys: [{ recipient_slot: 1, wrapped_transfer_key: 'AAAA', binding_signature: 'AAAA' }] };
+    expect((await call(alice, 'POST', `/api/councils/reshare/${sessionId}/keys`, keys, { signed: true })).json).toMatchObject(refused);
+    const results = { results: [{ escrow_id: sessionId, valid: true, faulty_helper_slot: null }] };
+    expect((await call(alice, 'POST', `/api/councils/${COUNCIL}/shares-checked`, results, { signed: true })).json).toMatchObject(refused);
   });
 });

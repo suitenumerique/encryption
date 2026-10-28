@@ -1,9 +1,9 @@
+import { startCouncilSync } from '@encryption/src/server/council-sync';
 import { startEmergencyJobs } from '@encryption/src/server/emergency-jobs';
 import { env } from '@encryption/src/server/env';
 import { maintenanceEscrowKeyFingerprint } from '@encryption/src/server/maintenance-escrow';
 import { captureServerError, flushMonitoring, initMonitoring, isMonitoringEnabled } from '@encryption/src/server/monitoring';
 import { councilWarnings } from '@encryption/src/server/recovery-councils';
-import { syncConfiguredCouncils } from '@encryption/src/server/routes/recovery-council';
 import { getBuildVersion } from '@encryption/src/server/routes/versions';
 import { createServer } from '@encryption/src/server/server';
 import { startVaultPurgeJobs } from '@encryption/src/server/vault-purge-jobs';
@@ -42,8 +42,8 @@ async function main() {
   }
   for (const warning of councilWarnings(env.RECOVERY_COUNCILS ?? [])) app.log.warn(warning);
   // A change of the variable becomes a proposal for the custodians right away,
-  // with its emails, rather than on the next visit of their custodian space.
-  void syncConfiguredCouncils(app.log);
+  // with its emails, then the sync runs again periodically.
+  startCouncilSync(app.log);
 
   // A throw outside a request never reaches the Fastify error handler, and these
   // are the ones worth waking someone for. Logged and reported, then left to Node's

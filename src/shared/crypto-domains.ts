@@ -22,7 +22,7 @@ export const DOMAIN_IDENTITY_CONTINUITY = 'lasuite-encryption/identity-continuit
 export const DOMAIN_EMERGENCY_ESCROW = 'lasuite-encryption/emergency-escrow/v1';
 export const DOMAIN_VAULT_MANIFEST = 'lasuite-encryption/vault-manifest/v1';
 export const DOMAIN_VAULT_AUTH_BINDING = 'lasuite-encryption/vault-auth-binding/v1';
-// The recovery council (shamir.md): a roster version, a user's escrow, a share
+// The recovery council (architecture.md Appendix F): a roster version, a user's escrow, a share
 // handed to a recovery, the key a helper hands a new custodian when resharing,
 // and the commitments a helper reshares under.
 export const DOMAIN_COUNCIL_ROSTER = 'lasuite-encryption/council-roster/v1';
@@ -81,6 +81,9 @@ export const DOMAIN_KEM_COUNCIL_SHARE = 'lasuite-encryption/kem-council-share/v1
 export const DOMAIN_KEM_COUNCIL_TRANSFER = 'lasuite-encryption/kem-council-transfer/v1';
 export const DOMAIN_KEM_COUNCIL_RESHARE_KEY = 'lasuite-encryption/kem-council-reshare-key/v1';
 export const DOMAIN_COUNCIL_SUBSHARE = 'lasuite-encryption/council-subshare/v1';
+// A helper's resharing transfer keys, derived from its VRK per session and
+// recipient so a reload finds the same ones again.
+export const DOMAIN_COUNCIL_TRANSFER_KEY = 'lasuite-encryption/council-transfer-key/v1';
 export const DOMAIN_VAULT_ITEM = 'lasuite-encryption/vault-item/v1';
 export const DOMAIN_VRK_WRAP = 'lasuite-encryption/vrk-wrap/v1';
 export const DOMAIN_DEVICE_VRK = 'lasuite-encryption/device-vrk/v1';
@@ -112,4 +115,9 @@ export type KemWrapDomain =
   | typeof DOMAIN_KEM_COUNCIL_RESHARE_KEY;
 
 // The labels `deriveSubkey` accepts.
-export type SubkeyDomain = typeof DOMAIN_VAULT_AUTH_SEED | typeof DOMAIN_VRK_WRAP_KEY | typeof DOMAIN_KEM_WRAP_KEY | typeof DOMAIN_KEY_POSSESSION_KEY;
+export type SubkeyDomain =
+  | typeof DOMAIN_VAULT_AUTH_SEED
+  | typeof DOMAIN_VRK_WRAP_KEY
+  | typeof DOMAIN_KEM_WRAP_KEY
+  | typeof DOMAIN_KEY_POSSESSION_KEY
+  | typeof DOMAIN_COUNCIL_TRANSFER_KEY;

@@ -175,12 +175,15 @@ export async function generateSymmetricKey(): Promise<Uint8Array> {
 }
 
 /**
- * A subkey of `key` for one purpose: BLAKE2b keyed by `key` over the label.
+ * A subkey of `key` for one purpose: BLAKE2b keyed by `key` over the label,
+ * and over the length-framed `context` when there is one.
  * libsodium has no HKDF; a keyed BLAKE2b is a PRF, so subkeys under distinct
  * labels are independent and `key` itself never has to key two primitives.
  */
-export function deriveSubkey(key: Uint8Array, domain: SubkeyDomain, length: number): Uint8Array {
-  return sodium.crypto_generichash(length, sodium.from_string(domain), key);
+export function deriveSubkey(key: Uint8Array, domain: SubkeyDomain, length: number, context: Uint8Array[] = []): Uint8Array {
+  const message = context.length === 0 ? sodium.from_string(domain) : concat([sodium.from_string(domain), ...context].flatMap(lengthPrefixed));
+
+  return sodium.crypto_generichash(length, message, key);
 }
 
 // The authenticated (never stored) data of a ciphertext: its version byte, its

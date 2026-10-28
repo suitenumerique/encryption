@@ -5,7 +5,7 @@ import {
   type RosterMember,
   type RosterRecord,
   type SignedRosterVersion,
-  createTransferKey,
+  deriveTransferKey,
   encodeRosterPayload,
   openSubShare,
   openTransferKey,
@@ -28,6 +28,7 @@ import {
   verifyRosterChain,
   wrapShareForCustodian,
   wrapShareForRequest,
+  wrapTransferKey,
 } from '@encryption/src/crypto/council';
 import { ensureSodium, generateUserKeyPair } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
@@ -88,7 +89,14 @@ describe('roster chain', () => {
     expect((await verifyRosterChain([forged])).ok).toBe(false);
   });
 
-  it('accepts a replacement signed by k of the previous version and the newcomer', async () => {
+  it('refuses one identity key on two slots (its signature would count twice)', async () => {
+    const [a, b] = await Promise.all([person(1), person(2)]);
+    const v1: RosterRecord = { ...(await genesis([a, b], 2)), members: [member(a, 1), member(b, 2), { ...member(a, 3), userId: 'other-user' }] };
+
+    expect(await verifyRosterChain([await signedBy(v1, [a, b])])).toMatchObject({ ok: false, reason: 'bad-genesis' });
+  });
+
+  it('accepts a replacement signed by a majority of the previous version and the newcomer', async () => {
     const [a, b, c, d, g] = await Promise.all([person(1), person(2), person(3), person(4), person(7)]);
     const v1 = await genesis([a, b, c, d], 2);
     const v2: RosterRecord = {
@@ -98,7 +106,7 @@ describe('roster chain', () => {
       previousRosterHash: await rosterHash(v1),
       members: [member(a, 1), member(b, 2), member(c, 3), member(g, 5)],
     };
-    const chain = [await signedBy(v1, [a, b, c, d]), await signedBy(v2, [a, b, g])];
+    const chain = [await signedBy(v1, [a, b, c, d]), await signedBy(v2, [a, b, c, g])];
 
     const result = await verifyRosterChain(chain);
     expect(result.ok).toBe(true);
@@ -117,6 +125,8 @@ describe('roster chain', () => {
     };
 
     expect(await verifyRosterChain([await signedBy(v1, [a, b, c, d]), await signedBy(v2, [a, g])])).toMatchObject({ reason: 'no-quorum' });
+    // k of the previous version is enough for a recovery, not for a change: that takes a majority.
+    expect(await verifyRosterChain([await signedBy(v1, [a, b, c, d]), await signedBy(v2, [a, b, g])])).toMatchObject({ reason: 'no-quorum' });
   });
 
   it('refuses a newcomer who did not vouch for their own key', async () => {
@@ -169,7 +179,7 @@ describe('roster chain', () => {
       members: [member(a, 1), member(b, 2), member(c, 3)],
     };
     // v1 is deliberately unsigned: the anchor stands for it.
-    const chain = [{ record: v1, signatures: [] }, await signedBy(v2, [a, c])];
+    const chain = [{ record: v1, signatures: [] }, await signedBy(v2, [a, b, c])];
 
     expect((await verifyRosterChain(chain, await rosterHash(v1))).ok).toBe(true);
     expect(await verifyRosterChain(chain, new Uint8Array(32))).toMatchObject({ reason: 'anchor-not-found' });
@@ -276,7 +286,13 @@ describe('contribution', () => {
 describe('resharing transfer', () => {
   it('seals sub-shares for one place only', async () => {
     const [helper, recipient] = await Promise.all([person(1), generateUserKeyPair()]);
-    const { transferKey, wrapped } = await createTransferKey(recipient.publicKey);
+    const transferKey = await deriveTransferKey(new Uint8Array(32).fill(1), {
+      sessionId: 's',
+      councilId: COUNCIL,
+      targetRosterVersion: 2,
+      recipientSlot: 5,
+    });
+    const wrapped = await wrapTransferKey(transferKey, recipient.publicKey);
     const where = { sessionId: 's', escrowId: 'e', helperSlot: 1, recipientSlot: 5 };
     const subShare = new Uint8Array(32).fill(8);
 
@@ -297,6 +313,18 @@ describe('resharing transfer', () => {
     const signature = await signReshareKeyBinding(binding, helper.identity.secretKey);
     expect(await verifyReshareKeyBinding(binding, signature, helper.wire)).toBe(true);
     expect(await verifyReshareKeyBinding({ ...binding, recipientSlot: 6 }, signature, helper.wire)).toBe(false);
+  });
+
+  it('derives the same transfer key again for one place, and another for any other', async () => {
+    const vrk = new Uint8Array(32).fill(1);
+    const where = { sessionId: 's', councilId: COUNCIL, targetRosterVersion: 2, recipientSlot: 5 };
+    const key = await deriveTransferKey(vrk, where);
+
+    expect(await deriveTransferKey(vrk, where)).toEqual(key);
+    for (const other of [{ sessionId: 't' }, { councilId: 'other' }, { targetRosterVersion: 3 }, { recipientSlot: 6 }]) {
+      expect(await deriveTransferKey(vrk, { ...where, ...other })).not.toEqual(key);
+    }
+    expect(await deriveTransferKey(new Uint8Array(32).fill(2), where)).not.toEqual(key);
   });
 
   it('signs the commitments of one helper for one escrow of one session', async () => {

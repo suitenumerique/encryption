@@ -95,10 +95,20 @@ CREATE TABLE "council_requests" (
     "status" "CouncilRequestStatus" NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "expires_at" TIMESTAMP(3) NOT NULL,
+    "release_not_before" TIMESTAMP(3) NOT NULL,
     "released_at" TIMESTAMP(3),
     "closed_at" TIMESTAMP(3),
 
     CONSTRAINT "council_requests_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "council_proposal_notices" (
+    "council_id" TEXT NOT NULL,
+    "roster_hash" BYTEA NOT NULL,
+    "notified_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "council_proposal_notices_pkey" PRIMARY KEY ("council_id","roster_hash")
 );
 
 -- CreateTable
@@ -204,6 +214,9 @@ CREATE INDEX "council_requests_user_id_status_idx" ON "council_requests"("user_i
 
 -- CreateIndex
 CREATE INDEX "council_requests_escrow_id_status_idx" ON "council_requests"("escrow_id", "status");
+
+-- One open or released request per user (not expressible in schema.prisma).
+CREATE UNIQUE INDEX "council_requests_one_live_per_user" ON "council_requests"("user_id") WHERE "status" IN ('open', 'released');
 
 -- CreateIndex
 CREATE UNIQUE INDEX "council_contributions_request_id_slot_key" ON "council_contributions"("request_id", "slot");

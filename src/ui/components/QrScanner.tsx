@@ -10,6 +10,14 @@ import styles from '@encryption/src/ui/components/layout/layout.module.css';
  */
 export function QrScanner({ onDecode, onUnavailable, label }: { onDecode: (text: string) => void; onUnavailable: () => void; label: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Callers pass inline arrows: kept in refs so a re-render never restarts the camera.
+  const onDecodeRef = useRef(onDecode);
+  const onUnavailableRef = useRef(onUnavailable);
+
+  useEffect(() => {
+    onDecodeRef.current = onDecode;
+    onUnavailableRef.current = onUnavailable;
+  });
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -34,7 +42,7 @@ export function QrScanner({ onDecode, onUnavailable, label }: { onDecode: (text:
         const found = decode?.(img.data, img.width, img.height);
 
         if (found?.data) {
-          onDecode(found.data);
+          onDecodeRef.current(found.data);
 
           return; // stop the loop; the parent unmounts the scanner
         }
@@ -58,8 +66,8 @@ export function QrScanner({ onDecode, onUnavailable, label }: { onDecode: (text:
         }
         raf = requestAnimationFrame(tick);
       } catch {
-        // No camera / permission denied — fall back to manual entry.
-        onUnavailable();
+        // No camera, or permission denied: the caller falls back to typed digits.
+        if (!cancelled) onUnavailableRef.current();
       }
     })();
 
@@ -68,7 +76,7 @@ export function QrScanner({ onDecode, onUnavailable, label }: { onDecode: (text:
       cancelAnimationFrame(raf);
       stream?.getTracks().forEach((tr) => tr.stop());
     };
-  }, [onDecode, onUnavailable]);
+  }, []);
 
   return <video ref={videoRef} muted playsInline className={styles.scanner} aria-label={label} />;
 }

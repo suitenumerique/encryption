@@ -5,9 +5,12 @@ import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
+import { MSG_VAULT_COUNCIL_COMPLETE_RECOVERY } from '@encryption/src/shared/constants';
 import { API_ERROR_VAULT_NOT_FOUND } from '@encryption/src/shared/error-codes';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import {
+  handleGetApiCouncilRecoveryRequestsByIdShares,
+  handleGetApiCouncilRecoveryRequestsMine,
   handleGetApiCouncilsForMe,
   handleGetApiEmergencyAccessTrusted,
   handleGetApiPublicKeys,
@@ -17,8 +20,9 @@ import {
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { forMe } from '@encryption/src/ui/testing/council-stories';
-import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+import { COUNCIL_LABEL, forMe } from '@encryption/src/ui/testing/council-stories';
+import { sampleCouncilEscrowRecord, sampleEmergencyEscrowRecord, sampleFingerprint, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+import { defaultVaultRequest } from '@encryption/src/ui/testing/mock-encryption';
 
 type ComponentType = typeof ModalEncryptionOnboarding;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
@@ -129,6 +133,103 @@ ExistingUserWithCouncilStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('council.recovery_title'));
 };
 export const ExistingUserWithCouncil = prepareStory(ExistingUserWithCouncilStory);
+
+// The council released the shares: the vault opens in this browser, then the
+// forced phrase change cannot be prepared. The user lands on a screen that
+// resumes it, never on a spinner.
+const COUNCIL_REQUEST_ID = '5d6e7f80-0000-4000-8000-000000000001';
+const councilReleasedHandlers = [
+  handleGetApiPublicKeys(({ request }) => {
+    const userIds = new URL(request.url).searchParams.getAll('user_ids');
+
+    return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
+  }),
+  handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+  handleGetApiCouncilRecoveryRequestsMine({
+    body: {
+      request: {
+        id: COUNCIL_REQUEST_ID,
+        council_label: COUNCIL_LABEL,
+        stage: 'released',
+        ephemeral_fingerprint: sampleFingerprint,
+        created_at_millis: Date.UTC(2026, 9, 28, 9),
+        expires_at_millis: Date.UTC(2026, 10, 4, 9),
+        meet: [],
+      },
+    },
+  }),
+  handleGetApiCouncilRecoveryRequestsByIdShares({
+    body: {
+      request_id: COUNCIL_REQUEST_ID,
+      council_id: 'dinum',
+      user_id: '00000000-0000-0000-0000-000000000000',
+      generation: 1,
+      threshold: 2,
+      share_commitments: sampleCouncilEscrowRecord.share_commitments,
+      lang: 'french',
+      escrow: sampleCouncilEscrowRecord,
+      contributions: [],
+    },
+  }),
+];
+
+async function chooseCouncil(canvasElement: HTMLElement) {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('council.option_title')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+}
+
+const CouncilRotationFailedStory = Template.bind({});
+CouncilRotationFailedStory.args = { ...ExistingUserStory.args };
+CouncilRotationFailedStory.parameters = {
+  msw: { handlers: councilReleasedHandlers },
+  encryption: {
+    changeRecoveryPhrase: async () => {
+      throw new Error('The vault did not answer.');
+    },
+  },
+};
+CouncilRotationFailedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await chooseCouncil(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
+  await canvas.findByText('The vault did not answer.');
+  // Resuming tries again, and lands on the same screen while it keeps failing.
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
+  await canvas.findByText('The vault did not answer.');
+};
+export const CouncilRecoveryRotationFailed = prepareStory(CouncilRotationFailedStory);
+
+// The council recovered an older vault: cancelling the prompt that would bring
+// it back leaves the user on the screen that offers it again.
+const CouncilReactivateCancelledStory = Template.bind({});
+CouncilReactivateCancelledStory.args = { ...ExistingUserStory.args };
+CouncilReactivateCancelledStory.parameters = {
+  msw: { handlers: councilReleasedHandlers },
+  encryption: {
+    request: async (type: string, payload?: unknown) =>
+      type === MSG_VAULT_COUNCIL_COMPLETE_RECOVERY
+        ? {
+            publicKey: samplePublicKey.encryption_public_key,
+            signaturePublicKey: samplePublicKey.signature_public_key,
+            isActiveVault: false,
+            vaultCreatedAtMillis: Date.UTC(2025, 2, 1),
+            contributors: [],
+          }
+        : defaultVaultRequest(type, payload),
+  },
+};
+CouncilReactivateCancelledStory.play = async ({ canvasElement }) => {
+  await chooseCouncil(canvasElement);
+  const body = within(canvasElement.ownerDocument.body);
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('onboarding.btn_cancel') }));
+  await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
+  // Continuing shows the prompt again.
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await body.findByRole('button', { name: i18n.t('onboarding.reactivate_confirm_button') });
+};
+export const CouncilRecoveryReactivateCancelled = prepareStory(CouncilReactivateCancelledStory);
 
 // This browser held the vault but forgot it after a year without use: the same
 // choice, explained.

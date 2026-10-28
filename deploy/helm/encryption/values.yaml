@@ -122,7 +122,7 @@ config:
   #     - domains: ['*']
   #       publicKey: AUJD...
   maintenanceEscrowKeys: []
-  # Recovery councils (shamir.md): for each group of users by email domain, the
+  # Recovery councils (architecture.md Appendix F): for each group of users by email domain, the
   # custodians who can together give one of them their vault back, by internal user
   # id with their email as a guard, and how many it takes (at least 1, at most one
   # less than the custodians, 2 to 12 custodians). The configuration only PROPOSES:
