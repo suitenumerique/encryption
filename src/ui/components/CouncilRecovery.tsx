@@ -1,4 +1,4 @@
-import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -71,6 +71,7 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
   const [view, setView] = useState<View>({ kind: 'loading' });
   const recovering = useRef(false);
   const [revealCode, setRevealCode] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const recover = useCallback(
     async (requestId: string) => {
@@ -173,6 +174,7 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
     (requestId: string) =>
       run(async () => {
         await withFreshIdToken(getIdToken, (idToken) => refuseCouncilRequest(idToken, requestId));
+        setConfirmCancel(false);
         await load();
       }),
     [run, getIdToken, load]
@@ -230,11 +232,38 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
   }
 
   const { request } = view;
-  // Cancelling covers both a request the user no longer needs and one they never made.
+  // Cancelling covers both a request the user no longer needs and one they never
+  // made; it cannot be undone, so it is confirmed first.
   const cancelButton = (
-    <Button variant="bordered" color="neutral" onClick={() => refuse(request.id)} disabled={busy}>
+    <Button variant="bordered" color="error" onClick={() => setConfirmCancel(true)} disabled={busy}>
       {t('council.cancel_request')}
     </Button>
+  );
+  const cancelDialog = (
+    <Modal
+      isOpen={confirmCancel}
+      onClose={() => setConfirmCancel(false)}
+      closeOnClickOutside={false}
+      size={ModalSize.SMALL}
+      aria-label={t('council.cancel_title')}
+    >
+      <Screen
+        title={t('council.cancel_title')}
+        description={t('council.cancel_body')}
+        banner={banner}
+        actionsLayout="row"
+        actions={
+          <>
+            <Button variant="bordered" color="neutral" onClick={() => setConfirmCancel(false)} disabled={busy}>
+              {t('council.cancel_keep')}
+            </Button>
+            <Button color="error" onClick={() => refuse(request.id)} disabled={busy}>
+              {t('council.cancel_confirm')}
+            </Button>
+          </>
+        }
+      />
+    </Modal>
   );
 
   if (request.stage === 'meet') {
@@ -273,6 +302,7 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
           )}
           <p className={`${styles.hint} ${styles.hintCenter}`}>{t('council.meet_code_hint')}</p>
         </div>
+        {cancelDialog}
       </Screen>
     );
   }
@@ -290,6 +320,8 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
         </>
       }
       actions={cancelButton}
-    />
+    >
+      {cancelDialog}
+    </Screen>
   );
 }

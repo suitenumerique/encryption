@@ -1,6 +1,6 @@
 import { Button, DropdownMenu, Input, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
 import { ChevronLeft, ChevronRight, Filter, User } from '@gouvfr-lasuite/ui-components/icons';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -27,6 +27,7 @@ import {
   REQUEST_FILTERS,
   type RequestFilter,
   countByFilter,
+  membershipChanges,
   pendingActions,
   selectRequests,
   sortCouncils,
@@ -88,7 +89,11 @@ export function CouncilCustodian({ getIdToken, userId, onBack, ...auth }: Counci
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [closeBlocked, setCloseBlocked] = useState(false);
 
-  useModalSize('large', view.kind === 'home');
+  // A council's page is wide (its requests); the list of councils less so; a
+  // message alone keeps the default width.
+  const councilCount = data?.councils.length ?? 0;
+  const onPage = councilCount === 1 || (councilCount > 1 && openId !== null);
+  useModalSize(onPage ? 'large' : 'medium', view.kind === 'home' && councilCount > 0);
 
   // Closing between the upload of the transfer keys and the sub-shares leaves
   // the batch to redo: the product's close control waits for the run to end.
@@ -297,20 +302,44 @@ export function CouncilCustodian({ getIdToken, userId, onBack, ...auth }: Counci
   const council = opened;
   const head = rosterHead(council.chain);
 
+  const proposal = council.proposal;
+  const delta = proposal && head ? membershipChanges(head, proposal.roster) : null;
+  const changes = delta
+    ? [
+        delta.joining.length > 0 && t('council.change_joining', { names: delta.joining.join(', ') }),
+        delta.leaving.length > 0 && t('council.change_leaving', { names: delta.leaving.join(', ') }),
+        delta.newKey.length > 0 && t('council.change_new_keys', { names: delta.newKey.join(', ') }),
+      ]
+        .filter(Boolean)
+        .join(' · ') || t('council.proposal_description')
+    : null;
+  const reshare = council.reshare;
+  const reshareHelpers = reshare
+    ? (council.chain.find((v) => v.version === reshare.source_version)?.members ?? [])
+        .filter((m) => reshare.helper_slots.includes(m.slot))
+        .map((m) => m.name ?? `#${m.slot}`)
+        .join(', ')
+    : '';
+
   return (
     <Screen
       back={data.councils.length > 1 ? { label: t('council.all_councils'), onClick: () => setOpenId(null), disabled: resharing } : leave}
       title={council.label}
       description={
-        <div className={styles.descriptionRow}>
-          <p>{head ? t('council.custodians_line', { count: head.threshold, total: head.members.length }) : t('council.role_invited')}</p>
-          {council.role === 'custodian' && head && (
-            <div className={styles.cardAside}>
-              <CouncilMembersButton roster={head} userId={userId} />
-              <CouncilCode councilId={council.council_id} chain={council.chain} />
-            </div>
-          )}
-        </div>
+        head ? (
+          <>
+            <p>{t('council.custodians_line', { count: head.threshold, total: head.members.length })}</p>
+            {council.role === 'custodian' && (
+              <div className={styles.filters}>
+                <CouncilMembersButton roster={head} userId={userId} />
+                <CouncilCode councilId={council.council_id} chain={council.chain} />
+              </div>
+            )}
+          </>
+        ) : (
+          // Possibly the first time this person hears of a council.
+          t('council.invitation_intro')
+        )
       }
       banner={
         <>
@@ -328,83 +357,80 @@ export function CouncilCustodian({ getIdToken, userId, onBack, ...auth }: Counci
               </div>
             </Notice>
           )}
+          {council.faulty_reshares.map((faulty) => (
+            <Notice key={faulty.helper_name} type={VariantType.ERROR}>
+              <div className={styles.alertStack}>
+                <strong>{t('council.faulty_reshare_title', { name: faulty.helper_name, count: faulty.escrows })}</strong>
+                <span>{t('council.faulty_reshare_description')}</span>
+              </div>
+            </Notice>
+          ))}
         </>
       }
     >
-      {council.proposal && (
-        <div className={styles.settingsRow}>
-          <div className={styles.settingsRowText}>
-            <p className={styles.settingsRowTitle}>
-              {head ? t('council.proposal_title', { version: council.proposal.roster.version }) : t('council.invitation_title')}
-            </p>
-            <p className={styles.settingsRowDescription}>
-              {council.proposal.signed_by_me
-                ? t('council.proposal_waiting', { count: council.proposal.quorum_missing + council.proposal.pending_members.length })
-                : head
-                  ? t('council.proposal_description')
-                  : t('council.invitation_description', {
-                      threshold: council.proposal.roster.threshold,
-                      count: council.proposal.roster.members.length,
-                    })}
-            </p>
-          </div>
-          {council.proposal.may_sign && !council.proposal.signed_by_me && (
-            <Button size="nano" onClick={() => setView({ kind: 'sign', councilId: council.council_id })}>
-              {head ? t('council.review_and_sign') : t('council.review_and_accept')}
-            </Button>
-          )}
-        </div>
+      {proposal && (
+        <Task
+          title={head ? t('council.proposal_title') : t('council.invitation_title')}
+          description={
+            proposal.signed_by_me
+              ? t('council.proposal_waiting', { count: proposal.quorum_missing + proposal.pending_members.length })
+              : changes
+                ? changes
+                : t('council.invitation_description', { threshold: proposal.roster.threshold, count: proposal.roster.members.length })
+          }
+          action={
+            proposal.may_sign &&
+            !proposal.signed_by_me && (
+              <Button size="small" onClick={() => setView({ kind: 'sign', councilId: council.council_id })}>
+                {head ? t('council.review_and_sign') : t('council.review_and_accept')}
+              </Button>
+            )
+          }
+        />
       )}
 
       {council.role === 'custodian' && (
         <>
-          <div className={styles.section}>
-            <HealthLine council={council} explained={council.health.outdated.length === 0 && !council.reshare} />
-            {council.faulty_reshares.map((faulty) => (
-              <Notice key={faulty.helper_name} type={VariantType.ERROR}>
-                <strong>{t('council.faulty_reshare_title', { name: faulty.helper_name, count: faulty.escrows })}</strong>
-                <br />
-                {t('council.faulty_reshare_description')}
-              </Notice>
-            ))}
-            {/* A version being moved shows as its move only. */}
-            {council.health.outdated
-              .filter((entry) => entry.version !== council.reshare?.source_version)
-              .map((entry) => (
-                <div key={entry.version} className={styles.settingsRow}>
-                  <div className={styles.settingsRowText}>
-                    <p className={styles.settingsRowTitle}>{t('council.outdated_title', { count: entry.escrows, to: head?.version })}</p>
-                    <p className={styles.settingsRowDescription}>{t('council.outdated_description')}</p>
-                  </div>
-                  {!council.reshare && (
-                    <Button
-                      size="nano"
-                      variant="bordered"
-                      onClick={() => setView({ kind: 'reshare', councilId: council.council_id, sourceVersion: entry.version })}
-                    >
+          <HealthLine council={council} explained={council.health.outdated.length === 0 && !reshare} />
+
+          {/* A version being moved shows as its move only. */}
+          {council.health.outdated
+            .filter((entry) => entry.version !== reshare?.source_version)
+            .map((entry) => (
+              <Task
+                key={entry.version}
+                title={t('council.outdated_title', { count: entry.escrows, to: head?.version })}
+                description={t('council.outdated_description')}
+                action={
+                  !reshare && (
+                    <Button size="small" onClick={() => setView({ kind: 'reshare', councilId: council.council_id, sourceVersion: entry.version })}>
                       {t('council.reshare_button')}
                     </Button>
-                  )}
-                </div>
-              ))}
-            {council.reshare && (
-              <div className={styles.settingsRow}>
-                <div className={styles.settingsRowText}>
-                  <p className={styles.settingsRowTitle}>{t('council.reshare_running', { to: council.reshare.target_version })}</p>
-                  <p className={styles.settingsRowDescription}>
-                    {council.reshare.i_am_helper && council.reshare.remaining_for_me > 0
-                      ? t('council.reshare_my_part', { count: council.reshare.remaining_for_me })
-                      : t('council.reshare_waiting_others', { count: council.reshare.remaining })}
-                  </p>
-                </div>
-                {council.reshare.i_am_helper && council.reshare.remaining_for_me > 0 && (
-                  <Button size="nano" onClick={() => processReshare(council.reshare!.session_id)} disabled={busy !== null}>
+                  )
+                }
+              />
+            ))}
+          {reshare && (
+            <Task
+              title={t('council.reshare_running', { to: reshare.target_version })}
+              description={
+                <>
+                  {reshare.i_am_helper && reshare.remaining_for_me > 0
+                    ? t('council.reshare_my_part', { count: reshare.remaining_for_me })
+                    : t('council.reshare_waiting_others', { count: reshare.remaining })}{' '}
+                  {t('council.reshare_helpers', { names: reshareHelpers })}
+                </>
+              }
+              action={
+                reshare.i_am_helper &&
+                reshare.remaining_for_me > 0 && (
+                  <Button size="small" onClick={() => processReshare(reshare.session_id)} disabled={busy !== null}>
                     {t('council.reshare_process')}
                   </Button>
-                )}
-              </div>
-            )}
-          </div>
+                )
+              }
+            />
+          )}
 
           <CouncilRequests
             key={council.council_id}
@@ -493,6 +519,9 @@ function CouncilRequests({
         <div className={styles.searchRow}>
           <Input
             fullWidth
+            variant="classic"
+            hideLabel
+            placeholder={t('council.requests_search')}
             label={t('council.requests_search')}
             value={query}
             onChange={(event) => {
@@ -575,27 +604,31 @@ function HealthLine({ council, explained }: { council: CustodianCouncil; explain
 
   if (health.escrows === 0) return <p className={styles.hint}>{t('council.health_empty')}</p>;
 
-  if (health.at_risk === 0 && health.lost === 0) {
-    return (
+  return (
+    <div className={styles.section}>
       <div className={styles.cardHeader}>
         <p className={styles.hint}>{t('council.health_line', { count: health.escrows })}</p>
-        <Chip tone="success" icon="trusted">
-          {t('council.health_ok')}
-        </Chip>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <p className={styles.hint}>{t('council.health_line', { count: health.escrows })}</p>
-      <div className={styles.filters}>
-        {health.at_risk > 0 && <Chip tone="warning">{t('council.health_at_risk', { count: health.at_risk })}</Chip>}
-        {health.lost > 0 && <Chip tone="error">{t('council.health_lost', { count: health.lost })}</Chip>}
+        <div className={styles.cardAside}>
+          {health.at_risk > 0 && (
+            <Chip tone="warning" icon="warning">
+              {t('council.health_at_risk', { count: health.at_risk })}
+            </Chip>
+          )}
+          {health.lost > 0 && (
+            <Chip tone="error" icon="alert">
+              {t('council.health_lost', { count: health.lost })}
+            </Chip>
+          )}
+          {health.at_risk === 0 && health.lost === 0 && (
+            <Chip tone="success" icon="trusted">
+              {t('council.health_ok')}
+            </Chip>
+          )}
+        </div>
       </div>
       {explained && health.at_risk > 0 && <p className={styles.hint}>{t('council.health_at_risk_explained', { count: health.at_risk })}</p>}
       {health.lost > 0 && <p className={styles.hint}>{t('council.health_lost_explained', { count: health.lost })}</p>}
-    </>
+    </div>
   );
 }
 
@@ -627,5 +660,18 @@ function CouncilMembersButton({ roster, userId }: { roster: NonNullable<ReturnTy
         </Screen>
       </Modal>
     </>
+  );
+}
+
+/** Something that waits on the custodians: tinted, with its action at hand. */
+function Task({ title, description, action }: { title: string; description: ReactNode; action?: ReactNode }) {
+  return (
+    <div className={styles.task}>
+      <div className={styles.settingsRowText}>
+        <p className={styles.settingsRowTitle}>{title}</p>
+        <p className={styles.settingsRowDescription}>{description}</p>
+      </div>
+      {action}
+    </div>
   );
 }

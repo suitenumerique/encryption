@@ -89,7 +89,7 @@ CodeStory.play = async ({ canvasElement }) => {
   const dialog = within(await within(document.body).findByRole('dialog'));
   await dialog.findByText(i18n.t('council.custodian_code_hint'));
   dialog.getByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '));
-  dialog.getByRole('button', { name: i18n.t('identity.copy_fingerprint') });
+  dialog.getByRole('button', { name: i18n.t('council.copy_code') });
 };
 export const CouncilCode = prepareStory(CodeStory);
 
@@ -124,7 +124,8 @@ InvitedStory.parameters = mine([
 InvitedStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await canvas.findByText(i18n.t('council.invitation_title'));
-  canvas.getByText(i18n.t('council.role_invited'));
+  // Maybe the first time they hear of a council: what it is, in one sentence.
+  canvas.getByText(i18n.t('council.invitation_intro'));
   await playFindButton(canvasElement, i18n.t('council.review_and_accept'));
   // No code before version 1 is signed.
   expect(canvas.queryByText(i18n.t('council.custodian_code_hint'))).toBeNull();
@@ -157,7 +158,9 @@ RequestsStory.play = async ({ canvasElement }) => {
   canvas.getByText(i18n.t('council.stage_awaiting_meeting'));
   // Each row's band says what it asks of this custodian, with its one action.
   canvas.getByText(i18n.t('council.request_nobody_met'));
-  canvas.getByText(i18n.t('council.request_met_by', { names: 'Bruno Petit' }));
+  canvas.getByText(
+    [i18n.t('council.request_met_by', { names: 'Bruno Petit' }), i18n.t('council.request_parts', { count: 1, threshold: 2 })].join(' · ')
+  );
   // One way each: in person before the meeting, remotely after it.
   expect(canvas.getAllByRole('button', { name: i18n.t('council.approve_remotely') })).toHaveLength(1);
   expect(canvas.getAllByRole('button', { name: i18n.t('council.hand_over_in_person') })).toHaveLength(1);
@@ -249,7 +252,9 @@ ReshareRunningStory.args = baseArgs;
 ReshareRunningStory.parameters = mine([runningCouncil]);
 ReshareRunningStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(i18n.t('council.reshare_my_part', { count: 88 }));
+  await canvas.findByText(i18n.t('council.reshare_my_part', { count: 88 }), { exact: false });
+  // Everyone sees who does the move.
+  canvas.getByText(i18n.t('council.reshare_helpers', { names: 'Alice Martin, Bruno Petit' }), { exact: false });
   // The version being moved shows as its move only.
   expect(canvas.queryByText(i18n.t('council.outdated_title', { count: 88, to: 2 }))).toBeNull();
   await playFindButton(canvasElement, i18n.t('council.reshare_process'));

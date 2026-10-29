@@ -376,30 +376,29 @@
   cursor: help;
 }
 
-/* A screen's description with small actions at its end (a council's members
-   and code): out to the right edge, past the room the header keeps for the
-   close control, which sits on the title's line only. */
-.description-row {
+/* Something that waits on the user (a change to sign, setups to move): tinted
+   and bordered in the brand colour, so it reads as the thing to do. */
+.task {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--c--globals--spacings--xs);
-  margin-right: calc(-1 * var(--c--globals--spacings--base));
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--brand--secondary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--semantic--brand--tertiary);
 }
 
-/* A search field with its filter button beside it, a square as tall as the field. */
+.task :global(.c__button) {
+  flex-shrink: 0;
+}
+
+/* A search field with its filter button beside it. */
 .search-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
+  align-items: center;
   gap: var(--c--globals--spacings--xs);
-}
-
-.search-row > :last-child,
-.search-row > :last-child :global(.c__button) {
-  height: 100%;
-  aspect-ratio: 1;
-  justify-content: center;
 }
 
 .card__aside {

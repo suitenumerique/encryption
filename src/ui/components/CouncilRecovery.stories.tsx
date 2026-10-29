@@ -82,7 +82,14 @@ export const Ask = prepareStory(IntroStory);
 // After the meeting, while the others approve remotely: nothing about who, or how many.
 const InProgressStory = Template.bind({});
 InProgressStory.args = baseArgs;
-InProgressStory.parameters = { msw: { handlers: [handleGetApiCouncilRecoveryRequestsMine({ body: { request: request() } })] } };
+InProgressStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiCouncilRecoveryRequestsMine({ body: { request: request() } }),
+      handlePostApiCouncilRecoveryRequestsByIdRefuse({ body: { refused: true } }),
+    ],
+  },
+};
 InProgressStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.in_progress_title'));
@@ -92,6 +99,18 @@ InProgressStory.play = async ({ canvasElement }) => {
   expect(canvas.queryByText('Alice Martin')).toBeNull();
 };
 export const InProgress = prepareStory(InProgressStory);
+
+// Cancelling cannot be undone: a dialog says what it costs first.
+const CancelRequestStory = Template.bind({});
+CancelRequestStory.args = baseArgs;
+CancelRequestStory.parameters = InProgressStory.parameters;
+CancelRequestStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.cancel_request')));
+  const dialog = within(await within(document.body).findByRole('dialog'));
+  await dialog.findByText(i18n.t('council.cancel_body'));
+  await dialog.findByRole('button', { name: i18n.t('council.cancel_keep') });
+};
+export const CancelRequestConfirmation = prepareStory(CancelRequestStory);
 
 // Right after asking: the names of who can hand over the first share, and the
 // code they check on this screen. Remote approvals only come after.

@@ -144,6 +144,9 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
   const toCheck = signed ? [] : head ? rows.filter((r) => r.change === 'new' || r.change === 'new-key') : peer ? [peer] : [];
   const ready = toCheck.every((r) => checked.has(r.userId));
   const first = head === null;
+  // A newcomer to a council in force accepts the role, like a member of version 1.
+  const joining = head !== null && !head.members.some((m) => m.user_id === userId);
+  const accepting = first || joining;
   // The custodian first, then whoever is still to check, then the rest by name.
   const rank = (row: Row) => (row.change === 'me' ? 0 : toCheck.includes(row) ? (checked.has(row.userId) ? 2 : 1) : 3);
   const ordered = [...rows].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -151,15 +154,15 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
   return (
     <Screen
       back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: busy }}
-      title={first ? t('council.sign_first_title') : t('council.sign_title')}
+      title={accepting ? t('council.sign_first_title') : t('council.sign_title')}
       description={
         <>
           <p>
-            {first
+            {accepting
               ? t('council.sign_first_description', { threshold: proposal.threshold, count: proposal.members.length })
               : t('council.sign_description', { threshold: proposal.threshold, count: proposal.members.length })}
           </p>
-          {head && <p>{t('council.sign_quorum', { quorum: changeQuorum(head), count: head.members.length })}</p>}
+          {head && !joining && <p>{t('council.sign_quorum', { quorum: changeQuorum(head), count: head.members.length })}</p>}
           {(peer || (head && toCheck.length > 0)) && (
             <p>
               {peer ? t('council.sign_check_peer', { name: peer.name }) : t('council.sign_check_newcomers')}{' '}
@@ -185,7 +188,7 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
       }
       actions={
         <Button onClick={sign} disabled={busy || !ready || signed}>
-          {busy ? t('council.signing') : first ? t('council.sign_first_button') : t('council.sign_button')}
+          {busy ? t('council.signing') : accepting ? t('council.sign_first_button') : t('council.sign_button')}
         </Button>
       }
     >

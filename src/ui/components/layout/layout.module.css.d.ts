@@ -30,7 +30,6 @@ declare const styles: {
   readonly deadline: string;
   readonly deadlineTime: string;
   readonly deadlineValue: string;
-  readonly descriptionRow: string;
   readonly empty: string;
   readonly errorText: string;
   readonly filters: string;
@@ -95,6 +94,7 @@ declare const styles: {
   readonly statusLabel: string;
   readonly statusSuccess: string;
   readonly statusWarning: string;
+  readonly task: string;
   readonly textLink: string;
   readonly textLinks: string;
   readonly visuallyHidden: string;

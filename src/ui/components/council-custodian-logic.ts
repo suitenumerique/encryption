@@ -1,3 +1,4 @@
+import type { RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
 import type { CouncilRequestSummary, CustodianCouncil } from '@encryption/src/ui/api/council-client';
 
 /** What waits on this custodian in one council: requests they can act on, a change to sign, their part of a resharing. */
@@ -57,4 +58,17 @@ export function countByFilter(requests: CouncilRequestSummary[], now: number): R
     RequestFilter,
     number
   >;
+}
+
+/** Who a proposed version adds, removes, or names with another key, against the version in force. */
+export function membershipChanges(head: RosterVersionWire, proposal: RosterVersionWire): { joining: string[]; leaving: string[]; newKey: string[] } {
+  const name = (m: RosterVersionWire['members'][number]) => m.name ?? `#${m.slot}`;
+  const before = new Map(head.members.map((m) => [m.user_id, m]));
+  const after = new Set(proposal.members.map((m) => m.user_id));
+
+  return {
+    joining: proposal.members.filter((m) => !before.has(m.user_id)).map(name),
+    leaving: head.members.filter((m) => !after.has(m.user_id)).map(name),
+    newKey: proposal.members.filter((m) => before.has(m.user_id) && before.get(m.user_id)!.identity_public_key !== m.identity_public_key).map(name),
+  };
 }

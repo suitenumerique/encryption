@@ -1,6 +1,6 @@
 import { Button } from '@gouvfr-lasuite/ui-components';
 import { XMark } from '@gouvfr-lasuite/ui-components/icons';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { CouncilRequestSummary } from '@encryption/src/ui/api/council-client';
@@ -33,9 +33,11 @@ export function CouncilRequestRow({
   onAbort: () => void;
 }) {
   const { t } = useTranslation('common');
+  // Read once per mount: the row refreshes with the custodian space.
+  const [now] = useState(() => Date.now());
   // The hour counts on the last day; before it, the date and hour.
   const expiry = (at: number) => {
-    const left = at - Date.now();
+    const left = at - now;
 
     return left < DAY_MS
       ? t('council.request_expires_in', { count: Math.max(1, Math.ceil(left / HOUR_MS)) })

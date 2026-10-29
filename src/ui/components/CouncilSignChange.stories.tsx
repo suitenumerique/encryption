@@ -119,3 +119,18 @@ AlreadySignedStory.play = async ({ canvasElement }) => {
   expect(canvas.queryByRole('button', { name: i18n.t('council.mark_checked') })).toBeNull();
 };
 export const AlreadySigned = prepareStory(AlreadySignedStory);
+
+// Élise's side of the same change: she joins a council in force, so she accepts
+// the role and vouches for her own key; checking newcomers is the others' part.
+const NewcomerStory = Template.bind({});
+NewcomerStory.args = { ...baseArgs, userId: 'aaaaaaaa-0000-4000-8000-000000000005', council: replacement };
+NewcomerStory.parameters = ReplacementStory.parameters;
+NewcomerStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('council.sign_first_title'));
+  await canvas.findByText(i18n.t('council.change_me'));
+  expect(canvas.queryByText(i18n.t('council.sign_quorum', { quorum: 3, count: 4 }))).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('council.mark_checked') })).toBeNull();
+  expect(await playFindButton(canvasElement, i18n.t('council.sign_first_button'))).toBeEnabled();
+};
+export const NewcomerAccepts = prepareStory(NewcomerStory);

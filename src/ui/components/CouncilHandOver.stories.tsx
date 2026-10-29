@@ -156,9 +156,9 @@ MismatchStory.play = async ({ canvasElement }) => {
 };
 export const WrongCode = prepareStory(MismatchStory);
 
-// A behaviour, not a screen: the hand-over fails once, the error shows, nothing
-// is retried by itself (no loop sending shares), and the custodian can try
-// again from the same confirmation. With a threshold of 1, this share releases.
+// The hand-over fails: the error shows on the same confirmation, nothing is
+// retried by itself (no loop sending shares), and the button stays there to try
+// again by hand.
 let contributeCalls = 0;
 const FailOnceStory = Template.bind({});
 FailOnceStory.args = { ...baseArgs, request: meeting, mode: 'in-person' };
@@ -185,8 +185,6 @@ FailOnceStory.play = async ({ canvasElement }) => {
   // Still one attempt after a while: no loop.
   await new Promise((resolve) => setTimeout(resolve, 300));
   await expect(contributeCalls).toBe(1);
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.in_person_button')));
-  await canvas.findByText(i18n.t('council.handed_over_released', { name: request.user_name }));
-  await expect(contributeCalls).toBe(2);
+  await expect(await playFindButton(canvasElement, i18n.t('council.in_person_button'))).toBeEnabled();
 };
-export const HandOverFailsOnce = prepareStory(FailOnceStory);
+export const HandOverFails = prepareStory(FailOnceStory);
