@@ -21,6 +21,7 @@ import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/s
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { SyncIntegrityAlert } from '@encryption/src/ui/components/SyncIntegrityAlert';
+import { pendingActions } from '@encryption/src/ui/components/council-custodian-logic';
 import {
   type BlockedContact,
   UntrustedRearmError,
@@ -416,10 +417,7 @@ export function EncryptionSettings({
         verified,
         covered: forMe?.council != null,
         custodian: councils.length > 0,
-        pending: councils.reduce(
-          (sum, c) => sum + c.requests.filter((r) => r.can_contribute).length + (c.proposal?.may_sign && !c.proposal.signed_by_me ? 1 : 0),
-          0
-        ),
+        pending: councils.reduce((sum, c) => sum + pendingActions(c), 0),
       };
     })
       .then((state) => {

@@ -18,6 +18,7 @@ import { createVault, hasRestorableVault } from '@encryption/src/ui/api/vault-cl
 import type { IdTokenSet } from '@encryption/src/ui/auth/login';
 import { SessionExpiredError, StepUpRequiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { CouncilRecovery, type CouncilRecoveryResult } from '@encryption/src/ui/components/CouncilRecovery';
+import { RecoveryCouncil } from '@encryption/src/ui/components/RecoveryCouncil';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
@@ -46,6 +47,7 @@ type OnboardingStep =
   | 'restore'
   | 'restored'
   | 'backup'
+  | 'council-join'
   | 'done'
   | 'council-recovery'
   | 'council-unfinished'
@@ -237,6 +239,8 @@ export function ModalEncryptionOnboarding({
   // so abandoning the backup step leaves no server-side registration or vault.
   const [onboardingBundle, setOnboardingBundle] = useState<{ bundle: OnboardingBundle; version: number } | null>(null);
   const [isCommitting, setIsCommitting] = useState(false);
+  // The council the user joined right after enabling encryption, named on the last screen.
+  const [joinedCouncil, setJoinedCouncil] = useState<string | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [restoreInput, setRestoreInput] = useState('');
   // The way back chosen on the "Restore your encryption" screen.
@@ -483,7 +487,13 @@ export function ModalEncryptionOnboarding({
       // immediate close.
       const { publicKey } = await getPublicKey();
       onSuccess?.(publicKey);
-      setStep('done');
+
+      // A council covers the user and holds nothing of this new vault yet: offer
+      // to join it now. Best effort, the settings offer it as well.
+      const joinable = await withFreshIdToken(getIdToken, fetchCouncilForMe)
+        .then(({ council, escrow }) => council !== null && !escrow?.vault_active)
+        .catch(() => false);
+      setStep(joinable ? 'council-join' : 'done');
     } catch (err) {
       // The server round-trip failed after we committed locally: roll the vault
       // back out of IndexedDB so has-keys is false again (the user is not
@@ -1243,6 +1253,25 @@ export function ModalEncryptionOnboarding({
 
       {/* Success screen after the kit backup is confirmed, with the one-time
           trusted-contact suggestion (our recommended fallback if the kit is lost). */}
+      {step === 'council-join' && (
+        <RecoveryCouncil
+          getIdToken={getIdToken}
+          userId={userId}
+          onClose={() => setStep('done')}
+          onboarding={{
+            onJoined: (council) => {
+              setJoinedCouncil(council);
+              setStep('done');
+            },
+          }}
+          onReconnect={onReconnect}
+          onStepUp={onStepUp}
+          isAuthenticating={isAuthenticating}
+          onCancelAuth={onCancelAuth}
+          currentIdToken={currentIdToken}
+        />
+      )}
+
       {step === 'done' && (
         <Screen
           illustration="shield-check"
@@ -1250,6 +1279,7 @@ export function ModalEncryptionOnboarding({
           description={
             <>
               <p>{t('onboarding.enabled_description')}</p>
+              {joinedCouncil && <p>{t('council.onboarding_joined', { council: joinedCouncil })}</p>}
               {onOpenEmergencyAccess && <p>{t('emergency.nudge_text')}</p>}
             </>
           }

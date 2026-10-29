@@ -1,4 +1,4 @@
-import { Button, Checkbox, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, Checkbox, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -6,9 +6,9 @@ import { computeKeyFingerprint } from '@encryption/src/crypto/fingerprint';
 import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_ACCEPT_FINGERPRINT } from '@encryption/src/shared/constants';
 import type { RosterVersionWire } from '@encryption/src/shared/schemas/recovery-council';
-import { type CouncilForMe, enrollCouncilEscrow, fetchCouncilForMe } from '@encryption/src/ui/api/council-client';
+import { type CouncilForMe, enrollCouncilEscrow, fetchCouncilForMe, leaveCouncil } from '@encryption/src/ui/api/council-client';
 import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
-import { Chip, FingerprintBoxes, Identity, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { Chip, FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCouncilAction } from '@encryption/src/ui/hooks/useCouncilAction';
@@ -26,6 +26,11 @@ interface RecoveryCouncilProps extends CouncilAuthProps {
   startVerifying?: boolean;
   onBack?: () => void;
   onClose: () => void;
+  /**
+   * Shown as a step of the onboarding: a shorter first screen, "later" skips it
+   * (`onClose`), and joining hands back to the flow instead of a screen of its own.
+   */
+  onboarding?: { onJoined: (council: string) => void };
 }
 
 type View =
@@ -72,14 +77,16 @@ function VerifiedChip({ verified }: { verified: boolean }) {
  * the council's code against the one the organization published, or the
  * personal code of one custodian of version 1 the user knows.
  */
-export function RecoveryCouncil({ getIdToken, userId = null, startVerifying = false, onBack, onClose, ...auth }: RecoveryCouncilProps) {
+export function RecoveryCouncil({ getIdToken, userId = null, startVerifying = false, onBack, onClose, onboarding, ...auth }: RecoveryCouncilProps) {
   const { t, i18n } = useTranslation('common');
   const vault = useCouncilVault();
   const { banner, fail, busy: running, run } = useCouncilAction(auth);
   const busy = running !== null;
   const [view, setView] = useState<View>({ kind: 'loading' });
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
-  useModalSize('medium');
+  // Wide enough for a list of people; a short message keeps the default width.
+  useModalSize('medium', view.kind === 'accept' || view.kind === 'enrolled' || view.kind === 'verify');
 
   const load = useCallback(async () => {
     try {
@@ -143,10 +150,22 @@ export function RecoveryCouncil({ getIdToken, userId = null, startVerifying = fa
           again ? forMe.escrow!.record.roster_hash : undefined
         );
         await withFreshIdToken(getIdToken, (idToken) => enrollCouncilEscrow(idToken, vault.sign, body));
-        setView({ kind: 'done', label: council.label });
+        if (onboarding) onboarding.onJoined(council.label);
+        else setView({ kind: 'done', label: council.label });
       });
     },
-    [vault, getIdToken, i18n.language, run]
+    [vault, getIdToken, i18n.language, run, onboarding]
+  );
+
+  // Signed by the vault like joining. Back to the joining screen afterwards.
+  const leave = useCallback(
+    () =>
+      run(async () => {
+        await withFreshIdToken(getIdToken, (idToken) => leaveCouncil(idToken, vault.sign));
+        setConfirmLeave(false);
+        await load();
+      }),
+    [run, getIdToken, vault, load]
   );
 
   const verified = useCallback(
@@ -162,19 +181,7 @@ export function RecoveryCouncil({ getIdToken, userId = null, startVerifying = fa
   if (view.kind === 'loading') return <LoadingScreen />;
 
   if (view.kind === 'none') {
-    return (
-      <Screen
-        back={back}
-        title={t('council.title')}
-        description={t('council.none')}
-        banner={banner}
-        actions={
-          <Button variant="bordered" color="neutral" onClick={onClose}>
-            {t('settings.done')}
-          </Button>
-        }
-      />
-    );
+    return <Screen back={back} title={t('council.title')} description={t('council.none')} banner={banner} />;
   }
 
   if (view.kind === 'done') {
@@ -211,53 +218,47 @@ export function RecoveryCouncil({ getIdToken, userId = null, startVerifying = fa
 
   if (view.kind === 'accept') {
     const { forMe, identity, again } = view;
+    const canVerify = !again && identity !== null && !identity.verified;
 
     return (
       <Screen
-        back={back}
-        title={again ? t('council.again_title') : t('council.accept_title', { council: council.label })}
-        description={
-          <>
-            {again && <p>{t('council.again_explanation')}</p>}
-            <p>{t('council.accept_explanation', { council: council.label, ...counts })}</p>
-            <p>{t('council.accept_nobody_reads')}</p>
-            {!again && identity && !identity.verified && <p>{t('council.join_later_hint')}</p>}
-          </>
-        }
+        back={onboarding ? undefined : back}
+        illustration={onboarding ? 'shield-restore' : undefined}
+        title={again ? t('council.again_title') : t('council.join_title')}
+        description={again ? t('council.again_explanation') : t('council.onboarding_description', counts)}
         banner={banner}
         actions={
           <>
             <Button onClick={() => join(forMe, again)} disabled={busy || identity === null}>
               {busy ? t('council.accepting') : again ? t('council.again_button') : t('council.join_button')}
             </Button>
-            {!again && identity && !identity.verified && (
+            {canVerify && (
               <Button variant="bordered" color="neutral" onClick={() => setView({ kind: 'verify', forMe, identity, then: 'join' })} disabled={busy}>
                 {t('council.join_verify_button')}
+              </Button>
+            )}
+            {onboarding && (
+              <Button variant="tertiary" color="neutral" onClick={onClose} disabled={busy}>
+                {t('council.onboarding_later')}
               </Button>
             )}
           </>
         }
       >
-        <div className={styles.section}>
-          <div className={styles.cardHeader}>
-            <p className={styles.sectionTitle}>{t('council.members', counts)}</p>
-            {!again && identity?.verified && <VerifiedChip verified />}
-          </div>
-          <Members roster={roster} />
-        </div>
+        <CouncilMembers council={council} chip={!again && identity?.verified ? <VerifiedChip verified /> : null} />
       </Screen>
     );
   }
 
   const { forMe, identity } = view;
-  const escrow = forMe.escrow!;
-  const health = escrow.health;
+  const health = forMe.escrow!.health;
+  const unverified = view.check === 'ok' && identity !== null && !identity.verified;
 
   return (
     <Screen
       back={back}
       title={t('council.title')}
-      description={t('council.enrolled_description', { council: council.label, ...counts })}
+      description={t('council.enrolled_description', counts)}
       banner={
         <>
           {banner}
@@ -266,46 +267,75 @@ export function RecoveryCouncil({ getIdToken, userId = null, startVerifying = fa
           )}
           {view.check === 'ok' && health.status === 'at-risk' && <Notice type={VariantType.WARNING}>{t('council.at_risk')}</Notice>}
           {view.check === 'ok' && health.outdated && <Notice type={VariantType.INFO}>{t('council.outdated')}</Notice>}
-          {view.check === 'ok' && identity && !identity.verified && <Notice type={VariantType.INFO}>{t('council.enrolled_unverified')}</Notice>}
+          {unverified && <Notice type={VariantType.INFO}>{t('council.enrolled_unverified')}</Notice>}
           {!council.configured && <Notice type={VariantType.INFO}>{t('council.not_configured_user')}</Notice>}
         </>
       }
       actions={
         <>
-          {view.check === 'ok' && identity && !identity.verified && (
-            <Button onClick={() => setView({ kind: 'verify', forMe, identity, then: 'enrolled' })}>{t('council.verify_open')}</Button>
-          )}
-          <Button
-            variant={identity && !identity.verified ? 'bordered' : undefined}
-            color={identity && !identity.verified ? 'neutral' : undefined}
-            onClick={onClose}
-          >
-            {t('settings.done')}
+          {unverified && <Button onClick={() => setView({ kind: 'verify', forMe, identity, then: 'enrolled' })}>{t('council.verify_open')}</Button>}
+          <Button variant="tertiary" color="neutral" onClick={() => setConfirmLeave(true)} disabled={busy}>
+            {t('council.leave')}
           </Button>
         </>
       }
     >
-      <div className={styles.section}>
-        <div className={styles.cardHeader}>
-          <p className={styles.sectionTitle}>{t('council.members', counts)}</p>
-          {view.check === 'ok' && health.status === 'ok' && (
+      <CouncilMembers
+        council={council}
+        chip={
+          view.check !== 'ok' ? null : identity && !identity.verified ? (
+            <VerifiedChip verified={false} />
+          ) : health.status === 'ok' ? (
             <Chip tone="success" icon="trusted">
               {t('council.chip_protected')}
             </Chip>
-          )}
-        </div>
-        <Members roster={roster} />
-      </div>
-      {identity && (
-        <div className={styles.section}>
-          <div className={styles.cardHeader}>
-            <p className={styles.sectionTitle}>{t('council.fingerprint_title')}</p>
-            <VerifiedChip verified={identity.verified} />
-          </div>
-          <FingerprintBoxes fingerprint={identity.fingerprint} />
-        </div>
-      )}
+          ) : null
+        }
+      />
+
+      <Modal
+        isOpen={confirmLeave}
+        onClose={() => setConfirmLeave(false)}
+        closeOnClickOutside={false}
+        size={ModalSize.SMALL}
+        aria-label={t('council.leave_title')}
+      >
+        <Screen
+          title={t('council.leave_title')}
+          description={
+            <>
+              <p>{t('council.leave_body')}</p>
+              <p>{t('council.leave_again')}</p>
+            </>
+          }
+          banner={banner}
+          actionsLayout="row"
+          actions={
+            <>
+              <Button variant="bordered" color="neutral" onClick={() => setConfirmLeave(false)} disabled={busy}>
+                {t('onboarding.btn_cancel')}
+              </Button>
+              <Button color="error" onClick={leave} disabled={busy}>
+                {t('council.leave_confirm')}
+              </Button>
+            </>
+          }
+        />
+      </Modal>
     </Screen>
+  );
+}
+
+/** The council's name over the people in its current version: who can give the user their access back. */
+function CouncilMembers({ council, chip }: { council: NonNullable<CouncilForMe['council']>; chip: ReactNode }) {
+  return (
+    <div className={styles.section}>
+      <div className={styles.cardHeader}>
+        <p className={styles.sectionTitle}>{council.label}</p>
+        {chip}
+      </div>
+      <Members roster={head(council.chain)} />
+    </div>
   );
 }
 
@@ -325,15 +355,18 @@ interface VerifyCouncilProps {
  * published. A custodian of version 1 the user knows proves it too: each member
  * of version 1 checked the next one before signing (the circle), so one real
  * person vouches for the whole list; later members never checked the others,
- * hence version 1 only.
+ * hence version 1 only. The code comes first; the custodians are the other way,
+ * each one's code shown only when the user picks them.
  */
 function VerifyCouncil({ council, identity, userId, banner, busy, onBack, onVerified, fail }: VerifyCouncilProps) {
   const { t } = useTranslation('common');
   const vault = useCouncilVault();
   const { request } = useEncryptionContext();
+  const [way, setWay] = useState<'code' | 'person'>('code');
   const [compared, setCompared] = useState(false);
   const [working, setWorking] = useState(false);
   const [people, setPeople] = useState<Array<{ userId: string; name: string; fingerprint: string }> | null>(null);
+  const [comparing, setComparing] = useState<{ userId: string; name: string; fingerprint: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -345,7 +378,7 @@ function VerifyCouncil({ council, identity, userId, banner, busy, onBack, onVeri
           .filter((m) => m.user_id !== userId)
           .map(async (m) => ({ userId: m.user_id, name: m.name ?? `#${m.slot}`, fingerprint: await computeKeyFingerprint(m.identity_public_key) }))
       );
-      if (!cancelled) setPeople(rows);
+      if (!cancelled) setPeople(rows.sort((a, b) => a.name.localeCompare(b.name)));
     })().catch(fail);
 
     return () => {
@@ -358,6 +391,7 @@ function VerifyCouncil({ council, identity, userId, banner, busy, onBack, onVeri
       setWorking(true);
       try {
         await check();
+        setComparing(null);
         await onVerified();
       } catch (err) {
         fail(err);
@@ -369,45 +403,84 @@ function VerifyCouncil({ council, identity, userId, banner, busy, onBack, onVeri
   );
 
   const disabled = busy || working;
+  const canUsePerson = people !== null && people.length > 0;
 
   return (
     <Screen
       back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled }}
-      title={t('council.verify_title', { council: council.label })}
-      description={t('council.verify_description')}
+      title={t('council.verify_title')}
+      description={way === 'code' ? t('council.fingerprint_hint') : t('council.verify_person_hint')}
       banner={banner}
-    >
-      <div className={styles.section}>
-        <p className={styles.sectionTitle}>{t('council.verify_code_title')}</p>
-        <p className={styles.hint}>{t('council.fingerprint_hint')}</p>
-        <FingerprintBoxes fingerprint={identity.fingerprint} />
-        <Checkbox label={t('council.fingerprint_compared')} checked={compared} onChange={() => setCompared((value) => !value)} />
-        <div>
-          <Button size="small" onClick={() => settle(() => vault.markVerified(council.council_id, council.chain))} disabled={disabled || !compared}>
-            {t('council.verify_code_confirm')}
+      actions={
+        way === 'code' ? (
+          <>
+            <Button onClick={() => settle(() => vault.markVerified(council.council_id, council.chain))} disabled={disabled || !compared}>
+              {t('council.verify_code_confirm')}
+            </Button>
+            {canUsePerson && (
+              <Button variant="tertiary" color="neutral" onClick={() => setWay('person')} disabled={disabled}>
+                {t('council.verify_with_person')}
+              </Button>
+            )}
+          </>
+        ) : (
+          <Button variant="tertiary" color="neutral" onClick={() => setWay('code')} disabled={disabled}>
+            {t('council.verify_with_code')}
           </Button>
-        </div>
-      </div>
-      {people && people.length > 0 && (
-        <div className={styles.section}>
-          <p className={styles.sectionTitle}>{t('council.verify_person_title')}</p>
-          <p className={styles.hint}>{t('council.verify_person_hint')}</p>
-          {people.map((person) => (
-            <IdentityCard key={person.userId} name={person.name} fingerprint={person.fingerprint}>
-              <div>
+        )
+      }
+    >
+      {way === 'code' ? (
+        <>
+          <FingerprintBoxes fingerprint={identity.fingerprint} />
+          <Checkbox label={t('council.fingerprint_compared')} checked={compared} onChange={() => setCompared((value) => !value)} />
+        </>
+      ) : (
+        <ul className={styles.people}>
+          {people!.map((person) => (
+            <li key={person.userId} className={styles.cardHeader}>
+              <Identity name={person.name} />
+              <Button size="nano" variant="bordered" onClick={() => setComparing(person)} disabled={disabled}>
+                {t('council.verify_person_compare')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Modal
+        isOpen={comparing !== null}
+        onClose={() => setComparing(null)}
+        closeOnClickOutside={false}
+        size={ModalSize.MEDIUM}
+        aria-label={t('council.verify_person_title')}
+      >
+        {comparing && (
+          <Screen
+            title={t('council.verify_person_modal_title', { name: comparing.name })}
+            description={t('council.verify_person_modal_hint', { name: comparing.name })}
+            banner={banner}
+            actionsLayout="row"
+            actions={
+              <>
+                <Button variant="bordered" color="neutral" onClick={() => setComparing(null)} disabled={disabled}>
+                  {t('onboarding.btn_cancel')}
+                </Button>
                 <Button
-                  size="nano"
-                  variant="bordered"
-                  onClick={() => settle(() => request(MSG_VAULT_ACCEPT_FINGERPRINT, { userId: person.userId, fingerprint: person.fingerprint }))}
+                  onClick={() =>
+                    settle(() => request(MSG_VAULT_ACCEPT_FINGERPRINT, { userId: comparing.userId, fingerprint: comparing.fingerprint }))
+                  }
                   disabled={disabled}
                 >
                   {t('council.verify_person_button')}
                 </Button>
-              </div>
-            </IdentityCard>
-          ))}
-        </div>
-      )}
+              </>
+            }
+          >
+            <FingerprintBoxes fingerprint={comparing.fingerprint} />
+          </Screen>
+        )}
+      </Modal>
     </Screen>
   );
 }

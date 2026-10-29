@@ -51,6 +51,7 @@ const request = {
   expires_at_millis: NOW + 7 * 24 * 60 * 60 * 1000,
   stage: 'collecting' as const,
   contributors: [],
+  threshold: 2,
   my_contribution: 'none' as const,
   can_contribute: true,
 };
@@ -109,12 +110,13 @@ async function typeCode(canvasElement: HTMLElement, code: string) {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('council.check_code')));
 }
 
-// In person, typing the code read on the person's screen (no camera here). A
-// matching code hands nothing over yet: the custodian confirms the person first.
-// A threshold of 1: this share alone releases.
+// The first share, in person, typing the code read on the person's screen (no
+// camera here). A matching code hands nothing over yet: the story stops on the
+// confirmation of the person, the screen that matters.
+const meeting = { ...request, stage: 'awaiting_meeting' as const };
 const InPersonStory = Template.bind({});
-InPersonStory.args = { ...baseArgs, mode: 'in-person' };
-InPersonStory.parameters = handlers('released');
+InPersonStory.args = { ...baseArgs, request: meeting, mode: 'in-person' };
+InPersonStory.parameters = handlers('collecting');
 InPersonStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.in_person_title'));
@@ -125,14 +127,12 @@ InPersonStory.play = async ({ canvasElement }) => {
   await expect(handOver).toBeDisabled();
   await userEvent.click(canvas.getByRole('checkbox', { name: i18n.t('council.identity_checked', { name: request.user_name }) }));
   await expect(handOver).toBeEnabled();
-  await userEvent.click(handOver);
-  await canvas.findByText(i18n.t('council.handed_over_released', { name: request.user_name }));
 };
 export const HandOverInPerson = prepareStory(InPersonStory);
 
-// The usual case: the meeting comes first, and the other custodians approve remotely after it.
+// Once handed over: the other custodians can now approve remotely.
 const MeetingFirstStory = Template.bind({});
-MeetingFirstStory.args = { ...baseArgs, mode: 'in-person' };
+MeetingFirstStory.args = { ...baseArgs, request: meeting, mode: 'in-person' };
 MeetingFirstStory.parameters = handlers('collecting');
 MeetingFirstStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
@@ -141,11 +141,11 @@ MeetingFirstStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('council.in_person_button')));
   await canvas.findByText(i18n.t('council.handed_over_met', { name: request.user_name }));
 };
-export const MeetingFirst = prepareStory(MeetingFirstStory);
+export const HandedOverInPerson = prepareStory(MeetingFirstStory);
 
 // The code is not the request's: refused before anything reaches the vault.
 const MismatchStory = Template.bind({});
-MismatchStory.args = { ...baseArgs, mode: 'in-person' };
+MismatchStory.args = { ...baseArgs, request: meeting, mode: 'in-person' };
 MismatchStory.parameters = handlers('released');
 MismatchStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
@@ -156,11 +156,12 @@ MismatchStory.play = async ({ canvasElement }) => {
 };
 export const WrongCode = prepareStory(MismatchStory);
 
-// The hand-over fails once: the error shows, nothing is retried by itself, and
-// the custodian can try again from the same confirmation.
+// A behaviour, not a screen: the hand-over fails once, the error shows, nothing
+// is retried by itself (no loop sending shares), and the custodian can try
+// again from the same confirmation. With a threshold of 1, this share releases.
 let contributeCalls = 0;
 const FailOnceStory = Template.bind({});
-FailOnceStory.args = { ...baseArgs, mode: 'in-person' };
+FailOnceStory.args = { ...baseArgs, request: meeting, mode: 'in-person' };
 FailOnceStory.parameters = {
   ...handlers('released'),
   encryption: {

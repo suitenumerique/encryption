@@ -37,7 +37,7 @@ export default {
       docs: {
         description: {
           component:
-            'The custodian space: one card per recovery council the user sits in or is invited to, with what waits on them (a change to sign, requests to approve or hand over in person, setups to move after a membership change). Opened from the encryption settings, or as the `custodian` settings section.',
+            'The custodian space: the recovery councils the user sits in or is invited to, those with something waiting first, each on a page of its own with what waits on them (a change to sign, requests to approve or hand over in person, setups to move after a membership change). With a single council its page opens at once. Opened from the encryption settings, only for a custodian or an invitee.',
         },
       },
     },
@@ -45,7 +45,7 @@ export default {
 } as Meta<ComponentType>;
 
 const Template: StoryFn<ComponentType> = (args) => <CouncilCustodian {...args} />;
-const baseArgs = { getIdToken: async () => 'mock-jwt-token', userId: sampleCouncilMembers[0].user_id, onClose: () => console.log('onClose') };
+const baseArgs = { getIdToken: async () => 'mock-jwt-token', userId: sampleCouncilMembers[0].user_id };
 
 function mine(councils: CouncilsMine['councils'], mfa = true) {
   return { msw: { handlers: [handleGetApiCouncilsMine({ body: { mfa_enforced: mfa, councils } })] } };
@@ -59,6 +59,7 @@ const request = {
   expires_at_millis: NOW + 6 * DAY,
   stage: 'collecting' as const,
   contributors: [],
+  threshold: 2,
   my_contribution: 'none' as const,
   can_contribute: true,
 };
@@ -66,23 +67,47 @@ const request = {
 const EmptyStory = Template.bind({});
 EmptyStory.args = baseArgs;
 EmptyStory.parameters = mine([]);
+// Never reached from the settings (no row without a council): only a link opened by hand.
 EmptyStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('council.custodian_none'));
+  // Closed by the modal's own control, as every page of the space.
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('settings.done') })).toBeNull();
 };
 export const NotACustodian = prepareStory(EmptyStory);
 
-// In force: the council's code, the one the organization publishes once.
+// In force: the council's code, the one the organization publishes once. Rarely
+// needed, so behind a small button.
 const CodeStory = Template.bind({});
 CodeStory.args = baseArgs;
 CodeStory.parameters = mine([custodianCouncil()]);
 CodeStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(i18n.t('council.custodian_code_hint'));
-  canvas.getByText(i18n.t('council.fingerprint_title'));
-  canvas.getByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '));
-  canvas.getByRole('button', { name: i18n.t('identity.copy_fingerprint') });
+  // A single council opens on its own page, named in the title.
+  await playFindHeading(canvasElement, COUNCIL_LABEL);
+  expect(canvas.queryByText(i18n.t('council.custodian_code_hint'))).toBeNull();
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.fingerprint_title')));
+  const dialog = within(await within(document.body).findByRole('dialog'));
+  await dialog.findByText(i18n.t('council.custodian_code_hint'));
+  dialog.getByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '));
+  dialog.getByRole('button', { name: i18n.t('identity.copy_fingerprint') });
 };
 export const CouncilCode = prepareStory(CodeStory);
+
+// Who else sits in the council: the version in force, the custodian first.
+const MembersStory = Template.bind({});
+MembersStory.args = baseArgs;
+MembersStory.parameters = mine([custodianCouncil()]);
+MembersStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.custodians_line', { count: 2, total: 4 }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.members_button')));
+  const dialog = within(await within(document.body).findByRole('dialog'));
+  const names = [...(await dialog.findAllByText(/^(Alice Martin|Bruno Petit|Chloé Durand|David Moreau)$/))].map((n) => n.textContent);
+  expect(names[0]).toBe('Alice Martin');
+  expect(names).toHaveLength(4);
+  dialog.getByText(i18n.t('council.change_me'));
+};
+export const Custodians = prepareStory(MembersStory);
 
 // Named in the configuration, the council not in force yet: accept the role.
 const InvitedStory = Template.bind({});
@@ -104,7 +129,7 @@ InvitedStory.play = async ({ canvasElement }) => {
   // No code before version 1 is signed.
   expect(canvas.queryByText(i18n.t('council.custodian_code_hint'))).toBeNull();
   // An invitee sees no request and no health: those are custodians' business.
-  expect(canvas.queryByText(i18n.t('council.requests_title'))).toBeNull();
+  expect(canvas.queryByText(i18n.t('council.requests_title_count', { count: 0 }))).toBeNull();
 };
 export const Invited = prepareStory(InvitedStory);
 
@@ -130,22 +155,26 @@ RequestsStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await canvas.findByText('Ursula Roux');
   canvas.getByText(i18n.t('council.stage_awaiting_meeting'));
-  canvas.getByText(i18n.t('council.waiting_for_meeting', { name: 'Victor Lemaire' }));
-  canvas.getByText(i18n.t('council.request_contributors', { names: i18n.t('council.contributor_in_person', { name: 'Bruno Petit' }) }), {
-    exact: false,
-  });
-  // Remote approval only after the meeting; a share in person is always possible.
+  // Each row's band says what it asks of this custodian, with its one action.
+  canvas.getByText(i18n.t('council.request_nobody_met'));
+  canvas.getByText(i18n.t('council.request_met_by', { names: 'Bruno Petit' }));
+  // One way each: in person before the meeting, remotely after it.
   expect(canvas.getAllByRole('button', { name: i18n.t('council.approve_remotely') })).toHaveLength(1);
-  expect(canvas.getAllByRole('button', { name: i18n.t('council.hand_over_in_person') })).toHaveLength(2);
+  expect(canvas.getAllByRole('button', { name: i18n.t('council.hand_over_in_person') })).toHaveLength(1);
 };
 export const Requests = prepareStory(RequestsStory);
 
 const StopRequestStory = Template.bind({});
 StopRequestStory.args = baseArgs;
 StopRequestStory.parameters = mine([custodianCouncil({ requests: [request] })]);
+// Out of the usual path: in the request's "⋯" menu, then confirmed in a dialog.
 StopRequestStory.play = async ({ canvasElement }) => {
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.abort')));
-  await playFindButton(canvasElement, i18n.t('council.abort_confirm'));
+  const body = within(document.body);
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('council.abort') })).toBeNull();
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.request_menu', { name: 'Ursula Roux' })));
+  await userEvent.click(await body.findByRole('menuitem', { name: i18n.t('council.abort') }));
+  await playFindHeading(document.body, i18n.t('council.abort_title', { name: 'Ursula Roux' }));
+  await body.findByRole('button', { name: i18n.t('council.abort_confirm') });
 };
 export const StopRequestConfirmation = prepareStory(StopRequestStory);
 
@@ -188,7 +217,9 @@ OutdatedStory.parameters = mine([
 ]);
 OutdatedStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(i18n.t('council.outdated_title', { count: 88, version: 1 }));
+  await canvas.findByText(i18n.t('council.outdated_title', { count: 88, to: 2 }));
+  // The move is the remedy: no separate explanation of the risk.
+  expect(canvas.queryByText(i18n.t('council.health_at_risk_explained', { count: 88 }))).toBeNull();
   canvas.getByText(i18n.t('council.health_at_risk', { count: 88 }));
   await userEvent.click(await playFindButton(canvasElement, i18n.t('council.reshare_button')));
   await playFindHeading(canvasElement, i18n.t('council.reshare_title', { from: 1, to: 2 }));
@@ -217,7 +248,10 @@ const ReshareRunningStory = Template.bind({});
 ReshareRunningStory.args = baseArgs;
 ReshareRunningStory.parameters = mine([runningCouncil]);
 ReshareRunningStory.play = async ({ canvasElement }) => {
-  await within(canvasElement).findByText(i18n.t('council.reshare_my_part', { count: 88 }));
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.reshare_my_part', { count: 88 }));
+  // The version being moved shows as its move only.
+  expect(canvas.queryByText(i18n.t('council.outdated_title', { count: 88, to: 2 }))).toBeNull();
   await playFindButton(canvasElement, i18n.t('council.reshare_process'));
 };
 export const MySharePartWaiting = prepareStory(ReshareRunningStory);
@@ -256,7 +290,7 @@ ReshareStalledStory.parameters = {
 ReshareStalledStory.play = async ({ canvasElement }) => {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('council.reshare_process')));
   await within(canvasElement).findByText(i18n.t('council.reshare_stalled'));
-  await expect(await playFindButton(canvasElement, i18n.t('settings.done'))).toBeEnabled();
+  await expect(await playFindButton(canvasElement, i18n.t('council.reshare_process'))).toBeEnabled();
 };
 export const ReshareStalled = prepareStory(ReshareStalledStory);
 
@@ -277,21 +311,36 @@ NotConfiguredStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('council.not_configured'));
   canvas.getByText(i18n.t('council.mfa_not_enforced'));
   canvas.getByText(i18n.t('council.blocked_email_mismatch', { email: 'dsi@numerique.gouv.fr' }));
+  // In the alert's own colour, no list.
+  expect(canvas.queryByRole('list')).toBeNull();
 };
 export const ConfigurationIssues = prepareStory(NotConfiguredStory);
 
-// A custodian of several councils: one card each, every action naming its council.
+// A custodian of several councils: a list first, the one waiting on them on top,
+// then a page per council and a way back to the list.
 const SeveralStory = Template.bind({});
 SeveralStory.args = baseArgs;
 SeveralStory.parameters = mine([
-  custodianCouncil({ requests: [request] }),
   custodianCouncil({ council_id: 'dgfip', label: 'RSSI DGFiP', my_slot: 3, health: { escrows: 2400, ok: 2400, at_risk: 0, lost: 0, outdated: [] } }),
+  custodianCouncil({ requests: [request] }),
 ]);
 SeveralStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(COUNCIL_LABEL);
-  canvas.getByText('RSSI DGFiP');
-  expect(canvas.getAllByText(i18n.t('council.health_ok'))).toHaveLength(2);
+  await playFindHeading(canvasElement, i18n.t('council.custodian_title'));
+  const open = await canvas.findAllByRole('button', { name: new RegExp(i18n.t('council.open_council', { council: '' })) });
+  expect(open.map((b) => b.getAttribute('aria-label'))).toEqual([
+    i18n.t('council.open_council', { council: COUNCIL_LABEL }),
+    i18n.t('council.open_council', { council: 'RSSI DGFiP' }),
+  ]);
+  canvas.getByText(i18n.t('council.pending_chip', { count: 1 }));
+  // No request shown before a council is opened.
+  expect(canvas.queryByText('Ursula Roux')).toBeNull();
+
+  await userEvent.click(open[0]);
+  await playFindHeading(canvasElement, COUNCIL_LABEL);
+  await canvas.findByText('Ursula Roux');
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.all_councils')));
+  await playFindHeading(canvasElement, i18n.t('council.custodian_title'));
 };
 export const SeveralCouncils = prepareStory(SeveralStory);
 
@@ -379,3 +428,83 @@ CheckStory.play = async ({ canvasElement }) => {
   await waitFor(() => expect(uploaded).toEqual([expect.objectContaining({ valid: true }), expect.objectContaining({ faulty_helper_slot: 2 })]));
 };
 export const ChecksReceivedParts = prepareStory(CheckStory);
+
+// A long list: search, filter (with the count of each) and pages, all in the browser.
+const crowd = Array.from({ length: 12 }, (_, i) => ({
+  ...request,
+  id: `5d6e7f80-0000-4000-8000-${String(i + 10).padStart(12, '0')}`,
+  user_name: i === 7 ? 'Victor Lemaire' : `Personne ${i + 1}`,
+  user_email: i === 7 ? 'victor.lemaire@numerique.gouv.fr' : `personne.${i + 1}@numerique.gouv.fr`,
+  stage: i % 3 === 0 ? ('awaiting_meeting' as const) : ('collecting' as const),
+  // Approvals only follow a meeting: someone handed over in person.
+  contributors: i % 3 === 0 ? [] : [{ slot: 2, name: 'Bruno Petit', in_person: true }],
+  can_contribute: i % 2 === 0,
+  created_at_millis: NOW - (i < 2 ? 4 : 1) * DAY,
+  expires_at_millis: NOW + (i + 1) * 60 * 60 * 1000,
+}));
+
+const ManyRequestsStory = Template.bind({});
+ManyRequestsStory.args = baseArgs;
+ManyRequestsStory.parameters = mine([custodianCouncil({ requests: crowd })]);
+ManyRequestsStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.requests_title_count', { count: 12 }));
+  // Five a page, those the custodian can act on first.
+  expect(
+    canvas.getAllByRole('button', { name: new RegExp(`^(${i18n.t('council.hand_over_in_person')}|${i18n.t('council.approve_remotely')})$`) })
+  ).toHaveLength(5);
+  canvas.getByText('Personne 1');
+  expect(canvas.queryByText('Personne 2')).toBeNull();
+  canvas.getByText(i18n.t('council.requests_page', { page: 1, count: 3 }));
+  expect(canvas.getByRole('button', { name: i18n.t('council.requests_previous') })).toBeDisabled();
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('council.requests_next') }));
+  await canvas.findByText(i18n.t('council.requests_page', { page: 2, count: 3 }));
+  canvas.getByText('Personne 11');
+};
+export const ManyRequests = prepareStory(ManyRequestsStory);
+
+const SearchRequestsStory = Template.bind({});
+SearchRequestsStory.args = baseArgs;
+SearchRequestsStory.parameters = ManyRequestsStory.parameters;
+SearchRequestsStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await userEvent.type(await canvas.findByLabelText(i18n.t('council.requests_search')), 'lemaire');
+  await canvas.findByText('Victor Lemaire');
+  expect(canvas.queryByText('Personne 1')).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('council.requests_next') })).toBeNull();
+};
+export const SearchRequests = prepareStory(SearchRequestsStory);
+
+const FilterRequestsStory = Template.bind({});
+FilterRequestsStory.args = baseArgs;
+FilterRequestsStory.parameters = ManyRequestsStory.parameters;
+FilterRequestsStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  const body = within(document.body);
+  await userEvent.click(await canvas.findByRole('button', { name: i18n.t('council.requests_filter') }));
+  // Only the filters that match something, each with its count.
+  await body.findByRole('menuitem', { name: new RegExp(i18n.t('council.requests_filter_all', { count: 12 }).replace(/[()]/g, '\\$&')) });
+  expect(
+    body.queryByRole('menuitem', { name: new RegExp(i18n.t('council.requests_filter_released', { count: 0 }).replace(/[()]/g, '\\$&')) })
+  ).toBeNull();
+  await userEvent.click(
+    body.getByRole('menuitem', { name: new RegExp(i18n.t('council.requests_filter_stalled', { count: 2 }).replace(/[()]/g, '\\$&')) })
+  );
+  await waitFor(() => expect(canvas.queryByText('Personne 3')).toBeNull());
+  canvas.getByText('Personne 1');
+  canvas.getByText('Personne 2');
+};
+export const FilterRequests = prepareStory(FilterRequestsStory);
+
+// Setups at risk and lost: what each means for the custodian, said under the chips.
+const HealthIssuesStory = Template.bind({});
+HealthIssuesStory.args = baseArgs;
+HealthIssuesStory.parameters = mine([custodianCouncil({ health: { escrows: 128, ok: 120, at_risk: 6, lost: 2, outdated: [] } })]);
+HealthIssuesStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.health_at_risk', { count: 6 }));
+  canvas.getByText(i18n.t('council.health_at_risk_explained', { count: 6 }));
+  canvas.getByText(i18n.t('council.health_lost_explained', { count: 2 }));
+  expect(canvas.queryByText(i18n.t('council.health_ok'))).toBeNull();
+};
+export const HealthIssues = prepareStory(HealthIssuesStory);

@@ -1,4 +1,4 @@
-import { Button, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Button, Tooltip, VariantType } from '@gouvfr-lasuite/ui-components';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -131,28 +131,27 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
   );
 
   if (!rows && loadFailed) {
-    return (
-      <Screen
-        back={{ label: t('onboarding.btn_back'), onClick: onBack }}
-        title={t('council.sign_title', { council: council.label })}
-        banner={banner}
-      />
-    );
+    return <Screen back={{ label: t('onboarding.btn_back'), onClick: onBack }} title={t('council.sign_title')} banner={banner} />;
   }
 
   if (!rows) return <LoadingScreen />;
 
   // A first version: each member checks the next one by slot (the circle the
   // vault enforces). After that, only newcomers, by the custodians who approve them.
-  const peer = head ? null : genesisPeer(rows, userId ?? '');
-  const toCheck = head ? rows.filter((r) => r.change === 'new' || r.change === 'new-key') : peer ? [peer] : [];
+  // Once signed, nothing is left to check: a different key would be another proposal.
+  const signed = council.proposal!.signed_by_me;
+  const peer = head || signed ? null : genesisPeer(rows, userId ?? '');
+  const toCheck = signed ? [] : head ? rows.filter((r) => r.change === 'new' || r.change === 'new-key') : peer ? [peer] : [];
   const ready = toCheck.every((r) => checked.has(r.userId));
   const first = head === null;
+  // The custodian first, then whoever is still to check, then the rest by name.
+  const rank = (row: Row) => (row.change === 'me' ? 0 : toCheck.includes(row) ? (checked.has(row.userId) ? 2 : 1) : 3);
+  const ordered = [...rows].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 
   return (
     <Screen
       back={{ label: t('onboarding.btn_back'), onClick: onBack, disabled: busy }}
-      title={first ? t('council.sign_first_title', { council: council.label }) : t('council.sign_title', { council: council.label })}
+      title={first ? t('council.sign_first_title') : t('council.sign_title')}
       description={
         <>
           <p>
@@ -161,14 +160,22 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
               : t('council.sign_description', { threshold: proposal.threshold, count: proposal.members.length })}
           </p>
           {head && <p>{t('council.sign_quorum', { quorum: changeQuorum(head), count: head.members.length })}</p>}
-          {peer && <p>{t('council.sign_check_peer', { name: peer.name })}</p>}
-          {head && toCheck.length > 0 && <p>{t('council.sign_check_newcomers')}</p>}
+          {(peer || (head && toCheck.length > 0)) && (
+            <p>
+              {peer ? t('council.sign_check_peer', { name: peer.name }) : t('council.sign_check_newcomers')}{' '}
+              <Tooltip content={t(peer ? 'council.sign_check_why_peer' : 'council.sign_check_why_newcomers')} placement="top">
+                <span className={styles.whyLink} tabIndex={0}>
+                  {t('council.sign_check_why')}
+                </span>
+              </Tooltip>
+            </p>
+          )}
         </>
       }
       banner={
         <>
           {banner}
-          {council.proposal!.signed_by_me && <Notice type={VariantType.SUCCESS}>{t('council.sign_already')}</Notice>}
+          {signed && <Notice type={VariantType.SUCCESS}>{t('council.sign_already')}</Notice>}
           {removed.length > 0 && (
             <Notice type={VariantType.INFO}>
               {t('council.sign_removed', { names: removed.map((m) => m.name ?? `#${m.slot}`).join(', '), count: removed.length })}
@@ -177,13 +184,14 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
         </>
       }
       actions={
-        <Button onClick={sign} disabled={busy || !ready || council.proposal!.signed_by_me}>
+        <Button onClick={sign} disabled={busy || !ready || signed}>
           {busy ? t('council.signing') : first ? t('council.sign_first_button') : t('council.sign_button')}
         </Button>
       }
     >
       <div className={styles.section}>
-        {rows.map((row) => {
+        <p className={styles.sectionTitle}>{council.label}</p>
+        {ordered.map((row) => {
           const needsCheck = toCheck.includes(row);
           const isChecked = checked.has(row.userId);
 
@@ -191,7 +199,7 @@ export function CouncilSignChange({ getIdToken, userId, council, onBack, onSigne
             <IdentityCard
               key={row.slot}
               name={row.name}
-              fingerprint={needsCheck || row.change === 'me' ? row.fingerprint : null}
+              fingerprint={(needsCheck && !isChecked) || row.change === 'me' ? row.fingerprint : null}
               tone={needsCheck && !isChecked ? 'warning' : 'default'}
               aside={
                 row.change === 'me' ? (

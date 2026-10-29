@@ -553,7 +553,6 @@ function InterfaceScreens({
         getIdToken={getValidIdToken}
         userId={internalUserId}
         onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
-        onClose={overlaid && !direct ? () => setRouteOverride(null) : handleClose}
       />
     );
   }

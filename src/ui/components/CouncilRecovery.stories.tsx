@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, fn, waitFor, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
@@ -71,8 +71,11 @@ IntroStory.parameters = {
 };
 IntroStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('council.recovery_title'));
-  await within(canvasElement).findByText(i18n.t('council.recovery_intro', { council: COUNCIL_LABEL }));
-  await playFindButton(canvasElement, i18n.t('council.ask_button', { council: COUNCIL_LABEL }));
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.recovery_intro'));
+  // The council named once, as a card.
+  expect(canvas.getAllByText(COUNCIL_LABEL)).toHaveLength(1);
+  await playFindButton(canvasElement, i18n.t('council.ask_button'));
 };
 export const Ask = prepareStory(IntroStory);
 
@@ -83,9 +86,9 @@ InProgressStory.parameters = { msw: { handlers: [handleGetApiCouncilRecoveryRequ
 InProgressStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.in_progress_title'));
-  canvas.getByText(i18n.t('council.in_progress_description', { council: COUNCIL_LABEL }));
-  canvas.getByText(i18n.t('council.in_progress_email'));
-  await playFindButton(canvasElement, i18n.t('council.refuse_request'));
+  canvas.getByText(i18n.t('council.in_progress_description'));
+  // The screen checks by itself: cancelling is the one action.
+  await playFindButton(canvasElement, i18n.t('council.cancel_request'));
   expect(canvas.queryByText('Alice Martin')).toBeNull();
 };
 export const InProgress = prepareStory(InProgressStory);
@@ -108,8 +111,14 @@ MeetStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('council.meet_title'));
   canvas.getByText('Bruno Petit');
   canvas.getByText('Chloé Durand');
-  await canvas.findByLabelText(sampleFingerprint.match(/\d{5}/g)!.join(' '));
   canvas.getByText(i18n.t('council.meet_code_hint'));
+  // The QR code first, its digits on demand.
+  await canvas.findByRole('img', { name: i18n.t('council.meet_qr_label') });
+  expect(canvas.queryByLabelText(sampleFingerprint.match(/\d{5}/g)!.join(' '))).toBeNull();
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.show_code')));
+  await canvas.findByLabelText(sampleFingerprint.match(/\d{5}/g)!.join(' '));
+  // Back to the QR code, the state the screen opens on.
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.show_qr')));
   await canvas.findByRole('img', { name: i18n.t('council.meet_qr_label') });
 };
 export const GoAndSee = prepareStory(MeetStory);
@@ -130,7 +139,7 @@ OtherBrowserStory.parameters = {
 };
 OtherBrowserStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('council.other_browser'));
-  await playFindButton(canvasElement, i18n.t('council.refuse_and_restart'));
+  await playFindButton(canvasElement, i18n.t('council.cancel_request'));
 };
 export const StartedFromAnotherBrowser = prepareStory(OtherBrowserStory);
 

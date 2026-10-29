@@ -2,6 +2,9 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
 import type {
+  DeleteApiCouncilsEscrowData,
+  DeleteApiCouncilsEscrowErrors,
+  DeleteApiCouncilsEscrowResponses,
   DeleteApiEmergencyAccessByIdData,
   DeleteApiEmergencyAccessByIdErrors,
   DeleteApiEmergencyAccessByIdResponses,
@@ -512,6 +515,14 @@ export const postApiCouncilsByCouncilIdVersionsByVersionSign = <ThrowOnError ext
       'Content-Type': 'application/json',
       ...options.headers,
     },
+  });
+
+export const deleteApiCouncilsEscrow = <ThrowOnError extends boolean = false>(
+  options?: Options<DeleteApiCouncilsEscrowData, ThrowOnError>
+): RequestResult<DeleteApiCouncilsEscrowResponses, DeleteApiCouncilsEscrowErrors, ThrowOnError> =>
+  (options?.client ?? client).delete<DeleteApiCouncilsEscrowResponses, DeleteApiCouncilsEscrowErrors, ThrowOnError>({
+    url: '/api/councils/escrow',
+    ...options,
   });
 
 export const postApiCouncilsEscrow = <ThrowOnError extends boolean = false>(

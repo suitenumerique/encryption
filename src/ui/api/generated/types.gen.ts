@@ -1844,6 +1844,7 @@ export type GetApiCouncilsMineResponses = {
           name: string;
           in_person: boolean;
         }>;
+        threshold: number;
         my_contribution: 'none' | 'remote' | 'in_person';
         can_contribute: boolean;
       }>;
@@ -2011,6 +2012,49 @@ export type PostApiCouncilsByCouncilIdVersionsByVersionSignResponses = {
 
 export type PostApiCouncilsByCouncilIdVersionsByVersionSignResponse =
   PostApiCouncilsByCouncilIdVersionsByVersionSignResponses[keyof PostApiCouncilsByCouncilIdVersionsByVersionSignResponses];
+
+export type DeleteApiCouncilsEscrowData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: '/api/councils/escrow';
+};
+
+export type DeleteApiCouncilsEscrowErrors = {
+  /**
+   * Default Response
+   */
+  401: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type DeleteApiCouncilsEscrowError = DeleteApiCouncilsEscrowErrors[keyof DeleteApiCouncilsEscrowErrors];
+
+export type DeleteApiCouncilsEscrowResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    left: number;
+  };
+};
+
+export type DeleteApiCouncilsEscrowResponse = DeleteApiCouncilsEscrowResponses[keyof DeleteApiCouncilsEscrowResponses];
 
 export type PostApiCouncilsEscrowData = {
   body: {

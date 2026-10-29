@@ -3,6 +3,7 @@ import { type HttpHandler, HttpResponse, type HttpResponseResolver, type Request
 
 import type {
   ClientOptions,
+  DeleteApiCouncilsEscrowResponses,
   DeleteApiEmergencyAccessByIdResponses,
   DeleteApiPublicKeysResponses,
   GetApiCouncilRecoveryRequestsByIdCustodianResponses,
@@ -1624,6 +1625,40 @@ export function handlePostApiCouncilsByCouncilIdVersionsByVersionSign(
   );
 }
 
+export type HandleDeleteApiCouncilsEscrowResponse = {
+  body: DeleteApiCouncilsEscrowResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `DELETE /api/councils/escrow` operation.
+ */
+export function handleDeleteApiCouncilsEscrow(
+  response?: HandleDeleteApiCouncilsEscrowResponse | HttpResponseResolver<never, never>,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.delete<never, never>(
+    `${options?.baseUrl ?? '*'}/api/councils/escrow`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
 export type HandlePostApiCouncilsEscrowResponse = {
   body: PostApiCouncilsEscrowResponses[200];
   status?: 200;
@@ -2440,6 +2475,10 @@ export type MswHandlerFactories = {
    */
   postApiCouncilsByCouncilIdVersionsByVersionSign: typeof handlePostApiCouncilsByCouncilIdVersionsByVersionSign;
   /**
+   * Handler for the `DELETE /api/councils/escrow` operation.
+   */
+  deleteApiCouncilsEscrow: typeof handleDeleteApiCouncilsEscrow;
+  /**
    * Handler for the `POST /api/councils/escrow` operation.
    */
   postApiCouncilsEscrow: typeof handlePostApiCouncilsEscrow;
@@ -2556,6 +2595,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     getApiCouncilsMine: wrap(handleGetApiCouncilsMine),
     getApiCouncilsForMe: wrap(handleGetApiCouncilsForMe),
     postApiCouncilsByCouncilIdVersionsByVersionSign: wrap(handlePostApiCouncilsByCouncilIdVersionsByVersionSign),
+    deleteApiCouncilsEscrow: wrap(handleDeleteApiCouncilsEscrow),
     postApiCouncilsEscrow: wrap(handlePostApiCouncilsEscrow),
     postApiCouncilRecoveryRequests: wrap(handlePostApiCouncilRecoveryRequests),
     getApiCouncilRecoveryRequestsMine: wrap(handleGetApiCouncilRecoveryRequestsMine),
@@ -2624,6 +2664,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.getApiEmergencyAccessGranted, overrides.getApiEmergencyAccessGranted),
       invoke(pick.getApiCouncilsMine, overrides.getApiCouncilsMine),
       invoke(pick.getApiCouncilsForMe, overrides.getApiCouncilsForMe),
+      invoke(pick.deleteApiCouncilsEscrow, overrides.deleteApiCouncilsEscrow),
       invoke(pick.postApiCouncilsEscrow, overrides.postApiCouncilsEscrow),
       invoke(pick.postApiCouncilRecoveryRequests, overrides.postApiCouncilRecoveryRequests),
       invoke(pick.getApiPublicKeysByUserId, overrides.getApiPublicKeysByUserId),

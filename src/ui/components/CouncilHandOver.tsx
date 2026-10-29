@@ -178,7 +178,7 @@ export function CouncilHandOver({ getIdToken, councilLabel, request, mode, onBac
       <Screen
         back={back}
         title={t('council.in_person_title')}
-        description={t('council.in_person_description', { name })}
+        description={t('council.in_person_description')}
         descriptionSize="xs"
         banner={screenBanner}
         actions={
@@ -206,7 +206,7 @@ export function CouncilHandOver({ getIdToken, councilLabel, request, mode, onBac
     <Screen
       back={back}
       title={t('council.in_person_title')}
-      description={t('council.in_person_description', { name })}
+      description={t('council.in_person_description')}
       descriptionSize="xs"
       banner={screenBanner}
       actions={

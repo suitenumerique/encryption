@@ -91,6 +91,8 @@ export function rosterRoutes(app: FastifyInstance): void {
                     expires_at_millis: z.number().int(),
                     stage: RequestStageSchema,
                     contributors: z.array(z.object({ slot: z.number().int(), name: z.string(), in_person: z.boolean() })),
+                    // How many parts release it: the escrow's own threshold, which a later version may not share.
+                    threshold: z.number().int().positive(),
                     my_contribution: z.enum(['none', 'remote', 'in_person']),
                     can_contribute: z.boolean(),
                   })
@@ -229,6 +231,7 @@ export function rosterRoutes(app: FastifyInstance): void {
               expires_at_millis: row.expiresAt.getTime(),
               stage: settled.stage,
               contributors,
+              threshold: settled.facts.threshold,
               my_contribution: mine ? (mine.inPerson ? ('in_person' as const) : ('remote' as const)) : ('none' as const),
               can_contribute:
                 !mine && row.userId !== userId && myCapsule !== undefined && (settled.stage === 'collecting' || settled.stage === 'awaiting_meeting'),

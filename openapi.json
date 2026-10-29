@@ -4513,6 +4513,12 @@
                                     "additionalProperties": false
                                   }
                                 },
+                                "threshold": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "exclusiveMinimum": true,
+                                  "maximum": 9007199254740991
+                                },
                                 "my_contribution": {
                                   "type": "string",
                                   "enum": ["none", "remote", "in_person"]
@@ -4529,6 +4535,7 @@
                                 "expires_at_millis",
                                 "stage",
                                 "contributors",
+                                "threshold",
                                 "my_contribution",
                                 "can_contribute"
                               ],
@@ -5267,6 +5274,77 @@
             }
           },
           "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "left": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["left"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
             "description": "Default Response",
             "content": {
               "application/json": {

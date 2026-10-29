@@ -72,4 +72,35 @@ export function escrowRoutes(app: FastifyInstance): void {
       }
     }
   );
+
+  // Leave the council: the caller's escrows go, credential and capsules with
+  // them, so the parts custodians hold open nothing any more. Identity-signed
+  // like joining: a stolen login alone cannot take a user out. Not while a
+  // recovery is in progress; joining again is the usual enrollment.
+  app.withTypeProvider<ZodTypeProvider>().delete(
+    '/api/councils/escrow',
+    {
+      schema: {
+        response: { 200: z.object({ left: z.number().int().nonnegative() }), ...errorResponses(401, 409) },
+      },
+    },
+    async (request, reply) => {
+      assertUserId(request);
+      const userId = request.userId;
+
+      if (await openRequestOf(userId)) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
+
+      const left = await serializable(async (tx) => {
+        if ((await tx.councilRequest.count({ where: { userId, status: { in: ['open', 'released'] } } })) > 0) return null;
+
+        const escrows = await tx.councilEscrow.findMany({ where: { userId }, select: { credentialId: true } });
+        await tx.vaultCredential.deleteMany({ where: { id: { in: escrows.map((e) => e.credentialId) } } });
+
+        return escrows.length;
+      });
+      if (left === null) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
+
+      return { left };
+    }
+  );
 }

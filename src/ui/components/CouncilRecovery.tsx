@@ -70,6 +70,7 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
   const busy = running !== null;
   const [view, setView] = useState<View>({ kind: 'loading' });
   const recovering = useRef(false);
+  const [revealCode, setRevealCode] = useState(false);
 
   const recover = useCallback(
     async (requestId: string) => {
@@ -194,17 +195,21 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
         title={t('council.recovery_title')}
         description={
           <>
-            <p>{t('council.recovery_intro', { council: view.council })}</p>
+            <p>{t('council.recovery_intro')}</p>
             <p>{t('council.recovery_intro_meeting')}</p>
           </>
         }
         banner={banner}
         actions={
           <Button onClick={ask} disabled={busy}>
-            {busy ? t('council.asking') : t('council.ask_button', { council: view.council })}
+            {busy ? t('council.asking') : t('council.ask_button')}
           </Button>
         }
-      />
+      >
+        <div className={styles.card}>
+          <Identity name={view.council} />
+        </div>
+      </Screen>
     );
   }
 
@@ -216,8 +221,8 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
         description={t('council.other_browser')}
         banner={banner}
         actions={
-          <Button color="error" variant="bordered" onClick={() => refuse(view.request.id)} disabled={busy}>
-            {t('council.refuse_and_restart')}
+          <Button variant="bordered" color="neutral" onClick={() => refuse(view.request.id)} disabled={busy}>
+            {t('council.cancel_request')}
           </Button>
         }
       />
@@ -225,15 +230,16 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
   }
 
   const { request } = view;
-  const refuseButton = (
-    <Button variant="tertiary" color="neutral" onClick={() => refuse(request.id)} disabled={busy}>
-      {t('council.refuse_request')}
+  // Cancelling covers both a request the user no longer needs and one they never made.
+  const cancelButton = (
+    <Button variant="bordered" color="neutral" onClick={() => refuse(request.id)} disabled={busy}>
+      {t('council.cancel_request')}
     </Button>
   );
 
   if (request.stage === 'meet') {
     return (
-      <Screen back={back} title={t('council.meet_title')} description={t('council.meet_description')} banner={banner} actions={refuseButton}>
+      <Screen back={back} title={t('council.meet_title')} description={t('council.meet_description')} banner={banner} actions={cancelButton}>
         <ul className={styles.people}>
           {request.meet.map((person) => (
             <li key={person.name}>
@@ -241,16 +247,30 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
             </li>
           ))}
         </ul>
+        {/* The QR code first, its digits on demand, as for pairing a device. */}
         <div className={styles.codeCard}>
-          {view.qr && (
-            <div
-              role="img"
-              aria-label={t('council.meet_qr_label')}
-              className={styles.qr}
-              dangerouslySetInnerHTML={{ __html: toTrustedMarkup(view.qr) }}
-            />
+          {view.qr && !revealCode ? (
+            <>
+              <div
+                role="img"
+                aria-label={t('council.meet_qr_label')}
+                className={styles.qr}
+                dangerouslySetInnerHTML={{ __html: toTrustedMarkup(view.qr) }}
+              />
+              <Button size="nano" variant="tertiary" color="neutral" onClick={() => setRevealCode(true)}>
+                {t('device_approval.show_code')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <FingerprintBoxes fingerprint={view.fingerprint} />
+              {view.qr && (
+                <Button size="nano" variant="tertiary" color="neutral" onClick={() => setRevealCode(false)}>
+                  {t('device_approval.show_qr')}
+                </Button>
+              )}
+            </>
           )}
-          <FingerprintBoxes fingerprint={view.fingerprint} />
           <p className={`${styles.hint} ${styles.hintCenter}`}>{t('council.meet_code_hint')}</p>
         </div>
       </Screen>
@@ -262,26 +282,14 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
       back={back}
       illustration="shield-gear"
       title={t('council.in_progress_title')}
-      description={
-        <>
-          <p>{t('council.in_progress_description', { council: request.council_label })}</p>
-          <p>{t('council.in_progress_email')}</p>
-        </>
-      }
+      description={t('council.in_progress_description')}
       banner={
         <>
           {banner}
           <Notice type={VariantType.INFO}>{t('council.in_progress_expires', { date: new Date(request.expires_at_millis) })}</Notice>
         </>
       }
-      actions={
-        <>
-          <Button variant="bordered" color="neutral" onClick={() => void load()} disabled={busy}>
-            {t('council.check_again')}
-          </Button>
-          {refuseButton}
-        </>
-      }
+      actions={cancelButton}
     />
   );
 }

@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
@@ -54,14 +54,16 @@ AcceptStory.args = baseArgs;
 AcceptStory.parameters = joining;
 AcceptStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await playFindHeading(canvasElement, i18n.t('council.accept_title', { council: COUNCIL_LABEL }));
+  await playFindHeading(canvasElement, i18n.t('council.join_title'));
+  canvas.getByText(i18n.t('council.onboarding_description', members));
+  // The council named once, over its members.
+  expect(canvas.getAllByText(COUNCIL_LABEL)).toHaveLength(1);
   canvas.getByText('Alice Martin');
-  canvas.getByText(i18n.t('council.members', members));
-  canvas.getByText(i18n.t('council.join_later_hint'));
   expect(await playFindButton(canvasElement, i18n.t('council.join_button'))).toBeEnabled();
   expect(await playFindButton(canvasElement, i18n.t('council.join_verify_button'))).toBeEnabled();
-  // No code to compare before joining.
+  // No code to compare before joining, and no "later" outside the onboarding.
   expect(canvas.queryByLabelText(i18n.t('council.fingerprint_compared'))).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('council.onboarding_later') })).toBeNull();
 };
 export const Accept = prepareStory(AcceptStory);
 
@@ -74,38 +76,55 @@ AcceptedStory.play = async ({ canvasElement }) => {
 };
 export const Accepted = prepareStory(AcceptedStory);
 
-// Verifying by the code: confirming waits on the person comparing it.
+// The same screen as a step of the onboarding, with "later" to skip it; joining
+// hands back to the onboarding (its NewUserJoinsCouncil story).
+const OnboardingStory = Template.bind({});
+OnboardingStory.args = { ...baseArgs, onClose: fn(), onboarding: { onJoined: fn() } };
+OnboardingStory.parameters = joining;
+OnboardingStory.play = async ({ canvasElement, args }) => {
+  await playFindHeading(canvasElement, i18n.t('council.join_title'));
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.onboarding_later')));
+  expect(args.onClose).toHaveBeenCalled();
+  expect(args.onboarding!.onJoined).not.toHaveBeenCalled();
+};
+export const Onboarding = prepareStory(OnboardingStory);
+
+// Verifying by the code (the default way): confirming waits on the person
+// comparing it. Stops on the ticked comparison; joining is the Accepted story.
 const VerifyByCodeStory = Template.bind({});
 VerifyByCodeStory.args = baseArgs;
 VerifyByCodeStory.parameters = joining;
 VerifyByCodeStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await userEvent.click(await playFindButton(canvasElement, i18n.t('council.join_verify_button')));
-  await playFindHeading(canvasElement, i18n.t('council.verify_title', { council: COUNCIL_LABEL }));
+  await playFindHeading(canvasElement, i18n.t('council.verify_title'));
   canvas.getByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '));
+  // The custodians are the other way, not shown at once.
+  expect(canvas.queryByText('Bruno Petit')).toBeNull();
   const confirm = await playFindButton(canvasElement, i18n.t('council.verify_code_confirm'));
   expect(confirm).toBeDisabled();
   await userEvent.click(canvas.getByLabelText(i18n.t('council.fingerprint_compared')));
   expect(confirm).toBeEnabled();
-  await userEvent.click(confirm);
-  await playFindHeading(canvasElement, i18n.t('council.done_title'));
 };
 export const VerifyByCode = prepareStory(VerifyByCodeStory);
 
-// Verifying through one custodian of version 1 the user knows: their own code.
+// Verifying through one custodian of version 1 the user knows: the names, and
+// each one's code only once picked, in a dialog.
 const VerifyByCustodianStory = Template.bind({});
 VerifyByCustodianStory.args = baseArgs;
 VerifyByCustodianStory.parameters = joining;
 VerifyByCustodianStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await userEvent.click(await playFindButton(canvasElement, i18n.t('council.join_verify_button')));
-  await canvas.findByText(i18n.t('council.verify_person_title'));
-  canvas.getByText(i18n.t('council.verify_person_hint'));
-  // One card per member of version 1, each with its own check.
-  const checks = await canvas.findAllByRole('button', { name: i18n.t('council.verify_person_button') });
-  expect(checks).toHaveLength(sampleRosterVersion().members.length);
-  await userEvent.click(checks[0]);
-  await playFindHeading(canvasElement, i18n.t('council.done_title'));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.verify_with_person')));
+  await canvas.findByText(i18n.t('council.verify_person_hint'));
+  const compare = await canvas.findAllByRole('button', { name: i18n.t('council.verify_person_compare') });
+  expect(compare).toHaveLength(sampleRosterVersion().members.length);
+  expect(canvas.queryByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '))).toBeNull();
+  await userEvent.click(compare[0]);
+  const dialog = within(await within(document.body).findByRole('dialog'));
+  await dialog.findByRole('button', { name: i18n.t('council.verify_person_button') });
 };
 export const VerifyByCustodian = prepareStory(VerifyByCustodianStory);
 
@@ -114,15 +133,27 @@ EnrolledStory.args = baseArgs;
 EnrolledStory.parameters = { msw: { handlers: [handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) })] } };
 EnrolledStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(i18n.t('council.enrolled_description', { council: COUNCIL_LABEL, ...members }));
-  canvas.getByText(i18n.t('council.chip_protected'));
+  await canvas.findByText(i18n.t('council.enrolled_description', members));
   // Joined without verifying: said, with the way to verify now.
   canvas.getByText(i18n.t('council.enrolled_unverified'));
   canvas.getByText(i18n.t('council.chip_unverified'));
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.verify_open')));
-  await playFindHeading(canvasElement, i18n.t('council.verify_title', { council: COUNCIL_LABEL }));
+  await playFindButton(canvasElement, i18n.t('council.verify_open'));
 };
 export const Enrolled = prepareStory(EnrolledStory);
+
+// Leaving is signed by the vault and explained first: the council could no
+// longer help, and joining again stays possible.
+const LeaveStory = Template.bind({});
+LeaveStory.args = baseArgs;
+LeaveStory.parameters = EnrolledStory.parameters;
+LeaveStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.leave')));
+  const dialog = within(await within(document.body).findByRole('dialog'));
+  await dialog.findByText(i18n.t('council.leave_body'));
+  dialog.getByText(i18n.t('council.leave_again'));
+  await dialog.findByRole('button', { name: i18n.t('council.leave_confirm') });
+};
+export const LeaveCouncil = prepareStory(LeaveStory);
 
 const EnrolledVerifiedStory = Template.bind({});
 EnrolledVerifiedStory.args = baseArgs;
@@ -132,8 +163,9 @@ EnrolledVerifiedStory.parameters = {
 };
 EnrolledVerifiedStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
-  await canvas.findByText(i18n.t('council.chip_verified'));
-  canvas.getByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '));
+  await canvas.findByText(i18n.t('council.chip_protected'));
+  // Verified: no code left to show.
+  expect(canvas.queryByLabelText(sampleCouncilFingerprint.match(/\d{5}/g)!.join(' '))).toBeNull();
   expect(canvas.queryByText(i18n.t('council.enrolled_unverified'))).toBeNull();
   expect(canvas.queryByRole('button', { name: i18n.t('council.verify_open') })).toBeNull();
 };
@@ -144,8 +176,8 @@ const StartVerifyingStory = Template.bind({});
 StartVerifyingStory.args = { ...baseArgs, startVerifying: true };
 StartVerifyingStory.parameters = EnrolledStory.parameters;
 StartVerifyingStory.play = async ({ canvasElement }) => {
-  await playFindHeading(canvasElement, i18n.t('council.verify_title', { council: COUNCIL_LABEL }));
-  await within(canvasElement).findByText(i18n.t('council.verify_code_title'));
+  await playFindHeading(canvasElement, i18n.t('council.verify_title'));
+  await within(canvasElement).findByText(i18n.t('council.fingerprint_hint'));
 };
 export const StartVerifying = prepareStory(StartVerifyingStory);
 
@@ -198,9 +230,9 @@ SetUpAgainStory.parameters = {
 };
 SetUpAgainStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('council.again_title'));
-  const button = await playFindButton(canvasElement, i18n.t('council.again_button'));
-  expect(button).toBeEnabled();
-  await userEvent.click(button);
-  await playFindHeading(canvasElement, i18n.t('council.done_title'));
+  within(canvasElement).getByText(i18n.t('council.again_explanation'));
+  expect(await playFindButton(canvasElement, i18n.t('council.again_button'))).toBeEnabled();
+  // Set up again as it was: no verification offered here.
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('council.join_verify_button') })).toBeNull();
 };
 export const SetUpAgain = prepareStory(SetUpAgainStory);

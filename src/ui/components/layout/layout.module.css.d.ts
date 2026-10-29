@@ -6,6 +6,9 @@ declare const styles: {
   readonly alertStack: string;
   readonly card: string;
   readonly cardAside: string;
+  readonly cardBlock: string;
+  readonly cardBlockTitle: string;
+  readonly cardButton: string;
   readonly cardError: string;
   readonly cardHeader: string;
   readonly cardSuccess: string;
@@ -27,8 +30,10 @@ declare const styles: {
   readonly deadline: string;
   readonly deadlineTime: string;
   readonly deadlineValue: string;
+  readonly descriptionRow: string;
   readonly empty: string;
   readonly errorText: string;
+  readonly filters: string;
   readonly fingerprint: string;
   readonly fingerprintError: string;
   readonly fingerprintGroup: string;
@@ -62,6 +67,7 @@ declare const styles: {
   readonly optionText: string;
   readonly optionTitle: string;
   readonly options: string;
+  readonly pager: string;
   readonly people: string;
   readonly qr: string;
   readonly scanner: string;
@@ -76,6 +82,7 @@ declare const styles: {
   readonly screenPadded: string;
   readonly screenTitle: string;
   readonly screenTitleError: string;
+  readonly searchRow: string;
   readonly section: string;
   readonly sectionHeader: string;
   readonly sectionSubtitle: string;
@@ -92,6 +99,7 @@ declare const styles: {
   readonly textLinks: string;
   readonly visuallyHidden: string;
   readonly waiting: string;
+  readonly whyLink: string;
   readonly wordInputs: string;
   readonly wordInputsCell: string;
   readonly wordInputsIndex: string;

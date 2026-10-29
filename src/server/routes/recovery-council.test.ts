@@ -136,7 +136,7 @@ let app: FastifyInstance;
 
 async function call<T = Record<string, unknown>>(
   as: Person,
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   url: string,
   body?: unknown,
   options: { signed?: boolean } = {}
@@ -509,6 +509,33 @@ describe('enrollment', () => {
       code: API_ERROR_COUNCIL_REQUEST_EXISTS,
     });
     expect((await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } })).id).toBe(escrows[0].id);
+  });
+
+  it('lets the user leave, signed, outside a recovery, and join again', async () => {
+    await bootstrap([alice, bruno, chloe], 2);
+    const first = await enroll(ursula, [alice, bruno, chloe]);
+    await call(ursula, 'POST', '/api/councils/escrow', first.body, { signed: true });
+    const escrow = await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } });
+
+    // A login alone cannot take the user out.
+    expect((await call(ursula, 'DELETE', '/api/councils/escrow')).status).toBe(401);
+
+    await call(ursula, 'POST', '/api/council-recovery/requests', {
+      ephemeral_public_key: exportPublicKeyAsBase64((await generateUserKeyPair()).publicKey),
+    });
+    expect((await call(ursula, 'DELETE', '/api/councils/escrow', undefined, { signed: true })).json).toMatchObject({
+      code: API_ERROR_COUNCIL_REQUEST_EXISTS,
+    });
+    const { request } = (await call<{ request: { id: string } }>(ursula, 'GET', '/api/council-recovery/requests/mine')).json;
+    await call(ursula, 'POST', `/api/council-recovery/requests/${request.id}/refuse`);
+
+    expect((await call(ursula, 'DELETE', '/api/councils/escrow', undefined, { signed: true })).json).toEqual({ left: 1 });
+    expect(await testPrisma.councilEscrow.count({ where: { userId: ursula.id } })).toBe(0);
+    expect(await testPrisma.vaultCredential.count({ where: { id: escrow.credentialId } })).toBe(0);
+    expect(await testPrisma.councilCapsule.count({ where: { escrowId: escrow.id } })).toBe(0);
+
+    const again = await enroll(ursula, [alice, bruno, chloe]);
+    expect((await call(ursula, 'POST', '/api/councils/escrow', again.body, { signed: true })).status).toBe(200);
   });
 
   // A council is its id: a rename starts a new one and leaves the users on the old.

@@ -1,5 +1,6 @@
 import { apiDefaults, authHeaders, signedHeaders } from '@encryption/src/ui/api/client';
 import {
+  deleteApiCouncilsEscrow,
   getApiCouncilRecoveryRequestsByIdCustodian,
   getApiCouncilRecoveryRequestsByIdShares,
   getApiCouncilRecoveryRequestsMine,
@@ -73,6 +74,14 @@ export async function signCouncilVersion(idToken: string, sign: RequestSigner, c
 export async function enrollCouncilEscrow(idToken: string, sign: RequestSigner, body: PostApiCouncilsEscrowData['body']) {
   const xSignature = await sign('POST', '/api/councils/escrow', JSON.stringify(body));
   const { data } = await postApiCouncilsEscrow({ ...apiDefaults, headers: signedHeaders(idToken, xSignature), body });
+
+  return data;
+}
+
+/** Leave the council: identity-signed, so a stolen login alone cannot take the user out. */
+export async function leaveCouncil(idToken: string, sign: RequestSigner) {
+  const xSignature = await sign('DELETE', '/api/councils/escrow');
+  const { data } = await deleteApiCouncilsEscrow({ ...apiDefaults, headers: signedHeaders(idToken, xSignature) });
 
   return data;
 }

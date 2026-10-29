@@ -16,7 +16,9 @@ import {
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
   handleGetApiVaultMeta,
+  handlePostApiCouncilsEscrow,
   handlePostApiPublicKeysRegisterInit,
+  handlePostApiVault,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
@@ -446,6 +448,57 @@ BackupStory.play = async ({ canvasElement }) => {
 
 BackupStory.parameters = { ...BackupStory.parameters, design: consoleFrame('4879-12693') };
 export const Backup = prepareStory(BackupStory);
+
+// Covered by a council: once the phrase is saved and the vault created, one
+// more step offers to join it, and the last screen names it.
+const NewUserJoinsCouncilStory = Template.bind({});
+NewUserJoinsCouncilStory.args = { ...NewUserStory.args };
+NewUserJoinsCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      ...newUserHandlers,
+      handlePostApiPublicKeysRegisterInit({ body: { challenge_id: '7f1c2b3a-0000-4000-8000-00000000000a', ciphertext: 'Y2lwaGVydGV4dA' } }),
+      handlePostApiVault({ body: { revision: 1 } }),
+      handleGetApiCouncilsForMe({ body: forMe() }),
+      handlePostApiCouncilsEscrow({ body: { id: '7f1c2b3a-0000-4000-8000-000000000001' } }),
+    ],
+  },
+};
+NewUserJoinsCouncilStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_reveal')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done')));
+
+  await playFindHeading(canvasElement, i18n.t('council.join_title'));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.join_button')));
+
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enabled'));
+  await within(canvasElement).findByText(i18n.t('council.onboarding_joined', { council: COUNCIL_LABEL }));
+};
+export const NewUserJoinsCouncil = prepareStory(NewUserJoinsCouncilStory);
+
+// Nothing to join: straight to the last screen.
+const NewUserWithoutCouncilStory = Template.bind({});
+NewUserWithoutCouncilStory.args = { ...NewUserStory.args };
+NewUserWithoutCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      ...newUserHandlers,
+      handlePostApiPublicKeysRegisterInit({ body: { challenge_id: '7f1c2b3a-0000-4000-8000-00000000000a', ciphertext: 'Y2lwaGVydGV4dA' } }),
+      handlePostApiVault({ body: { revision: 1 } }),
+      handleGetApiCouncilsForMe({ body: { council: null, escrow: null } }),
+    ],
+  },
+};
+NewUserWithoutCouncilStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_reveal')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done')));
+
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enabled'));
+  expect(within(canvasElement).queryByText(i18n.t('council.onboarding_joined', { council: COUNCIL_LABEL }))).toBeNull();
+};
+export const NewUserWithoutCouncil = prepareStory(NewUserWithoutCouncilStory);
 
 // The product's cross on the backup step does not close: the screen holds a
 // guard that asks first. The story ends with the prompt open, which is the

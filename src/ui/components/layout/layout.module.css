@@ -319,6 +319,89 @@
   min-height: 34px;
 }
 
+/* One part of a card holding several (a council: its code, its health, its
+   requests), ruled off from the part above so each reads apart. */
+.card__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  padding-top: var(--c--globals--spacings--xs);
+  border-top: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.card__block-title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+/* A long list's filters: one toggle each, wrapping. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--xxxs);
+}
+
+/* Previous, "page n of m", next, under a long list. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--xs);
+}
+
+/* A whole card that opens what it shows (a council in the custodian space). */
+.card-button {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-button:hover {
+  background: var(--c--contextuals--background--surface--secondary);
+}
+
+.card-button:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 2px;
+}
+
+/* "Why?" after a sentence: its explanation in a tooltip. */
+.why-link {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+/* A screen's description with small actions at its end (a council's members
+   and code): out to the right edge, past the room the header keeps for the
+   close control, which sits on the title's line only. */
+.description-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  margin-right: calc(-1 * var(--c--globals--spacings--base));
+}
+
+/* A search field with its filter button beside it, a square as tall as the field. */
+.search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: var(--c--globals--spacings--xs);
+}
+
+.search-row > :last-child,
+.search-row > :last-child :global(.c__button) {
+  height: 100%;
+  aspect-ratio: 1;
+  justify-content: center;
+}
+
 .card__aside {
   display: flex;
   align-items: center;

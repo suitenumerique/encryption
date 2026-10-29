@@ -30,22 +30,33 @@ const Template: StoryFn<ComponentType> = (args, { globals }) => {
   return <CouncilRecoveryToApproveEmail {...args} locale={(globals.locale as string) ?? 'en'} />;
 };
 
-const DefaultStory = Template.bind({});
-DefaultStory.args = {
+// Two variants, each with its client overview: approve remotely (after the
+// meeting), and meet first (nobody has met the person yet).
+const ApproveStory = Template.bind({});
+ApproveStory.args = {
   requester: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
   council: 'Équipe sécurité DINUM',
   step: 'approve',
   productUrl: 'http://localhost:7201',
 };
-DefaultStory.decorators = [WithEmailRenderer];
-DefaultStory.play = async ({ canvasElement }) => {
+ApproveStory.decorators = [WithEmailRenderer];
+ApproveStory.play = async ({ canvasElement }) => {
   await playFindEmailStructure(canvasElement);
 };
 
-export const Default = prepareStory(DefaultStory);
+export const Approve = prepareStory(ApproveStory);
+
+const ApproveClientOverviewStory = Template.bind({});
+ApproveClientOverviewStory.args = { ...ApproveStory.args };
+ApproveClientOverviewStory.decorators = [WithEmailClientOverviewFactory((locale) => subject(locale, 'approve'))];
+ApproveClientOverviewStory.play = async ({ canvasElement }) => {
+  await playFindEmailStructure(canvasElement);
+};
+
+export const ApproveClientOverview = prepareStory(ApproveClientOverviewStory);
 
 const MeetFirstStory = Template.bind({});
-MeetFirstStory.args = { ...DefaultStory.args, step: 'meet' };
+MeetFirstStory.args = { ...ApproveStory.args, step: 'meet' };
 MeetFirstStory.decorators = [WithEmailRenderer];
 MeetFirstStory.play = async ({ canvasElement }) => {
   await playFindEmailStructure(canvasElement);
@@ -53,11 +64,11 @@ MeetFirstStory.play = async ({ canvasElement }) => {
 
 export const MeetFirst = prepareStory(MeetFirstStory);
 
-const ClientOverviewStory = Template.bind({});
-ClientOverviewStory.args = { ...DefaultStory.args };
-ClientOverviewStory.decorators = [WithEmailClientOverviewFactory((locale) => subject(locale, 'approve'))];
-ClientOverviewStory.play = async ({ canvasElement }) => {
+const MeetFirstClientOverviewStory = Template.bind({});
+MeetFirstClientOverviewStory.args = { ...MeetFirstStory.args };
+MeetFirstClientOverviewStory.decorators = [WithEmailClientOverviewFactory((locale) => subject(locale, 'meet'))];
+MeetFirstClientOverviewStory.play = async ({ canvasElement }) => {
   await playFindEmailStructure(canvasElement);
 };
 
-export const ClientOverview = prepareStory(ClientOverviewStory);
+export const MeetFirstClientOverview = prepareStory(MeetFirstClientOverviewStory);
