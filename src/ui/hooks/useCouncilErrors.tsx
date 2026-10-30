@@ -24,6 +24,7 @@ type CouncilVaultErrorKey =
   | 'errors.vault.council_code_mismatch'
   | 'errors.vault.council_no_request'
   | 'errors.vault.council_meeting_first'
+  | 'errors.vault.request_timeout'
   | 'errors.unknown';
 
 /** The vault's message is English and meant for logs: the person reads a translation of its code. */
@@ -39,6 +40,8 @@ export function councilVaultErrorKey(code: VaultErrorCode): CouncilVaultErrorKey
       return 'errors.vault.council_no_request';
     case VaultErrorCode.COUNCIL_MEETING_FIRST:
       return 'errors.vault.council_meeting_first';
+    case VaultErrorCode.TIMEOUT:
+      return 'errors.vault.request_timeout';
     default:
       return 'errors.unknown';
   }

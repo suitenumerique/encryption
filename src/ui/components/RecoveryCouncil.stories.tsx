@@ -4,7 +4,7 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
-import { handleGetApiCouncilsForMe, handlePostApiCouncilsEscrow } from '@encryption/src/ui/api/generated/msw.gen';
+import { handleDeleteApiCouncilsEscrow, handleGetApiCouncilsForMe, handlePostApiCouncilsEscrow } from '@encryption/src/ui/api/generated/msw.gen';
 import { RecoveryCouncil } from '@encryption/src/ui/components/RecoveryCouncil';
 import { COUNCIL_LABEL, forMe, vaultCheckingEscrow } from '@encryption/src/ui/testing/council-stories';
 import { sampleCouncilFingerprint, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
@@ -35,7 +35,7 @@ const members = { threshold: 2, count: 4 };
 
 const NoneStory = Template.bind({});
 NoneStory.args = baseArgs;
-NoneStory.parameters = { msw: { handlers: [handleGetApiCouncilsForMe({ body: { council: null, escrow: null } })] } };
+NoneStory.parameters = { msw: { handlers: [handleGetApiCouncilsForMe({ body: { council: null, escrow: null, active_vault_created_at_millis: null, vaults: [] } })] } };
 NoneStory.play = async ({ canvasElement }) => {
   await within(canvasElement).findByText(i18n.t('council.none'));
 };
@@ -154,6 +154,37 @@ LeaveStory.play = async ({ canvasElement }) => {
   await dialog.findByRole('button', { name: i18n.t('council.leave_confirm') });
 };
 export const LeaveCouncil = prepareStory(LeaveStory);
+
+// Leaving also takes a fresh second factor: the dialog stays open on the way to
+// confirm it, and leaving is clicked again afterwards.
+const LeaveStepUpStory = Template.bind({});
+LeaveStepUpStory.args = { ...baseArgs, onStepUp: fn() };
+LeaveStepUpStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      handleDeleteApiCouncilsEscrow(
+        () =>
+          new Response(JSON.stringify({ code: 'insufficient_user_authentication', params: { max_age: 300 } }), {
+            status: 401,
+            headers: {
+              'content-type': 'application/json',
+              'www-authenticate': 'Bearer error="insufficient_user_authentication", max_age="300"',
+            },
+          })
+      ),
+    ],
+  },
+};
+LeaveStepUpStory.play = async ({ args, canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.leave')));
+  const dialog = within(await within(document.body).findByRole('dialog'));
+  await userEvent.click(await dialog.findByRole('button', { name: i18n.t('council.leave_confirm') }));
+  await dialog.findByText(i18n.t('council.step_up_required'));
+  await userEvent.click(dialog.getByRole('button', { name: i18n.t('auth.step_up_confirm') }));
+  expect(args.onStepUp).toHaveBeenCalledOnce();
+};
+export const LeaveNeedsStepUp = prepareStory(LeaveStepUpStory);
 
 const EnrolledVerifiedStory = Template.bind({});
 EnrolledVerifiedStory.args = baseArgs;

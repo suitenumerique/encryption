@@ -8,6 +8,7 @@ import {
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_DISCARD_RECOVERY,
   MSG_VAULT_COUNCIL_MARK_VERIFIED,
   MSG_VAULT_COUNCIL_REQUEST_KEY,
   MSG_VAULT_COUNCIL_RESHARE_BATCH,
@@ -107,6 +108,8 @@ export const defaultVaultRequest = async (type: string, payload?: unknown): Prom
         vaultCreatedAtMillis: samplePublicKey.created_at_millis,
         contributors: [],
       };
+    case MSG_VAULT_COUNCIL_DISCARD_RECOVERY:
+      return { discarded: true };
     case MSG_VAULT_COUNCIL_CONTRIBUTE:
       return { slot: 1, wrapped_share: samplePublicKey.key_binding_signature, in_person: false, signature: samplePublicKey.key_binding_signature };
     case MSG_VAULT_COUNCIL_SIGN_ROSTER:
@@ -157,6 +160,8 @@ export function createMockEncryption(overrides: Partial<EncryptionContextType> =
       signaturePublicKey: samplePublicKey.signature_public_key,
       isActiveVault: true,
       vaultCreatedAtMillis: samplePublicKey.created_at_millis,
+      emergencyUnlock: false,
+      councilRequestClosed: false,
     }),
     reactivateVault: stub('reactivateVault', {
       reactivated: true,
@@ -165,6 +170,7 @@ export function createMockEncryption(overrides: Partial<EncryptionContextType> =
       disabledVaultId: null,
       disabledVaultCreatedAtMillis: null,
       emergencyUnlock: false,
+      councilRequestClosed: false,
     }),
     createEmergencyEscrow: stub('createEmergencyEscrow', sampleEmergencyDesignateBody),
     buildEmergencyRearms: stub('buildEmergencyRearms', { rearms: [] }),

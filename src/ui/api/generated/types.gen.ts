@@ -637,6 +637,7 @@ export type PostApiVaultFetchResponses = {
     }>;
     is_active: boolean;
     created_at_millis: number;
+    council_request_closed: boolean;
   };
 };
 
@@ -728,6 +729,7 @@ export type PostApiVaultReactivateResponses = {
     active_vault_id: string;
     disabled_vault_id: string | null;
     disabled_vault_created_at_millis: number | null;
+    council_request_closed: boolean;
   };
 };
 
@@ -1129,6 +1131,7 @@ export type GetApiVaultApprovalsByRequestIdResponses = {
   200: {
     wrapped_device_bootstrap: string;
     device_public_key: string;
+    council_request_closed: boolean;
   };
 };
 
@@ -1832,22 +1835,8 @@ export type GetApiCouncilsMineResponses = {
           escrows: number;
         }>;
       };
-      requests: Array<{
-        id: string;
-        user_name: string | null;
-        user_email: string;
-        created_at_millis: number;
-        expires_at_millis: number;
-        stage: 'collecting' | 'awaiting_meeting' | 'cooldown' | 'released' | 'completed' | 'aborted' | 'expired';
-        contributors: Array<{
-          slot: number;
-          name: string;
-          in_person: boolean;
-        }>;
-        threshold: number;
-        my_contribution: 'none' | 'remote' | 'in_person';
-        can_contribute: boolean;
-      }>;
+      requests_count: number;
+      requests_to_handle: number;
       shares_to_check: number;
       faulty_reshares: Array<{
         helper_name: string;
@@ -1928,6 +1917,13 @@ export type GetApiCouncilsForMeResponses = {
         outdated: boolean;
       };
     } | null;
+    active_vault_created_at_millis: number | null;
+    vaults: Array<{
+      escrow_id: string;
+      active: boolean;
+      created_at_millis: number;
+      disabled_at_millis: number | null;
+    }>;
   };
 };
 
@@ -2142,6 +2138,7 @@ export type PostApiCouncilsEscrowResponse = PostApiCouncilsEscrowResponses[keyof
 export type PostApiCouncilRecoveryRequestsData = {
   body: {
     ephemeral_public_key: string;
+    escrow_id?: string;
   };
   path?: never;
   query?: never;
@@ -2227,6 +2224,8 @@ export type GetApiCouncilRecoveryRequestsMineResponses = {
         name: string;
       }>;
       ephemeral_fingerprint: string | null;
+      vault_active: boolean;
+      vault_created_at_millis: number;
     } | null;
   };
 };
@@ -2346,6 +2345,71 @@ export type GetApiCouncilRecoveryRequestsByIdSharesResponses = {
 
 export type GetApiCouncilRecoveryRequestsByIdSharesResponse =
   GetApiCouncilRecoveryRequestsByIdSharesResponses[keyof GetApiCouncilRecoveryRequestsByIdSharesResponses];
+
+export type GetApiCouncilsByCouncilIdRequestsData = {
+  body?: never;
+  path: {
+    councilId: string;
+  };
+  query?: {
+    page?: number;
+    page_size?: number;
+    filter?: 'all' | 'to-handle' | 'awaiting_meeting' | 'collecting' | 'cooldown' | 'released' | 'stalled';
+    query?: string;
+  };
+  url: '/api/councils/{councilId}/requests';
+};
+
+export type GetApiCouncilsByCouncilIdRequestsErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    code: string;
+    params?: {
+      [key: string]: unknown;
+    };
+    message?: string;
+  };
+};
+
+export type GetApiCouncilsByCouncilIdRequestsError = GetApiCouncilsByCouncilIdRequestsErrors[keyof GetApiCouncilsByCouncilIdRequestsErrors];
+
+export type GetApiCouncilsByCouncilIdRequestsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    items: Array<{
+      id: string;
+      user_name: string | null;
+      user_email: string;
+      created_at_millis: number;
+      expires_at_millis: number;
+      stage: 'collecting' | 'awaiting_meeting' | 'cooldown' | 'released' | 'completed' | 'aborted' | 'expired';
+      contributors: Array<{
+        slot: number;
+        name: string;
+        in_person: boolean;
+      }>;
+      threshold: number;
+      my_contribution: 'none' | 'remote' | 'in_person';
+      can_contribute: boolean;
+    }>;
+    total_count: number;
+    counts: {
+      all: number;
+      'to-handle': number;
+      awaiting_meeting: number;
+      collecting: number;
+      cooldown: number;
+      released: number;
+      stalled: number;
+    };
+  };
+};
+
+export type GetApiCouncilsByCouncilIdRequestsResponse = GetApiCouncilsByCouncilIdRequestsResponses[keyof GetApiCouncilsByCouncilIdRequestsResponses];
 
 export type GetApiCouncilRecoveryRequestsByIdCustodianData = {
   body?: never;

@@ -7,7 +7,7 @@ import { playFindButton, playFindHeading } from '@encryption/.storybook/testing'
 import i18n from '@encryption/src/i18n';
 import { MSG_VAULT_COUNCIL_CHECK_SHARES, MSG_VAULT_COUNCIL_RESHARE_BATCH } from '@encryption/src/shared/constants';
 import type { CouncilCheckResultsBody } from '@encryption/src/shared/schemas/recovery-council';
-import type { CouncilsMine } from '@encryption/src/ui/api/council-client';
+import type { CouncilRequestSummary, CouncilsMine } from '@encryption/src/ui/api/council-client';
 import {
   handleGetApiCouncilsByCouncilIdSharesToCheck,
   handleGetApiCouncilsMine,
@@ -16,7 +16,7 @@ import {
   handlePostApiCouncilsReshareBySessionIdSubShares,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { CouncilCustodian } from '@encryption/src/ui/components/CouncilCustodian';
-import { COUNCIL_LABEL, custodianCouncil } from '@encryption/src/ui/testing/council-stories';
+import { COUNCIL_LABEL, councilRequestsHandler, custodianCouncil, requestCounts } from '@encryption/src/ui/testing/council-stories';
 import { sampleCouncilEscrowRecord, sampleCouncilFingerprint, sampleCouncilMembers, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
 import { defaultVaultRequest } from '@encryption/src/ui/testing/mock-encryption';
 
@@ -47,8 +47,9 @@ export default {
 const Template: StoryFn<ComponentType> = (args) => <CouncilCustodian {...args} />;
 const baseArgs = { getIdToken: async () => 'mock-jwt-token', userId: sampleCouncilMembers[0].user_id };
 
-function mine(councils: CouncilsMine['councils'], mfa = true) {
-  return { msw: { handlers: [handleGetApiCouncilsMine({ body: { mfa_enforced: mfa, councils } })] } };
+/** `/api/councils/mine` answering `councils`, and their request list answering `requests`. */
+function mine(councils: CouncilsMine['councils'], mfa = true, requests: CouncilRequestSummary[] = []) {
+  return { msw: { handlers: [handleGetApiCouncilsMine({ body: { mfa_enforced: mfa, councils } }), councilRequestsHandler(requests)] } };
 }
 
 const request = {
@@ -138,20 +139,17 @@ export const Invited = prepareStory(InvitedStory);
 // met nobody yet (only a share in person, after checking the code).
 const RequestsStory = Template.bind({});
 RequestsStory.args = baseArgs;
-RequestsStory.parameters = mine([
-  custodianCouncil({
-    requests: [
-      { ...request, contributors: [{ slot: 2, name: 'Bruno Petit', in_person: true }] },
-      {
-        ...request,
-        id: '5d6e7f80-0000-4000-8000-000000000002',
-        user_name: 'Victor Lemaire',
-        user_email: 'victor.lemaire@numerique.gouv.fr',
-        stage: 'awaiting_meeting',
-      },
-    ],
-  }),
-]);
+const twoRequests: CouncilRequestSummary[] = [
+  { ...request, contributors: [{ slot: 2, name: 'Bruno Petit', in_person: true }] },
+  {
+    ...request,
+    id: '5d6e7f80-0000-4000-8000-000000000002',
+    user_name: 'Victor Lemaire',
+    user_email: 'victor.lemaire@numerique.gouv.fr',
+    stage: 'awaiting_meeting',
+  },
+];
+RequestsStory.parameters = mine([custodianCouncil(requestCounts(twoRequests))], true, twoRequests);
 RequestsStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await canvas.findByText('Ursula Roux');
@@ -169,7 +167,7 @@ export const Requests = prepareStory(RequestsStory);
 
 const StopRequestStory = Template.bind({});
 StopRequestStory.args = baseArgs;
-StopRequestStory.parameters = mine([custodianCouncil({ requests: [request] })]);
+StopRequestStory.parameters = mine([custodianCouncil(requestCounts([request]))], true, [request]);
 // Out of the usual path: in the request's "⋯" menu, then confirmed in a dialog.
 StopRequestStory.play = async ({ canvasElement }) => {
   const body = within(document.body);
@@ -270,6 +268,7 @@ ReshareStalledStory.parameters = {
   msw: {
     handlers: [
       handleGetApiCouncilsMine({ body: { mfa_enforced: true, councils: [runningCouncil] } }),
+      councilRequestsHandler([]),
       handleGetApiCouncilsReshareBySessionIdBatch({
         body: {
           session_id: RESHARE_SESSION,
@@ -325,10 +324,19 @@ export const ConfigurationIssues = prepareStory(NotConfiguredStory);
 // then a page per council and a way back to the list.
 const SeveralStory = Template.bind({});
 SeveralStory.args = baseArgs;
-SeveralStory.parameters = mine([
-  custodianCouncil({ council_id: 'dgfip', label: 'RSSI DGFiP', my_slot: 3, health: { escrows: 2400, ok: 2400, at_risk: 0, lost: 0, outdated: [] } }),
-  custodianCouncil({ requests: [request] }),
-]);
+SeveralStory.parameters = mine(
+  [
+    custodianCouncil({
+      council_id: 'dgfip',
+      label: 'RSSI DGFiP',
+      my_slot: 3,
+      health: { escrows: 2400, ok: 2400, at_risk: 0, lost: 0, outdated: [] },
+    }),
+    custodianCouncil(requestCounts([request])),
+  ],
+  true,
+  [request]
+);
 SeveralStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.custodian_title'));
@@ -376,6 +384,7 @@ CheckStory.args = baseArgs;
 CheckStory.parameters = {
   msw: {
     handlers: [
+      councilRequestsHandler([]),
       handleGetApiCouncilsMine(() =>
         HttpResponse.json({
           mfa_enforced: true,
@@ -434,7 +443,7 @@ CheckStory.play = async ({ canvasElement }) => {
 };
 export const ChecksReceivedParts = prepareStory(CheckStory);
 
-// A long list: search, filter (with the count of each) and pages, all in the browser.
+// A long list: search, filter (with the count of each) and pages, applied by the server.
 const crowd = Array.from({ length: 12 }, (_, i) => ({
   ...request,
   id: `5d6e7f80-0000-4000-8000-${String(i + 10).padStart(12, '0')}`,
@@ -450,7 +459,7 @@ const crowd = Array.from({ length: 12 }, (_, i) => ({
 
 const ManyRequestsStory = Template.bind({});
 ManyRequestsStory.args = baseArgs;
-ManyRequestsStory.parameters = mine([custodianCouncil({ requests: crowd })]);
+ManyRequestsStory.parameters = mine([custodianCouncil(requestCounts(crowd))], true, crowd);
 ManyRequestsStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await canvas.findByText(i18n.t('council.requests_title_count', { count: 12 }));
@@ -464,7 +473,7 @@ ManyRequestsStory.play = async ({ canvasElement }) => {
   expect(canvas.getByRole('button', { name: i18n.t('council.requests_previous') })).toBeDisabled();
   await userEvent.click(canvas.getByRole('button', { name: i18n.t('council.requests_next') }));
   await canvas.findByText(i18n.t('council.requests_page', { page: 2, count: 3 }));
-  canvas.getByText('Personne 11');
+  await canvas.findByText('Personne 11');
 };
 export const ManyRequests = prepareStory(ManyRequestsStory);
 

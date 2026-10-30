@@ -436,6 +436,11 @@ export async function handleReactivateCouncilVault(
   return { publicKey: result.publicKey, signaturePublicKey: result.signaturePublicKey };
 }
 
+/** The user keeps their current vault: the superseded one the council recovered is forgotten. */
+export async function handleDiscardCouncilRecovery(userId: string): Promise<{ discarded: boolean }> {
+  return { discarded: pendingReactivation.delete(userId) };
+}
+
 // ----- A custodian ----------------------------------------------------------------
 
 const CustodianRequestDetailSchema = z.object({

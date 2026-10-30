@@ -4,6 +4,7 @@ import {
   getApiCouncilRecoveryRequestsByIdCustodian,
   getApiCouncilRecoveryRequestsByIdShares,
   getApiCouncilRecoveryRequestsMine,
+  getApiCouncilsByCouncilIdRequests,
   getApiCouncilsByCouncilIdSharesToCheck,
   getApiCouncilsForMe,
   getApiCouncilsMine,
@@ -23,6 +24,8 @@ import {
 import type {
   GetApiCouncilRecoveryRequestsByIdCustodianResponses,
   GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsByCouncilIdRequestsData,
+  GetApiCouncilsByCouncilIdRequestsResponses,
   GetApiCouncilsForMeResponses,
   GetApiCouncilsMineResponses,
   PostApiCouncilRecoveryRequestsByIdContributeData,
@@ -34,7 +37,9 @@ import type {
 
 export type CouncilsMine = GetApiCouncilsMineResponses[200];
 export type CustodianCouncil = CouncilsMine['councils'][number];
-export type CouncilRequestSummary = CustodianCouncil['requests'][number];
+export type CouncilRequestsPage = GetApiCouncilsByCouncilIdRequestsResponses[200];
+export type CouncilRequestSummary = CouncilRequestsPage['items'][number];
+export type CouncilRequestsQuery = NonNullable<GetApiCouncilsByCouncilIdRequestsData['query']>;
 export type CouncilForMe = GetApiCouncilsForMeResponses[200];
 export type MyCouncilRequest = NonNullable<GetApiCouncilRecoveryRequestsMineResponses[200]['request']>;
 export type CustodianRequestDetail = GetApiCouncilRecoveryRequestsByIdCustodianResponses[200];
@@ -47,6 +52,13 @@ export type RequestSigner = (method: string, path: string, body?: string) => Pro
 
 export async function fetchMyCouncils(idToken: string) {
   const { data } = await getApiCouncilsMine({ ...apiDefaults, headers: authHeaders(idToken) });
+
+  return data;
+}
+
+/** One page of a council's live requests, filtered and searched by the server. */
+export async function fetchCouncilRequests(idToken: string, councilId: string, query: CouncilRequestsQuery) {
+  const { data } = await getApiCouncilsByCouncilIdRequests({ ...apiDefaults, headers: authHeaders(idToken), path: { councilId }, query });
 
   return data;
 }
@@ -86,11 +98,11 @@ export async function leaveCouncil(idToken: string, sign: RequestSigner) {
   return data;
 }
 
-export async function askCouncilRecovery(idToken: string, ephemeralPublicKey: string) {
+export async function askCouncilRecovery(idToken: string, ephemeralPublicKey: string, escrowId?: string) {
   const { data } = await postApiCouncilRecoveryRequests({
     ...apiDefaults,
     headers: authHeaders(idToken),
-    body: { ephemeral_public_key: ephemeralPublicKey },
+    body: { ephemeral_public_key: ephemeralPublicKey, escrow_id: escrowId },
   });
 
   return data;

@@ -113,6 +113,7 @@ export const MSG_VAULT_COUNCIL_START_REQUEST = 'vault:council-start-request';
 export const MSG_VAULT_COUNCIL_REQUEST_KEY = 'vault:council-request-key';
 export const MSG_VAULT_COUNCIL_COMPLETE_RECOVERY = 'vault:council-complete-recovery';
 export const MSG_VAULT_COUNCIL_REACTIVATE = 'vault:council-reactivate';
+export const MSG_VAULT_COUNCIL_DISCARD_RECOVERY = 'vault:council-discard-recovery';
 export const MSG_VAULT_COUNCIL_CONTRIBUTE = 'vault:council-contribute';
 export const MSG_VAULT_COUNCIL_SIGN_ROSTER = 'vault:council-sign-roster';
 export const MSG_VAULT_COUNCIL_RESHARE_BATCH = 'vault:council-reshare-batch';

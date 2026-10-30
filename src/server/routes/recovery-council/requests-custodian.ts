@@ -7,7 +7,15 @@ import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-
 import type { Prisma } from '@encryption/src/generated/prisma/client';
 import { prisma } from '@encryption/src/prisma/client';
 import { requireStepUp } from '@encryption/src/server/auth/step-up';
-import { councilChain, councilLabel, custodianOf, escrowRecordWire, rosterVersionWire, sha256 } from '@encryption/src/server/council-core';
+import {
+  councilChain,
+  councilHead,
+  councilLabel,
+  custodianOf,
+  escrowRecordWire,
+  rosterVersionWire,
+  sha256,
+} from '@encryption/src/server/council-core';
 import {
   type RequestStage,
   RequestStageSchema,
@@ -17,6 +25,8 @@ import {
   settleLocked,
   settleRequest,
 } from '@encryption/src/server/council-requests-core';
+import { RequestFilterSchema, custodianRequestViews, requestSummaryWire } from '@encryption/src/server/council-requests-list';
+import { countByFilter, paginate, selectRequests } from '@encryption/src/server/council-requests-select';
 import { afterRequestClosed, capsuleWire } from '@encryption/src/server/council-reshare-core';
 import { sendCouncilRecoveryAborted, sendCouncilRecoveryToApprove } from '@encryption/src/server/email/council';
 import { env } from '@encryption/src/server/env';
@@ -26,10 +36,12 @@ import { logEmailFailure, sendSignatureError } from '@encryption/src/server/rout
 import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
 import { SKIP_SIG, assertUserId } from '@encryption/src/server/routes/transport-auth';
 import { userFullName } from '@encryption/src/server/user-name';
+import { REQUEST_FILTERS, REQUEST_PAGE_SIZES, type RequestFilter } from '@encryption/src/shared/council-request-filters';
 import {
   API_ERROR_COUNCIL_ALREADY_CONTRIBUTED,
   API_ERROR_COUNCIL_MEETING_FIRST,
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
+  API_ERROR_COUNCIL_NOT_FOUND,
   API_ERROR_COUNCIL_OWN_REQUEST,
   API_ERROR_COUNCIL_REQUEST_CLOSED,
   API_ERROR_COUNCIL_REQUEST_NOT_FOUND,
@@ -64,6 +76,71 @@ function custodianCapsule<C extends { slot: number; generation: number; identity
 
 export function custodianRequestRoutes(app: FastifyInstance): void {
   const productUrl = env.EMAIL_PRODUCT_URL ?? '';
+
+  // A council's live requests, one page at a time, for one of its custodians:
+  // the filter, the search and the order are applied here, so a council with
+  // many requests never sends them all.
+  app.withTypeProvider<ZodTypeProvider>().get(
+    '/api/councils/:councilId/requests',
+    {
+      ...SKIP_SIG,
+      schema: {
+        params: z.object({ councilId: z.string().min(1) }),
+        querystring: z.object({
+          page: z.coerce.number().int().positive().default(1),
+          page_size: z.coerce
+            .number()
+            .int()
+            .refine((size) => (REQUEST_PAGE_SIZES as readonly number[]).includes(size))
+            .default(REQUEST_PAGE_SIZES[0]),
+          filter: RequestFilterSchema.default('all'),
+          query: z.string().max(200).default(''),
+        }),
+        response: {
+          200: z.object({
+            items: z.array(
+              z.object({
+                id: z.string().uuid(),
+                user_name: z.string().nullable(),
+                user_email: z.string(),
+                created_at_millis: z.number().int(),
+                expires_at_millis: z.number().int(),
+                stage: RequestStageSchema,
+                contributors: z.array(z.object({ slot: z.number().int(), name: z.string(), in_person: z.boolean() })),
+                threshold: z.number().int().positive(),
+                my_contribution: z.enum(['none', 'remote', 'in_person']),
+                can_contribute: z.boolean(),
+              })
+            ),
+            // Matching the filter and the search, across every page.
+            total_count: z.number().int().nonnegative(),
+            // Per filter, before the search: what the filter menu offers.
+            counts: z.object(
+              Object.fromEntries(REQUEST_FILTERS.map((f) => [f, z.number().int().nonnegative()])) as Record<RequestFilter, z.ZodNumber>
+            ),
+          }),
+          ...errorResponses(404),
+        },
+      },
+    },
+    async (request, reply) => {
+      assertUserId(request);
+      const { page, page_size: pageSize, filter, query } = request.query;
+      const head = await councilHead(request.params.councilId);
+      const me = head?.members.find((m) => m.userId === request.userId);
+      if (!head || !me) return reply.status(404).send({ code: API_ERROR_COUNCIL_NOT_FOUND });
+
+      const now = Date.now();
+      const views = await custodianRequestViews(head.councilId, head, me, now);
+      const selected = selectRequests(views, filter, query, now);
+
+      return {
+        items: paginate(selected, pageSize, page).map((view) => requestSummaryWire(view, head)),
+        total_count: selected.length,
+        counts: countByFilter(views, now),
+      };
+    }
+  );
 
   // What a custodian's vault needs to hand over their share: the request's
   // ephemeral key, the user's signed escrow record, their own capsule, and the

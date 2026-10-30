@@ -89,7 +89,14 @@ interface UseEncryptionReturn {
   restoreFromPhrase: (
     recoveryPhrase: string,
     idToken: string
-  ) => Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }>;
+  ) => Promise<{
+    publicKey: string;
+    signaturePublicKey: string;
+    isActiveVault: boolean;
+    vaultCreatedAtMillis: number;
+    emergencyUnlock: boolean;
+    councilRequestClosed: boolean;
+  }>;
   /** Bring the dormant vault a phrase unlocks back as the current one (after user confirmation). */
   reactivateVault: (
     recoveryPhrase: string,
@@ -101,6 +108,7 @@ interface UseEncryptionReturn {
     disabledVaultId: string | null;
     disabledVaultCreatedAtMillis: number | null;
     emergencyUnlock: boolean;
+    councilRequestClosed: boolean;
   }>;
   /** Grantor: build a full designation body (fresh emergency phrase, dormant credential, capsule, binding signature). Requires the contact TOFU-trusted. */
   createEmergencyEscrow: (granteeUserId: string, waitTimeDays: number, lang?: MnemonicLanguage) => Promise<EmergencyDesignateBody>;
@@ -339,6 +347,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
         isActiveVault: boolean;
         vaultCreatedAtMillis: number;
         emergencyUnlock: boolean;
+        councilRequestClosed: boolean;
       }>,
     [request]
   );
@@ -352,6 +361,7 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
         disabledVaultId: string | null;
         disabledVaultCreatedAtMillis: number | null;
         emergencyUnlock: boolean;
+        councilRequestClosed: boolean;
       }>,
     [request]
   );

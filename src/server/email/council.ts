@@ -1,6 +1,7 @@
 import { senderFor } from '@encryption/src/server/email/emergency';
 import { mailer } from '@encryption/src/server/email/mailer';
 import type { SendOptions } from '@encryption/src/server/email/mailer';
+import { CouncilLeftEmail, subject as councilLeftSubject } from '@encryption/src/server/email/templates/CouncilLeft';
 import { CouncilRecoveryAbortedEmail, subject as councilRecoveryAbortedSubject } from '@encryption/src/server/email/templates/CouncilRecoveryAborted';
 import {
   CouncilRecoveryCompletedEmail,
@@ -109,5 +110,13 @@ export async function sendCouncilRosterToSign(params: { recipient: string; local
     recipients: [params.recipient],
     subject: councilRosterToSignSubject(params.locale),
     emailComponent: CouncilRosterToSignEmail(params),
+  });
+}
+
+export async function sendCouncilLeft(params: { recipient: string; locale: string; council: string; productUrl: string }): Promise<void> {
+  await send(params.locale, {
+    recipients: [params.recipient],
+    subject: councilLeftSubject(params.locale),
+    emailComponent: CouncilLeftEmail(params),
   });
 }

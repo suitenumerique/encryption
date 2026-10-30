@@ -70,8 +70,8 @@ const cases: Case[] = [
     subject: councilRecoveryRequestedSubject,
     make: (locale) => CouncilRecoveryRequestedEmail({ locale, council: 'Équipe sécurité DINUM', productUrl: 'http://localhost:7201' }),
     expected: {
-      fr: ['Équipe sécurité DINUM', 'collège de recouvrement'],
-      en: ['Équipe sécurité DINUM', 'recovery council'],
+      fr: ['Équipe sécurité DINUM', 'équipe de récupération'],
+      en: ['Équipe sécurité DINUM', 'recovery team'],
     },
   },
   {

@@ -668,6 +668,7 @@ function InterfaceScreens({
             setRouteOverride('recovery-council');
           }}
           onOpenCustodian={() => setRouteOverride('council-custodian')}
+          onOpenCouncilRequest={() => setRouteOverride('council-request')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           onCancelAuth={oidcAuth.cancelAuth}
@@ -684,6 +685,28 @@ function InterfaceScreens({
 
     case 'council-custodian':
       return councilCustodian(false);
+
+    // A request to the council for an older vault, carried on from a browser that holds the one in use.
+    case 'council-request':
+      return (
+        <ModalEncryptionOnboarding
+          getIdToken={getValidIdToken}
+          userId={internalUserId}
+          parentOrigin={parentContext.parentOrigin}
+          hasExistingBackendKey={true}
+          userInfo={userInfo}
+          councilForOlderVault
+          onSuccess={handleOnboardingSuccess}
+          onClose={overlaid ? () => setRouteOverride(null) : handleClose}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
+        />
+      );
 
     case 'device-approval':
       return deviceApproval(false);

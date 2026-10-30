@@ -54,6 +54,8 @@ function request(overrides: Partial<MyCouncilRequest> = {}): MyCouncilRequest {
     expires_at_millis: NOW + 7 * 24 * 60 * 60 * 1000,
     meet: [],
     ephemeral_fingerprint: sampleFingerprint,
+    vault_active: true,
+    vault_created_at_millis: Date.UTC(2026, 0, 12),
     ...overrides,
   };
 }
@@ -78,6 +80,51 @@ IntroStory.play = async ({ canvasElement }) => {
   await playFindButton(canvasElement, i18n.t('council.ask_button'));
 };
 export const Ask = prepareStory(IntroStory);
+
+// The council holds a vault the user replaced: they may want back what came
+// before rather than the vault of the last few hours, so they choose.
+const asked = fn();
+const ChooseVaultStory = Template.bind({});
+ChooseVaultStory.args = baseArgs;
+ChooseVaultStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiCouncilRecoveryRequestsMine({ body: { request: null } }),
+      handleGetApiCouncilsForMe({
+        body: forMe({
+          escrow: {},
+          vaults: [
+            { escrow_id: '7f1c2b3a-0000-4000-8000-000000000001', active: true, created_at_millis: Date.UTC(2026, 9, 27), disabled_at_millis: null },
+            {
+              escrow_id: '7f1c2b3a-0000-4000-8000-000000000002',
+              active: false,
+              created_at_millis: Date.UTC(2025, 2, 1),
+              disabled_at_millis: Date.UTC(2026, 9, 27),
+            },
+          ],
+        }),
+      }),
+      handlePostApiCouncilRecoveryRequests(async ({ request: req }) => {
+        asked(((await req.json()) as { escrow_id?: string }).escrow_id);
+
+        return Response.json({ id: request().id, expires_at_millis: request().expires_at_millis });
+      }),
+    ],
+  },
+};
+ChooseVaultStory.play = async ({ canvasElement }) => {
+  asked.mockClear();
+  const canvas = within(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('council.recovery_title'));
+  const current = await canvas.findByRole('radio', { name: new RegExp(i18n.t('council.vault_current')) });
+  await expect(current).toBeChecked();
+  const older = canvas.getByRole('radio', { name: new RegExp(i18n.t('council.vault_retired', { date: new Date(Date.UTC(2026, 9, 27)) })) });
+  await userEvent.click(older);
+  await expect(older).toBeChecked();
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.ask_button')));
+  await waitFor(() => expect(asked).toHaveBeenCalledWith('7f1c2b3a-0000-4000-8000-000000000002'));
+};
+export const ChooseVault = prepareStory(ChooseVaultStory);
 
 // After the meeting, while the others approve remotely: nothing about who, or how many.
 const InProgressStory = Template.bind({});

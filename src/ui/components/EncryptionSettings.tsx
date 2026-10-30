@@ -8,7 +8,7 @@ import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { UserInfo } from '@encryption/src/ui/App';
-import { fetchCouncilForMe, fetchMyCouncils } from '@encryption/src/ui/api/council-client';
+import { type MyCouncilRequest, fetchCouncilForMe, fetchMyCouncilRequest, fetchMyCouncils } from '@encryption/src/ui/api/council-client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import {
   deletePublicKeys,
@@ -65,6 +65,8 @@ interface EncryptionSettingsProps {
   /** Opens the verification of the user's council, offered while it is not verified. */
   onVerifyRecoveryCouncil?: () => void;
   onOpenCustodian?: () => void;
+  /** Carry on a request to the council for an older vault (this browser holds the one in use). */
+  onOpenCouncilRequest?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
   onCancelAuth?: () => void;
@@ -128,6 +130,7 @@ export function EncryptionSettings({
   onOpenRecoveryCouncil,
   onVerifyRecoveryCouncil,
   onOpenCustodian,
+  onOpenCouncilRequest,
   onReconnect,
   isAuthenticating = false,
   onCancelAuth,
@@ -391,11 +394,19 @@ export function EncryptionSettings({
   // The council rows appear only for someone a council covers, and for its
   // custodians: the interface never learns more than "you are a custodian".
   // `verified` (null when not enrolled) comes from this vault, never from the server.
-  const [council, setCouncil] = useState<{ covered: boolean; custodian: boolean; pending: number; verified: boolean | null }>({
+  // `olderVaultRequest`: a request to the council for an older vault than the one this browser holds.
+  const [council, setCouncil] = useState<{
+    covered: boolean;
+    custodian: boolean;
+    pending: number;
+    verified: boolean | null;
+    olderVaultRequest: MyCouncilRequest | null;
+  }>({
     covered: false,
     custodian: false,
     pending: 0,
     verified: null,
+    olderVaultRequest: null,
   });
   const councilVault = useCouncilVault();
 
@@ -405,7 +416,11 @@ export function EncryptionSettings({
     let cancelled = false;
 
     withFreshIdToken(getIdToken, async (idToken) => {
-      const [forMe, mine] = await Promise.all([fetchCouncilForMe(idToken).catch(() => null), fetchMyCouncils(idToken).catch(() => null)]);
+      const [forMe, mine, request] = await Promise.all([
+        fetchCouncilForMe(idToken).catch(() => null),
+        fetchMyCouncils(idToken).catch(() => null),
+        fetchMyCouncilRequest(idToken).catch(() => null),
+      ]);
       const councils = mine?.councils ?? [];
       const escrow = forMe?.escrow;
       const verified =
@@ -418,6 +433,7 @@ export function EncryptionSettings({
         covered: forMe?.council != null,
         custodian: councils.length > 0,
         pending: councils.reduce((sum, c) => sum + pendingActions(c), 0),
+        olderVaultRequest: request && !request.vault_active ? request : null,
       };
     })
       .then((state) => {
@@ -1052,6 +1068,23 @@ export function EncryptionSettings({
       {status}
 
       {syncIntegrityFailed && <SyncIntegrityAlert onRetry={handleRecheckSync} isRetrying={isRecheckingSync} />}
+
+      {council.olderVaultRequest && onOpenCouncilRequest && (
+        <Notice type={council.olderVaultRequest.stage === 'released' ? VariantType.WARNING : VariantType.INFO}>
+          <div className={styles.alertStack}>
+            <span>
+              {t(council.olderVaultRequest.stage === 'released' ? 'council.request_banner_released' : 'council.request_banner_progress', {
+                date: new Date(council.olderVaultRequest.vault_created_at_millis),
+              })}
+            </span>
+            <div>
+              <Button size="nano" variant="bordered" color="neutral" onClick={onOpenCouncilRequest}>
+                {t('council.request_banner_open')}
+              </Button>
+            </div>
+          </div>
+        </Notice>
+      )}
 
       {liveEmergencyPhrases.length > 0 && (
         <Notice type={VariantType.WARNING}>

@@ -18,6 +18,7 @@ import { prisma } from '@encryption/src/prisma/client';
 import { satisfiesStepUp, sendStepUpChallenge } from '@encryption/src/server/auth/step-up';
 import { councilLabel } from '@encryption/src/server/council-core';
 import { CouncilHeadChangedError, checkEscrowSubmission, writeEscrow } from '@encryption/src/server/council-escrow';
+import { closeRequestsForVault } from '@encryption/src/server/council-requests-core';
 import { sendCouncilRecoveryCompleted, sendCouncilRecoveryCompletedCustodian } from '@encryption/src/server/email/council';
 import { errorResponses } from '@encryption/src/server/error-response';
 import {
@@ -381,6 +382,11 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     | { ok: true; challenge: ProofChallenge; credential: Credential; keyring: Keyring }
     | { ok: false; status: 401 | 404 | 410; code: string };
 
+  // A phrase other than the council's own opened this vault: the user is back in without the council.
+  async function regainedWithoutCouncil(userId: string, credential: Credential): Promise<boolean> {
+    return credential.type === 'council' ? false : closeRequestsForVault(userId, credential.vault.id);
+  }
+
   async function selectVaultByProof(userId: string, body: { challenge_id: string; proof: string }): Promise<ProofResult> {
     const challenge = await prisma.vaultChallenge.findUnique({ where: { id: body.challenge_id } });
 
@@ -440,6 +446,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         200: VaultContentSchema.extend({
           is_active: z.boolean(),
           created_at_millis: z.number().int().nonnegative(),
+          // A recovery request to the council for this vault was closed: the user got back in without it.
+          council_request_closed: z.boolean(),
         }),
         ...errorResponses(400, 401, 404, 410),
       },
@@ -462,6 +470,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         ...(await loadVaultContent(selected.credential)),
         is_active: matched.disabledAt === null,
         created_at_millis: matched.createdAt.getTime(),
+        council_request_closed: await regainedWithoutCouncil(request.userId, selected.credential),
       };
     },
   });
@@ -482,6 +491,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           active_vault_id: z.string(),
           disabled_vault_id: z.string().nullable(),
           disabled_vault_created_at_millis: z.number().int().nonnegative().nullable(),
+          council_request_closed: z.boolean(),
         }),
         ...errorResponses(400, 401, 404, 409, 410),
       },
@@ -497,6 +507,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       const target = selected.keyring;
 
       await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
+      const councilRequestClosed = await regainedWithoutCouncil(userId, selected.credential);
 
       // Already the current vault: nothing to switch, but still release the content
       // so the caller can cache it in the one path it caches at all.
@@ -506,6 +517,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           active_vault_id: target.id,
           disabled_vault_id: null,
           disabled_vault_created_at_millis: null,
+          council_request_closed: councilRequestClosed,
           ...(await loadVaultContent(selected.credential)),
         };
 
@@ -544,6 +556,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         active_vault_id: target.id,
         disabled_vault_id: previouslyActive?.id ?? null,
         disabled_vault_created_at_millis: previouslyActive?.createdAt.getTime() ?? null,
+        council_request_closed: councilRequestClosed,
         ...(await loadVaultContent(selected.credential)),
       };
     },
@@ -1128,7 +1141,10 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     ...SKIP_SIG,
     schema: {
       params: RequestIdParamsSchema,
-      response: { 200: z.object({ wrapped_device_bootstrap: z.string(), device_public_key: z.string() }), ...errorResponses(404, 425) },
+      response: {
+        200: z.object({ wrapped_device_bootstrap: z.string(), device_public_key: z.string(), council_request_closed: z.boolean() }),
+        ...errorResponses(404, 425),
+      },
     },
     handler: async (request, reply) => {
       assertUserId(request);
@@ -1141,7 +1157,15 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       // One-shot: consume once collected.
       await prisma.vaultApproval.delete({ where: { requestId: approval.requestId } });
 
-      return { wrapped_device_bootstrap: approval.wrappedDeviceBootstrap, device_public_key: approval.devicePublicKey };
+      // Another device handed over the vault in use: a council request for it is moot.
+      const active = await activeKeyring(request.userId);
+      const councilRequestClosed = active ? await closeRequestsForVault(request.userId, active.id) : false;
+
+      return {
+        wrapped_device_bootstrap: approval.wrappedDeviceBootstrap,
+        device_public_key: approval.devicePublicKey,
+        council_request_closed: councilRequestClosed,
+      };
     },
   });
 

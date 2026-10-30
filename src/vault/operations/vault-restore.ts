@@ -43,6 +43,7 @@ interface VaultContentWire {
 interface VaultFetchWire extends VaultContentWire {
   is_active: boolean;
   created_at_millis: number;
+  council_request_closed: boolean;
 }
 
 // Prove possession of the recovery phrase to `endpoint` (/fetch or /reactivate)
@@ -162,7 +163,15 @@ async function openAndCacheVault(
 export async function handleRestoreFromPhrase(
   userId: string,
   payload: { recoveryPhrase: string; idToken: string }
-): Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }> {
+): Promise<{
+  publicKey: string;
+  signaturePublicKey: string;
+  isActiveVault: boolean;
+  vaultCreatedAtMillis: number;
+  emergencyUnlock: boolean;
+  /** The server closed a council request for this vault: the user got back in without it. */
+  councilRequestClosed: boolean;
+}> {
   const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/fetch');
   const vault = body as VaultFetchWire;
 
@@ -178,6 +187,7 @@ export async function handleRestoreFromPhrase(
       isActiveVault: false,
       vaultCreatedAtMillis: vault.created_at_millis,
       emergencyUnlock: vault.credential_type === 'emergency',
+      councilRequestClosed: vault.council_request_closed === true,
     };
   }
 
@@ -189,6 +199,7 @@ export async function handleRestoreFromPhrase(
     isActiveVault: true,
     vaultCreatedAtMillis: vault.created_at_millis,
     emergencyUnlock: vault.credential_type === 'emergency',
+    councilRequestClosed: vault.council_request_closed === true,
   };
 }
 
@@ -218,12 +229,14 @@ export async function handleReactivateVault(
   disabledVaultId: string | null;
   disabledVaultCreatedAtMillis: number | null;
   emergencyUnlock: boolean;
+  councilRequestClosed: boolean;
 }> {
   const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/reactivate');
   const data = body as VaultContentWire & {
     reactivated: boolean;
     disabled_vault_id: string | null;
     disabled_vault_created_at_millis: number | null;
+    council_request_closed?: boolean;
   };
 
   const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, data);
@@ -235,5 +248,6 @@ export async function handleReactivateVault(
     disabledVaultId: data.disabled_vault_id ?? null,
     disabledVaultCreatedAtMillis: data.disabled_vault_created_at_millis ?? null,
     emergencyUnlock: data.credential_type === 'emergency',
+    councilRequestClosed: data.council_request_closed === true,
   };
 }

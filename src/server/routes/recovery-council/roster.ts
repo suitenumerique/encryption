@@ -22,14 +22,8 @@ import {
   serializable,
   sha256,
 } from '@encryption/src/server/council-core';
-import {
-  EscrowHealthSchema,
-  RequestStageSchema,
-  escrowForRecovery,
-  healthOf,
-  healthWire,
-  settleRequest,
-} from '@encryption/src/server/council-requests-core';
+import { EscrowHealthSchema, escrowsOf, healthOf, healthWire } from '@encryption/src/server/council-requests-core';
+import { custodianRequestViews } from '@encryption/src/server/council-requests-list';
 import { activateIfReady, reshareProgress } from '@encryption/src/server/council-reshare-core';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
@@ -82,21 +76,9 @@ export function rosterRoutes(app: FastifyInstance): void {
                   lost: z.number().int().nonnegative(),
                   outdated: z.array(z.object({ version: z.number().int(), escrows: z.number().int() })),
                 }),
-                requests: z.array(
-                  z.object({
-                    id: z.string().uuid(),
-                    user_name: z.string().nullable(),
-                    user_email: z.string(),
-                    created_at_millis: z.number().int(),
-                    expires_at_millis: z.number().int(),
-                    stage: RequestStageSchema,
-                    contributors: z.array(z.object({ slot: z.number().int(), name: z.string(), in_person: z.boolean() })),
-                    // How many parts release it: the escrow's own threshold, which a later version may not share.
-                    threshold: z.number().int().positive(),
-                    my_contribution: z.enum(['none', 'remote', 'in_person']),
-                    can_contribute: z.boolean(),
-                  })
-                ),
+                // Live recovery requests, and those this custodian can act on; the list itself is paged (`/api/councils/:councilId/requests`).
+                requests_count: z.number().int().nonnegative(),
+                requests_to_handle: z.number().int().nonnegative(),
                 // Reshared shares this custodian's vault has not checked yet, and
                 // those found invalid across the council, by the helper that sent them.
                 shares_to_check: z.number().int().nonnegative(),
@@ -158,7 +140,8 @@ export function rosterRoutes(app: FastifyInstance): void {
 
         // Health and requests are a custodian's business, not an invitee's.
         const health = { escrows: 0, ok: 0, at_risk: 0, lost: 0, outdated: [] as Array<{ version: number; escrows: number }> };
-        const requests = [];
+        let requestsCount = 0;
+        let requestsToHandle = 0;
         let reshare = null;
         let sharesToCheck = 0;
         const faultyReshares: Array<{ helper_name: string; escrows: number }> = [];
@@ -203,40 +186,9 @@ export function rosterRoutes(app: FastifyInstance): void {
             faultyReshares.push({ helper_name: member ? (userFullName(member.user) ?? member.user.email) : '?', escrows: entry.escrows });
           }
 
-          const open = await prisma.councilRequest.findMany({
-            where: { escrow: { councilId }, status: { in: ['open', 'released'] } },
-            include: { user: true, escrow: { include: { capsules: true } } },
-            orderBy: { createdAt: 'asc' },
-          });
-
-          for (const row of open) {
-            const settled = await settleRequest(row.id, now);
-            if (!settled || settled.stage === 'expired') continue;
-
-            const counted = settled.facts.contributions;
-            const mine = counted.find((c) => c.slot === myHeadMember.slot);
-            const myCapsule = row.escrow.capsules.find(
-              (c) => c.slot === myHeadMember.slot && c.generation === row.escrow.generation && c.identityId === myHeadMember.identityId && !c.invalid
-            );
-            const contributors = counted.map((c) => {
-              const member = head.members.find((m) => m.slot === c.slot);
-              return { slot: c.slot, name: member ? (userFullName(member.user) ?? member.user.email) : `#${c.slot}`, in_person: c.inPerson };
-            });
-
-            requests.push({
-              id: row.id,
-              user_name: userFullName(row.user),
-              user_email: row.user.email,
-              created_at_millis: row.createdAt.getTime(),
-              expires_at_millis: row.expiresAt.getTime(),
-              stage: settled.stage,
-              contributors,
-              threshold: settled.facts.threshold,
-              my_contribution: mine ? (mine.inPerson ? ('in_person' as const) : ('remote' as const)) : ('none' as const),
-              can_contribute:
-                !mine && row.userId !== userId && myCapsule !== undefined && (settled.stage === 'collecting' || settled.stage === 'awaiting_meeting'),
-            });
-          }
+          const views = await custodianRequestViews(councilId, head, myHeadMember, now);
+          requestsCount = views.length;
+          requestsToHandle = views.filter((v) => v.canContribute).length;
 
           const session = await prisma.councilReshareSession.findFirst({
             where: { councilId, status: 'open' },
@@ -266,7 +218,8 @@ export function rosterRoutes(app: FastifyInstance): void {
           proposal: proposalWire,
           blocked: config ? (await desiredRoster(config)).blocked.map((b) => ({ email: b.email, reason: b.reason })) : [],
           health,
-          requests,
+          requests_count: requestsCount,
+          requests_to_handle: requestsToHandle,
           reshare,
           shares_to_check: sharesToCheck,
           faulty_reshares: faultyReshares,
@@ -306,6 +259,17 @@ export function rosterRoutes(app: FastifyInstance): void {
                 health: EscrowHealthSchema,
               })
               .nullable(),
+            // The vault in use, escrowed or not: what giving back an older one would put aside.
+            active_vault_created_at_millis: z.number().int().nullable(),
+            // Every vault the council can still give back, the current one first.
+            vaults: z.array(
+              z.object({
+                escrow_id: z.string().uuid(),
+                active: z.boolean(),
+                created_at_millis: z.number().int(),
+                disabled_at_millis: z.number().int().nullable(),
+              })
+            ),
           }),
         },
       },
@@ -315,7 +279,8 @@ export function rosterRoutes(app: FastifyInstance): void {
       const userId = request.userId;
 
       const user = await prisma.user.findUnique({ where: { id: userId } });
-      const escrow = await escrowForRecovery(userId);
+      const escrows = await escrowsOf(userId);
+      const escrow = escrows[0] ?? null;
       const councilId = escrow?.councilId ?? (user ? councilForEmail(configuredCouncils(), user.email)?.id : undefined);
 
       let council = null;
@@ -346,7 +311,20 @@ export function rosterRoutes(app: FastifyInstance): void {
         };
       }
 
-      return { council, escrow: escrowWire };
+      const vaults = [];
+      for (const e of escrows) {
+        if ((await healthOf(e)).status === 'lost') continue;
+        vaults.push({
+          escrow_id: e.id,
+          active: e.credential.vault.disabledAt === null,
+          created_at_millis: e.credential.vault.createdAt.getTime(),
+          disabled_at_millis: e.credential.vault.disabledAt?.getTime() ?? null,
+        });
+      }
+
+      const active = await prisma.vaultKeyring.findFirst({ where: { userId, disabledAt: null }, select: { createdAt: true } });
+
+      return { council, escrow: escrowWire, active_vault_created_at_millis: active?.createdAt.getTime() ?? null, vaults };
     }
   );
 

@@ -10,6 +10,7 @@ export type Route =
   | 'emergency-access'
   | 'recovery-council'
   | 'council-custodian'
+  | 'council-request'
   | 'device-approval'
   | 'verify-recipients'
   | 'recipient-profile'
@@ -27,6 +28,7 @@ export function getRouteFromPath(path: string): Route | null {
     '/emergency-access': 'emergency-access',
     '/recovery-council': 'recovery-council',
     '/council-custodian': 'council-custodian',
+    '/council-request': 'council-request',
     '/device-approval': 'device-approval',
     '/verify-recipients': 'verify-recipients',
     '/recipient-profile': 'recipient-profile',
@@ -59,6 +61,7 @@ export const PATH_FOR_ROUTE: Partial<Record<Route, string>> = {
   'emergency-access': '/emergency-access',
   'recovery-council': '/recovery-council',
   'council-custodian': '/council-custodian',
+  'council-request': '/council-request',
   'device-approval': '/device-approval',
   'verify-recipients': '/verify-recipients',
   'recipient-profile': '/recipient-profile',

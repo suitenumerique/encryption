@@ -3,10 +3,15 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { prisma } from '@encryption/src/prisma/client';
-import { serializable } from '@encryption/src/server/council-core';
+import { requireStepUp } from '@encryption/src/server/auth/step-up';
+import { councilLabel, serializable } from '@encryption/src/server/council-core';
 import { CouncilHeadChangedError, checkEscrowSubmission, enrollableCouncil, writeEscrow } from '@encryption/src/server/council-escrow';
 import { openRequestOf } from '@encryption/src/server/council-requests-core';
+import { sendCouncilLeft } from '@encryption/src/server/email/council';
+import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
+import { emergencyRecipient } from '@encryption/src/server/routes/emergency-core';
+import { logEmailFailure } from '@encryption/src/server/routes/recovery-council/replies';
 import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
 import { assertUserId } from '@encryption/src/server/routes/transport-auth';
 import {
@@ -75,8 +80,10 @@ export function escrowRoutes(app: FastifyInstance): void {
 
   // Leave the council: the caller's escrows go, credential and capsules with
   // them, so the parts custodians hold open nothing any more. Identity-signed
-  // like joining: a stolen login alone cannot take a user out. Not while a
-  // recovery is in progress; joining again is the usual enrollment.
+  // like joining, plus the step-up: it silently removes the user's way back,
+  // so neither a stolen login nor an unattended browser should be enough, and
+  // the email tells them if it was not them. Not while a recovery is in
+  // progress; joining again is the usual enrollment.
   app.withTypeProvider<ZodTypeProvider>().delete(
     '/api/councils/escrow',
     {
@@ -86,6 +93,7 @@ export function escrowRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
+      if (!requireStepUp(request, reply)) return reply;
       const userId = request.userId;
 
       if (await openRequestOf(userId)) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
@@ -93,14 +101,24 @@ export function escrowRoutes(app: FastifyInstance): void {
       const left = await serializable(async (tx) => {
         if ((await tx.councilRequest.count({ where: { userId, status: { in: ['open', 'released'] } } })) > 0) return null;
 
-        const escrows = await tx.councilEscrow.findMany({ where: { userId }, select: { credentialId: true } });
+        const escrows = await tx.councilEscrow.findMany({ where: { userId }, select: { credentialId: true, councilId: true } });
         await tx.vaultCredential.deleteMany({ where: { id: { in: escrows.map((e) => e.credentialId) } } });
 
-        return escrows.length;
+        return escrows;
       });
       if (left === null) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
 
-      return { left };
+      const user = left.length > 0 ? await emergencyRecipient(userId) : null;
+      if (user)
+        for (const councilId of new Set(left.map((e) => e.councilId)))
+          sendCouncilLeft({
+            recipient: user.email,
+            locale: user.locale,
+            council: councilLabel(councilId),
+            productUrl: env.EMAIL_PRODUCT_URL ?? '',
+          }).catch(logEmailFailure(app, 'left'));
+
+      return { left: left.length };
     }
   );
 }

@@ -8,6 +8,7 @@ import { MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
 import { ApiError, approveDevicePath } from '@encryption/src/ui/api/client';
 import { approveDeviceRequest, fetchDeviceApproval, fetchPendingDeviceApprovals, requestDeviceApproval } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
+import { CouncilClosedDialog } from '@encryption/src/ui/components/CouncilClosedDialog';
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
 import { QrScanner } from '@encryption/src/ui/components/QrScanner';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
@@ -149,6 +150,8 @@ function NewDeviceSide({
   const [revealCode, setRevealCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [done, setDone] = useState(false);
+  // Getting the vault from another device closed a request to the council for it.
+  const [councilClosed, setCouncilClosed] = useState(false);
   const requestIdRef = useRef<string | null>(null);
   // Once poll returns the wrapped VRK, the server row is consumed; keep the only
   // copy here so completion can be retried (in refs so effect re-runs keep them).
@@ -222,6 +225,7 @@ function NewDeviceSide({
           // Store before the cancellation check: if the effect re-ran mid-poll,
           // the next interval picks the payload up instead of losing it.
           if (forwarded) wrappedVrkRef.current = forwarded.wrapped_device_bootstrap;
+          if (forwarded?.council_request_closed) setCouncilClosed(true);
           if (cancelled || !forwarded) return;
         }
 
@@ -273,7 +277,9 @@ function NewDeviceSide({
         title={t('device_approval.new_success_title')}
         description={t('device_approval.new_success')}
         actions={<Button onClick={onClose}>{t('device_approval.btn_done')}</Button>}
-      />
+      >
+        <CouncilClosedDialog isOpen={councilClosed} onClose={() => setCouncilClosed(false)} />
+      </Screen>
     );
   }
 

@@ -26,6 +26,7 @@ import { DEFAULT_KDF_PARAMS, signAuthPublicKeyBinding, signVaultChallenge } from
 import { testPrisma, useTestDatabase } from '@encryption/src/prisma/testing';
 import { syncConfiguredCouncils, unconfiguredCouncilsWithEscrows } from '@encryption/src/server/council-sync';
 import {
+  sendCouncilLeft,
   sendCouncilRecoveryMeeting,
   sendCouncilRecoveryRequested,
   sendCouncilRecoveryToApprove,
@@ -39,6 +40,7 @@ import {
   API_ERROR_COUNCIL_MEETING_FIRST,
   API_ERROR_COUNCIL_NOT_COVERED,
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
+  API_ERROR_COUNCIL_NO_ESCROW,
   API_ERROR_COUNCIL_OWN_REQUEST,
   API_ERROR_COUNCIL_REARM_REQUIRED,
   API_ERROR_COUNCIL_REQUEST_CLOSED,
@@ -187,7 +189,8 @@ interface MineCouncil {
   proposal: { roster: RosterVersionWire; quorum_missing: number; pending_members: Array<{ name: string }>; may_sign: boolean } | null;
   blocked: Array<{ email: string; reason: string }>;
   health: { escrows: number; ok: number; at_risk: number; lost: number; outdated: Array<{ version: number; escrows: number }> };
-  requests: Array<{ id: string; stage: string; can_contribute: boolean; my_contribution: string }>;
+  requests_count: number;
+  requests_to_handle: number;
   reshare: { session_id: string; i_am_helper: boolean; remaining_for_me: number } | null;
 }
 
@@ -529,7 +532,17 @@ describe('enrollment', () => {
     const { request } = (await call<{ request: { id: string } }>(ursula, 'GET', '/api/council-recovery/requests/mine')).json;
     await call(ursula, 'POST', `/api/council-recovery/requests/${request.id}/refuse`);
 
+    // Signed is not enough: it takes a fresh second factor too.
+    env.OIDC_STEP_UP_ENABLED = true;
+    expect((await call(ursula, 'DELETE', '/api/councils/escrow', undefined, { signed: true })).json).toMatchObject({
+      code: API_ERROR_INSUFFICIENT_USER_AUTHENTICATION,
+    });
+    env.OIDC_STEP_UP_ENABLED = false;
+    expect(sendCouncilLeft).not.toHaveBeenCalled();
+
     expect((await call(ursula, 'DELETE', '/api/councils/escrow', undefined, { signed: true })).json).toEqual({ left: 1 });
+    // Told by email, in case it was not them.
+    expect(sendCouncilLeft).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipient: 'ursula@numerique.gouv.fr' }));
     expect(await testPrisma.councilEscrow.count({ where: { userId: ursula.id } })).toBe(0);
     expect(await testPrisma.vaultCredential.count({ where: { id: escrow.credentialId } })).toBe(0);
     expect(await testPrisma.councilCapsule.count({ where: { escrowId: escrow.id } })).toBe(0);
@@ -779,6 +792,127 @@ describe('recovery', () => {
     expect((await call(ursula, 'POST', `/api/council-recovery/requests/${id}/refuse`)).status).toBe(200);
     expect(await testPrisma.councilContribution.count()).toBe(0);
     expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toEqual({ request: null });
+  });
+
+  // A user who started over, then wants back what came before: the council holds
+  // both vaults, and the request names the one to give back.
+  it('lists every vault the council can give back, and asks for the one named', async () => {
+    await enrolled();
+    const older = await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } });
+    await testPrisma.vaultKeyring.update({ where: { id: ursula.vaultId }, data: { disabledAt: new Date(Date.UTC(2026, 5, 1)) } });
+    await testPrisma.vaultKeyring.create({ data: { userId: ursula.id, identityId: ursula.identityId } });
+    await call(ursula, 'POST', '/api/councils/escrow', (await enroll(ursula, [alice, bruno, chloe])).body, { signed: true });
+
+    const { vaults } = (
+      await call<{ vaults: Array<{ escrow_id: string; active: boolean; disabled_at_millis: number | null }> }>(ursula, 'GET', '/api/councils/for-me')
+    ).json;
+    expect(vaults.map((v) => [v.active, v.disabled_at_millis])).toEqual([
+      [true, null],
+      [false, Date.UTC(2026, 5, 1)],
+    ]);
+    expect(vaults[1].escrow_id).toBe(older.id);
+
+    const res = await call<{ id: string }>(ursula, 'POST', '/api/council-recovery/requests', {
+      ephemeral_public_key: uint8ToBase64(new Uint8Array(33)),
+      escrow_id: older.id,
+    });
+    expect(res.status).toBe(200);
+    expect((await testPrisma.councilRequest.findUniqueOrThrow({ where: { id: res.json.id } })).escrowId).toBe(older.id);
+
+    // Someone else's escrow is not one of the user's vaults.
+    await testPrisma.councilRequest.deleteMany();
+    const other = await call(victor, 'POST', '/api/council-recovery/requests', {
+      ephemeral_public_key: uint8ToBase64(new Uint8Array(33)),
+      escrow_id: older.id,
+    });
+    expect(other.json).toMatchObject({ code: API_ERROR_COUNCIL_NO_ESCROW });
+  });
+
+  // Back in with their own phrase before the council finished: the request has
+  // no purpose left and closes, while one for an older vault would stay.
+  it('closes the request when the user opens that vault with their own phrase', async () => {
+    await enrolled();
+    const { id } = await ask();
+    await contribute(alice, id, true);
+
+    const auth = await generateSignatureKeyPair();
+    await testPrisma.vaultCredential.updateMany({
+      where: { vaultId: ursula.vaultId, type: 'primary' },
+      data: { authPublicKey: Buffer.from(auth.publicKey) },
+    });
+    const { json: challenge } = await call<{ challenge_id: string; nonce: string }>(ursula, 'POST', '/api/vault/challenge');
+    const proof = await signVaultChallenge(base64ToUint8(challenge.nonce), ursula.id, auth.secretKey);
+    const fetched = await call<{ council_request_closed: boolean }>(ursula, 'POST', '/api/vault/fetch', {
+      challenge_id: challenge.challenge_id,
+      proof: uint8ToBase64(proof),
+    });
+
+    expect(fetched).toMatchObject({ status: 200, json: { council_request_closed: true } });
+    expect(await testPrisma.councilRequest.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: 'aborted' });
+    expect(await testPrisma.councilContribution.count()).toBe(0);
+    expect((await call(ursula, 'GET', '/api/council-recovery/requests/mine')).json).toEqual({ request: null });
+  });
+
+  // Opening the vault in use says nothing about an older one the user asked for:
+  // that request stays, and its answer will offer the choice.
+  it('keeps a request for an older vault when the user opens the one in use', async () => {
+    await enrolled();
+    const older = await testPrisma.councilEscrow.findFirstOrThrow({ where: { userId: ursula.id } });
+    await testPrisma.vaultKeyring.update({ where: { id: ursula.vaultId }, data: { disabledAt: new Date() } });
+    const current = await testPrisma.vaultKeyring.create({ data: { userId: ursula.id, identityId: ursula.identityId } });
+    const auth = await generateSignatureKeyPair();
+    await testPrisma.vaultCredential.create({
+      data: {
+        vaultId: current.id,
+        type: 'primary',
+        wrappedVrk: 'WRAPPED',
+        authPublicKey: Buffer.from(auth.publicKey),
+        authPubSig: Buffer.from(randomBytes(64)),
+        kdfOps: DEFAULT_KDF_PARAMS.opsLimit,
+        kdfMem: DEFAULT_KDF_PARAMS.memLimit,
+        lang: 'english',
+      },
+    });
+    const { id } = (
+      await call<{ id: string }>(ursula, 'POST', '/api/council-recovery/requests', {
+        ephemeral_public_key: uint8ToBase64(new Uint8Array(33)),
+        escrow_id: older.id,
+      })
+    ).json;
+
+    const { json: challenge } = await call<{ challenge_id: string; nonce: string }>(ursula, 'POST', '/api/vault/challenge');
+    const proof = await signVaultChallenge(base64ToUint8(challenge.nonce), ursula.id, auth.secretKey);
+    const fetched = await call(ursula, 'POST', '/api/vault/fetch', { challenge_id: challenge.challenge_id, proof: uint8ToBase64(proof) });
+
+    expect(fetched).toMatchObject({ status: 200, json: { council_request_closed: false } });
+    expect(await testPrisma.councilRequest.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: 'open' });
+  });
+
+  // The custodian space pages, filters and searches on the server: a council
+  // with many requests never sends them all.
+  it('lists a council’s requests one page at a time, filtered and searched', async () => {
+    await enrolled();
+    await call(victor, 'POST', '/api/councils/escrow', (await enroll(victor, [alice, bruno, chloe])).body, { signed: true });
+    const { id: ursulaRequest } = await ask();
+    await call(victor, 'POST', '/api/council-recovery/requests', { ephemeral_public_key: uint8ToBase64(new Uint8Array(33)) });
+    await contribute(alice, ursulaRequest, true);
+
+    type Page = { items: Array<{ id: string; user_email: string; can_contribute: boolean }>; total_count: number; counts: Record<string, number> };
+    const list = async (as: Person, query: string) => call<Page>(as, 'GET', `/api/councils/${COUNCIL}/requests?${query}`);
+
+    // Alice met Ursula already: only Victor's request waits on her, so it comes first.
+    const all = (await list(alice, '')).json;
+    expect(all.items.map((r) => r.user_email)).toEqual(['victor@numerique.gouv.fr', 'ursula@numerique.gouv.fr']);
+    expect(all.total_count).toBe(2);
+    expect(all.counts).toMatchObject({ all: 2, 'to-handle': 1, awaiting_meeting: 1, collecting: 1 });
+    expect((await mine(alice))[0]).toMatchObject({ requests_count: 2, requests_to_handle: 1 });
+
+    expect((await list(alice, 'filter=collecting')).json.items.map((r) => r.id)).toEqual([ursulaRequest]);
+    expect((await list(alice, 'query=ROUX')).json).toMatchObject({ total_count: 1, items: [{ id: ursulaRequest }] });
+    expect((await list(alice, 'page=2&page_size=5')).json).toMatchObject({ items: [], total_count: 2 });
+
+    expect((await list(alice, 'page_size=7')).status).toBe(400);
+    expect((await list(victor, '')).status).toBe(404);
   });
 
   // Every request emails the user and the custodians: asking, refusing and asking

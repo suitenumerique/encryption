@@ -16,6 +16,7 @@ import {
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
   handleGetApiVaultMeta,
+  handlePostApiCouncilRecoveryRequestsByIdRefuse,
   handlePostApiCouncilsEscrow,
   handlePostApiPublicKeysRegisterInit,
   handlePostApiVault,
@@ -110,7 +111,8 @@ ExistingUserStory.play = async ({ canvasElement }) => {
 ExistingUserStory.parameters = { ...ExistingUserStory.parameters, design: consoleFrame('4880-17085') };
 export const ExistingUser = prepareStory(ExistingUserStory);
 
-// Covered by a recovery council that can still help: a third way back.
+// Covered by a recovery council that can still help: a third way back, next to
+// another device and the recovery phrase (which a trusted contact hands back).
 const ExistingUserWithCouncilStory = Template.bind({});
 ExistingUserWithCouncilStory.args = { ...ExistingUserStory.args };
 ExistingUserWithCouncilStory.parameters = {
@@ -122,17 +124,19 @@ ExistingUserWithCouncilStory.parameters = {
         return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
       }),
       handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      // So that Continue opens the council's first screen.
+      handleGetApiCouncilRecoveryRequestsMine({ body: { request: null } }),
     ],
   },
 };
 ExistingUserWithCouncilStory.play = async ({ canvasElement }) => {
   await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
-  const council = await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('council.option_title')) });
+  const canvas = within(canvasElement);
+  await canvas.findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_use_another_device')) });
+  await canvas.findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) });
+  const council = await canvas.findByRole('radio', { name: new RegExp(i18n.t('council.option_title')) });
   await userEvent.click(council);
   await expect(council).toBeChecked();
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
-  // The council screen takes over (its request lookup is not mocked here, so it settles on "unavailable").
-  await playFindHeading(canvasElement, i18n.t('council.recovery_title'));
 };
 export const ExistingUserWithCouncil = prepareStory(ExistingUserWithCouncilStory);
 
@@ -157,6 +161,8 @@ const councilReleasedHandlers = [
         created_at_millis: Date.UTC(2026, 9, 28, 9),
         expires_at_millis: Date.UTC(2026, 10, 4, 9),
         meet: [],
+        vault_active: true,
+        vault_created_at_millis: Date.UTC(2026, 0, 12),
       },
     },
   }),
@@ -181,13 +187,25 @@ async function chooseCouncil(canvasElement: HTMLElement) {
   await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
 }
 
+// The usual case: the council gave back the vault the user still has, so the
+// next screen is the new recovery phrase, which burns the one the council released.
+const CouncilNewPhraseStory = Template.bind({});
+CouncilNewPhraseStory.args = { ...ExistingUserStory.args };
+CouncilNewPhraseStory.parameters = { msw: { handlers: councilReleasedHandlers } };
+CouncilNewPhraseStory.play = async ({ canvasElement }) => {
+  await chooseCouncil(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('emergency.rotation_title'));
+  await within(canvasElement).findByText(i18n.t('council.rotation_explanation'));
+};
+export const CouncilRecoveryNewPhrase = prepareStory(CouncilNewPhraseStory);
+
 const CouncilRotationFailedStory = Template.bind({});
 CouncilRotationFailedStory.args = { ...ExistingUserStory.args };
 CouncilRotationFailedStory.parameters = {
   msw: { handlers: councilReleasedHandlers },
   encryption: {
     changeRecoveryPhrase: async () => {
-      throw new Error('The vault did not answer.');
+      throw new VaultError(VaultErrorCode.TIMEOUT, 'vault request timed out');
     },
   },
 };
@@ -195,43 +213,93 @@ CouncilRotationFailedStory.play = async ({ canvasElement }) => {
   const canvas = within(canvasElement);
   await chooseCouncil(canvasElement);
   await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
-  await canvas.findByText('The vault did not answer.');
+  await canvas.findByText(i18n.t('errors.vault.request_timeout'));
   // Resuming tries again, and lands on the same screen while it keeps failing.
   await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
   await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
-  await canvas.findByText('The vault did not answer.');
+  await canvas.findByText(i18n.t('errors.vault.request_timeout'));
 };
 export const CouncilRecoveryRotationFailed = prepareStory(CouncilRotationFailedStory);
 
-// The council recovered an older vault: cancelling the prompt that would bring
-// it back leaves the user on the screen that offers it again.
-const CouncilReactivateCancelledStory = Template.bind({});
-CouncilReactivateCancelledStory.args = { ...ExistingUserStory.args };
-CouncilReactivateCancelledStory.parameters = {
+// Rare: after losing access the user created a new vault, then asked the council
+// for the older one. Bringing it back is confirmed; keeping the current vault
+// instead closes the request, which is confirmed too.
+const olderVaultRecovered = async (type: string, payload?: unknown) =>
+  type === MSG_VAULT_COUNCIL_COMPLETE_RECOVERY
+    ? {
+        publicKey: samplePublicKey.encryption_public_key,
+        signaturePublicKey: samplePublicKey.signature_public_key,
+        isActiveVault: false,
+        vaultCreatedAtMillis: Date.UTC(2025, 2, 1),
+        contributors: [],
+      }
+    : defaultVaultRequest(type, payload);
+
+const CouncilKeepCurrentVaultStory = Template.bind({});
+CouncilKeepCurrentVaultStory.args = { ...ExistingUserStory.args };
+CouncilKeepCurrentVaultStory.parameters = {
   msw: { handlers: councilReleasedHandlers },
-  encryption: {
-    request: async (type: string, payload?: unknown) =>
-      type === MSG_VAULT_COUNCIL_COMPLETE_RECOVERY
-        ? {
-            publicKey: samplePublicKey.encryption_public_key,
-            signaturePublicKey: samplePublicKey.signature_public_key,
-            isActiveVault: false,
-            vaultCreatedAtMillis: Date.UTC(2025, 2, 1),
-            contributors: [],
-          }
-        : defaultVaultRequest(type, payload),
-  },
+  encryption: { request: olderVaultRecovered },
 };
-CouncilReactivateCancelledStory.play = async ({ canvasElement }) => {
+CouncilKeepCurrentVaultStory.play = async ({ canvasElement }) => {
   await chooseCouncil(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
-  await userEvent.click(await body.findByRole('button', { name: i18n.t('onboarding.btn_cancel') }));
-  await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
-  // Continuing shows the prompt again.
-  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
-  await body.findByRole('button', { name: i18n.t('onboarding.reactivate_confirm_button') });
+  // The request's date first, so the person recognizes what they asked for.
+  await body.findByText(i18n.t('council.reactivate_requested', { date: new Date(Date.UTC(2026, 9, 28, 9)) }));
+  await body.findByRole('button', { name: i18n.t('council.reactivate_confirm_button') });
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_button') }));
+  await body.findByText(i18n.t('council.keep_current_body'));
+  await body.findByRole('button', { name: i18n.t('council.keep_current_confirm') });
 };
-export const CouncilRecoveryReactivateCancelled = prepareStory(CouncilReactivateCancelledStory);
+export const CouncilRecoveryKeepCurrentVault = prepareStory(CouncilKeepCurrentVaultStory);
+
+// Confirmed: the request is closed. This browser never held the current vault
+// (the council is only offered without one), so it is back to the ways to
+// restore it, and says so.
+const refused = fn();
+const CouncilKeptCurrentVaultStory = Template.bind({});
+CouncilKeptCurrentVaultStory.args = { ...ExistingUserStory.args };
+CouncilKeptCurrentVaultStory.parameters = {
+  msw: {
+    handlers: [
+      ...councilReleasedHandlers,
+      handlePostApiCouncilRecoveryRequestsByIdRefuse(({ params }) => {
+        refused(params.id);
+
+        return Response.json({ refused: true });
+      }),
+    ],
+  },
+  encryption: { request: olderVaultRecovered },
+};
+CouncilKeptCurrentVaultStory.play = async ({ canvasElement }) => {
+  refused.mockClear();
+  await chooseCouncil(canvasElement);
+  const body = within(canvasElement.ownerDocument.body);
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_button') }));
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_confirm') }));
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  // This browser never held the current vault: it still has to be restored here.
+  await within(canvasElement).findByText(i18n.t('council.kept_current_notice'));
+  await waitFor(() => expect(refused).toHaveBeenCalledWith(COUNCIL_REQUEST_ID));
+};
+export const CouncilRecoveryKeptCurrentVault = prepareStory(CouncilKeptCurrentVaultStory);
+
+// This browser already holds the vault in use (created after the request): the
+// settings open the council's request, and the question says so.
+const CouncilOlderVaultHereStory = Template.bind({});
+CouncilOlderVaultHereStory.args = { ...ExistingUserStory.args, councilForOlderVault: true };
+CouncilOlderVaultHereStory.parameters = {
+  msw: { handlers: councilReleasedHandlers },
+  encryption: { request: olderVaultRecovered },
+};
+CouncilOlderVaultHereStory.play = async ({ canvasElement }) => {
+  const body = within(canvasElement.ownerDocument.body);
+  await body.findByText(i18n.t('council.reactivate_confirm_here', { date: new Date(Date.UTC(2025, 2, 1)), active: new Date(Date.UTC(2026, 0, 12)) }));
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_button') }));
+  await body.findByText(i18n.t('council.keep_current_body_here'));
+};
+export const CouncilRecoveryOlderVaultHere = prepareStory(CouncilOlderVaultHereStory);
 
 // This browser held the vault but forgot it after a year without use: the same
 // choice, explained.
@@ -411,6 +479,33 @@ RestoredStory.play = async ({ canvasElement }) => {
 RestoredStory.parameters = { ...RestoredStory.parameters, design: consoleFrame('4882-22604') };
 export const Restored = prepareStory(RestoredStory);
 
+// Back in with the phrase while the council worked on a request for this vault:
+// the server closed it, and the user is told here.
+const RestoredCouncilClosedStory = Template.bind({});
+RestoredCouncilClosedStory.args = { ...ExistingUserStory.args };
+RestoredCouncilClosedStory.parameters = {
+  ...ExistingUserStory.parameters,
+  encryption: {
+    restoreFromPhrase: async () => ({
+      publicKey: samplePublicKey.encryption_public_key,
+      signaturePublicKey: samplePublicKey.signature_public_key,
+      isActiveVault: true,
+      vaultCreatedAtMillis: samplePublicKey.created_at_millis,
+      emergencyUnlock: false,
+      councilRequestClosed: true,
+    }),
+  },
+};
+RestoredCouncilClosedStory.play = async ({ canvasElement }) => {
+  await playSubmitPhrase(canvasElement);
+  const body = within(canvasElement.ownerDocument.body);
+  await body.findByText(i18n.t('council.closed_body'));
+  await body.findByRole('button', { name: i18n.t('council.closed_ok') });
+  // Over the usual end of the restore, which stays.
+  await within(canvasElement).findByText(i18n.t('onboarding.restored_description'));
+};
+export const RestoredCouncilRequestClosed = prepareStory(RestoredCouncilClosedStory);
+
 const LastResortStory = Template.bind({});
 LastResortStory.args = { ...ExistingUserStory.args };
 // No frame of its own in the design: the existing user's mocks without their link.
@@ -430,6 +525,43 @@ LastResortStory.play = async ({ canvasElement }) => {
 };
 
 export const LastResort = prepareStory(LastResortStory);
+
+// Starting over while a request to the council runs: it carries on for the vault replaced.
+const LastResortCouncilStory = Template.bind({});
+LastResortCouncilStory.args = { ...ExistingUserStory.args };
+LastResortCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiPublicKeys(({ request }) => {
+        const userIds = new URL(request.url).searchParams.getAll('user_ids');
+
+        return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
+      }),
+      handleGetApiCouncilRecoveryRequestsMine({
+        body: {
+          request: {
+            id: COUNCIL_REQUEST_ID,
+            council_label: COUNCIL_LABEL,
+            stage: 'meet',
+            ephemeral_fingerprint: sampleFingerprint,
+            created_at_millis: Date.UTC(2026, 9, 28, 9),
+            expires_at_millis: Date.UTC(2026, 10, 4, 9),
+            meet: [],
+            vault_active: true,
+            vault_created_at_millis: Date.UTC(2026, 0, 12),
+          },
+        },
+      }),
+    ],
+  },
+};
+LastResortCouncilStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_last_resort')));
+  await within(canvasElement).findByText(i18n.t('council.last_resort_request_open'));
+};
+export const LastResortWithCouncilRequest = prepareStory(LastResortCouncilStory);
 
 // The recovery phrase step: the keys are minted locally and the confirmation
 // stays locked until the phrase left the screen one way or another.
@@ -486,7 +618,7 @@ NewUserWithoutCouncilStory.parameters = {
       ...newUserHandlers,
       handlePostApiPublicKeysRegisterInit({ body: { challenge_id: '7f1c2b3a-0000-4000-8000-00000000000a', ciphertext: 'Y2lwaGVydGV4dA' } }),
       handlePostApiVault({ body: { revision: 1 } }),
-      handleGetApiCouncilsForMe({ body: { council: null, escrow: null } }),
+      handleGetApiCouncilsForMe({ body: { council: null, escrow: null, active_vault_created_at_millis: null, vaults: [] } }),
     ],
   },
 };

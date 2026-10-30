@@ -164,7 +164,11 @@ NewDeviceAdoptedStory.parameters = {
     handlers: [
       handlePostApiVaultApprovalsRequest({ body: { request_id: 'req-1', device_public_key: samplePublicKey.encryption_public_key } }),
       handleGetApiVaultApprovalsByRequestId({
-        body: { wrapped_device_bootstrap: samplePublicKey.key_binding_signature, device_public_key: samplePublicKey.encryption_public_key },
+        body: {
+          wrapped_device_bootstrap: samplePublicKey.key_binding_signature,
+          device_public_key: samplePublicKey.encryption_public_key,
+          council_request_closed: false,
+        },
       }),
     ],
   },
@@ -176,6 +180,31 @@ NewDeviceAdoptedStory.play = async ({ canvasElement }) => {
 
 NewDeviceAdoptedStory.parameters = { ...NewDeviceAdoptedStory.parameters, design: consoleFrame('4882-22604') };
 export const NewDeviceAdopted = prepareStory(NewDeviceAdoptedStory);
+
+// The vault came from another device while the council worked on a request for
+// it: the server closed it, and this device says so.
+const NewDeviceCouncilClosedStory = Template.bind({});
+NewDeviceCouncilClosedStory.args = { ...fromOnboardingArgs };
+NewDeviceCouncilClosedStory.parameters = {
+  encryption: { hasKeys: async () => ({ hasKeys: false }) },
+  msw: {
+    handlers: [
+      handlePostApiVaultApprovalsRequest({ body: { request_id: 'req-1', device_public_key: samplePublicKey.encryption_public_key } }),
+      handleGetApiVaultApprovalsByRequestId({
+        body: {
+          wrapped_device_bootstrap: samplePublicKey.key_binding_signature,
+          device_public_key: samplePublicKey.encryption_public_key,
+          council_request_closed: true,
+        },
+      }),
+    ],
+  },
+};
+NewDeviceCouncilClosedStory.play = async ({ canvasElement }) => {
+  const body = within(canvasElement.ownerDocument.body);
+  await body.findByText(i18n.t('council.closed_body'), {}, { timeout: 10000 });
+};
+export const NewDeviceCouncilRequestClosed = prepareStory(NewDeviceCouncilClosedStory);
 
 const ErroredStory = Template.bind({});
 ErroredStory.args = { ...fromOnboardingArgs };

@@ -12,6 +12,7 @@ import {
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_DISCARD_RECOVERY,
   MSG_VAULT_COUNCIL_MARK_VERIFIED,
   MSG_VAULT_COUNCIL_REACTIVATE,
   MSG_VAULT_COUNCIL_REQUEST_KEY,
@@ -86,6 +87,7 @@ import {
   handleCouncilRequestKey,
   handleCouncilReshareBatch,
   handleCreateCouncilEscrow,
+  handleDiscardCouncilRecovery,
   handleMarkCouncilVerified,
   handleReactivateCouncilVault,
   handleSignCouncilRoster,
@@ -279,6 +281,8 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       return handleCompleteCouncilRecovery(userId, payload as Parameters<typeof handleCompleteCouncilRecovery>[1]);
     case MSG_VAULT_COUNCIL_REACTIVATE:
       return handleReactivateCouncilVault(userId, payload as Parameters<typeof handleReactivateCouncilVault>[1]);
+    case MSG_VAULT_COUNCIL_DISCARD_RECOVERY:
+      return handleDiscardCouncilRecovery(userId);
     case MSG_VAULT_COUNCIL_CONTRIBUTE:
       return handleCouncilContribute(userId, payload as Parameters<typeof handleCouncilContribute>[1]);
     case MSG_VAULT_COUNCIL_SIGN_ROSTER:

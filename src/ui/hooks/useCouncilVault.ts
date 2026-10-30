@@ -7,6 +7,7 @@ import {
   MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
   MSG_VAULT_COUNCIL_CONTRIBUTE,
   MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_DISCARD_RECOVERY,
   MSG_VAULT_COUNCIL_MARK_VERIFIED,
   MSG_VAULT_COUNCIL_REACTIVATE,
   MSG_VAULT_COUNCIL_REQUEST_KEY,
@@ -68,6 +69,7 @@ export function useCouncilVault() {
         }>,
       reactivate: (idToken: string) =>
         request(MSG_VAULT_COUNCIL_REACTIVATE, { idToken }) as Promise<{ publicKey: string; signaturePublicKey: string }>,
+      discardRecovery: () => request(MSG_VAULT_COUNCIL_DISCARD_RECOVERY) as Promise<{ discarded: boolean }>,
       contribute: (detail: CustodianRequestDetail, inPerson: boolean, meetingCode?: string) =>
         request(MSG_VAULT_COUNCIL_CONTRIBUTE, { detail, inPerson, meetingCode }) as Promise<CouncilContributionBody>,
       signRoster: (councilId: string, chain: RosterVersionWire[], proposal: RosterVersionWire) =>

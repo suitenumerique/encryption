@@ -1,8 +1,10 @@
 import { Button, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { History, ShieldCheck } from '@gouvfr-lasuite/ui-components/icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
+  type CouncilForMe,
   type MyCouncilRequest,
   askCouncilRecovery,
   fetchCouncilForMe,
@@ -12,6 +14,7 @@ import {
 } from '@encryption/src/ui/api/council-client';
 import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { FingerprintBoxes, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
+import { OptionCard } from '@encryption/src/ui/components/layout/OptionCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCouncilAction } from '@encryption/src/ui/hooks/useCouncilAction';
@@ -28,6 +31,8 @@ export interface CouncilRecoveryResult {
   publicKey: string;
   isActiveVault: boolean;
   vaultCreatedAtMillis: number;
+  /** When the user asked the council. */
+  requestedAtMillis: number;
   contributors: Array<{ name: string | null; inPerson: boolean }>;
 }
 
@@ -40,7 +45,7 @@ interface CouncilRecoveryProps extends CouncilAuthProps {
 
 type View =
   | { kind: 'loading' }
-  | { kind: 'intro'; council: string }
+  | { kind: 'intro'; council: string; vaults: CouncilForMe['vaults'] }
   | { kind: 'unavailable' }
   | { kind: 'request'; request: MyCouncilRequest; fingerprint: string; qr: string | null }
   | { kind: 'other-browser'; request: MyCouncilRequest }
@@ -72,9 +77,11 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
   const recovering = useRef(false);
   const [revealCode, setRevealCode] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // Which vault to ask for, when the council holds more than one: the current one by default.
+  const [escrowId, setEscrowId] = useState<string | null>(null);
 
   const recover = useCallback(
-    async (requestId: string) => {
+    async (request: MyCouncilRequest) => {
       if (recovering.current) return;
 
       recovering.current = true;
@@ -82,9 +89,9 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
 
       try {
         const result = await withFreshIdToken(getIdToken, async (idToken) =>
-          vault.completeRecovery(await fetchReleasedShares(idToken, requestId), idToken)
+          vault.completeRecovery(await fetchReleasedShares(idToken, request.id), idToken)
         );
-        onRecovered(result);
+        onRecovered({ ...result, requestedAtMillis: request.created_at_millis });
       } catch (err) {
         recovering.current = false;
         fail(err);
@@ -101,14 +108,14 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
       if (!request) {
         // No request open: a key this browser kept from an earlier one is stale.
         await vault.requestKey(null);
-        const { council, escrow } = await withFreshIdToken(getIdToken, fetchCouncilForMe);
-        setView(council && escrow && escrow.health.status !== 'lost' ? { kind: 'intro', council: council.label } : { kind: 'unavailable' });
+        const { council, vaults } = await withFreshIdToken(getIdToken, fetchCouncilForMe);
+        setView(council && vaults.length > 0 ? { kind: 'intro', council: council.label, vaults } : { kind: 'unavailable' });
 
         return;
       }
 
       if (request.stage === 'released') {
-        await recover(request.id);
+        await recover(request);
 
         return;
       }
@@ -164,10 +171,10 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
     () =>
       run(async () => {
         const { ephemeralPublicKey } = await vault.startRequest();
-        await withFreshIdToken(getIdToken, (idToken) => askCouncilRecovery(idToken, ephemeralPublicKey));
+        await withFreshIdToken(getIdToken, (idToken) => askCouncilRecovery(idToken, ephemeralPublicKey, escrowId ?? undefined));
         await load();
       }),
-    [run, vault, getIdToken, load]
+    [run, vault, getIdToken, load, escrowId]
   );
 
   const refuse = useCallback(
@@ -190,6 +197,9 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
   }
 
   if (view.kind === 'intro') {
+    const chosen = escrowId ?? view.vaults[0].escrow_id;
+    const date = (millis: number) => new Date(millis);
+
     return (
       <Screen
         back={back}
@@ -199,6 +209,7 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
           <>
             <p>{t('council.recovery_intro')}</p>
             <p>{t('council.recovery_intro_meeting')}</p>
+            {view.vaults.length > 1 && <p>{t('council.vault_choice')}</p>}
           </>
         }
         banner={banner}
@@ -211,6 +222,26 @@ export function CouncilRecovery({ getIdToken, onBack, onRecovered, ...auth }: Co
         <div className={styles.card}>
           <Identity name={view.council} />
         </div>
+        {/* Someone who started over may want back what came before, not the vault of the last few hours. */}
+        {view.vaults.length > 1 && (
+          <>
+            <div className={styles.options} role="radiogroup" aria-label={t('council.vault_choice')}>
+              {view.vaults.map((v) => (
+                <OptionCard
+                  key={v.escrow_id}
+                  name="council-vault"
+                  selected={chosen === v.escrow_id}
+                  onSelect={() => setEscrowId(v.escrow_id)}
+                  icon={v.disabled_at_millis === null ? <ShieldCheck aria-hidden size={20} /> : <History aria-hidden size={20} />}
+                  title={
+                    v.disabled_at_millis === null ? t('council.vault_current') : t('council.vault_retired', { date: date(v.disabled_at_millis) })
+                  }
+                  description={t('council.vault_created', { date: date(v.created_at_millis) })}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </Screen>
     );
   }

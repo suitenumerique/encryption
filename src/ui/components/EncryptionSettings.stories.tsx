@@ -7,6 +7,7 @@ import { playFindButton, playFindHeading } from '@encryption/.storybook/testing'
 import i18n from '@encryption/src/i18n';
 import {
   handleDeleteApiEmergencyAccessById,
+  handleGetApiCouncilRecoveryRequestsMine,
   handleGetApiCouncilsForMe,
   handleGetApiCouncilsMine,
   handleGetApiEmergencyAccessTrusted,
@@ -98,24 +99,7 @@ HomeWithCouncilStory.parameters = {
       handleGetApiCouncilsMine({
         body: {
           mfa_enforced: true,
-          councils: [
-            custodianCouncil({
-              requests: [
-                {
-                  id: '5d6e7f80-0000-4000-8000-000000000001',
-                  user_name: 'Ursula Roux',
-                  user_email: 'ursula.roux@numerique.gouv.fr',
-                  created_at_millis: 1_760_000_000_000,
-                  expires_at_millis: 1_760_600_000_000,
-                  stage: 'collecting',
-                  contributors: [],
-                  threshold: 2,
-                  my_contribution: 'none',
-                  can_contribute: true,
-                },
-              ],
-            }),
-          ],
+          councils: [custodianCouncil({ requests_count: 1, requests_to_handle: 1 })],
         },
       }),
     ],
@@ -130,6 +114,43 @@ HomeWithCouncilStory.play = async ({ canvasElement }) => {
   await canvas.findByText(i18n.t('council.chip_unverified'));
 };
 export const HomeWithCouncil = prepareStory(HomeWithCouncilStory);
+
+// This browser holds the vault in use, created after the user asked the council
+// for an older one: the request goes on from here, and its answer is announced.
+const openCouncilRequest = fn();
+const HomeOlderVaultRequestStory = Template.bind({});
+HomeOlderVaultRequestStory.args = { ...baseArgs, onOpenCouncilRequest: openCouncilRequest };
+HomeOlderVaultRequestStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      handleGetApiCouncilRecoveryRequestsMine({
+        body: {
+          request: {
+            id: '5d6e7f80-0000-4000-8000-000000000001',
+            council_label: 'Équipe sécurité DINUM',
+            stage: 'released',
+            ephemeral_fingerprint: null,
+            created_at_millis: Date.UTC(2026, 9, 28, 9),
+            expires_at_millis: Date.UTC(2026, 10, 4, 9),
+            meet: [],
+            vault_active: false,
+            vault_created_at_millis: Date.UTC(2025, 2, 1),
+          },
+        },
+      }),
+    ],
+  },
+};
+HomeOlderVaultRequestStory.play = async ({ canvasElement }) => {
+  openCouncilRequest.mockClear();
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.request_banner_released', { date: new Date(Date.UTC(2025, 2, 1)) }));
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('council.request_banner_open') }));
+  await expect(openCouncilRequest).toHaveBeenCalledOnce();
+};
+export const HomeOlderVaultRequest = prepareStory(HomeOlderVaultRequestStory);
 
 // An unverified council: the row offers its verification rather than opening the council.
 const HomeCouncilUnverifiedStory = Template.bind({});

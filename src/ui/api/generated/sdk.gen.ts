@@ -19,6 +19,9 @@ import type {
   GetApiCouncilRecoveryRequestsByIdSharesResponses,
   GetApiCouncilRecoveryRequestsMineData,
   GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsByCouncilIdRequestsData,
+  GetApiCouncilsByCouncilIdRequestsErrors,
+  GetApiCouncilsByCouncilIdRequestsResponses,
   GetApiCouncilsByCouncilIdSharesToCheckData,
   GetApiCouncilsByCouncilIdSharesToCheckErrors,
   GetApiCouncilsByCouncilIdSharesToCheckResponses,
@@ -570,6 +573,14 @@ export const getApiCouncilRecoveryRequestsByIdShares = <ThrowOnError extends boo
 ): RequestResult<GetApiCouncilRecoveryRequestsByIdSharesResponses, GetApiCouncilRecoveryRequestsByIdSharesErrors, ThrowOnError> =>
   (options.client ?? client).get<GetApiCouncilRecoveryRequestsByIdSharesResponses, GetApiCouncilRecoveryRequestsByIdSharesErrors, ThrowOnError>({
     url: '/api/council-recovery/requests/{id}/shares',
+    ...options,
+  });
+
+export const getApiCouncilsByCouncilIdRequests = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilsByCouncilIdRequestsData, ThrowOnError>
+): RequestResult<GetApiCouncilsByCouncilIdRequestsResponses, GetApiCouncilsByCouncilIdRequestsErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilsByCouncilIdRequestsResponses, GetApiCouncilsByCouncilIdRequestsErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/requests',
     ...options,
   });
 

@@ -6,7 +6,7 @@ import { requestFingerprint } from '@encryption/src/crypto/council';
 import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { prisma } from '@encryption/src/prisma/client';
 import { configuredCouncils, councilLabel, escrowRecordWire, serializable, sha256 } from '@encryption/src/server/council-core';
-import { closeRequest, escrowForRecovery, healthOf, liveSlots, openRequestOf, settleRequest } from '@encryption/src/server/council-requests-core';
+import { closeRequest, escrowsOf, healthOf, liveSlots, openRequestOf, settleRequest } from '@encryption/src/server/council-requests-core';
 import { sendCouncilRecoveryMeeting, sendCouncilRecoveryRequested, sendCouncilRecoveryToApprove } from '@encryption/src/server/email/council';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
@@ -45,7 +45,8 @@ export function userRequestRoutes(app: FastifyInstance): void {
     {
       ...SKIP_SIG,
       schema: {
-        body: z.object({ ephemeral_public_key: z.string().min(1).max(4096) }),
+        // `escrow_id` picks one of the vaults `/api/councils/for-me` lists; without it, the current vault's.
+        body: z.object({ ephemeral_public_key: z.string().min(1).max(4096), escrow_id: z.string().uuid().optional() }),
         response: { 200: z.object({ id: z.string().uuid(), expires_at_millis: z.number().int() }), ...errorResponses(400, 404, 409, 429) },
       },
     },
@@ -53,7 +54,8 @@ export function userRequestRoutes(app: FastifyInstance): void {
       assertUserId(request);
       const userId = request.userId;
 
-      const escrow = await escrowForRecovery(userId);
+      const escrows = await escrowsOf(userId);
+      const escrow = (request.body.escrow_id ? escrows.find((e) => e.id === request.body.escrow_id) : escrows[0]) ?? null;
       if (!escrow) return reply.status(404).send({ code: API_ERROR_COUNCIL_NO_ESCROW });
       if ((await healthOf(escrow)).status === 'lost') return reply.status(409).send({ code: API_ERROR_COUNCIL_ESCROW_UNRECOVERABLE });
       if (await openRequestOf(userId)) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
@@ -145,6 +147,9 @@ export function userRequestRoutes(app: FastifyInstance): void {
                 expires_at_millis: z.number().int(),
                 meet: z.array(z.object({ name: z.string() })),
                 ephemeral_fingerprint: z.string().nullable(),
+                // The vault it gives back: the one in use, or an older one.
+                vault_active: z.boolean(),
+                vault_created_at_millis: z.number().int(),
               })
               .nullable(),
           }),
@@ -159,7 +164,10 @@ export function userRequestRoutes(app: FastifyInstance): void {
       const settled = await settleRequest(open.id, Date.now());
       if (!settled || settled.stage === 'expired' || settled.stage === 'aborted') return { request: null };
 
-      const escrow = await prisma.councilEscrow.findUniqueOrThrow({ where: { id: open.escrowId }, include: { capsules: true } });
+      const escrow = await prisma.councilEscrow.findUniqueOrThrow({
+        where: { id: open.escrowId },
+        include: { capsules: true, credential: { select: { vault: { select: { disabledAt: true, createdAt: true } } } } },
+      });
       const stage = settled.stage === 'released' ? 'released' : settled.stage === 'awaiting_meeting' ? 'meet' : 'in_progress';
 
       const contributed = new Set(settled.facts.contributions.map((c) => c.slot));
@@ -179,6 +187,8 @@ export function userRequestRoutes(app: FastifyInstance): void {
           expires_at_millis: open.expiresAt.getTime(),
           meet,
           ephemeral_fingerprint: await requestFingerprint(new Uint8Array(open.ephemeralPublicKey)).catch(() => null),
+          vault_active: escrow.credential.vault.disabledAt === null,
+          vault_created_at_millis: escrow.credential.vault.createdAt.getTime(),
         },
       };
     }

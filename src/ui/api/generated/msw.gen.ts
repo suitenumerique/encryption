@@ -9,6 +9,7 @@ import type {
   GetApiCouncilRecoveryRequestsByIdCustodianResponses,
   GetApiCouncilRecoveryRequestsByIdSharesResponses,
   GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsByCouncilIdRequestsResponses,
   GetApiCouncilsByCouncilIdSharesToCheckResponses,
   GetApiCouncilsForMeResponses,
   GetApiCouncilsMineResponses,
@@ -1853,6 +1854,52 @@ export function handleGetApiCouncilRecoveryRequestsByIdShares(
   );
 }
 
+export type HandleGetApiCouncilsByCouncilIdRequestsResponse = {
+  body: GetApiCouncilsByCouncilIdRequestsResponses[200];
+  status?: 200;
+};
+
+/**
+ * Handler for the `GET /api/councils/{councilId}/requests` operation.
+ */
+export function handleGetApiCouncilsByCouncilIdRequests(
+  response?:
+    | HandleGetApiCouncilsByCouncilIdRequestsResponse
+    | HttpResponseResolver<
+        {
+          councilId: string;
+        },
+        never
+      >,
+  options?: RequestHandlerOptions
+): HttpHandler {
+  return http.get<
+    {
+      councilId: string;
+    },
+    never
+  >(
+    `${options?.baseUrl ?? '*'}/api/councils/:councilId/requests`,
+    (info) => {
+      if (typeof response === 'function') {
+        return response(info);
+      }
+      const body = response?.body;
+      if (body !== undefined) {
+        return HttpResponse.json(body, { status: response?.status ?? 200 });
+      }
+      if (options?.responseFallback === 'passthrough') {
+        return;
+      }
+      return new Response('Not Implemented', {
+        status: 501,
+        statusText: 'Not Implemented',
+      });
+    },
+    options
+  );
+}
+
 export type HandleGetApiCouncilRecoveryRequestsByIdCustodianResponse = {
   body: GetApiCouncilRecoveryRequestsByIdCustodianResponses[200];
   status?: 200;
@@ -2499,6 +2546,10 @@ export type MswHandlerFactories = {
    */
   getApiCouncilRecoveryRequestsByIdShares: typeof handleGetApiCouncilRecoveryRequestsByIdShares;
   /**
+   * Handler for the `GET /api/councils/{councilId}/requests` operation.
+   */
+  getApiCouncilsByCouncilIdRequests: typeof handleGetApiCouncilsByCouncilIdRequests;
+  /**
    * Handler for the `GET /api/council-recovery/requests/{id}/custodian` operation.
    */
   getApiCouncilRecoveryRequestsByIdCustodian: typeof handleGetApiCouncilRecoveryRequestsByIdCustodian;
@@ -2601,6 +2652,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
     getApiCouncilRecoveryRequestsMine: wrap(handleGetApiCouncilRecoveryRequestsMine),
     postApiCouncilRecoveryRequestsByIdRefuse: wrap(handlePostApiCouncilRecoveryRequestsByIdRefuse),
     getApiCouncilRecoveryRequestsByIdShares: wrap(handleGetApiCouncilRecoveryRequestsByIdShares),
+    getApiCouncilsByCouncilIdRequests: wrap(handleGetApiCouncilsByCouncilIdRequests),
     getApiCouncilRecoveryRequestsByIdCustodian: wrap(handleGetApiCouncilRecoveryRequestsByIdCustodian),
     postApiCouncilRecoveryRequestsByIdContribute: wrap(handlePostApiCouncilRecoveryRequestsByIdContribute),
     postApiCouncilRecoveryRequestsByIdAbort: wrap(handlePostApiCouncilRecoveryRequestsByIdAbort),
@@ -2644,6 +2696,7 @@ export function createMswHandlers(config: RequestHandlerOptions = {}): CreateMsw
       invoke(pick.postApiEmergencyAccessByIdCancel, overrides.postApiEmergencyAccessByIdCancel),
       invoke(pick.postApiEmergencyAccessByIdReject, overrides.postApiEmergencyAccessByIdReject),
       invoke(pick.postApiEmergencyAccessByIdRecover, overrides.postApiEmergencyAccessByIdRecover),
+      invoke(pick.getApiCouncilsByCouncilIdRequests, overrides.getApiCouncilsByCouncilIdRequests),
       invoke(pick.postApiCouncilsByCouncilIdReshare, overrides.postApiCouncilsByCouncilIdReshare),
       invoke(pick.getApiCouncilsByCouncilIdSharesToCheck, overrides.getApiCouncilsByCouncilIdSharesToCheck),
       invoke(pick.postApiCouncilsByCouncilIdSharesChecked, overrides.postApiCouncilsByCouncilIdSharesChecked),

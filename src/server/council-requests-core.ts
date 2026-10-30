@@ -34,15 +34,16 @@ export type EscrowWithParts = Prisma.CouncilEscrowGetPayload<{
   include: { capsules: true; credential: { include: { vault: true } }; signedRosterVersion: true };
 }>;
 
-/** The escrow a recovery request of this user is about: the one on their current vault, else their latest. */
-export async function escrowForRecovery(userId: string): Promise<EscrowWithParts | null> {
+/** Every escrow of this user (one per vault): the current vault's first, then the most recently retired. */
+export async function escrowsOf(userId: string): Promise<EscrowWithParts[]> {
   const escrows = await prisma.councilEscrow.findMany({
     where: { userId },
     include: { capsules: true, credential: { include: { vault: true } }, signedRosterVersion: true },
-    orderBy: { createdAt: 'desc' },
   });
 
-  return escrows.find((e) => e.credential.vault.disabledAt === null) ?? escrows[0] ?? null;
+  const retiredAt = (e: EscrowWithParts) => e.credential.vault.disabledAt?.getTime() ?? Number.POSITIVE_INFINITY;
+
+  return escrows.sort((a, b) => retiredAt(b) - retiredAt(a));
 }
 
 export async function healthOf(escrow: EscrowWithParts | Prisma.CouncilEscrowGetPayload<{ include: { capsules: true } }>): Promise<EscrowHealth> {
@@ -155,6 +156,23 @@ export async function closeRequest(requestId: string): Promise<boolean> {
     const row = await prisma.councilRequest.findUnique({ where: { id: requestId }, select: { escrowId: true } });
     if (row) await afterRequestClosed(row.escrowId);
   }
+
+  return closed;
+}
+
+/**
+ * The user got back into this vault without the council (their phrase, a
+ * trusted contact's, another device): a request for it no longer has a
+ * purpose, so it is closed like a refusal. True when one was.
+ */
+export async function closeRequestsForVault(userId: string, vaultId: string): Promise<boolean> {
+  const open = await prisma.councilRequest.findMany({
+    where: { userId, status: { in: ['open', 'released'] }, escrow: { credential: { vaultId } } },
+    select: { id: true },
+  });
+
+  let closed = false;
+  for (const { id } of open) closed = (await closeRequest(id)) || closed;
 
   return closed;
 }

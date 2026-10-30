@@ -3,11 +3,14 @@ import { ChevronLeft, ChevronRight, Filter, User } from '@gouvfr-lasuite/ui-comp
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { REQUEST_FILTERS, type RequestFilter } from '@encryption/src/shared/council-request-filters';
 import {
   type CouncilRequestSummary,
+  type CouncilRequestsPage,
   type CouncilsMine,
   type CustodianCouncil,
   abortCouncilRequest,
+  fetchCouncilRequests,
   fetchMyCouncils,
   fetchReshareBatch,
   fetchSharesToCheck,
@@ -22,16 +25,7 @@ import { CouncilHandOver } from '@encryption/src/ui/components/CouncilHandOver';
 import { CouncilRequestRow } from '@encryption/src/ui/components/CouncilRequestRow';
 import { CouncilReshareStart } from '@encryption/src/ui/components/CouncilReshareStart';
 import { CouncilSignChange } from '@encryption/src/ui/components/CouncilSignChange';
-import {
-  REQUESTS_PAGE_SIZE,
-  REQUEST_FILTERS,
-  type RequestFilter,
-  countByFilter,
-  membershipChanges,
-  pendingActions,
-  selectRequests,
-  sortCouncils,
-} from '@encryption/src/ui/components/council-custodian-logic';
+import { REQUESTS_PAGE_SIZE, membershipChanges, pendingActions, sortCouncils } from '@encryption/src/ui/components/council-custodian-logic';
 import { rosterHead } from '@encryption/src/ui/components/council-roster';
 import { Chip, Identity } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
@@ -434,7 +428,11 @@ export function CouncilCustodian({ getIdToken, userId, onBack, ...auth }: Counci
 
           <CouncilRequests
             key={council.council_id}
-            requests={council.requests}
+            getIdToken={getIdToken}
+            councilId={council.council_id}
+            // A new answer of /mine (after an action, a return to the page) reloads the list too.
+            reload={council}
+            onError={fail}
             busy={busy}
             onRemote={(request) => setView({ kind: 'hand-over', councilId: council.council_id, request, mode: 'remote' })}
             onInPerson={(request) => setView({ kind: 'hand-over', councilId: council.council_id, request, mode: 'in-person' })}
@@ -472,19 +470,28 @@ export function CouncilCustodian({ getIdToken, userId, onBack, ...auth }: Counci
   );
 }
 
+// Typing in the search asks the server once the person pauses.
+const SEARCH_DELAY_MS = 300;
+
 /**
  * A council's recovery requests, those the custodian can act on first. A long
- * list gets a search, a filter and pages, all in the browser: the server already
- * sends every live request of the council.
+ * list gets a search, a filter and pages; the server applies all three and
+ * sends one page.
  */
 function CouncilRequests({
-  requests,
+  getIdToken,
+  councilId,
+  reload,
+  onError,
   busy,
   onRemote,
   onInPerson,
   onAbort,
 }: {
-  requests: CouncilRequestSummary[];
+  getIdToken: () => Promise<string | null>;
+  councilId: string;
+  reload: unknown;
+  onError: (err: unknown) => void;
   busy: string | null;
   onRemote: (request: CouncilRequestSummary) => void;
   onInPerson: (request: CouncilRequestSummary) => void;
@@ -492,29 +499,55 @@ function CouncilRequests({
 }) {
   const { t } = useTranslation('common');
   const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<RequestFilter>('all');
   const [page, setPage] = useState(1);
   const [filtering, setFiltering] = useState(false);
-  // Read once per render of the list: "open for long" needs a clock, not a live one.
-  const [now] = useState(() => Date.now());
+  const [list, setList] = useState<CouncilRequestsPage | null>(null);
 
-  const long = requests.length > REQUESTS_PAGE_SIZE;
-  const selected = selectRequests(requests, filter, query, now);
-  const pagesCount = Math.max(1, Math.ceil(selected.length / REQUESTS_PAGE_SIZE));
-  const current = Math.min(page, pagesCount);
-  const shown = selected.slice((current - 1) * REQUESTS_PAGE_SIZE, current * REQUESTS_PAGE_SIZE);
-  const counts = countByFilter(requests, now);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(query), SEARCH_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    let current = true;
+    void (async () => {
+      try {
+        const next = await withFreshIdToken(getIdToken, (idToken) =>
+          fetchCouncilRequests(idToken, councilId, { page, page_size: REQUESTS_PAGE_SIZE, filter, query: search })
+        );
+        if (!current) return;
+        // The last request of the last page went (handled, stopped): show the new last page.
+        if (next.items.length === 0 && next.total_count > 0 && page > 1) setPage(Math.ceil(next.total_count / REQUESTS_PAGE_SIZE));
+        else setList(next);
+      } catch (err) {
+        if (current) onError(err);
+      }
+    })();
+
+    return () => {
+      current = false;
+    };
+  }, [getIdToken, councilId, page, filter, search, reload, onError]);
+
+  if (!list) return null;
+
+  const { counts } = list;
+  const long = counts.all > REQUESTS_PAGE_SIZE;
+  const pagesCount = Math.max(1, Math.ceil(list.total_count / REQUESTS_PAGE_SIZE));
   const filterLabel = (value: RequestFilter) =>
     t(`council.requests_filter_${value.replace('-', '_')}` as 'council.requests_filter_all', { count: counts[value] });
 
   return (
     <div className={styles.cardBlock}>
       <p className={styles.cardBlockTitle}>
-        {filter !== 'all' || query.trim()
-          ? t('council.requests_title_filtered', { shown: selected.length, count: requests.length })
-          : t('council.requests_title_count', { count: requests.length })}
+        {filter !== 'all' || search.trim()
+          ? t('council.requests_title_filtered', { shown: list.total_count, count: counts.all })
+          : t('council.requests_title_count', { count: counts.all })}
       </p>
-      {requests.length === 0 && <p className={styles.hint}>{t('council.requests_none')}</p>}
+      {counts.all === 0 && <p className={styles.hint}>{t('council.requests_none')}</p>}
       {long && (
         <div className={styles.searchRow}>
           <Input
@@ -554,8 +587,8 @@ function CouncilRequests({
           </DropdownMenu>
         </div>
       )}
-      {long && selected.length === 0 && <p className={styles.hint}>{t('council.requests_no_match')}</p>}
-      {shown.map((request) => (
+      {long && list.total_count === 0 && <p className={styles.hint}>{t('council.requests_no_match')}</p>}
+      {list.items.map((request) => (
         <CouncilRequestRow
           key={request.id}
           request={request}
@@ -573,18 +606,18 @@ function CouncilRequests({
             color="neutral"
             aria-label={t('council.requests_previous')}
             icon={<ChevronLeft aria-hidden size={16} />}
-            onClick={() => setPage(current - 1)}
-            disabled={current === 1}
+            onClick={() => setPage(page - 1)}
+            disabled={page === 1}
           />
-          <span className={styles.hint}>{t('council.requests_page', { page: current, count: pagesCount })}</span>
+          <span className={styles.hint}>{t('council.requests_page', { page, count: pagesCount })}</span>
           <Button
             size="nano"
             variant="bordered"
             color="neutral"
             aria-label={t('council.requests_next')}
             icon={<ChevronRight aria-hidden size={16} />}
-            onClick={() => setPage(current + 1)}
-            disabled={current === pagesCount}
+            onClick={() => setPage(page + 1)}
+            disabled={page === pagesCount}
           />
         </div>
       )}

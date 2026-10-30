@@ -10,3 +10,4 @@ export const sendCouncilRecoveryCompleted = vi.fn().mockResolvedValue(undefined)
 export const sendCouncilRecoveryCompletedCustodian = vi.fn().mockResolvedValue(undefined);
 export const sendCouncilRecoveryAborted = vi.fn().mockResolvedValue(undefined);
 export const sendCouncilRosterToSign = vi.fn().mockResolvedValue(undefined);
+export const sendCouncilLeft = vi.fn().mockResolvedValue(undefined);
