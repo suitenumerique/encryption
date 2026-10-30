@@ -1,0 +1,25 @@
+{{ .Chart.Name }} {{ .Chart.Version }} deployed as release {{ .Release.Name }}, running {{ include "encryption.image" . }}.
+
+  vault      https://{{ .Values.hosts.vault }}
+  interface  https://{{ .Values.hosts.interface }}
+
+Both hostnames must reach the Service {{ include "encryption.fullname" . }} with the Host
+header unchanged, over TLS.
+{{- if not .Values.ingress.enabled }}
+No Ingress was rendered (ingress.enabled is false): route them yourself.
+{{- end }}
+{{- if .Values.database.migration.enabled }}
+
+Migrations ran as a pre-{{ if eq .Release.Revision 1 }}install{{ else }}upgrade{{ end }} hook
+with the migrator role. The server itself connects with the runtime role, which cannot
+alter the schema (see deploy/postgres/ in the repository).
+{{- else }}
+
+database.migration.enabled is false: apply migrations yourself, once per release, before
+the new pods start (see "Migrations" in the repository README).
+{{- end }}
+{{- if not .Values.sentry.enabled }}
+
+Error reporting is off. Set sentry.enabled with a DSN to send server and browser errors
+to a Sentry-compatible collector.
+{{- end }}

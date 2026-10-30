@@ -1,0 +1,134 @@
+{{- if .Values.database.migration.enabled }}
+{{- $m := .Values.database.migration }}
+{{- if not (or $m.url $m.existingSecret.name) }}
+{{- fail "database.migration.url or database.migration.existingSecret.name is required when database.migration.enabled (set enabled: false to run migrations elsewhere)" }}
+{{- end }}
+{{- $hookName := printf "%s-migrate" (include "encryption.fullname" .) }}
+{{- /*
+Everything the Job reads is a hook of the same phases with a lower weight, never an
+object of the release itself. Helm runs pre-install hooks before it creates the release's
+objects and pre-upgrade hooks before it updates them, so a Job pointing at the release's
+ServiceAccount or Secret finds the account missing on a first install ("serviceaccount
+not found", the pod is never created) and the Secret one revision behind on an upgrade (a
+key that did not exist yet, or the password from before a rotation). Created here, they
+hold the current values every time. `hook-succeeded` deletes them once the whole phase has
+succeeded (Helm deletes after the last hook, not after each), so the migrator's password
+does not stay in the cluster between releases.
+*/}}
+{{- if $m.serviceAccount.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "encryption.migrationServiceAccountName" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "encryption.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    {{- with $m.serviceAccount.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+automountServiceAccountToken: false
+{{- end }}
+{{- if and $m.url (not $m.existingSecret.name) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $hookName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "encryption.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+type: Opaque
+stringData:
+  DATABASE_URL: {{ $m.url | quote }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # The release revision in the name: a hook Job is immutable once created, so the
+  # name must change every time Helm has to create it again.
+  name: {{ include "encryption.fullname" . }}-migrate-{{ .Release.Revision }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "encryption.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # Before the Deployment is touched, on install and on upgrade. Argo CD reads the
+    # same annotations and runs it as a PreSync hook. A failed Job stays for its logs;
+    # a succeeded one is removed, and a stale one is replaced on the next run.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    {{- with $m.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  backoffLimit: {{ $m.backoffLimit }}
+  activeDeadlineSeconds: {{ $m.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "encryption.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "encryption.migrationServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "encryption.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # The image's entrypoint is `node`; these are its arguments, the Prisma CLI
+          # the image ships for exactly this (see the Dockerfile).
+          args:
+            - node_modules/prisma/build/index.js
+            - migrate
+            - deploy
+          env:
+            - name: NODE_ENV
+              value: production
+            {{- include "encryption.secretEnv" (dict "root" $ "env" "DATABASE_URL" "value" $m.url "existing" $m.existingSecret "key" "DATABASE_URL" "secretName" $hookName) | trim | nindent 12 }}
+          {{- with $m.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

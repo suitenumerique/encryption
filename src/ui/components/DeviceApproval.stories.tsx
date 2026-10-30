@@ -1,0 +1,309 @@
+import { Decorator, Meta, StoryFn } from '@storybook/react';
+import jsQR from 'jsqr';
+import { useEffect, useRef } from 'react';
+import { expect, userEvent, within } from 'storybook/test';
+
+import { consoleFrame } from '@encryption/.storybook/figma';
+import { StoryHelperFactory } from '@encryption/.storybook/helpers';
+import { playFindAlert, playFindButton, playFindHeading } from '@encryption/.storybook/testing';
+import i18n from '@encryption/src/i18n';
+import {
+  handleGetApiVaultApprovalsByRequestId,
+  handleGetApiVaultApprovalsPending,
+  handlePostApiVaultApprovalsByRequestIdApprove,
+  handlePostApiVaultApprovalsRequest,
+} from '@encryption/src/ui/api/generated/msw.gen';
+import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
+import { sampleFingerprint, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+
+type ComponentType = typeof DeviceApproval;
+const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
+
+export default {
+  title: 'Preview/Pages/DeviceApproval',
+  component: DeviceApproval,
+  ...generateMetaDefault({
+    parameters: {
+      layout: 'centered',
+      hostModal: true,
+    },
+  }),
+} as Meta<ComponentType>;
+
+const Template: StoryFn<ComponentType> = (args) => <DeviceApproval {...args} />;
+
+// The approving side opens on its own, as a product's account page does (settings
+// section "add-device"): no way back. The new device is reached from the
+// onboarding ("Use another device"), and goes back to it.
+const baseArgs = {
+  getIdToken: async () => 'mock-jwt-token',
+  onClose: () => console.log('onClose'),
+};
+
+const fromOnboardingArgs = { ...baseArgs, onBack: () => console.log('onBack') };
+
+// A failing `getUserMedia` silently drops the component to the manual screen, so
+// the camera is pinned rather than left to the machine opening Storybook.
+function pinCamera(available: boolean): () => void {
+  const previous = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      // Pending rather than resolved: no MediaStream to fabricate, and it is what
+      // the scan screen looks like while the camera warms up.
+      getUserMedia: available ? () => new Promise<MediaStream>(() => {}) : () => Promise.reject(new Error('NotFoundError')),
+    },
+  });
+
+  return () => {
+    if (previous) {
+      Object.defineProperty(navigator, 'mediaDevices', previous);
+    } else {
+      Reflect.deleteProperty(navigator, 'mediaDevices');
+    }
+  };
+}
+
+function withCamera(available: boolean): Decorator {
+  return function CameraDecorator(Story) {
+    // Patched during render, so it is in place before the scanner's mount effect.
+    const restore = useRef<(() => void) | null>(null);
+    if (!restore.current) restore.current = pinCamera(available);
+
+    useEffect(() => {
+      return () => {
+        restore.current?.();
+        restore.current = null;
+      };
+    }, []);
+
+    return <Story />;
+  };
+}
+
+// Rasterizes the rendered SVG and reads it back with the same decoder the
+// enrolled device scans with, so a QR that draws but does not scan fails.
+async function decodeQr(qr: HTMLElement): Promise<string | null> {
+  const svg = qr.querySelector('svg');
+  if (!svg) return null;
+
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const { data, width, height } = context.getImageData(0, 0, canvas.width, canvas.height);
+
+    return jsQR(data, width, height)?.data ?? null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function fillPairingCode(canvasElement: HTMLElement, digits: string) {
+  const canvas = within(canvasElement);
+
+  for (let group = 0; group * 5 < digits.length; group++) {
+    await userEvent.type(await canvas.findByLabelText(`code group ${group + 1}`), digits.slice(group * 5, group * 5 + 5));
+  }
+}
+
+const NewDeviceStory = Template.bind({});
+NewDeviceStory.args = { ...fromOnboardingArgs };
+NewDeviceStory.parameters = {
+  encryption: {
+    hasKeys: async () => ({ hasKeys: false }),
+  },
+  msw: {
+    handlers: [
+      handlePostApiVaultApprovalsRequest({ body: { request_id: 'req-1', device_public_key: samplePublicKey.encryption_public_key } }),
+      // 425 is the normal "still pending" poll outcome. The `{ body }` form only
+      // types the 200, so a declared error needs the resolver form.
+      handleGetApiVaultApprovalsByRequestId(() => Response.json({ code: 'vault_approval_not_ready' }, { status: 425 })),
+    ],
+  },
+};
+
+// The pairing request is made on arrival: the QR code shows without a click.
+NewDeviceStory.play = async ({ canvasElement }) => {
+  const qr = await within(canvasElement).findByRole('img', { name: i18n.t('device_approval.qr_label') });
+  await expect(await decodeQr(qr)).toBe(sampleFingerprint);
+};
+
+NewDeviceStory.parameters = { ...NewDeviceStory.parameters, design: consoleFrame('4880-17086') };
+export const NewDevice = prepareStory(NewDeviceStory);
+
+const NewDeviceCodeRevealedStory = Template.bind({});
+NewDeviceCodeRevealedStory.args = { ...fromOnboardingArgs };
+NewDeviceCodeRevealedStory.parameters = NewDeviceStory.parameters;
+NewDeviceCodeRevealedStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.show_code')));
+  // The same code in digits, with the way back to the QR code.
+  const groups = sampleFingerprint.match(/\d{5}/g) ?? [];
+  await within(canvasElement).findByLabelText(groups.join(' '));
+  await playFindButton(canvasElement, i18n.t('device_approval.show_qr'));
+};
+
+NewDeviceCodeRevealedStory.parameters = { ...NewDeviceCodeRevealedStory.parameters, design: consoleFrame('4882-22440') };
+export const NewDeviceCodeRevealed = prepareStory(NewDeviceCodeRevealedStory);
+
+const NewDeviceAdoptedStory = Template.bind({});
+NewDeviceAdoptedStory.args = { ...fromOnboardingArgs };
+NewDeviceAdoptedStory.parameters = {
+  encryption: {
+    hasKeys: async () => ({ hasKeys: false }),
+  },
+  msw: {
+    handlers: [
+      handlePostApiVaultApprovalsRequest({ body: { request_id: 'req-1', device_public_key: samplePublicKey.encryption_public_key } }),
+      handleGetApiVaultApprovalsByRequestId({
+        body: { wrapped_device_bootstrap: samplePublicKey.key_binding_signature, device_public_key: samplePublicKey.encryption_public_key },
+      }),
+    ],
+  },
+};
+// Reached by the 3s poll, so the default 1s wait would give up before the first tick.
+NewDeviceAdoptedStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('device_approval.new_success_title'), { timeout: 10000 });
+};
+
+NewDeviceAdoptedStory.parameters = { ...NewDeviceAdoptedStory.parameters, design: consoleFrame('4882-22604') };
+export const NewDeviceAdopted = prepareStory(NewDeviceAdoptedStory);
+
+const ErroredStory = Template.bind({});
+ErroredStory.args = { ...fromOnboardingArgs };
+ErroredStory.parameters = {
+  encryption: {
+    hasKeys: async () => ({ hasKeys: false }),
+    startDeviceApproval: async () => {
+      throw new Error('The vault is unavailable.');
+    },
+  },
+};
+ErroredStory.play = async ({ canvasElement }) => {
+  await playFindAlert(canvasElement, 'The vault is unavailable.');
+};
+
+export const Errored = prepareStory(ErroredStory);
+
+const EnrolledDeviceStory = Template.bind({});
+EnrolledDeviceStory.args = { ...baseArgs };
+EnrolledDeviceStory.decorators = [withCamera(true)];
+EnrolledDeviceStory.parameters = {
+  encryption: {
+    hasKeys: async () => ({ hasKeys: true }),
+  },
+};
+// The camera opens on arrival: the scanner, with the manual entry one click away.
+EnrolledDeviceStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_title'));
+  expect((await canvas.findByLabelText(i18n.t('device_approval.scan_hint'))).tagName).toBe('VIDEO');
+  await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead'));
+  expect(canvas.queryByLabelText('code group 1')).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('device_approval.btn_approve') })).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('onboarding.btn_back') })).toBeNull();
+};
+
+EnrolledDeviceStory.parameters = { ...EnrolledDeviceStory.parameters, design: consoleFrame('4883-22638') };
+export const EnrolledDevice = prepareStory(EnrolledDeviceStory);
+
+// Reached from the interface's own encryption home: a way back to it.
+const EnrolledDeviceFromSettingsHomeStory = Template.bind({});
+EnrolledDeviceFromSettingsHomeStory.args = { ...baseArgs, onBack: () => console.log('onBack') };
+EnrolledDeviceFromSettingsHomeStory.decorators = [withCamera(true)];
+EnrolledDeviceFromSettingsHomeStory.parameters = EnrolledDeviceStory.parameters;
+EnrolledDeviceFromSettingsHomeStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_title'));
+  await playFindButton(canvasElement, i18n.t('onboarding.btn_back'));
+};
+
+EnrolledDeviceFromSettingsHomeStory.parameters = { ...EnrolledDeviceFromSettingsHomeStory.parameters, design: consoleFrame('4883-22638') };
+export const EnrolledDeviceFromSettingsHome = prepareStory(EnrolledDeviceFromSettingsHomeStory);
+
+const EnrolledDeviceManualEntryStory = Template.bind({});
+EnrolledDeviceManualEntryStory.args = { ...baseArgs };
+EnrolledDeviceManualEntryStory.decorators = [withCamera(true)];
+EnrolledDeviceManualEntryStory.parameters = EnrolledDeviceStory.parameters;
+EnrolledDeviceManualEntryStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead')));
+};
+
+EnrolledDeviceManualEntryStory.parameters = { ...EnrolledDeviceManualEntryStory.parameters, design: consoleFrame('4883-22846') };
+export const EnrolledDeviceManualEntry = prepareStory(EnrolledDeviceManualEntryStory);
+
+const EnrolledDeviceNoCameraStory = Template.bind({});
+EnrolledDeviceNoCameraStory.args = { ...baseArgs };
+EnrolledDeviceNoCameraStory.decorators = [withCamera(false)];
+EnrolledDeviceNoCameraStory.parameters = EnrolledDeviceStory.parameters;
+// Reached by the camera rejecting, and distinct from ManualEntry by having no way back.
+EnrolledDeviceNoCameraStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByLabelText('code group 1');
+  expect(canvas.queryByRole('button', { name: i18n.t('device_approval.scan_instead') })).toBeNull();
+};
+
+EnrolledDeviceNoCameraStory.parameters = { ...EnrolledDeviceNoCameraStory.parameters, design: consoleFrame('4883-22846') };
+export const EnrolledDeviceNoCamera = prepareStory(EnrolledDeviceNoCameraStory);
+
+const EnrolledDeviceCodeMismatchStory = Template.bind({});
+EnrolledDeviceCodeMismatchStory.args = { ...baseArgs };
+EnrolledDeviceCodeMismatchStory.decorators = [withCamera(true)];
+EnrolledDeviceCodeMismatchStory.parameters = {
+  encryption: {
+    hasKeys: async () => ({ hasKeys: true }),
+    // A rejection for every pending request is what "no match" means.
+    approveDevice: async () => {
+      throw new Error('fingerprint mismatch');
+    },
+  },
+  msw: {
+    handlers: [
+      handleGetApiVaultApprovalsPending({
+        body: { approvals: [{ request_id: 'req-1', device_public_key: samplePublicKey.encryption_public_key }] },
+      }),
+    ],
+  },
+};
+EnrolledDeviceCodeMismatchStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.enter_code_instead')));
+  await fillPairingCode(canvasElement, sampleFingerprint);
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_approve')));
+  await playFindAlert(canvasElement, i18n.t('device_approval.code_no_match'));
+  await playFindButton(canvasElement, i18n.t('device_approval.scan_instead'));
+};
+
+EnrolledDeviceCodeMismatchStory.parameters = { ...EnrolledDeviceCodeMismatchStory.parameters, design: consoleFrame('4884-28194') };
+export const EnrolledDeviceCodeMismatch = prepareStory(EnrolledDeviceCodeMismatchStory);
+
+const EnrolledDeviceApprovedStory = Template.bind({});
+EnrolledDeviceApprovedStory.args = { ...baseArgs };
+EnrolledDeviceApprovedStory.decorators = [withCamera(false)];
+EnrolledDeviceApprovedStory.parameters = {
+  encryption: {
+    hasKeys: async () => ({ hasKeys: true }),
+  },
+  msw: {
+    handlers: [
+      handleGetApiVaultApprovalsPending({
+        body: { approvals: [{ request_id: 'req-1', device_public_key: samplePublicKey.encryption_public_key }] },
+      }),
+      handlePostApiVaultApprovalsByRequestIdApprove({ body: { approved: true } }),
+    ],
+  },
+};
+EnrolledDeviceApprovedStory.play = async ({ canvasElement }) => {
+  await fillPairingCode(canvasElement, sampleFingerprint);
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('device_approval.btn_approve')));
+  await playFindHeading(canvasElement, i18n.t('device_approval.approve_success_title'));
+};
+
+EnrolledDeviceApprovedStory.parameters = { ...EnrolledDeviceApprovedStory.parameters, design: consoleFrame('4883-23011') };
+export const EnrolledDeviceApproved = prepareStory(EnrolledDeviceApprovedStory);

@@ -1,0 +1,1339 @@
+import {
+  MSG_INTERFACE_CLOSED,
+  MSG_INTERFACE_CONTEXT,
+  MSG_INTERFACE_ONBOARDING_COMPLETE,
+  MSG_INTERFACE_REQUEST_CLOSE,
+  MSG_INTERFACE_REQUEST_CONTEXT,
+  MSG_INTERFACE_SET_THEME,
+  MSG_INTERFACE_SHOWN,
+  MSG_INTERFACE_VERIFY_COMPLETE,
+  MSG_VAULT_CHECK_FINGERPRINTS,
+  MSG_VAULT_DECRYPT_WITH_KEY,
+  MSG_VAULT_EMERGENCY_PENDING,
+  MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
+  MSG_VAULT_ENCRYPT_WITHOUT_KEY,
+  MSG_VAULT_ENCRYPT_WITH_KEY,
+  MSG_VAULT_FETCH_PUBLIC_KEYS,
+  MSG_VAULT_GET_KNOWN_FINGERPRINTS,
+  MSG_VAULT_GET_PUBLIC_KEY,
+  MSG_VAULT_HAS_KEYS,
+  MSG_VAULT_READY,
+  MSG_VAULT_RESULT,
+  MSG_VAULT_REWRAP_NESTED_KEY,
+  MSG_VAULT_SHARE_KEYS,
+  MSG_VAULT_WRAP_NESTED_KEY,
+} from '@encryption/src/shared/constants';
+import { DOMAIN_IDENTITY_FINGERPRINT } from '@encryption/src/shared/crypto-domains';
+import { computeDecimalFingerprint, formatDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
+import type { HasKeysResult } from '@encryption/src/shared/has-keys';
+import { type RecipientLabel, interfaceContextSchema } from '@encryption/src/shared/schemas/interface-context';
+import type { VaultResponse } from '@encryption/src/shared/schemas/post-message';
+import { type SettingsSection, isSettingsSection } from '@encryption/src/shared/settings-section';
+import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
+
+export type { RecipientLabel } from '@encryption/src/shared/schemas/interface-context';
+export type { SettingsSection } from '@encryption/src/shared/settings-section';
+
+/**
+ * Where encryption stands for the signed-in user on this device, for a product's
+ * own account page:
+ * - `active`: this device holds the user's keys and they are the ones registered for the account;
+ * - `disabled-for-account`: this device holds keys, but encryption was turned off for the account;
+ * - `needs-attention`: this device holds keys of another identity than the one registered (replaced elsewhere),
+ *   or the registered record fails its binding check;
+ * - `not-set-up`: this device holds no keys. `registered` then tells whether the account set
+ *   encryption up on another device (the onboarding offers to restore it rather than start over).
+ */
+export interface EncryptionStatus {
+  state: 'active' | 'disabled-for-account' | 'needs-attention' | 'not-set-up';
+  registered: boolean;
+}
+
+export interface EncryptionClientOptions {
+  /** URL of the vault domain (data.encryption), e.g. "https://data.encryption.numerique.gouv.fr" */
+  vaultUrl: string;
+  /** URL of the interface domain (encryption), e.g. "https://encryption.numerique.gouv.fr" */
+  interfaceUrl: string;
+  /** Timeout in ms for vault operations (default: 30000) */
+  timeout?: number;
+  /**
+   * Design system theme for the interface iframe.
+   * Standard names: "default", "dark", "dsfr" (or "dsfr-light"), "dsfr-dark", "anct" (or "anct-light"), "anct-dark".
+   * Default: "default"
+   */
+  theme?: string;
+  /** Language code for the interface iframe: "fr", "en", etc. (default: browser language) */
+  lang?: string;
+}
+
+export interface AuthContext {
+  /**
+   * The identity provider's `sub` claim for the logged-in user. Products only
+   * ever deal in subs — their own APIs know users by sub, and every SDK
+   * operation (recipients, fingerprints, profiles) takes subs. The vault
+   * resolves them to its internal, migration-stable user ids at its boundary
+   * (local alias map, then public registry); that internal id never has to be
+   * handled, stored, or even seen by a product.
+   */
+  suiteUserId: string;
+}
+
+/**
+ * Union on `verified` on purpose: `encryptionPublicKey` is a usable
+ * `ArrayBuffer` only in the verified branch (`null` otherwise), so a caller
+ * cannot wrap a key for a forged / incoherent directory entry without the
+ * compiler stopping them. Identity and encryption key live in one per-user
+ * entry so the two can never disagree for a user.
+ */
+export type RegisteredUser =
+  | {
+      verified: true;
+      signaturePublicKey: ArrayBuffer;
+      identityFingerprint: string;
+      version: number;
+      createdAtMillis: number;
+      encryptionPublicKey: ArrayBuffer;
+    }
+  | {
+      verified: false;
+      signaturePublicKey: ArrayBuffer;
+      identityFingerprint: string;
+      version: number;
+      createdAtMillis: number;
+      encryptionPublicKey: null;
+    };
+
+export interface EncryptionClientEventMap {
+  /** Fired when the hidden vault iframe is ready for encrypt/decrypt operations */
+  [MSG_VAULT_READY]: void;
+  /** Fired when the user completes onboarding (key generation + backup) */
+  'onboarding:complete': { publicKey: string };
+  /** Fired when the user cancels or closes the interface */
+  [MSG_INTERFACE_CLOSED]: void;
+  /**
+   * Fired when the interface opened by an open* call is on screen: the product
+   * dismisses the loader it showed meanwhile. Not fired for the overlays the SDK
+   * opens on its own (verify recipients, the emergency prompt).
+   */
+  'interface:ready': void;
+  /** Fired on errors from the vault or the interface */
+  error: Error;
+  /** Fired when keys changed from another tab/product (via BroadcastChannel) */
+  'keys-changed': void;
+  /** Fired when keys were destroyed from another tab/product (via BroadcastChannel) */
+  'keys-destroyed': void;
+  /** Fired when a fingerprint is accepted or refused in the local registry */
+  'fingerprint-changed': void;
+}
+
+type Listener<K extends keyof EncryptionClientEventMap> = (data: EncryptionClientEventMap[K]) => void;
+
+/**
+ * Client SDK for integrating encryption into suite products.
+ *
+ * Orchestrates two iframes:
+ * - data.encryption (hidden): encrypt, decrypt, check keys
+ * - encryption (visible): onboarding, backup, restore, settings
+ *
+ * Products load this script from encryption:
+ *
+ *   <script src="https://encryption.numerique.gouv.fr/client.js"></script>
+ *   <script>
+ *     const encryption = new EncryptionClient.VaultClient({
+ *       vaultUrl: 'https://data.encryption.numerique.gouv.fr',
+ *       interfaceUrl: 'https://encryption.numerique.gouv.fr',
+ *     });
+ *
+ *     await encryption.init();
+ *
+ *     if (!(await encryption.hasKeys()).hasKeys) {
+ *       // Opens the interface over the page (it draws its own modal)
+ *       encryption.openOnboarding();
+ *       encryption.on('onboarding:complete', ({ publicKey }) => { ... });
+ *     }
+ *
+ *     const { encryptedContent, encryptedKeys } = await encryption.encryptWithoutKey(data, userPublicKeys);
+ *   </script>
+ */
+// The vault's emergency-pending push is a bare routing signal: which prompt the
+// interface should lead with, nothing identifying. The product forwards it
+// verbatim; the interface renders the actual list from its own ID-token-authenticated fetch.
+interface EmergencyPendingContext {
+  recovery: boolean;
+  invitation: boolean;
+}
+
+// How long the SDK-owned emergency overlay waits for the interface to prove it
+// booted before removing itself (see surfaceEmergencyPending). Generous enough
+// for a cold bundle on a slow connection, short enough that a broken interface
+// does not hold the product page hostage.
+const OVERLAY_BOOT_TIMEOUT_MS = 15_000;
+const OVERLAY_READY_FALLBACK_MS = 500;
+
+export class VaultClient {
+  private vaultIframe: HTMLIFrameElement | null = null;
+  private interfaceIframe: HTMLIFrameElement | null = null;
+  private pending = new Map<string, { resolve: (value: unknown) => void; reject: (reason: unknown) => void }>();
+  private listeners = new Map<string, Set<Listener<keyof EncryptionClientEventMap>>>();
+  private vaultReadyResolve: (() => void) | null = null;
+  private initTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private messageHandler: ((event: MessageEvent) => void) | null = null;
+  private vaultUrl: string;
+  private interfaceUrl: string;
+  private vaultOrigin: string;
+  private interfaceOrigin: string;
+  private timeout: number;
+  private theme: string;
+  private lang: string | null;
+  private authContext: AuthContext | null = null;
+  // The full-viewport, transparent layer hosting the interface iframe, for every
+  // flow: the interface draws its own modal (backdrop and card) inside it, so
+  // nothing is ever sized across the two windows. Kept invisible until the app
+  // inside mounted (see openOverlay), with a watchdog for a page that never comes up.
+  private overlay: HTMLDivElement | null = null;
+  private overlayWatchdog: ReturnType<typeof setTimeout> | null = null;
+  private overlayBootFailure: 'silent' | 'report' = 'report';
+  private overlayReadyFallback: ReturnType<typeof setTimeout> | null = null;
+  // "Verify recipients": the resolver awaiting the overlay's outcome.
+  private verifyResolve: ((outcome: 'resolved' | 'cancelled') => void) | null = null;
+  // Once-per-page-load latch for the auto-surfaced emergency-access prompt (it
+  // reappears on the next load while actionable, without nagging within a session).
+  private emergencySurfaced = false;
+  // The per-flow context owed to the interface iframe, set when a flow opens and
+  // cleared on teardown / closeInterface. Ephemeral by design: recipient labels
+  // (name/email) are display-only and never persisted, synced, or sent to any
+  // server; only the flow currently open carries a block here.
+  private pendingContext: {
+    verifyRecipients?: { recipients: Record<string, RecipientLabel> };
+    recipientProfile?: { userId: string; label: RecipientLabel };
+    emergencyPending?: EmergencyPendingContext;
+  } | null = null;
+
+  constructor(options: EncryptionClientOptions) {
+    this.vaultUrl = options.vaultUrl;
+    this.interfaceUrl = options.interfaceUrl;
+    this.vaultOrigin = new URL(options.vaultUrl).origin;
+    this.interfaceOrigin = new URL(options.interfaceUrl).origin;
+    this.timeout = options.timeout ?? 30000;
+    this.theme = options.theme ?? 'default';
+    this.lang = options.lang ?? null;
+  }
+
+  /**
+   * Update the Cunningham theme. If the interface iframe is open, sends it a
+   * theme message so it re-themes in place.
+   * @param theme - Cunningham theme name: "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark", etc.
+   */
+  setTheme(theme: string): void {
+    this.theme = theme;
+
+    // Drive the theme purely via postMessage. Reassigning interfaceIframe.src
+    // would force a full navigation back to the iframe's original route,
+    // discarding any in-app state (e.g. an unsaved recovery phrase mid-backup)
+    // if the interface has since navigated internally.
+    if (this.interfaceIframe?.contentWindow) {
+      this.interfaceIframe.contentWindow.postMessage({ type: MSG_INTERFACE_SET_THEME, theme }, this.interfaceOrigin);
+    }
+  }
+
+  /**
+   * Set the authentication context. Must be called before opening the interface.
+   * The suiteUserId is passed to the interface iframe so it can register
+   * public keys on the server and perform device transfers.
+   */
+  setAuthContext(context: AuthContext): void {
+    this.authContext = context;
+
+    // If the interface iframe is already open, update it immediately
+    // (e.g., after a token refresh)
+    this.sendContext(this.interfaceIframe?.contentWindow);
+  }
+
+  /**
+   * Read back the auth context that was set via {@link setAuthContext}.
+   * Returns `null` until `setAuthContext` has been called. Useful when
+   * the host app needs to identify the currently-bound suite user from
+   * code that doesn't otherwise have access to the auth state — e.g.
+   * the Drive driver's encryption-aware move handler, which has to
+   * verify the operator (mover) keeps a per-user wrap during a
+   * re-anchor and would otherwise need to thread the user identifier
+   * through every call site.
+   */
+  getAuthContext(): AuthContext | null {
+    return this.authContext;
+  }
+
+  // =========================================================================
+  // Lifecycle
+  // =========================================================================
+
+  /**
+   * Initialize the encryption client.
+   * Creates a hidden vault iframe (data.encryption) and waits for it to be ready.
+   */
+  async init(): Promise<void> {
+    if (this.vaultIframe) {
+      // Programmer-error path — init() called twice. Keeping it as a
+      // plain Error since no consumer should branch on it.
+      throw new Error('EncryptionClient already initialized');
+    }
+
+    const vaultReady = new Promise<void>((resolve) => {
+      this.vaultReadyResolve = resolve;
+    });
+
+    this.messageHandler = this.handleMessage.bind(this);
+    window.addEventListener('message', this.messageHandler);
+
+    // Create hidden vault iframe
+    this.vaultIframe = document.createElement('iframe');
+    this.vaultIframe.src = `${this.vaultUrl}/bridge.html`;
+    this.vaultIframe.style.display = 'none';
+    // Minimal sandbox — the vault only runs crypto scripts and accesses IndexedDB.
+    // - allow-scripts: required for libsodium WASM, postMessage handling, Service Worker
+    // - allow-same-origin: required for IndexedDB access (key storage) and fetch API
+    this.vaultIframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    this.vaultIframe.setAttribute('title', 'Encryption Vault');
+    document.body.appendChild(this.vaultIframe);
+
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      this.initTimeoutId = setTimeout(() => reject(new VaultError(VaultErrorCode.TIMEOUT, 'Vault initialization timed out')), this.timeout);
+    });
+
+    try {
+      await Promise.race([vaultReady, timeoutPromise]);
+    } finally {
+      if (this.initTimeoutId !== null) {
+        clearTimeout(this.initTimeoutId);
+        this.initTimeoutId = null;
+      }
+    }
+  }
+
+  /**
+   * Clean up all iframes and event listeners.
+   */
+  destroy(): void {
+    if (this.initTimeoutId !== null) {
+      clearTimeout(this.initTimeoutId);
+      this.initTimeoutId = null;
+    }
+
+    if (this.messageHandler) {
+      window.removeEventListener('message', this.messageHandler);
+      this.messageHandler = null;
+    }
+
+    // Resolve any in-flight verify overlay as cancelled before tearing it down,
+    // so a pending share awaiting its outcome rejects (original error) instead of
+    // hanging.
+    this.completeVerify('cancelled');
+
+    this.removeIframe(this.vaultIframe);
+    this.vaultIframe = null;
+    this.closeInterface();
+    this.pending.clear();
+    this.listeners.clear();
+  }
+
+  // =========================================================================
+  // Data operations (via data.encryption hidden iframe)
+  // =========================================================================
+
+  /**
+   * Check if the user has encryption keys on this device. `deEnrolled` is set when
+   * this browser forgot them after a long inactivity: the onboarding explains it.
+   */
+  async hasKeys(): Promise<HasKeysResult> {
+    return (await this.vaultRequest(MSG_VAULT_HAS_KEYS)) as HasKeysResult;
+  }
+
+  /** Get the user's public key as ArrayBuffer. */
+  async getPublicKey(): Promise<{ publicKey: ArrayBuffer }> {
+    return (await this.vaultRequest(MSG_VAULT_GET_PUBLIC_KEY)) as { publicKey: ArrayBuffer };
+  }
+
+  /**
+   * Where encryption stands for the signed-in user on this device (see
+   * {@link EncryptionStatus}), from the vault (the keys on this device) and the
+   * public directory (the identity registered for the account). Needs no sign-in
+   * to the encryption interface: an account page can show it before any modal is
+   * opened, and each of its actions opens the interface, which signs in if needed.
+   */
+  async getEncryptionStatus(): Promise<EncryptionStatus> {
+    const suiteUserId = this.authContext?.suiteUserId;
+
+    if (!suiteUserId) {
+      throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'setAuthContext() must be called before getEncryptionStatus()');
+    }
+
+    const [{ hasKeys }, directory] = await Promise.all([this.hasKeys(), this.ownDirectoryEntry(suiteUserId)]);
+    const registeredUser = directory[suiteUserId];
+
+    if (!hasKeys) return { state: 'not-set-up', registered: registeredUser !== undefined };
+    if (!registeredUser) return { state: 'disabled-for-account', registered: false };
+    // A record whose binding signature does not verify cannot vouch for this device.
+    if (!registeredUser.verified) return { state: 'needs-attention', registered: true };
+
+    const local = (await this.vaultRequest(MSG_VAULT_GET_PUBLIC_KEY)) as { signaturePublicKey?: ArrayBuffer };
+    const localFingerprint = local.signaturePublicKey ? await this.computeKeyFingerprint(local.signaturePublicKey) : null;
+
+    return { state: localFingerprint === registeredUser.identityFingerprint ? 'active' : 'needs-attention', registered: true };
+  }
+
+  /**
+   * Create a new ROOT encrypted resource. Mints a fresh symmetric key,
+   * encrypts `data` with it, and wraps the new key once per recipient.
+   *
+   * Pass recipients as a labeled map (OIDC sub → {email, name?}), not public
+   * keys — the subs your product already holds for its users. The vault
+   * resolves + trust-checks each recipient (binding + TOFU 'trusted' with
+   * matching fingerprint, keyed internally so trust survives an OIDC provider
+   * migration) before wrapping, and throws UNTRUSTED_RECIPIENT if any is
+   * unverified or untrusted. Call checkFingerprints first to resolve any
+   * 'unknown' contacts. The labels are display-only and used only if the trust
+   * modal opens; the vault request itself sees just the subs.
+   *
+   * Use this for standalone encrypted files (no parent) and for the root
+   * folder of an encrypted subtree.
+   *
+   * When the deployment runs the maintenance escrow, the result also carries
+   * `maintenanceKey`: the same key wrapped for the maintenance key covering the
+   * current user's email domain (the creator owns the resource). Persist it on the
+   * resource whenever it is present (a nullable column next to the ciphertext);
+   * never treat it as a recipient. It is absent otherwise, including for a user
+   * no configured key covers.
+   *
+   * @returns encryptedContent, encryptedKeys (userId → wrappedKey) and, when
+   *   configured, maintenanceKey
+   */
+  async encryptWithoutKey(
+    data: ArrayBuffer,
+    recipients: Record<string, RecipientLabel>,
+    options?: { optimizeMemory?: boolean }
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
+    return this.withRecipientVerification(recipients, (isFinalAttempt) =>
+      this.encryptWithoutKeyRequest(data, Object.keys(recipients), options, isFinalAttempt)
+    );
+  }
+
+  private async encryptWithoutKeyRequest(
+    data: ArrayBuffer,
+    recipientSubs: string[],
+    options: { optimizeMemory?: boolean } | undefined,
+    allowTransfer: boolean
+  ): Promise<{ encryptedContent: ArrayBuffer; encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
+    const optimize = options?.optimizeMemory === true;
+    // Transferring `data` detaches it, so only do it on the FINAL attempt: an
+    // auto-verify retry needs the buffer intact if the first attempt is refused
+    // for an untrusted recipient. (optimizeMemory is a client-side hint here; the
+    // vault op does not read it.)
+    const transferables = optimize && allowTransfer ? [data] : undefined;
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientSubs, optimizeMemory: optimize }, transferables)) as {
+      encryptedContent: ArrayBuffer;
+      encryptedKeys: Record<string, ArrayBuffer>;
+      maintenanceKey?: ArrayBuffer;
+    };
+  }
+
+  /**
+   * Create a new NESTED encrypted resource inside an existing encrypted
+   * subtree. Resolves `entry + chain` to the parent folder's key, mints a
+   * fresh symmetric key, encrypts `data` with it, and wraps the new key
+   * under the parent's key.
+   *
+   * Use this for creating a file inside an already-encrypted folder.
+   * Persist the returned `wrappedKey` on the new item's DB row.
+   *
+   * @param data - ArrayBuffer content to encrypt
+   * @param encryptedSymmetricKey - caller's entry key (asymmetric bootstrap
+   *   into the subtree, same value used for decryptWithKey)
+   * @param encryptedKeyChain - optional symmetric wrappings from entry down
+   *   to the parent folder (exclusive of the new resource, since it doesn't
+   *   exist yet). Empty/omitted means the entry key IS the parent's key.
+   */
+  async encryptNestedWithoutKey(
+    data: ArrayBuffer,
+    encryptedSymmetricKey: ArrayBuffer,
+    encryptedKeyChain?: ArrayBuffer[],
+    options?: { optimizeMemory?: boolean }
+  ): Promise<{ encryptedContent: ArrayBuffer; wrappedKey: ArrayBuffer }> {
+    const optimize = options?.optimizeMemory === true;
+    const payload: Record<string, unknown> = {
+      data,
+      encryptedSymmetricKey,
+      optimizeMemory: optimize,
+    };
+
+    if (encryptedKeyChain) {
+      payload.encryptedKeyChain = encryptedKeyChain;
+    }
+
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY, payload, optimize ? [data] : undefined)) as {
+      encryptedContent: ArrayBuffer;
+      wrappedKey: ArrayBuffer;
+    };
+  }
+
+  /**
+   * Encrypt content with an EXISTING symmetric key — pure symmetric mirror
+   * of `decryptWithKey`. No new key is minted.
+   *
+   * Without `encryptedKeyChain`: resolves `encryptedSymmetricKey` (user's
+   * entry key) and encrypts with it. Used by the flat model (Docs).
+   *
+   * With `encryptedKeyChain`: resolves entry + chain to the terminal
+   * symmetric key and encrypts with it. Used by the collaborative relay
+   * to encrypt messages tied to an existing file inside an encrypted
+   * hierarchy, so that sender and receiver converge on the same K_file.
+   */
+  async encryptWithKey(
+    data: ArrayBuffer,
+    encryptedSymmetricKey: ArrayBuffer,
+    encryptedKeyChain?: ArrayBuffer[],
+    options?: { optimizeMemory?: boolean }
+  ): Promise<{ encryptedData: ArrayBuffer }> {
+    const optimize = options?.optimizeMemory === true;
+    const payload: Record<string, unknown> = {
+      data,
+      encryptedSymmetricKey,
+      optimizeMemory: optimize,
+    };
+
+    if (encryptedKeyChain) {
+      payload.encryptedKeyChain = encryptedKeyChain;
+    }
+
+    return (await this.vaultRequest(MSG_VAULT_ENCRYPT_WITH_KEY, payload, optimize ? [data] : undefined)) as {
+      encryptedData: ArrayBuffer;
+    };
+  }
+
+  /**
+   * Decrypt content using a separately provided encrypted symmetric key.
+   * The symmetric key decryption is cached per session for performance.
+   *
+   * @param encryptedData - ArrayBuffer ciphertext to decrypt
+   * @param encryptedSymmetricKey - user's encrypted copy of the symmetric key
+   * @param keyVersion - the recipient's encryption-key VERSION this wrap was
+   *   produced against, as stored by the product on the access row. The vault
+   *   unwraps with exactly that retained key: a version this vault does not
+   *   hold throws KEY_VERSION_UNAVAILABLE, a wrap that key cannot open throws
+   *   WRONG_SECRET_KEY, and content that fails its integrity check under the
+   *   unwrapped key throws CONTENT_INTEGRITY_FAILED.
+   * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
+   *   When provided, resolves the chain from entry point to target before decrypting.
+   */
+  async decryptWithKey(
+    encryptedData: ArrayBuffer,
+    encryptedSymmetricKey: ArrayBuffer,
+    keyVersion: number,
+    encryptedKeyChain?: ArrayBuffer[],
+    options?: { optimizeMemory?: boolean }
+  ): Promise<{ data: ArrayBuffer }> {
+    const optimize = options?.optimizeMemory === true;
+    const payload: Record<string, unknown> = {
+      encryptedData,
+      encryptedSymmetricKey,
+      keyVersion,
+      optimizeMemory: optimize,
+    };
+
+    if (encryptedKeyChain) {
+      payload.encryptedKeyChain = encryptedKeyChain;
+    }
+
+    return (await this.vaultRequest(MSG_VAULT_DECRYPT_WITH_KEY, payload, optimize ? [encryptedData] : undefined)) as { data: ArrayBuffer };
+  }
+
+  /**
+   * Re-wrap a nested resource's symmetric key from one parent chain onto
+   * another. Used when MOVING an encrypted file/folder between positions
+   * inside the same encrypted subtree: the file's content is left
+   * untouched (still encrypted with K_file), but K_file's wrapping
+   * follows its new parent.
+   *
+   * @param encryptedSymmetricKey - the user's entry-point key (root key
+   *   wrapped under the user's pubkey). Same value for both old and new
+   *   chains since this operation stays within a single encrypted root.
+   * @param oldEncryptedKey - the resource's K_file as currently stored,
+   *   wrapped under its OLD parent's key.
+   * @param oldEncryptedKeyChain - chain of wrapped folder keys from the
+   *   entry point down to (and including) the OLD parent's key. Omit /
+   *   pass `undefined` when the OLD parent IS the encryption root.
+   * @param newEncryptedKeyChain - chain entry → NEW parent. Omit when
+   *   the NEW parent is the encryption root.
+   * @returns the resource's K_file re-wrapped under the NEW parent's
+   *   key — caller persists this on the resource's DB row, replacing
+   *   the old wrapping.
+   */
+  async rewrapNestedKey(
+    encryptedSymmetricKey: ArrayBuffer,
+    oldEncryptedKey: ArrayBuffer,
+    oldEncryptedKeyChain?: ArrayBuffer[],
+    newEncryptedKeyChain?: ArrayBuffer[]
+  ): Promise<{ newEncryptedKey: ArrayBuffer }> {
+    const payload: Record<string, unknown> = {
+      encryptedSymmetricKey,
+      oldEncryptedKey,
+    };
+
+    if (oldEncryptedKeyChain) {
+      payload.oldEncryptedKeyChain = oldEncryptedKeyChain;
+    }
+
+    if (newEncryptedKeyChain) {
+      payload.newEncryptedKeyChain = newEncryptedKeyChain;
+    }
+
+    return (await this.vaultRequest(MSG_VAULT_REWRAP_NESTED_KEY, payload)) as {
+      newEncryptedKey: ArrayBuffer;
+    };
+  }
+
+  /**
+   * Wrap an existing per-user-anchored symmetric key under a parent
+   * chain. Symmetric reverse of {@link shareKeys} (which goes 1→N
+   * chain→per-user); this goes 1→1 per-user→chain.
+   *
+   * Used when MOVING a self-rooted encrypted resource (per-user
+   * wraps on its access rows) INTO an encrypted subtree: K_item is
+   * recovered from the user's per-user wrap, then wrapped under the
+   * destination parent's chain so the resource stops being a root
+   * and joins the destination tree.
+   *
+   * @param userEncryptedKey - the resource's per-user wrap from the
+   *   caller's access row (`encrypted_item_symmetric_key_for_user`).
+   * @param newEntryEncryptedSymmetricKey - user's entry-point key
+   *   for the destination tree (the tree's root key wrapped under
+   *   their pubkey — same value `getKeyChain` returns as
+   *   `encrypted_key_for_user` for any item under that tree).
+   * @param newEncryptedKeyChain - chain entry → NEW parent. Omit
+   *   when the new parent IS the destination tree's root.
+   * @returns the resource's K_item wrapped under the new parent's
+   *   key — caller persists this on the resource's row.
+   */
+  async wrapNestedKey(
+    userEncryptedKey: ArrayBuffer,
+    newEntryEncryptedSymmetricKey: ArrayBuffer,
+    newEncryptedKeyChain?: ArrayBuffer[]
+  ): Promise<{ newEncryptedKey: ArrayBuffer }> {
+    const payload: Record<string, unknown> = {
+      userEncryptedKey,
+      newEntryEncryptedSymmetricKey,
+    };
+    if (newEncryptedKeyChain) {
+      payload.newEncryptedKeyChain = newEncryptedKeyChain;
+    }
+    return (await this.vaultRequest(MSG_VAULT_WRAP_NESTED_KEY, payload)) as {
+      newEncryptedKey: ArrayBuffer;
+    };
+  }
+
+  /**
+   * Share an existing document's or item's symmetric key with additional users.
+   *
+   * Pass recipients as a labeled map (OIDC sub → {email, name?}), not public
+   * keys: the vault resolves each recipient's encryption key from the directory
+   * itself and wraps ONLY for identities whose binding verifies AND that you have marked
+   * 'trusted' (TOFU) with a matching fingerprint. If any recipient is unverified
+   * or untrusted it throws UNTRUSTED_RECIPIENT and wraps for none — call
+   * checkFingerprints (and resolve any 'unknown') first. Recipients are resolved
+   * in one batched request. The labels are display-only and used only if the
+   * trust modal opens; the vault request itself sees just the userIds.
+   *
+   * @param encryptedSymmetricKey - current user's encrypted copy of the key
+   * @param recipients - map of userId → display label to share with
+   * @param encryptedKeyChain - optional chain of wrapped keys for Drive's key hierarchy.
+   *   When provided, resolves the chain from entry point to the target item's key
+   *   before re-encrypting for the target users.
+   * @param ownerSub - the OIDC sub of the resource's owner (its creator, say), whose
+   *   email domain decides the maintenance key; the current user when omitted.
+   *   Pass it whenever the sharer may not be the owner, or the copy would follow
+   *   the sharer's organization.
+   * @returns encryptedKeys - Record of userId → ArrayBuffer encrypted symmetric key for each user,
+   *   plus `maintenanceKey` when the deployment runs the maintenance escrow and a
+   *   configured key covers the owner (persist it on the resource, replacing any
+   *   previous value: the bytes differ on every wrap, the key behind them only when
+   *   the owner's coverage changed). An empty `recipients` map is valid and returns
+   *   only that copy: use it to backfill a resource that predates the escrow, or the
+   *   coverage of its owner's domain, from any current holder.
+   */
+  async shareKeys(
+    encryptedSymmetricKey: ArrayBuffer,
+    recipients: Record<string, RecipientLabel>,
+    encryptedKeyChain?: ArrayBuffer[],
+    ownerSub?: string
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
+    return this.withRecipientVerification(recipients, () =>
+      this.shareKeysRequest(encryptedSymmetricKey, Object.keys(recipients), encryptedKeyChain, ownerSub)
+    );
+  }
+
+  private async shareKeysRequest(
+    encryptedSymmetricKey: ArrayBuffer,
+    recipientSubs: string[],
+    encryptedKeyChain?: ArrayBuffer[],
+    ownerSub?: string
+  ): Promise<{ encryptedKeys: Record<string, ArrayBuffer>; maintenanceKey?: ArrayBuffer }> {
+    const payload: Record<string, unknown> = { encryptedSymmetricKey, recipientSubs };
+
+    if (encryptedKeyChain) {
+      payload.encryptedKeyChain = encryptedKeyChain;
+    }
+
+    if (ownerSub) {
+      payload.ownerSub = ownerSub;
+    }
+
+    return (await this.vaultRequest(MSG_VAULT_SHARE_KEYS, payload)) as {
+      encryptedKeys: Record<string, ArrayBuffer>;
+      maintenanceKey?: ArrayBuffer;
+    };
+  }
+
+  /**
+   * Fetch registered users for a list of OIDC subs (the ids your product
+   * already holds). The vault calls the encryption server itself (products
+   * never touch it) and verifies each record's binding signature before
+   * returning. The map is keyed by the subs you queried; subs with no active
+   * registration are absent (that person never onboarded encryption). Use it
+   * when building a sharing UI: it tells you who has keys, their fingerprint,
+   * and whether the directory record is coherent (`verified`).
+   */
+  /**
+   * The current user's own directory record. The vault refuses every lookup on
+   * behalf of a user it cannot resolve, which is exactly a user who never
+   * registered anything: for the status, that means no record.
+   */
+  private async ownDirectoryEntry(suiteUserId: string): Promise<Record<string, RegisteredUser>> {
+    try {
+      return await this.fetchPublicKeys([suiteUserId]);
+    } catch (error) {
+      if (error instanceof VaultError && error.code === VaultErrorCode.UNRESOLVED_USER) return {};
+
+      throw error;
+    }
+  }
+
+  async fetchPublicKeys(subs: string[]): Promise<Record<string, RegisteredUser>> {
+    const { users } = (await this.vaultRequest(MSG_VAULT_FETCH_PUBLIC_KEYS, { subs })) as {
+      users: Record<string, RegisteredUser>;
+    };
+
+    return users;
+  }
+
+  // =========================================================================
+  // Fingerprint registry (TOFU pattern)
+  // =========================================================================
+
+  /**
+   * Check fingerprints provided by the product against the vault's local registry.
+   * The product sends the fingerprints it stored at share time, keyed by OIDC
+   * sub; results echo the same subs back (the vault translates to its internal
+   * trust keys on its side).
+   *
+   * Returns results with status: "trusted", "refused", or "unknown" (needs user decision).
+   */
+  async checkFingerprints(userFingerprints: Record<string, string>): Promise<{
+    results: Array<{
+      userId: string;
+      knownFingerprint: string | null;
+      providedFingerprint: string;
+      // 'mismatch' = a recorded fingerprint that has since changed (transient, not
+      // a persisted status); 'unknown' = seen but not yet verified.
+      status: 'trusted' | 'refused' | 'unknown' | 'mismatch';
+    }>;
+  }> {
+    return (await this.vaultRequest(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints })) as {
+      results: Array<{
+        userId: string;
+        knownFingerprint: string | null;
+        providedFingerprint: string;
+        status: 'trusted' | 'refused' | 'unknown' | 'mismatch';
+      }>;
+    };
+  }
+
+  /**
+   * Get all known fingerprints with their status from the local registry.
+   */
+  async getKnownFingerprints(): Promise<{
+    fingerprints: Record<string, { fingerprint: string; status: 'trusted' | 'refused' | 'unknown' }>;
+  }> {
+    return (await this.vaultRequest(MSG_VAULT_GET_KNOWN_FINGERPRINTS)) as {
+      fingerprints: Record<string, { fingerprint: string; status: 'trusted' | 'refused' | 'unknown' }>;
+    };
+  }
+
+  // =========================================================================
+  // Key fingerprints (client-side, no iframe round-trip)
+  // =========================================================================
+
+  /**
+   * Compute the 40-digit identity fingerprint of a user, the value people compare
+   * out of band: the same computation as the vault and the interface, so every
+   * surface shows the same value. Pure client-side, no vault iframe needed.
+   *
+   * @param signaturePublicKey - The identity (signature) public key wire blob, as returned by fetchPublicKeys or getPublicKey
+   */
+  async computeKeyFingerprint(signaturePublicKey: ArrayBuffer): Promise<string> {
+    return computeDecimalFingerprint(DOMAIN_IDENTITY_FINGERPRINT, new Uint8Array(signaturePublicKey));
+  }
+
+  /**
+   * Format a raw decimal fingerprint for display, grouped in blocks of five.
+   */
+  formatFingerprint(fingerprint: string): string {
+    return formatDecimalFingerprint(fingerprint);
+  }
+
+  // =========================================================================
+  // Interface operations (via encryption visible iframe)
+  // =========================================================================
+
+  /**
+   * Open the encryption interface for onboarding (key generation + backup).
+   *
+   * Every open* call lays a transparent, full-viewport layer over the page and
+   * loads the interface in it; the interface draws its own modal there (card,
+   * backdrop, close control, width), so the product shows nothing but a loader
+   * until 'interface:ready', and unmounts that loader on 'interface:closed'.
+   * Listen to 'onboarding:complete' for the result.
+   */
+  openOnboarding(): void {
+    this.openOverlay('/onboarding');
+  }
+
+  /**
+   * Open the encryption interface for key backup/export.
+   */
+  openBackup(): void {
+    this.openOverlay('/backup');
+  }
+
+  /**
+   * Open the encryption interface for key restoration from backup.
+   */
+  openRestore(): void {
+    this.openOverlay('/restore');
+  }
+
+  /**
+   * Open the encryption settings. Without a section, the interface's own
+   * encryption home (status and every flow below), for a product with no account
+   * page of its own. With a section, that single flow, which closes the interface
+   * when it ends, for a product listing the flows on its own page:
+   * - `manage`: turn encryption off (this device or the account), or review a
+   *   device out of step with the account (turned off, replaced elsewhere);
+   * - `add-device`: give another device access, from this one;
+   * - `verification-code`: the code others compare to verify this user;
+   * - `recovery-phrase`: change the recovery phrase;
+   * - `trusted-contacts`: the trusted contacts, and the people this user can help.
+   */
+  openSettings(section?: SettingsSection): void {
+    if (section !== undefined && !isSettingsSection(section)) {
+      throw new Error(`Unknown settings section: ${String(section)}`);
+    }
+
+    this.openOverlay(section ? `/settings/${section}` : '/settings');
+  }
+
+  /**
+   * Open device approval: enroll this device from another, or approve a new one.
+   */
+  openDeviceApproval(): void {
+    this.openOverlay('/device-approval');
+  }
+
+  /**
+   * Open the emergency-access (trusted contacts) management screen: designate
+   * contacts, accept a designation, follow or refuse a running recovery.
+   */
+  openEmergencyAccess(): void {
+    this.openOverlay('/emergency-access');
+  }
+
+  /**
+   * Open the per-recipient profile: the recipient's current trust decision, their
+   * identity fingerprint (for out-of-band comparison), and Trust / Refuse actions.
+   * Opened explicitly by the product (e.g. clicking a person in its share UI).
+   * `userId` is the recipient's OIDC sub, like every id a product passes.
+   */
+  openRecipientProfile(userId: string, label: RecipientLabel): void {
+    // Reset per-flow state, then set the profile target so the context handshake
+    // carries it (and its display label) once the iframe loads / requests context.
+    this.openOverlay('/recipient-profile');
+    this.pendingContext = { recipientProfile: { userId, label } };
+    this.sendContext(this.interfaceIframe?.contentWindow);
+  }
+
+  /**
+   * Ask the interface to close, from the product's own close control (the X of
+   * the modal hosting the iframe). The interface owns the decision: mid-backup
+   * it shows its "cancel setup?" confirmation instead of closing, so a product
+   * must NOT unmount its modal here. It waits for the 'interface:closed' event,
+   * which fires once the interface has really closed (for this request or any
+   * other reason). With no interface open this is a no-op that still emits
+   * 'interface:closed', so a product's close handler stays uniform.
+   */
+  requestClose(): void {
+    const target = this.interfaceIframe?.contentWindow;
+
+    if (!target) {
+      this.emit(MSG_INTERFACE_CLOSED, undefined as never);
+
+      return;
+    }
+
+    target.postMessage({ type: MSG_INTERFACE_REQUEST_CLOSE }, this.interfaceOrigin);
+  }
+
+  /**
+   * Close the interface iframe if it is open.
+   */
+  closeInterface(): void {
+    if (this.overlayWatchdog !== null) {
+      clearTimeout(this.overlayWatchdog);
+      this.overlayWatchdog = null;
+    }
+    if (this.overlayReadyFallback !== null) {
+      clearTimeout(this.overlayReadyFallback);
+      this.overlayReadyFallback = null;
+    }
+
+    // The overlay owns the interface iframe, so it goes with it.
+    if (this.overlay?.parentNode) this.overlay.parentNode.removeChild(this.overlay);
+    this.overlay = null;
+    this.interfaceIframe = null;
+
+    // Closed before the verify screen answered (from the sign-in screen shown in
+    // its place, or by the product): the share is abandoned, never left pending.
+    const verifyResolve = this.verifyResolve;
+    this.verifyResolve = null;
+    verifyResolve?.('cancelled');
+
+    // Context scoped to a single interface flow — clear it so a later open()
+    // of another screen never re-sends a stale flow block.
+    this.pendingContext = null;
+  }
+
+  // =========================================================================
+  // Events
+  // =========================================================================
+
+  on<K extends keyof EncryptionClientEventMap>(event: K, listener: Listener<K>): void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+
+    this.listeners.get(event)!.add(listener as Listener<keyof EncryptionClientEventMap>);
+  }
+
+  off<K extends keyof EncryptionClientEventMap>(event: K, listener: Listener<K>): void {
+    this.listeners.get(event)?.delete(listener as Listener<keyof EncryptionClientEventMap>);
+  }
+
+  // =========================================================================
+  // Private
+  // =========================================================================
+
+  /**
+   * Lay the transparent full-viewport layer over the page and load the interface
+   * in it. The layer stays `visibility: hidden` until the app inside reports its
+   * modal painted, and that is the only right way to hide it:
+   *  - `display: none` would stop the iframe laying out, so the app inside could
+   *    mount at zero size;
+   *  - `opacity: 0` would keep the layer in the hit-test, so this full-viewport
+   *    element would silently swallow every click on the product underneath;
+   *  - `visibility: hidden` still loads and lays the iframe out, but drops it
+   *    from hit-testing, so clicks pass through to the product until the reveal.
+   * A watchdog tears down a page that never comes up: reported to the product
+   * (an 'error' then 'interface:closed', so its loader goes) for a flow it asked
+   * for, silently for the overlays the SDK opens on its own.
+   */
+  private openOverlay(path: string, bootFailure: 'silent' | 'report' = 'report'): void {
+    this.closeInterface();
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = ['position: fixed', 'inset: 0', 'z-index: 2147483647', 'visibility: hidden'].join(';');
+
+    const iframe = this.buildInterfaceIframe(path);
+    // Fill the layer and stay transparent, so the product shows through the
+    // backdrop the interface draws.
+    iframe.style.height = '100%';
+    iframe.style.background = 'transparent';
+    iframe.setAttribute('allowtransparency', 'true');
+
+    this.interfaceIframe = iframe;
+    overlay.appendChild(iframe);
+    document.body.appendChild(overlay);
+    this.overlay = overlay;
+    this.overlayBootFailure = bootFailure;
+
+    this.overlayWatchdog = setTimeout(() => {
+      this.overlayWatchdog = null;
+      if (!this.overlay) return;
+
+      this.closeInterface();
+      if (bootFailure === 'report') {
+        this.emit('error', new Error('The encryption interface did not load.'));
+        this.emit(MSG_INTERFACE_CLOSED, undefined as never);
+      }
+    }, OVERLAY_BOOT_TIMEOUT_MS);
+  }
+
+  /**
+   * The app inside came up: stand the watchdog down and wait for its modal
+   * (`revealOverlay`), for a bounded time. The layer stays hidden meanwhile,
+   * over the product's own loader.
+   */
+  private overlayBooted(): void {
+    if (this.overlayWatchdog !== null) {
+      clearTimeout(this.overlayWatchdog);
+      this.overlayWatchdog = null;
+    }
+
+    if (!this.overlay || this.overlayReadyFallback !== null) return;
+
+    // Should the report never come, the layer must still show and the loader go.
+    this.overlayReadyFallback = setTimeout(() => this.revealOverlay(), OVERLAY_READY_FALLBACK_MS);
+  }
+
+  /**
+   * The app inside has its modal in the DOM: show the layer and have the
+   * product drop its loader, in one go, so both land in the same paint. The
+   * layer is transparent and both modals dim the page the same way, so a
+   * moment with the two of them, or with neither, would show as a blink.
+   * Once per opening.
+   */
+  private revealOverlay(): void {
+    if (this.overlayReadyFallback !== null) {
+      clearTimeout(this.overlayReadyFallback);
+      this.overlayReadyFallback = null;
+    }
+
+    if (!this.overlay || this.overlay.style.visibility === 'visible') return;
+
+    // The product's state update first, so its render is queued before the
+    // layer's style change and neither waits a frame for the other.
+    if (this.overlayBootFailure === 'report') this.emit('interface:ready', undefined as never);
+    this.overlay.style.visibility = 'visible';
+  }
+
+  /**
+   * Construct and configure an interface iframe for `path` (sandbox, allow,
+   * theme/lang hash, context handshake). Mounting is left to the caller so the
+   * same setup serves both the product-provided container (openInterface) and
+   * the SDK-created full-screen overlay (openVerifyRecipients).
+   *
+   * `overlay` travels in the HASH, not in the postMessage context, precisely
+   * because the context arrives asynchronously: a screen that renders as a page
+   * when embedded and as a modal when overlaid would otherwise paint the page
+   * variant first (full-width and opaque, over the product) and swap to the modal
+   * only once the handshake lands, which reads as a flash.
+   */
+  private buildInterfaceIframe(path: string): HTMLIFrameElement {
+    const iframe = document.createElement('iframe');
+    const hashParams = new URLSearchParams({ theme: this.theme });
+
+    if (this.lang) {
+      hashParams.set('lang', this.lang);
+    }
+
+    iframe.src = `${this.interfaceUrl}${path}#${hashParams.toString()}`;
+    iframe.style.width = '100%';
+    iframe.style.border = 'none';
+    // Sandbox permissions (principle of least privilege):
+    // - allow-scripts: required for the React app and OIDC client
+    // - allow-same-origin: required for sessionStorage (OIDC state)
+    // - allow-forms: required for potential native form submissions (Cunningham components)
+    // - allow-downloads: required for the recovery phrase file download during backup
+    // - allow-popups: required for window.open() to open the OIDC login tab
+    // - allow-popups-to-escape-sandbox: that tab is a top-level page, which the
+    //   sandbox does not make safer; inheriting it, the browser refuses outright a
+    //   provider page that sends COOP (architecture.md §2.1)
+    // - allow-modals: required for window.print() of the recovery kit and the
+    //   beforeunload guard that warns before losing an un-saved recovery phrase
+    iframe.setAttribute(
+      'sandbox',
+      'allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals'
+    );
+    // Permissions policy:
+    // - camera: required for QR code scanning during device transfer import
+    // - clipboard-write: required for the "Copy to clipboard" button during backup
+    iframe.setAttribute('allow', 'camera; clipboard-write');
+    iframe.setAttribute('title', 'Encryption Interface');
+
+    iframe.addEventListener('load', () => {
+      // Send auth context to the interface once it loads.
+      // The interface also requests context via a handshake (MSG_INTERFACE_REQUEST_CONTEXT)
+      // to handle the race condition where the React app mounts after the load event.
+      this.sendContext(iframe.contentWindow);
+    });
+
+    return iframe;
+  }
+
+  /** The context message currently owed to the interface, or null before auth. */
+  private sendContext(target: Window | null | undefined): void {
+    if (!target || !this.authContext) {
+      return;
+    }
+
+    // suiteUserId is always present; the per-flow block (verify / profile), if
+    // any, rides on the same channel the interface handshakes for. Validate
+    // before posting so a malformed context fails loudly in dev.
+    const context = interfaceContextSchema.parse({
+      suiteUserId: this.authContext.suiteUserId,
+      ...(this.pendingContext ?? {}),
+    });
+
+    target.postMessage({ type: MSG_INTERFACE_CONTEXT, ...context }, this.interfaceOrigin);
+  }
+
+  /**
+   * Open the SDK-owned "verify recipients" overlay on top of the product's own
+   * share dialog, and resolve with the user's outcome. The SDK deliberately does
+   * NOT draw any chrome here: the container is a minimal, transparent, full-
+   * viewport layer, and the interface (a Cunningham Modal) draws the whole modal
+   * (its own backdrop + card) inside the transparent iframe, so it matches the
+   * rest of the interface UI. Tears the overlay down once the outcome is in.
+   */
+  private openVerifyRecipients(recipients: Record<string, RecipientLabel>): Promise<'resolved' | 'cancelled'> {
+    this.openOverlay('/verify-recipients', 'silent');
+    this.pendingContext = { verifyRecipients: { recipients } };
+
+    return new Promise<'resolved' | 'cancelled'>((resolve) => {
+      this.verifyResolve = resolve;
+    });
+  }
+
+  /**
+   * Auto-open the interface over the product when the vault reports actionable
+   * emergency-access state: a running recovery request against the user's vault
+   * (which they must be able to refuse without hunting for a menu) or a pending
+   * trusted-contact designation to accept. Same transparent-overlay technique
+   * as the verify-recipients flow; at most once per page load, and never while
+   * another interface flow is already open (the settings screen shows the same
+   * state anyway).
+   *
+   * This one is the ONLY flow the SDK opens on its own initiative, so it is held
+   * to a stricter rule than the flows a product asked for: it stays invisible
+   * until the interface says it is up, and if it never says so it is removed
+   * rather than left covering the page. Both halves hang off the same signal:
+   *
+   *  - the interface asks for its context (MSG_INTERFACE_REQUEST_CONTEXT) as soon
+   *    as its React app mounts, so that is "the remote page is ready";
+   *  - until then `visibility: hidden` keeps the blank document, then the app's
+   *    first frames, off the screen;
+   *  - if it never arrives (bundle blocked, offline, a redirect leaving an empty
+   *    document, a crash before mount) the watchdog removes the whole overlay, so
+   *    a broken interface never sits on top of the product swallowing clicks. The
+   *    user loses nothing: the same state is in the settings screen, and the
+   *    load-bearing channel for all of this is email.
+   */
+  private surfaceEmergencyPending(state: EmergencyPendingContext): void {
+    if (this.emergencySurfaced || this.interfaceIframe) return;
+    this.emergencySurfaced = true;
+
+    this.openOverlay('/emergency-access', 'silent');
+    this.pendingContext = {
+      emergencyPending: { recovery: state.recovery, invitation: state.invitation },
+    };
+  }
+
+  private completeVerify(outcome: 'resolved' | 'cancelled'): void {
+    const resolve = this.verifyResolve;
+    this.verifyResolve = null;
+    this.closeInterface();
+    resolve?.(outcome);
+  }
+
+  /**
+   * Run a recipient-bearing operation, and on UNTRUSTED_RECIPIENT open the shared
+   * verify modal for the ORIGINAL recipients (full labeled map; the interface
+   * surfaces only the blocked ones). If the user trusts them all, retry the
+   * operation exactly once; otherwise rethrow the original error so the product
+   * sees the share failed (all-or-nothing). Any other error rethrows unchanged.
+   * This is always on: whether to prompt for trust is not a product choice, so
+   * there is no opt-out.
+   */
+  private async withRecipientVerification<T>(recipients: Record<string, RecipientLabel>, run: (isFinalAttempt: boolean) => Promise<T>): Promise<T> {
+    try {
+      // The first attempt may fail the trust gate and be retried, so it must not
+      // transfer (detach) any buffers; the retry is the final attempt.
+      return await run(false);
+    } catch (err) {
+      if (err instanceof VaultError && err.code === VaultErrorCode.UNTRUSTED_RECIPIENT) {
+        const outcome = await this.openVerifyRecipients(recipients);
+
+        if (outcome === 'resolved') {
+          // The user trusted every recipient (accept-fingerprint ran in the
+          // vault), so the local registry changed: notify listeners and retry
+          // the operation exactly once.
+          this.emit('fingerprint-changed', undefined as never);
+
+          return await run(true);
+        }
+      }
+
+      throw err;
+    }
+  }
+
+  private async vaultRequest(type: string, payload?: Record<string, unknown>, transferables?: Transferable[]): Promise<unknown> {
+    if (!this.vaultIframe?.contentWindow) {
+      throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'Vault not initialized. Call init() first.');
+    }
+
+    if (!this.authContext?.suiteUserId) {
+      throw new VaultError(VaultErrorCode.AUTH_REQUIRED, 'Auth context with suiteUserId is required. Call setAuthContext() first.');
+    }
+
+    const requestId = crypto.randomUUID();
+    const { suiteUserId } = this.authContext;
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new VaultError(VaultErrorCode.TIMEOUT, `Vault request "${type}" timed out after ${this.timeout}ms`));
+      }, this.timeout);
+
+      this.pending.set(requestId, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (reason) => {
+          clearTimeout(timer);
+          reject(reason);
+        },
+      });
+
+      const message = { type, requestId, suiteUserId, ...(payload ? { payload } : {}) };
+
+      if (transferables && transferables.length > 0) {
+        this.vaultIframe!.contentWindow!.postMessage(message, this.vaultOrigin, transferables);
+      } else {
+        this.vaultIframe!.contentWindow!.postMessage(message, this.vaultOrigin);
+      }
+    });
+  }
+
+  private handleMessage(event: MessageEvent): void {
+    // Messages from the vault (data.encryption)
+    if (event.origin === this.vaultOrigin) {
+      const msg = event.data as { type?: string };
+
+      // Forwarded BroadcastChannel notifications from the vault iframe
+      if (msg?.type === 'vault:keys-changed') {
+        this.emit('keys-changed', undefined as never);
+
+        return;
+      }
+
+      if (msg?.type === 'vault:keys-destroyed') {
+        this.emit('keys-destroyed', undefined as never);
+
+        return;
+      }
+
+      this.handleVaultMessage(event.data as VaultResponse);
+
+      return;
+    }
+
+    // Messages from the interface (.encryption)
+    if (event.origin === this.interfaceOrigin) {
+      this.handleInterfaceMessage(event.data);
+
+      return;
+    }
+  }
+
+  private handleVaultMessage(data: VaultResponse): void {
+    if (!data || typeof data !== 'object' || !('type' in data)) {
+      return;
+    }
+
+    if (data.type === MSG_VAULT_READY) {
+      this.vaultReadyResolve?.();
+      this.emit(MSG_VAULT_READY, undefined as never);
+
+      return;
+    }
+
+    if ((data as { type?: string }).type === MSG_VAULT_EMERGENCY_PENDING) {
+      const payload = (data as unknown as { payload?: EmergencyPendingContext }).payload;
+
+      if (payload) this.surfaceEmergencyPending(payload);
+
+      return;
+    }
+
+    if (data.type === MSG_VAULT_RESULT && 'requestId' in data) {
+      const pending = this.pending.get(data.requestId);
+
+      if (pending) {
+        this.pending.delete(data.requestId);
+
+        if (data.success) {
+          pending.resolve(data.data);
+        } else {
+          // Reconstruct as a VaultError when the vault marshalled a
+          // code; falls back to UNKNOWN if the response came from an
+          // older vault build that didn't include one yet.
+          const code = (data as { code?: string }).code as VaultErrorCode | undefined;
+          const error = new VaultError(code ?? VaultErrorCode.UNKNOWN, data.error);
+          pending.reject(error);
+          this.emit('error', error);
+        }
+      }
+    }
+  }
+
+  private handleInterfaceMessage(data: unknown): void {
+    if (!data || typeof data !== 'object' || !('type' in (data as Record<string, unknown>))) {
+      return;
+    }
+
+    const msg = data as { type: string; publicKey?: string; outcome?: 'resolved' | 'cancelled' };
+
+    switch (msg.type) {
+      case MSG_INTERFACE_REQUEST_CONTEXT:
+        // Handshake: interface iframe requests its context on mount. That request
+        // is also the proof the remote page came up.
+        this.sendContext(this.interfaceIframe?.contentWindow);
+        this.overlayBooted();
+        break;
+      case MSG_INTERFACE_SHOWN:
+        // The interface has its modal in the DOM: swap the product's loader for it.
+        this.revealOverlay();
+        break;
+      case MSG_INTERFACE_ONBOARDING_COMPLETE:
+        this.emit('onboarding:complete', { publicKey: msg.publicKey ?? '' });
+        break;
+      case MSG_INTERFACE_VERIFY_COMPLETE:
+        // The verify overlay reports its outcome; any value other than an explicit
+        // 'resolved' aborts the share (all-or-nothing).
+        this.completeVerify(msg.outcome === 'resolved' ? 'resolved' : 'cancelled');
+        break;
+      case MSG_INTERFACE_CLOSED:
+        this.closeInterface();
+        this.emit(MSG_INTERFACE_CLOSED, undefined as never);
+        break;
+    }
+  }
+
+  private removeIframe(iframe: HTMLIFrameElement | null): void {
+    if (iframe?.parentNode) {
+      iframe.parentNode.removeChild(iframe);
+    }
+  }
+
+  private emit<K extends keyof EncryptionClientEventMap>(event: K, data: EncryptionClientEventMap[K]): void {
+    this.listeners.get(event)?.forEach((listener) => (listener as Listener<K>)(data));
+  }
+}

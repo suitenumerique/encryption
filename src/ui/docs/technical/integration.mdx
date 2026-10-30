@@ -1,0 +1,482 @@
+import { Alert } from '@encryption/src/ui/docs/components/Alert';
+import { CodeBlock } from '@encryption/src/ui/docs/components/CodeBlock';
+
+# Integration guide — Encryption service
+
+## Architecture
+
+The encryption service is built on **two isolated domains** served by a single server:
+
+| Domain            | Role                                                       | Visibility           |
+| ----------------- | ---------------------------------------------------------- | -------------------- |
+| `data.encryption` | **Vault** — stores private keys, encrypts and decrypts     | **invisible** iframe |
+| `encryption`      | **Interface** — onboarding, backup, restore, documentation | **visible** iframe   |
+
+Suite products talk to these iframes through `postMessage`. Private keys **never leave** the `data.encryption` domain.
+
+### User identity: `suiteUserId`
+
+Each Suite product may have its own internal identifiers. The encryption service uses the **`suiteUserId`** — the `sub` claim from the OIDC identity provider — as the user identifier shared across every product.
+
+<Alert severity="warning" title="Cross-product identifier">
+  For the `suiteUserId` to be shared across products, the OIDC identity provider must issue a **public** (non-_pairwise_) `sub`, that is
+  `subject_types_supported: ["public"]`: the `sub` is then **the same for a given user** whichever Suite product is calling (Docs, Drive, Fichier,
+  Visio). Products must use this `suiteUserId` (and never their internal ID) in every interaction with the encryption service.
+</Alert>
+
+### Interface authentication
+
+The encryption interface (`encryption`) handles its own OIDC authentication, **independently of the product**. Products do not pass a token to the interface, they only pass the `suiteUserId`.
+
+When the user opens onboarding or the settings, the flow is:
+
+1. The iframe shows an "Authentication required" screen with a **Continue** button
+2. Clicking Continue opens a **new tab**, which asks the iframe for the sign-in's parameters and goes to the identity provider (OIDC client `encryption`)
+3. The user authenticates there (possibly with a second factor), taking as long as they need
+4. The provider sends the tab back to the interface, which hands the authorization code to the encryption server and closes the tab
+5. Meanwhile the iframe asks the server to exchange that code, receives the ID token, and renders the actual interface
+
+<Alert severity="info" title="Why a separate authentication?">
+  The iframe cannot perform a classic OIDC redirect (redirects are blocked by the identity provider's CSP, and popups are restricted inside iframes).
+  Opening a new tab works around those limitations while preserving the security isolation.
+</Alert>
+
+---
+
+## Security
+
+### Iframe isolation
+
+Each domain runs in its own origin context. The browser guarantees that:
+
+- `data.encryption` has its own IndexedDB, unreachable from the other domains
+- Private keys (ideally non-extractable CryptoKey objects) stay inside the vault context
+- Communication happens only through `postMessage`, with origin validation
+
+### Security headers
+
+<Alert severity="info" title="Content Security Policy">
+  The vault uses the most restrictive CSP possible:<br/>
+  `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors <allowed domains>`<br/>
+  No style, no image, no font — only the encryption script. `'wasm-unsafe-eval'` is what lets the libsodium
+  WebAssembly module compile; it authorizes compiling WebAssembly and nothing else, and grants no network or DOM reach
+  of its own.
+</Alert>
+
+- **SRI (Subresource Integrity)** — the script hash is verified on every load
+- **Service Worker** — the vault and the client SDK are cached by a SW, which provides offline operation and automatic updates
+- **X-Frame-Options + frame-ancestors** — only allowed products can embed the iframes
+- **Runtime origin validation** — every incoming `postMessage` is checked in JavaScript
+- **Cross-Origin-Embedder-Policy / Cross-Origin-Opener-Policy** — reinforced origin isolation on the vault, reducing the attack surface for side-channel attacks (Spectre, etc.)
+
+### Browser extensions
+
+<Alert severity="warning" title="Known limitation">
+  Browser extensions holding broad permissions (`<all_urls>`, `activeTab`) can potentially read page content, including cross-origin iframes, by injecting content scripts. **No browser mechanism exists** to prevent this: it is an architectural limitation of the extension security model.
+
+We applied every available protection (CSP, COEP, COOP, CORP, SRI, iframe isolation) to raise the technical bar, but those measures do not stop extensions with elevated privileges. Users handling sensitive data must make sure only trusted extensions are installed in their browser. A warning is shown during onboarding and during key restore.
+
+</Alert>
+
+### Storage partitioning (Chrome)
+
+<Alert severity="warning" title="Domain constraint: every product must share the same registrable domain (eTLD+1)">
+  Since Chrome 115, storage APIs (IndexedDB, BroadcastChannel, localStorage, etc.) inside third-party iframes are **partitioned by top-level site** (eTLD+1). The vault (`data.encryption`) stores private keys in IndexedDB, so if products live on different registrable domains each product gets **its own partition** with isolated keys.
+
+**Works:** `docs.numerique.gouv.fr` and `drive.numerique.gouv.fr` → same eTLD+1 (`numerique.gouv.fr`) → shared partition → keys reachable from every product.
+
+**Does not work:** `docs.gouv.fr` and `drive.gouv.fr` → different eTLD+1 (`docs.gouv.fr` vs `drive.gouv.fr`) → separate partitions → keys generated from Docs are invisible from Drive.
+
+**Development pitfall:** using `localhost` with different ports (e.g. `:7203` and `:7204`) **hides this problem**, because every port shares the same `localhost` site. To test storage separation properly, use subdomains sharing a common parent in `/etc/hosts` (e.g. `a.product.localhost` and `b.product.localhost`, which share the eTLD+1 `product.localhost`).
+
+</Alert>
+
+<Alert severity="info" title="Why the result goes through the server">
+  The sign-in tab cannot hand its result back to the iframe through the browser. A provider page sending `Cross-Origin-Opener-Policy: same-origin`
+  (LaSuite Accounts, ProConnect) cuts `window.opener` for good, and `BroadcastChannel` or storage do not reach across either: the iframe, embedded in
+  `docs.numerique.gouv.fr`, and the tab, on `encryption.numerique.gouv.fr`, sit in different storage partitions. So the callback deposits the code on
+  the encryption server, under a relay id only the iframe and its tab know, and the iframe exchanges it with its PKCE verifier. The SDK lets the
+  interface's tabs escape the iframe's sandbox (`allow-popups-to-escape-sandbox`): a sandboxed tab cannot load a provider page that sends COOP at all.
+</Alert>
+
+### Operation separation
+
+| Operation                                                         | Reachable from                            |
+| ----------------------------------------------------------------- | ----------------------------------------- |
+| `has-keys`, `get-public-key`, `encrypt`, `decrypt`                | Every product (through `data.encryption`) |
+| `generate-keys`, `export-backup`, `import-backup`, `destroy-keys` | **Only** `encryption`                     |
+
+A product can **never** generate, export or delete keys. Those sensitive actions always go through the encryption interface (`encryption`).
+
+### Network call and privilege separation
+
+The split between the two domains creates an intentional **privilege separation** for calls to the central server:
+
+| Domain                    | Network calls                                                               | Authentication                                                 | Access             |
+| ------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------ |
+| `data.encryption` (vault) | `GET /api/public-keys` only                                                 | **None** (public endpoint)                                     | Public key reads   |
+| `encryption` (interface)  | `POST /api/public-keys/register/{init,complete}`, `DELETE /api/public-keys` | Provider's **ID token** issued to the OIDC client `encryption` | Writes / deletions |
+
+<Alert severity="info" title="Why this separation?">
+  The vault (`data.encryption`) stores the **private keys** in its IndexedDB and holds **no authenticated token**. The interface (`encryption`) holds the provider's ID token but has **no access to the private keys** (different domain, IndexedDB isolated by the browser).
+
+**If the vault is compromised**: the attacker reaches the local private keys and could decrypt content, but cannot alter the central server (no token). They can neither register forged public keys, nor delete existing ones, nor start key transfers to another device.
+
+**If the interface is compromised**: the attacker has a token and can alter public keys on the server, but has **no access to the private keys** and therefore **cannot decrypt existing content**.
+
+Compromising both domains at once would be required to both reach the private keys AND manipulate the central server. This separation significantly reduces the attack surface.
+
+</Alert>
+
+<Alert severity="info" title="Why are public keys not behind authentication?">
+
+The `GET /api/public-keys` endpoint is reachable **without a token**. That choice is deliberate:
+
+- Public keys are **public by nature** — they are meant to be shared.
+- LaSuite is used by tens of thousands of users. Any authenticated user could fetch everyone else's public keys, so requiring a token would add no real protection.
+- Protecting this endpoint would mean propagating an authentication token into the vault (`data.encryption`), which would work against the privilege separation principle for no security benefit.
+
+</Alert>
+
+---
+
+## Quick integration
+
+### 1. Load the client SDK
+
+The SDK is served from `data.encryption` (the same domain as the vault). It is handled by the same Service Worker: cached automatically, and updated whenever a new version is detected.
+
+<CodeBlock language="html">
+{`<!-- Classic script (IIFE, exposes window.EncryptionClient) -->
+<script src="https://data.encryption.numerique.gouv.fr/client.js"></script>
+
+<!-- Or as an ES module -->
+
+<script type="module">
+  import { VaultClient } from 'https://data.encryption.numerique.gouv.fr/client.mjs';
+</script>`}
+
+</CodeBlock>
+
+The ES module form, and a classic script carrying an `integrity` attribute (which then also needs `crossorigin="anonymous"`), are cross-origin (CORS) requests. The server answers them only for the product origins listed in its `ALLOWED_FRAME_ANCESTORS`, the same list that allows embedding the iframes: from any other origin, the browser refuses to run the SDK.
+
+### 2. TypeScript autocompletion (optional)
+
+The SDK is loaded by URL, so TypeScript does not know its types by default. To get autocompletion and type checking in your IDE, download the declaration file:
+
+<CodeBlock language="bash">
+  {`# Download the types into your project
+curl -o src/types/encryption-client.d.ts https://data.encryption.numerique.gouv.fr/client.d.ts`}
+</CodeBlock>
+
+Then reference it from your code:
+
+<CodeBlock language="typescript">
+{`/// <reference path="./types/encryption-client.d.ts" />
+
+// Autocompletion now works:
+const encryption = new EncryptionClient.VaultClient({
+vaultUrl: '...', // ← your IDE suggests the options
+interfaceUrl: '...',
+});
+
+const { hasKeys } = await encryption.hasKeys(); // ← return types are known`}
+
+</CodeBlock>
+
+<Alert severity="info" title="Keeping the types up to date">
+  When the encryption service is updated, download the `.d.ts` file again to get the latest types. Types are not versioned independently from the SDK,
+  they always match the version served by `encryption`.
+</Alert>
+
+### 3. Initialize the client
+
+<CodeBlock language="javascript">
+{`const encryption = new EncryptionClient.VaultClient({
+  vaultUrl: 'https://data.encryption.numerique.gouv.fr',
+  interfaceUrl: 'https://encryption.numerique.gouv.fr',
+  theme: 'dsfr',   // Cunningham theme name: "default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark"
+  lang: 'fr',      // interface language (optional, auto-detected otherwise)
+});
+
+// Creates the invisible vault iframe and waits for it to be ready
+await encryption.init();`}
+
+</CodeBlock>
+
+### 4. Authentication
+
+Before using the service, pass the authentication context: the `suiteUserId`, which is the `sub` claim from the OIDC identity provider, the identifier shared by every Suite product. No token of yours is ever passed: the encryption service signs the user in on its own.
+
+<Alert severity="warning" title="suiteUserId ≠ internal ID">
+  The `suiteUserId` must be the OIDC `sub`, **not** your product's internal identifier. It is what lets the encryption service find a user's keys
+  whichever product is calling.
+</Alert>
+
+<CodeBlock language="javascript">
+  {`encryption.setAuthContext({
+  suiteUserId: userId,   // OIDC "sub" claim — cross-product identifier
+});`}
+</CodeBlock>
+
+<Alert severity="info" title="The interface authenticates on its own">
+  The encryption interface (`encryption`) signs the user in through its own OIDC client (`encryption`, confidential: the encryption server exchanges
+  the code and keeps the access token), then presents the provider's **ID token** on every call, which the server verifies locally (its audience must
+  be `encryption`, so an ID token issued to your product is refused). If the provider signs in someone other than the `suiteUserId`, the sign-in is
+  refused. The product never passes a token, only the `suiteUserId`, so the interface can attach the keys to the right user.
+</Alert>
+
+### 5. Check for keys and trigger onboarding
+
+<CodeBlock language="javascript">
+{`const { hasKeys } = await encryption.hasKeys();
+
+if (!hasKeys) {
+// Opens the interface inside a container (your modal, sidebar, etc.)
+encryption.openOnboarding(document.getElementById('modal-container'));
+
+encryption.on('onboarding:complete', ({ publicKey }) => {
+console.log('Keys generated, public key:', publicKey);
+// The public key is already registered server-side by the interface
+});
+}`}
+
+</CodeBlock>
+
+### 6. Encrypt and decrypt
+
+<CodeBlock language="javascript">
+{`// Encrypt content (generates a symmetric key, encrypts, wraps it for each user)
+const { encryptedContent, encryptedKeys } = await encryption.encryptWithoutKey(
+btoa('Sensitive content'),
+{
+'suite-user-id-1': publicKey1,  // suiteUserId → public key (ArrayBuffer)
+'suite-user-id-2': publicKey2,
+}
+);
+
+// Decrypt with your own copy of the symmetric key
+const { data } = await encryption.decryptWithKey(
+encryptedContent,
+encryptedKeys['my-suite-user-id']
+);
+const plaintext = atob(data);
+
+// Re-encrypt with the same key (real-time collaboration, auto-save)
+const { encryptedData } = await encryption.encryptWithKey(
+btoa('Updated content'),
+encryptedKeys['my-suite-user-id']
+);
+
+// Share the key with new users
+const { encryptedKeys: newKeys } = await encryption.shareKeys(
+encryptedKeys['my-suite-user-id'],
+{ 'new-user-id': newUserPublicKey }
+);`}
+
+</CodeBlock>
+
+<Alert severity="info" title="maintenanceKey">
+  When the deployment runs the maintenance escrow, `encryptWithoutKey` and `shareKeys` also return `maintenanceKey`. Persist it on the resource
+  whenever it is present, and pass the resource's owner to `shareKeys` (see "Maintenance escrow" below). It is absent otherwise, and it is never a
+  recipient.
+</Alert>
+
+### 7. Automatic updates
+
+The vault is served by a Service Worker that caches it, so encryption keeps working offline. Each time the vault loads, the Service Worker first asks `GET /api/version` which version the server runs; when it differs from the cached one, it downloads the new vault into a separate cache and switches to it before serving the page, so the vault that starts matches the server. A vault already running keeps its version until its page reloads. No event is emitted and nothing is required on your side.
+
+The SDK (`client.js`, `client.mjs`) is not cached by the Service Worker: your page loads it from another origin, and a Service Worker only sees the requests of its own origin's pages. It comes from the server on every load of your page.
+
+<Alert severity="info" title="Offline and slow networks">
+  When the browser reports being offline, the vault starts from the cache at once, without asking the server. Online, the check waits at most 3
+  seconds (a server that does not answer, a captive portal) before starting from the cache; the next load checks again.
+</Alert>
+
+### 8. Cleanup
+
+<CodeBlock language="javascript">
+  {`// Remove the iframes, stop the version check, release the resources
+encryption.destroy();`}
+</CodeBlock>
+
+---
+
+## SDK API
+
+### Product operations (through the vault)
+
+| Method                                                                            | Description                                                                                  | Returns                                                |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `hasKeys()`                                                                       | Whether keys exist on this device (`deEnrolled` when it forgot them after a long inactivity) | `HasKeysResult` (`{ hasKeys, deEnrolled? }`)           |
+| `getPublicKey()`                                                                  | Fetch the public key                                                                         | `{ publicKey: ArrayBuffer }`                           |
+| `encryptWithoutKey(data, userPublicKeys)`                                         | Encrypt content (generates a new symmetric key)                                              | `{ encryptedContent, encryptedKeys, maintenanceKey? }` |
+| `encryptWithKey(data, encryptedSymmetricKey)`                                     | Re-encrypt with an existing key (collab, auto-save)                                          | `{ encryptedData: ArrayBuffer }`                       |
+| `decryptWithKey(encryptedData, encryptedSymmetricKey)`                            | Decrypt with a provided symmetric key                                                        | `{ data: ArrayBuffer }`                                |
+| `shareKeys(encryptedSymmetricKey, userPublicKeys, encryptedKeyChain?, ownerSub?)` | Share the key with other users                                                               | `{ encryptedKeys: Record, maintenanceKey? }`           |
+
+### Configuration
+
+| Method                    | Description                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `setTheme(theme)`         | Change the interface's Cunningham theme ("default", "dark", "dsfr", "dsfr-dark", "anct", "anct-dark") |
+| `setAuthContext(context)` | Pass the `suiteUserId` (OIDC `sub` claim)                                                             |
+
+### Interface operations (onboarding, backup)
+
+| Method             | Description                                 |
+| ------------------ | ------------------------------------------- |
+| `openOnboarding()` | Open the onboarding interface over the page |
+| `openBackup()`     | Open the key backup interface               |
+| `openRestore()`    | Open the restore interface                  |
+| `openSettings()`   | Open the encryption settings                |
+| `requestClose()`   | Ask the interface to close (see below)      |
+| `closeInterface()` | Remove the interface immediately            |
+
+Every open\* call lays a transparent, full-viewport iframe over the page and loads the interface in it; the interface draws its own modal there (backdrop, card, close control, width), so the product draws nothing around it. Show a loader in a modal of your own when you call open\*, dismiss it on the `interface:ready` event, and unmount whatever you keep on the `interface:closed` event, which the interface emits once it has really closed (its close control may first ask, e.g. over an unsaved recovery phrase). If the interface never comes up, the SDK tears the frame down after a few seconds and emits an `error` then `interface:closed`, so the loader goes too. `requestClose()` asks the interface to close as its own close control would; `closeInterface()` remains for the cases where the product must tear the frame down regardless (the user signed out, the page navigates away).
+
+### Events
+
+| Event                 | Payload         | Description                                          |
+| --------------------- | --------------- | ---------------------------------------------------- |
+| `vault:ready`         | —               | The vault is initialized                             |
+| `onboarding:complete` | `{ publicKey }` | The user completed onboarding                        |
+| `interface:ready`     | —               | The interface is on screen (dismiss your loader)     |
+| `interface:closed`    | —               | The interface closed (also after a `requestClose()`) |
+| `error`               | `Error`         | An error occurred                                    |
+
+---
+
+## Integration checklist for products
+
+To integrate the encryption service, each Suite product must:
+
+1. **Expose the `suiteUserId`** — make the OIDC identity provider's `sub` claim reachable from the product's user API
+2. **Use the `suiteUserId` in `setAuthContext`** — **never** pass the product's internal identifier
+3. **Index by `suiteUserId`** — use the `suiteUserId` as the key in every encryption-related map (`fetchPublicKeys`, `encryptWithoutKey`, etc.)
+4. **Do not pass a token to the interface** — the interface (`encryption`) authenticates on its own through its dedicated OIDC client
+
+### Maintenance escrow
+
+A deployment may keep, for every encrypted resource, one extra copy of the resource key wrapped for an operator-held maintenance key, kept offline, so that the stored content can be decrypted in batch (after a general failure, or to stop encrypting) without waiting for its users. It is a temporary mode, for a massive loss rather than a user who lost their keys, and while it runs the custodians can read what it covers. Most deployments configure one key for every user; a deployment shared by several organizations can give each its own key, chosen by the email domain of the resource's **owner**. The encryption server decides (`MAINTENANCE_ESCROW_KEYS`); a product has nothing to configure and these rules to follow:
+
+1. **Persist `maintenanceKey` when it is present.** `encryptWithoutKey` and `shareKeys` return it next to `encryptedKeys`. Store it on the resource that holds the ciphertext, in a nullable column, and overwrite it on every share. Name the column after what it holds, the resource key wrapped for maintenance (`maintenance_wrapped_document_key`, say); the export renames it `maintenanceKey`. In a key hierarchy (Drive), it is returned for the encryption root only, which is enough: nested keys chain from it.
+2. **Name the owner when you share.** `encryptWithoutKey` escrows for the caller's organization, the caller creating the resource. `shareKeys` takes the owner's OIDC sub as its fourth argument (the creator, say) and escrows for the owner's organization; without it, the sharer counts as the owner, and a document shared onwards by someone from another organization would move to that organization's custodians. An owner who never signed in to the encryption service has no known email: no copy comes back, and the share itself goes through. Take the owner from your backend's own record of the resource (its creator column), never from a value the browser sent: the owner decides which organization's custodians can read the resource.
+3. **Never treat it as a recipient.** It is not in `encryptedKeys`, it is not a user, and it must not appear in a sharing list or be removable from one.
+4. **Backfill lazily.** A resource created before the option was enabled, or before its owner's domain was covered, has no copy. Calling `shareKeys` with an empty recipient map, from any current holder, returns only `maintenanceKey`; do it when you open such a resource and the column is null.
+
+#### The encrypted export for a batch recovery
+
+The day the content has to be decrypted without its users (a general failure of the encryption, an organization that stops encrypting), the product team exports it, still encrypted, into a folder (the **encrypted export**), the deployment's custodians decrypt it on an isolated computer with the maintenance tool (downloadable at `/public-assets/maintenance-tool.html` on the interface host) into a **decrypted copy**, and the team imports that copy back. Use these two names in your own documentation and commands: "export" alone is ambiguous once both exist. The encrypted export has the same shape for every product:
+
+- `manifest.ndjson`: one JSON object per line, one line per encrypted item (a document, an attachment, a comment, a Drive folder or file).
+- Any other file: a ciphertext too large for a column, such as an attachment from object storage, at the path its line names.
+
+Each line has:
+
+| Field            | Required                         | Meaning                                                                                                                                         |
+| ---------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | yes                              | Unique in the export (a string or an integer, given back with the same type)                                                                    |
+| `type`           | no                               | A free label shown in the tool (`document`, `attachment`...)                                                                                    |
+| `maintenanceKey` | one of `maintenanceKey`/`parent` | A root resource: its stored `maintenanceKey`, base64                                                                                            |
+| `parent`         | one of `maintenanceKey`/`parent` | A nested item: the `id` of the item whose key opens it                                                                                          |
+| `wrappedKey`     | no, with `parent`                | The item's own key wrapped by the parent's key, base64 (the `wrappedKey` of `encryptNestedWithoutKey`); absent, the parent's key itself is used |
+| `content`        | no                               | The ciphertext, base64 on one line                                                                                                              |
+| `file`           | no                               | Or: the ciphertext's path in the folder, relative, forward slashes                                                                              |
+
+One line per item, as `psql -At` writes it, so an example reads as long lines:
+
+<CodeBlock language="json">
+  {`{"id":"0f1e…","type":"document","title":"Notes","updatedAt":"2026-10-19T10:00:00Z","maintenanceKey":"AWAE…","content":"AfGk…"}
+{"id":"7c2a…","type":"attachment","parent":"0f1e…","wrappedKey":"AY3x…","file":"0f1e…/attachments/7c2a…"}
+{"id":"9b41…","type":"comment","parent":"0f1e…","content":"AQx9…"}`}
+</CodeBlock>
+
+Keep the lines small: the tool reads the manifest whole, and a browser cannot hold a text of several gigabytes. Anything larger than a short value goes in a file, a document's content included (100,000 documents of a few pages inline would make a manifest of 5 to 10 GB; in files, about 30 MB), whether the product keeps it in object storage or in a column: the export writes each one to its own file either way. An item with neither `content` nor `file` only carries a key for its children (a Drive folder). Every other field (a title, an `updatedAt`, an object key...) passes through unchanged.
+
+**Attachments in an object storage.** The tool runs offline and reads only the folder it is given, so the export has one more step than the query: copying each object named by a `file` into the folder. Make `file` the object's key in the bucket, and that step and its reverse need no mapping:
+
+<CodeBlock language="bash">
+  {`# Export: fill the folder with the ciphertexts the manifest names
+jq -r 'select(.file) | .file' export/manifest.ndjson | while read -r key; do
+  aws s3 cp "s3://$BUCKET/$key" "export/$key"
+done
+
+# Import, from the unzipped archive: each decrypted file is at the same path
+
+jq -r 'select(.file and (.error | not)) | .file' decrypted/manifest.ndjson | while read -r key; do
+aws s3 cp "decrypted/$key" "s3://$BUCKET/$key"
+done`}
+
+</CodeBlock>
+
+The tool lists the files the manifest names but the folder lacks as soon as the folder is picked. Whether the plaintext replaces the ciphertext at the same key or goes to a new one is the product's import to decide; a passed-through field can carry whatever it needs.
+
+**What comes back: the decrypted copy.** The tool writes a folder or an archive with the same structure: `manifest.ndjson` with the same lines without `maintenanceKey` and `wrappedKey`, `content` holding the plaintext in base64, each `file` path holding the plaintext, and an `error` field on any line it could not decrypt. Compare a passed-through `updatedAt` at import to leave a document edited after the encrypted export for the next batch. The items escrowed for another organization's key are not in that manifest: the decrypted copy holds them as they came, files included, in one encrypted export per key (`other-keys/<fingerprint>/`), to hand to those custodians.
+
+**Importing.** One document (or Drive tree) per transaction, never the whole decrypted copy in one: upload the decrypted files first, under new object keys (rewriting the references to them in the plaintext content when the content names its objects by key, as Docs' blocks do), then in a short transaction check `updatedAt`, point the rows at the new objects and write the plaintext columns, a content under a key that never changes written last as a new version; delete the new plaintext objects and that version after a rollback, and keep the old ciphertext ones after the commit, for an investigation, until a separate clean-up deletes them once the batch is checked. Docs and Drive ship this as `maintenance_import`, the export as `maintenance_export --fingerprint`, and the clean-up as `maintenance_purge_versions` (Docs) and `delete_orphan_objects` (Drive). Skip a document when any of its items carries an `error`: switching it alone would drop the key its attachments still depend on. `src/maintenance/escrow.test.ts` in this repository is a complete example.
+
+**Rotating to a new maintenance key.** When an organization replaces its key, its copies are wrapped again for the new public key in the tool, from an encrypted export of the copies alone: one line per root, `id`, `maintenanceKey` and any product field, no descendant and no file (Docs and Drive: `maintenance_export --keys-only --fingerprint <old key's fingerprint>`). The tool hands back a `manifest.ndjson` with the same lines, each with the new copy in `maintenanceKey` and the exported one in `previousMaintenanceKey`, or `previousMaintenanceKey` and an `error` when it could not rotate that copy (damaged, or made for another key); `content` and `file` are dropped. It holds no secret. Write it back in one transaction (one small column, nothing in the object storage, so all or nothing is the simplest), each row only where its stored copy still equals `previousMaintenanceKey`: a copy that changed since the encrypted export (the resource encrypted again with a new key) is left alone. Docs and Drive ship this as `maintenance_rotate`.
+
+**One organization at a time.** A copy starts with a version byte and the 16-byte id of the key it was made for (the 128 bits its fingerprint writes in digits), so an export can be limited to one organization with SQL alone, without working out who owns what: `WHERE substring(decode(maintenance_wrapped_document_key, 'base64') from 2 for 16) = decode('<key id in hex>', 'hex')` on a base64 column (without the inner `decode` on a binary one). Take the fingerprint as your command's input, never a second identifier: it is the one number custodians and operators handle, in the encryption server's startup log and in the tool, and the key id is the fingerprint without its leading `1`, read as a number and written in 16 bytes: `int(digits[1:]).to_bytes(16, 'big').hex()` in Python, `BigInt(digits.slice(1)).toString(16).padStart(32, '0')` in JavaScript.
+
+PostgreSQL's `encode(…, 'base64')` breaks lines every 76 characters: wrap it in `translate(encode(…, 'base64'), E'\n', '')`, the tool refuses wrapped base64. The tool writes each item as soon as it is decrypted: into a folder in Chrome and Edge, into a ZIP64 archive built in the browser's storage in Firefox, so the decrypted copy's total size is bounded by the disk, not the memory. One item must fit in memory, as it did when it was encrypted. Architecture, Appendix E, has the full model and the alternatives that were considered.
+
+### Second authentication factor (2FA) and step-up
+
+Everyday use does **not** require 2FA: the private keys live in the user's device vault, so a stolen password alone decrypts nothing. The one action that does is **replacing the user's identity** (registering a new signature key when the user already has one, typically after losing every device), since it changes what their contacts see. It follows RFC 9470 (_OAuth 2.0 Step-Up Authentication Challenge_): the ID token must show a second factor (an `acr` among `OIDC_STEP_UP_ACR_VALUES` or an `amr` among `OIDC_STEP_UP_AMR_VALUES`) and an `auth_time` younger than `OIDC_STEP_UP_MAX_AGE_SECONDS` (300 by default). Otherwise the server answers `401` with `{"code": "insufficient_user_authentication", "params": {"max_age": 300}}` and a `WWW-Authenticate: Bearer error="insufficient_user_authentication", error_description="…", acr_values="…", max_age="300"` header. The interface then asks the user to confirm their identity: a new sign-in (`prompt=login`, `max_age=0`, `acr` required through the `claims` parameter) whose ID token replaces the current one. Products have nothing to do: the whole exchange stays inside the interface.
+
+<Alert severity="info" title="Step-up off for now">
+  LaSuite Accounts, the Suite's identity provider, does not report a second factor yet, so the step-up is off by default
+  (`OIDC_STEP_UP_ENABLED=false`) and replacing an identity only takes a valid sign-in. Everything above is in place and will be turned on by default
+  once Accounts handles it ([suitenumerique/accounts#141](https://github.com/suitenumerique/accounts/issues/141)).
+</Alert>
+
+<Alert severity="warning" title="2FA across every Suite product">
+  Even when the encryption service requires 2FA, an attacker who compromises access to a Suite product without 2FA (Docs, for instance) can reach the
+  **metadata of shared content** (document titles, collaborator lists, etc.), even though the encrypted content stays protected. Enabling 2FA on
+  **every Suite product**, not just the encryption service, significantly reduces the attack vectors.
+</Alert>
+
+---
+
+## Emergency access (trusted contacts)
+
+The service lets every user designate a **trusted contact** who can help them recover access to their vault if they lose their recovery phrase and all their devices.
+
+<Alert severity="info" title="No product integration needed">
+  The feature is carried entirely by the encryption service and `client.js`: management screens, email notifications, and the automatic prompts (an
+  invitation to accept, a recovery request to refuse) that the SDK surfaces by itself through an interface overlay whenever a pending state exists.
+  Products have **no code to write**: updating the script is enough.
+</Alert>
+
+The instance operator does have to configure the notification emails, which are an essential channel (the objection delay only protects the owner if they are told a recovery was requested):
+
+- **`EMAIL_PRODUCT_URL`**: the product page the email links point to. The links carry neither a token nor a deep route: once signed in, the pending state resurfaces on its own through the SDK.
+- **`MAILER_*`**: the SMTP configuration (`MAILER_SMTP_HOST`, `MAILER_SMTP_PORT`, `MAILER_SMTP_USER`, `MAILER_SMTP_PASSWORD`), the optional fallback transport (`MAILER_FALLBACK_SMTP_*`) and `MAILER_SENDER_ADDRESS`, the address notifications are sent from (the relay must accept it). With no SMTP host configured, the server logs the emails instead of sending them.
+
+In local development a **maildev** container is provided in `docker-compose.yaml`: the emails sent are readable in a web interface on port **7207** (SMTP on port **7208**), and nothing leaves the machine.
+
+---
+
+## Server endpoints
+
+| Method   | URL                                  | Auth     | Description                                                                                                                                                                                                                                                                                  |
+| -------- | ------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/api/version`                       | No       | Unique build identifier (hash of every bundle)                                                                                                                                                                                                                                               |
+| `GET`    | `/api/public-keys?user_ids=...`      | No       | Fetch public keys by `suiteUserId`                                                                                                                                                                                                                                                           |
+| `GET`    | `/api/auth/authorize`                | No       | Keep the state and PKCE challenge, and redirect to the identity provider (sign-in tab of the interface; `step_up=1` asks for a second factor)                                                                                                                                                |
+| `POST`   | `/api/auth/relay`                    | No       | Deposit the authorization code (`state`, `relay_id`, `code`), once per sign-in, from the interface's callback page                                                                                                                                                                           |
+| `POST`   | `/api/auth/token`                    | No       | Exchange the deposited code (`relay_id`, `code_verifier`, `nonce`, optional `expected_sub`): `202` until it is deposited, then the ID token, its expiry, `sub`, `user_id`, `email`, `name` and `second_factor`. `409 wrong_user` if the provider signed in someone other than `expected_sub` |
+| `DELETE` | `/api/public-keys`                   | ID token | Disable your active public key ("start over")                                                                                                                                                                                                                                                |
+| `POST`   | `/api/public-keys/register/init`     | ID token | Registration phase 1: receive an X-Wing challenge to decapsulate. Replacing an existing identity requires step-up (`401 insufficient_user_authentication`)                                                                                                                                   |
+| `POST`   | `/api/public-keys/register/complete` | ID token | Registration phase 2: prove possession of the private key and persist                                                                                                                                                                                                                        |
+
+<Alert severity="info" title="Error handling">
+  Endpoints return error codes (not messages). Your application translates those codes client-side. Example error response: `{"code": "rate_limit_keys", "params": {"max": 10, "days": 30}}`.
+</Alert>
+
+<Alert severity="warning" title="Rate limiting">
+  Public key creation is limited to **10 per user per 30-day period**. Device transfers are limited to **10 per hour**. Those protections prevent
+  abuse.
+</Alert>
