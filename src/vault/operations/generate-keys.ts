@@ -1,6 +1,4 @@
 import { exportPublicKeyAsBase64, generateSignatureKeyPair, generateUserKeyPair } from '@encryption/src/crypto';
-import { BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
-import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { serialized } from '@encryption/src/vault/operations/key-management';
 import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cache';
 import { createVault } from '@encryption/src/vault/vault-keys';
@@ -15,7 +13,7 @@ import { createVault } from '@encryption/src/vault/vault-keys';
  * Returns both public keys (wire base64). `createVault` stages the vault in
  * memory (it is not registered yet, so has-keys stays false and abandoning the
  * flow leaves nothing behind); the caller persists it with commitStagedVault once
- * registration succeeds (see signKeyRegistration + the proof-of-possession flow).
+ * registration succeeds, which is when other tabs are told (see signKeyRegistration + the proof-of-possession flow).
  */
 export async function handleGenerateKeys(userId: string): Promise<{ publicKey: string; signaturePublicKey: string }> {
   return serialized(async () => {
@@ -31,8 +29,8 @@ export async function handleGenerateKeys(userId: string): Promise<{ publicKey: s
     // unchanged). Drop them so decryption goes through the new vault.
     clearSymmetricKeyCache();
 
-    // Notify other tabs/iframes that keys changed
-    getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
+    // No keys-changed broadcast here: other tabs read has-keys from disk, which
+    // the staged vault has not reached. The commit announces it.
 
     return {
       publicKey: exportPublicKeyAsBase64(encryptionKeyPair.publicKey),

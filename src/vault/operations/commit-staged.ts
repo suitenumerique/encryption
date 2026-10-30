@@ -1,3 +1,5 @@
+import { BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
+import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { serialized } from '@encryption/src/vault/operations/key-management';
 import { commitStagedVault, uncommitStagedVault, withVaultCacheLock } from '@encryption/src/vault/vault-cache';
 
@@ -8,7 +10,11 @@ import { commitStagedVault, uncommitStagedVault, withVaultCacheLock } from '@enc
  * nothing is staged (e.g. a non-onboarding generate).
  */
 export async function handleCommitStagedVault(userId: string): Promise<{ committed: boolean }> {
-  await serialized(() => withVaultCacheLock(userId, () => commitStagedVault(userId)));
+  // Other tabs learn of the new keys only now that has-keys can see them: told
+  // earlier, a product asks, hears "no keys", and is never told again.
+  if (await serialized(() => withVaultCacheLock(userId, () => commitStagedVault(userId)))) {
+    getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
+  }
 
   return { committed: true };
 }
@@ -19,7 +25,9 @@ export async function handleCommitStagedVault(userId: string): Promise<{ committ
  * and a retry can re-commit it without re-deriving keys or the recovery phrase.
  */
 export async function handleUncommitStagedVault(userId: string): Promise<{ uncommitted: boolean }> {
-  await serialized(() => withVaultCacheLock(userId, () => uncommitStagedVault(userId)));
+  if (await serialized(() => withVaultCacheLock(userId, () => uncommitStagedVault(userId)))) {
+    getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
+  }
 
   return { uncommitted: true };
 }

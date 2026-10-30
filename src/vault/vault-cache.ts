@@ -96,13 +96,15 @@ export async function saveVaultCache(userId: string, entry: VaultCacheEntry): Pr
  * against the real persisted vault (its read-modify-write and the post-bootstrap
  * revision land on disk like any normal sync). No-op when nothing is staged.
  */
-export async function commitStagedVault(userId: string): Promise<void> {
+export async function commitStagedVault(userId: string): Promise<boolean> {
   const staged = stagedVaults.get(userId);
 
-  if (!staged) return;
+  if (!staged) return false;
 
   await putPersistedVaultCache(userId, staged);
   stagedVaults.delete(userId);
+
+  return true;
 }
 
 /**
@@ -112,14 +114,16 @@ export async function commitStagedVault(userId: string): Promise<void> {
  * in memory so a retry can re-commit it without re-deriving keys or the phrase.
  * No-op when there is no persisted entry.
  */
-export async function uncommitStagedVault(userId: string): Promise<void> {
+export async function uncommitStagedVault(userId: string): Promise<boolean> {
   const db = await getEncryptionDB();
   const entry = (await db.get(STORE_VAULT_CACHE, userId)) as VaultCacheEntry | undefined;
 
-  if (!entry) return;
+  if (!entry) return false;
 
   stagedVaults.set(userId, entry);
   await deletePersistedVaultCache(userId);
+
+  return true;
 }
 
 export async function clearVaultCache(userId: string): Promise<void> {

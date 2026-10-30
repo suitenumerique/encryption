@@ -6,8 +6,11 @@ import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { verifyManifest } from '@encryption/src/crypto/vault-manifest';
 import { activeIdentity } from '@encryption/src/crypto/vault-state';
 import { DEFAULT_KDF_PARAMS, deriveKek, deriveVaultAuthKeyPair, unwrapVrk, verifyAuthPublicKeyBinding } from '@encryption/src/crypto/vault-unlock';
+import { BROADCAST_CHANNEL_NAME, BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
 import { closeVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
+import { handleCommitStagedVault, handleUncommitStagedVault } from '@encryption/src/vault/operations/commit-staged';
 import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-keys';
+import { handleHasKeys } from '@encryption/src/vault/operations/key-management';
 import { handleChangeRecoveryPhrase, handlePrepareOnboarding } from '@encryption/src/vault/operations/onboarding';
 import { loadVault } from '@encryption/src/vault/vault-keys';
 
@@ -80,5 +83,38 @@ describe('change passphrase', () => {
     const kek = await deriveKek(after.recoveryPhrase, userId);
     const unwrapped = await unwrapVrk(base64ToUint8(after.keyring.wrapped_vrk), kek);
     expect(Buffer.from(unwrapped)).toEqual(Buffer.from(vrk));
+  });
+});
+
+describe('other tabs', () => {
+  // Another tab's vault: its own channel instance receives what this one posts.
+  async function listen<T>(run: () => Promise<T>): Promise<string[]> {
+    const other = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    const received: string[] = [];
+    other.onmessage = (event: MessageEvent<{ type: string }>) => received.push(event.data.type);
+
+    await run();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    other.close();
+
+    return received;
+  }
+
+  it('are told of new keys once has-keys sees them, not while the onboarding is staged', async () => {
+    const userId = 'u-tabs';
+
+    // Told now, a product would ask, hear "no keys" and never be told again.
+    expect(await listen(() => handleGenerateKeys(userId))).toEqual([]);
+    expect(await handleHasKeys(userId)).toEqual({ hasKeys: false });
+
+    expect(await listen(() => handleCommitStagedVault(userId))).toEqual([BROADCAST_KEYS_CHANGED]);
+    expect(await handleHasKeys(userId)).toEqual({ hasKeys: true });
+
+    // A failed registration takes them back, and says so.
+    expect(await listen(() => handleUncommitStagedVault(userId))).toEqual([BROADCAST_KEYS_CHANGED]);
+    expect(await handleHasKeys(userId)).toEqual({ hasKeys: false });
+
+    // Nothing staged: nothing committed, nothing announced.
+    expect(await listen(() => handleCommitStagedVault('u-nothing-staged'))).toEqual([]);
   });
 });
