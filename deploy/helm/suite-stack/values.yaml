@@ -198,6 +198,40 @@ bootstrap:
         firstName: Bob
         lastName: Dupont
         password: bob.dupont
+      # The recovery team (encryption.config.recoveryCouncils): members 1 to 3, with 4
+      # and 5 to add to it. `id` is their `sub` in Accounts and their user id in the
+      # encryption service, both written before their first sign-in, so the team can name
+      # them in the values.
+      - username: recovery.member.1
+        email: recovery.member.1@example.org
+        firstName: Member 1
+        lastName: Recovery team
+        password: recovery.member.1
+        id: 00000000-0000-4000-8000-000000000001
+      - username: recovery.member.2
+        email: recovery.member.2@example.org
+        firstName: Member 2
+        lastName: Recovery team
+        password: recovery.member.2
+        id: 00000000-0000-4000-8000-000000000002
+      - username: recovery.member.3
+        email: recovery.member.3@example.org
+        firstName: Member 3
+        lastName: Recovery team
+        password: recovery.member.3
+        id: 00000000-0000-4000-8000-000000000003
+      - username: recovery.member.4
+        email: recovery.member.4@example.org
+        firstName: Member 4
+        lastName: Recovery team
+        password: recovery.member.4
+        id: 00000000-0000-4000-8000-000000000004
+      - username: recovery.member.5
+        email: recovery.member.5@example.org
+        firstName: Member 5
+        lastName: Recovery team
+        password: recovery.member.5
+        id: 00000000-0000-4000-8000-000000000005
     # Written on the realm at every run. `header` heads every sign-in and registration
     # page; `terms` is what every new account, registered or created here, must accept
     # before its first sign-in (Keycloak's own terms-and-conditions step). Anyone with the
@@ -391,6 +425,19 @@ encryption:
       requireTls: false
       senderAddress: noreply@suite.example.org
     emailProductUrl: https://docs.suite.example.org
+    # One team for everyone, its members among the testers above (bootstrap.keycloak.users,
+    # by `id` and email). It is in force once all three have signed in, created their
+    # vault and signed it; any two of them then give a vault back, one in person and one
+    # remotely. Adding recovery.member.4 or 5 here tests a change of members.
+    recoveryCouncils:
+      - id: test
+        label: Recovery team (test)
+        domains: ['*']
+        custodians:
+          - { userId: 00000000-0000-4000-8000-000000000001, email: recovery.member.1@example.org }
+          - { userId: 00000000-0000-4000-8000-000000000002, email: recovery.member.2@example.org }
+          - { userId: 00000000-0000-4000-8000-000000000003, email: recovery.member.3@example.org }
+        threshold: 2
   database:
     url: postgresql://encryption_runtime:runtime@postgres:5432/encryption?schema=encryption
     migration:

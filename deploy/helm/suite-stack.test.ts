@@ -142,8 +142,9 @@ function containerEnv(container: Container | undefined): Map<string, EnvEntry> {
 }
 
 function mainContainer(manifest: Manifest, name?: string): Container {
-  const containers = manifest.spec?.template?.spec.containers ?? [];
-  const container = name ? containers.find((candidate) => candidate.name === name) : containers[0];
+  const spec = manifest.spec?.template?.spec;
+  const containers = spec?.containers ?? [];
+  const container = name ? [...containers, ...(spec?.initContainers ?? [])].find((candidate) => candidate.name === name) : containers[0];
 
   if (!container) throw new Error(`no container ${name ?? ''} in ${manifest.kind} ${manifest.metadata.name}`);
 
@@ -170,7 +171,10 @@ interface AccountsApplication {
 }
 
 const defaults = parseYaml(readFileSync(resolve(CHART, 'values.yaml'), 'utf8')) as {
-  bootstrap: { keycloak: { clients: KeycloakClient[] }; accounts: { applications: AccountsApplication[] } };
+  bootstrap: {
+    keycloak: { clients: KeycloakClient[]; users: Array<{ email: string; firstName: string; lastName: string; id?: string }> };
+    accounts: { applications: AccountsApplication[] };
+  };
 };
 const withoutAccounts = parseYaml(readFileSync(WITHOUT_ACCOUNTS_VALUES, 'utf8')) as {
   bootstrap: { keycloak: { clients: KeycloakClient[] } };
@@ -316,7 +320,8 @@ describe('the stack chart', () => {
     expect(Number(secret.metadata.annotations?.['helm.sh/hook-weight'])).toBeLessThan(Number(job.metadata.annotations?.['helm.sh/hook-weight']));
 
     // Sequential: init containers, in the order the products need them.
-    expect(job.spec?.template?.spec.initContainers?.map((container) => container.name)).toEqual(['postgres', 'minio', 'keycloak']);
+    expect(job.spec?.template?.spec.initContainers?.map((container) => container.name)).toEqual(['postgres', 'minio', 'keycloak', 'migrate']);
+    expect(job.spec?.template?.spec.containers.map((container) => container.name)).toEqual(['encryption-users']);
 
     const scripts = secret.stringData ?? {};
 
@@ -519,6 +524,69 @@ describe('the stack chart', () => {
     expect(scripts['applications.py']).toContain('Application.CLIENT_CONFIDENTIAL');
     expect(scripts['applications.py']).toContain('Application.RS256_ALGORITHM');
     expect(scripts['applications.py']).toContain('application.skip_authorization = True');
+  });
+
+  it('names the recovery team before its members first sign in, by the id Accounts and the service give them', () => {
+    const testers = (defaults.bootstrap.keycloak.users ?? []).filter((user) => user.id);
+    const encryption = containerEnv(mainContainer(find(full.docs, 'Deployment', 'stack-encryption')));
+    const [team] = JSON.parse(encryption.get('RECOVERY_COUNCILS')?.value ?? '[]') as Array<{
+      custodians: Array<{ userId: string; email: string }>;
+      threshold: number;
+    }>;
+
+    expect(testers.map((user) => user.email)).toEqual([1, 2, 3, 4, 5].map((n) => `recovery.member.${n}@example.org`));
+    expect(team.threshold).toBe(2);
+    // 4 and 5 are there to be added.
+    expect(team.custodians).toEqual(testers.slice(0, 3).map((user) => ({ userId: user.id, email: user.email })));
+
+    // Accounts: the same `sub`, by email.
+    const accountsScripts = find(full.own, 'Secret', 'stack-suite-stack-accounts-applications-1').stringData ?? {};
+
+    expect(JSON.parse(accountsScripts['users.json'])).toEqual(testers.map((user) => ({ email: user.email, sub: user.id })));
+    expect(accountsScripts['applications.py']).toContain('User.objects.create_user(email=spec["email"], sub=spec["sub"])');
+
+    // The service: the user and its credential under Accounts' issuer, once migrated, with the migrator role.
+    const job = find(full.own, 'Job', 'stack-suite-stack-bootstrap-1');
+    const seed = mainContainer(job, 'encryption-users');
+    const sql = find(full.own, 'Secret', 'stack-suite-stack-bootstrap-1').stringData?.['encryption-users.sql'] ?? '';
+
+    expect(seed.command).toEqual(['psql', '-v', `issuer=${encryption.get('OIDC_ISSUER')?.value}`, '-f', '/scripts/encryption-users.sql']);
+    expect(containerEnv(seed).get('PGUSER')?.value).toBe('encryption_migrator');
+    expect(containerEnv(seed).get('PGOPTIONS')?.value).toBe('-c search_path=encryption');
+
+    for (const user of testers) {
+      expect(sql).toContain(`VALUES ('${user.id}', '${user.email}', '${user.firstName}', '${user.lastName}') ON CONFLICT (id) DO NOTHING;`);
+      expect(sql).toContain(`VALUES (gen_random_uuid(), '${user.id}', :'issuer', '${user.id}') ON CONFLICT (issuer, subject) DO NOTHING;`);
+    }
+
+    expect(sql).not.toContain('alice.martin');
+
+    // Without Accounts, no `sub` can be fixed: no team, nothing written.
+    const keycloakJob = find(keycloakOnly.own, 'Job', 'stack-suite-stack-bootstrap-1');
+
+    expect(containerEnv(mainContainer(find(keycloakOnly.docs, 'Deployment', 'stack-encryption'))).has('RECOVERY_COUNCILS')).toBe(false);
+    expect(mainContainer(keycloakJob).name).toBe('done');
+    expect(find(keycloakOnly.own, 'Secret', 'stack-suite-stack-bootstrap-1').stringData).not.toHaveProperty('encryption-users.sql');
+  });
+
+  it('refuses a recovery team member the bootstrap does not create', () => {
+    const team = (custodians: Array<{ userId: string; email: string }>) =>
+      `encryption.config.recoveryCouncils=${JSON.stringify([{ id: 'test', label: 'Test', domains: ['*'], custodians, threshold: 1 }])}`;
+    const first = { userId: '00000000-0000-4000-8000-000000000001', email: 'recovery.member.1@example.org' };
+
+    expect(renderError([], [team([first, { userId: '00000000-0000-4000-8000-000000000099', email: 'x@example.org' }])])).toMatch(
+      /recoveryCouncils\[test\] names user 00000000-0000-4000-8000-000000000099, which no bootstrap\.keycloak\.users entry carries/
+    );
+    expect(renderError([], [team([first, { userId: '00000000-0000-4000-8000-000000000002', email: 'other@example.org' }])])).toMatch(
+      /user 00000000-0000-4000-8000-000000000002 is "recovery\.member\.2@example\.org" in bootstrap\.keycloak\.users \(got "other@example\.org"\)/
+    );
+    expect(
+      renderError(
+        [],
+        [team([first, { userId: '00000000-0000-4000-8000-000000000002', email: 'recovery.member.2@example.org' }])],
+        [WITHOUT_ACCOUNTS_VALUES]
+      )
+    ).toMatch(/recoveryCouncils\[test\] needs Accounts/);
   });
 
   it('gives the Accounts Job the settings an operator moved out of backend.envVars', () => {

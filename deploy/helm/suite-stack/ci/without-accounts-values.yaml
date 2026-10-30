@@ -46,6 +46,8 @@ encryption:
       # Keycloak asks for the password again on `prompt=login`: the default max age holds.
       stepUp:
         maxAgeSeconds: 300
+    # Its members are named by a `sub` only Accounts lets the bootstrap fix.
+    recoveryCouncils: []
 
 docs:
   backend:

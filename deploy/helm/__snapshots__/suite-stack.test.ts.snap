@@ -530,6 +530,7 @@ metadata:
 type: Opaque
 stringData:
   applications.json: "[{\\"clientId\\":\\"docs\\",\\"postLogoutRedirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"drive\\",\\"postLogoutRedirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"encryption\\",\\"postLogoutRedirectUris\\":[],\\"redirectUris\\":[\\"https://encryption.suite.example.org/auth/callback\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"}]"
+  users.json: "[{\\"email\\":\\"recovery.member.1@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000001\\"},{\\"email\\":\\"recovery.member.2@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000002\\"},{\\"email\\":\\"recovery.member.3@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000003\\"},{\\"email\\":\\"recovery.member.4@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000004\\"},{\\"email\\":\\"recovery.member.5@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000005\\"}]"
   # Run by \`manage.py shell\`, so with Accounts' settings and its database.
   applications.py: |
     import json
@@ -559,6 +560,23 @@ stringData:
         application.clean()
         application.save()
         print(("created" if created else "updated") + " application " + spec["clientId"])
+
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+
+    with open("/scripts/users.json", encoding="utf-8") as file:
+        users = json.load(file)
+
+    for spec in users:
+        user = User.objects.filter(email__iexact=spec["email"]).first()
+        if user is None:
+            User.objects.create_user(email=spec["email"], sub=spec["sub"])
+            print("created user " + spec["email"])
+        elif user.sub != spec["sub"]:
+            user.sub = spec["sub"]
+            user.save(update_fields=["sub"])
+            print("fixed the sub of user " + spec["email"])
 
 ---
 
@@ -744,6 +762,26 @@ stringData:
     add_optional_scope 'siret'
     ensure_user 'alice.martin' 'alice.martin@example.org' 'Alice' 'Martin' 'alice.martin'
     ensure_user 'bob.dupont' 'bob.dupont@example.org' 'Bob' 'Dupont' 'bob.dupont'
+    ensure_user 'recovery.member.1' 'recovery.member.1@example.org' 'Member 1' 'Recovery team' 'recovery.member.1'
+    ensure_user 'recovery.member.2' 'recovery.member.2@example.org' 'Member 2' 'Recovery team' 'recovery.member.2'
+    ensure_user 'recovery.member.3' 'recovery.member.3@example.org' 'Member 3' 'Recovery team' 'recovery.member.3'
+    ensure_user 'recovery.member.4' 'recovery.member.4@example.org' 'Member 4' 'Recovery team' 'recovery.member.4'
+    ensure_user 'recovery.member.5' 'recovery.member.5@example.org' 'Member 5' 'Recovery team' 'recovery.member.5'
+  # The testers with a fixed \`id\`, as the encryption service would mint them at their
+  # first sign-in through Accounts, so a value can name them before it. Left alone once
+  # there: a sign-in refreshes the email and the names.
+  encryption-users.sql: |
+    \\set ON_ERROR_STOP on
+    INSERT INTO users (id, email, first_name, last_name) VALUES ('00000000-0000-4000-8000-000000000001', 'recovery.member.1@example.org', 'Member 1', 'Recovery team') ON CONFLICT (id) DO NOTHING;
+    INSERT INTO oidc_accounts (id, user_id, issuer, subject) VALUES (gen_random_uuid(), '00000000-0000-4000-8000-000000000001', :'issuer', '00000000-0000-4000-8000-000000000001') ON CONFLICT (issuer, subject) DO NOTHING;
+    INSERT INTO users (id, email, first_name, last_name) VALUES ('00000000-0000-4000-8000-000000000002', 'recovery.member.2@example.org', 'Member 2', 'Recovery team') ON CONFLICT (id) DO NOTHING;
+    INSERT INTO oidc_accounts (id, user_id, issuer, subject) VALUES (gen_random_uuid(), '00000000-0000-4000-8000-000000000002', :'issuer', '00000000-0000-4000-8000-000000000002') ON CONFLICT (issuer, subject) DO NOTHING;
+    INSERT INTO users (id, email, first_name, last_name) VALUES ('00000000-0000-4000-8000-000000000003', 'recovery.member.3@example.org', 'Member 3', 'Recovery team') ON CONFLICT (id) DO NOTHING;
+    INSERT INTO oidc_accounts (id, user_id, issuer, subject) VALUES (gen_random_uuid(), '00000000-0000-4000-8000-000000000003', :'issuer', '00000000-0000-4000-8000-000000000003') ON CONFLICT (issuer, subject) DO NOTHING;
+    INSERT INTO users (id, email, first_name, last_name) VALUES ('00000000-0000-4000-8000-000000000004', 'recovery.member.4@example.org', 'Member 4', 'Recovery team') ON CONFLICT (id) DO NOTHING;
+    INSERT INTO oidc_accounts (id, user_id, issuer, subject) VALUES (gen_random_uuid(), '00000000-0000-4000-8000-000000000004', :'issuer', '00000000-0000-4000-8000-000000000004') ON CONFLICT (issuer, subject) DO NOTHING;
+    INSERT INTO users (id, email, first_name, last_name) VALUES ('00000000-0000-4000-8000-000000000005', 'recovery.member.5@example.org', 'Member 5', 'Recovery team') ON CONFLICT (id) DO NOTHING;
+    INSERT INTO oidc_accounts (id, user_id, issuer, subject) VALUES (gen_random_uuid(), '00000000-0000-4000-8000-000000000005', :'issuer', '00000000-0000-4000-8000-000000000005') ON CONFLICT (issuer, subject) DO NOTHING;
   ENCRYPTION_MIGRATION_DATABASE_URL: "postgresql://encryption_migrator:migrator@postgres:5432/encryption?schema=encryption"
 
 ---
@@ -999,7 +1037,6 @@ spec:
               value: "Environnement de test : rien n&#39;y est privé"
           securityContext: *containerSecurityContext
           volumeMounts: *volumeMounts
-      containers:
         # The service's migration, as its own chart runs it (templates/migration-job.yaml
         # there), with the migrator role the first init container created.
         - name: migrate
@@ -1024,6 +1061,28 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+      containers:
+        - name: encryption-users
+          image: "postgres:16-alpine"
+          command:
+            - psql
+            - -v
+            - "issuer=https://accounts.suite.example.org/api/v1.0/o"
+            - -f
+            - /scripts/encryption-users.sql
+          env:
+            - name: PGHOST
+              value: "postgres"
+            - name: PGUSER
+              value: encryption_migrator
+            - name: PGPASSWORD
+              value: "migrator"
+            - name: PGDATABASE
+              value: "encryption"
+            - name: PGOPTIONS
+              value: -c search_path=encryption
+          securityContext: *containerSecurityContext
+          volumeMounts: *volumeMounts
       volumes:
         - name: scripts
           secret:
