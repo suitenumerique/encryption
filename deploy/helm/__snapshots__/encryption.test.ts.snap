@@ -62,6 +62,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: encryption
       app.kubernetes.io/instance: enc
+      app.kubernetes.io/component: server
 ---
 # Source: encryption-chart/templates/serviceaccount.yaml
 apiVersion: v1
@@ -149,6 +150,7 @@ spec:
       labels:
         app.kubernetes.io/name: encryption
         app.kubernetes.io/instance: enc
+        app.kubernetes.io/component: server
       annotations:
         # A changed inline secret rolls the pods, since env from a Secret is read at start.
         checksum/secret: bf38a8350b18458487d62aa04ee83ec23728ddccb16234890ee4839853c96cb7
@@ -327,6 +329,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: encryption
               app.kubernetes.io/instance: enc
+              app.kubernetes.io/component: server
 ---
 # Source: encryption-chart/templates/ingress.yaml
 apiVersion: networking.k8s.io/v1

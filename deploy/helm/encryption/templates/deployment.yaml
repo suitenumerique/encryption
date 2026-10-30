@@ -24,6 +24,7 @@ spec:
     metadata:
       labels:
         {{- include "encryption.selectorLabels" . | nindent 8 }}
+        {{- include "encryption.serverLabel" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -111,6 +112,7 @@ spec:
           labelSelector:
             matchLabels:
               {{- include "encryption.selectorLabels" $ | nindent 14 }}
+              {{- include "encryption.serverLabel" $ | nindent 14 }}
         {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}

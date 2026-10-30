@@ -32,7 +32,10 @@ interface EnvEntry {
 interface Manifest {
   kind: string;
   metadata: { name: string; annotations?: Record<string, string>; labels?: Record<string, string> };
-  spec?: { template?: { spec: { serviceAccountName?: string; containers: { env: EnvEntry[] }[] } } };
+  spec?: {
+    selector?: { matchLabels: Record<string, string> };
+    template?: { metadata?: { labels?: Record<string, string> }; spec: { serviceAccountName?: string; containers: { env: EnvEntry[] }[] } };
+  };
 }
 
 function run(command: string, args: string[], input?: string): string {
@@ -220,6 +223,16 @@ describe('the chart', () => {
       'config.oidc.claims.lastName or config.oidc.claims.fullName must name at least one claim'
     );
     expect(renderError(EXISTING_SECRETS_VALUES, ['image.digest='])).toContain('image.tag or image.digest is required');
+  });
+
+  it('keeps the migration Job out of what the disruption budget counts', () => {
+    const { docs } = render(EXISTING_SECRETS_VALUES);
+    const selector = docs.find((document) => document.kind === 'PodDisruptionBudget')?.spec?.selector?.matchLabels ?? {};
+    const selects = (labels: Record<string, string>) => Object.entries(selector).every(([key, value]) => labels[key] === value);
+    const podLabels = (kind: string) => docs.find((document) => document.kind === kind)?.spec?.template?.metadata?.labels ?? {};
+
+    expect(selects(podLabels('Deployment'))).toBe(true);
+    expect(selects(podLabels('Job'))).toBe(false);
   });
 
   it('renders nothing for what is off', () => {

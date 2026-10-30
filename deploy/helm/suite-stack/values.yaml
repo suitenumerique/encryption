@@ -588,6 +588,9 @@ drive:
     migrateJobAnnotations:
       argocd.argoproj.io/hook: Sync
       argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    # Same as Docs: the budget would select the migrate Job's pods and turn Degraded.
+    pdb:
+      enabled: false
     replicas: 1
     envVars:
       DJANGO_CONFIGURATION: Feature
@@ -810,6 +813,9 @@ accounts:
     migrateJobAnnotations:
       argocd.argoproj.io/hook: Sync
       argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    # Same as Docs: the budget would select the migrate Job's pods and turn Degraded.
+    pdb:
+      enabled: false
     replicas: 1
     envVars:
       DJANGO_CONFIGURATION: Feature

@@ -11,4 +11,5 @@ spec:
   selector:
     matchLabels:
       {{- include "encryption.selectorLabels" . | nindent 6 }}
+      {{- include "encryption.serverLabel" . | nindent 6 }}
 {{- end }}

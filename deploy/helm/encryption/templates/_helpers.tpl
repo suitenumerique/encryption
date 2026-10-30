@@ -27,6 +27,16 @@ app.kubernetes.io/name: {{ include "encryption.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/*
+The server pods only. The migration Job's pods carry the selector labels too, so a
+budget or a spread constraint on those alone would count them: a budget then fails on a
+Job ("jobs.batch does not implement the scale subresource") and turns Degraded. Not in
+the Deployment's selector, which cannot change on an existing release.
+*/}}
+{{- define "encryption.serverLabel" -}}
+app.kubernetes.io/component: server
+{{- end }}
+
 {{- define "encryption.labels" -}}
 helm.sh/chart: {{ include "encryption.chart" . }}
 {{ include "encryption.selectorLabels" . }}
