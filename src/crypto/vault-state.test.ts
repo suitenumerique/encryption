@@ -6,11 +6,14 @@ import {
   type TofuEntry,
   type VaultState,
   addEncryptionKey,
+  councilPin,
   deleteTofu,
   emptyVaultState,
   keyMaterialChanged,
   mergeVaultState,
+  pinCouncil,
   setTofu,
+  vaultStateSchema,
 } from '@encryption/src/crypto/vault-state';
 
 const normalize = (s: VaultState): VaultState => mergeVaultState(s, emptyVaultState());
@@ -35,9 +38,63 @@ describe('mergeVaultState algebraic laws', () => {
         for (const side of [a, b]) {
           for (const k of side.encryptionKeys) expect(merged.encryptionKeys.some((m) => m.version === k.version)).toBe(true);
           for (const userId of Object.keys(side.tofu)) expect(merged.tofu[userId]).toBeDefined();
+          for (const [councilId, pins] of Object.entries(side.councils))
+            for (const hash of Object.keys(pins)) expect(merged.councils[councilId][hash]).toBeDefined();
         }
       })
     );
+  });
+
+  // Whatever order devices sync in, they agree on the version 1 in force and never forget a verification.
+  it('agrees on the council version 1 in force, and keeps a verification either side made', () => {
+    fc.assert(
+      fc.property(vaultStateArb, vaultStateArb, (a, b) => {
+        const ab = mergeVaultState(a, b);
+        expect(councilPin(ab, 'c0')).toEqual(councilPin(mergeVaultState(b, a), 'c0'));
+
+        for (const side of [a, b])
+          for (const [councilId, pins] of Object.entries(side.councils))
+            for (const [hash, pin] of Object.entries(pins)) {
+              const merged = ab.councils[councilId][hash];
+              expect(merged.pinnedAt).toBeLessThanOrEqual(pin.pinnedAt);
+              if (pin.verifiedAt !== null) expect(merged.verifiedAt).not.toBeNull();
+            }
+      })
+    );
+  });
+});
+
+describe('council pins', () => {
+  it('keeps the first pin and the first verification, and never takes a verification back', () => {
+    const pinned = pinCouncil(emptyVaultState(), 'dinum', 'h1', false, 10);
+    expect(councilPin(pinned, 'dinum')).toEqual({ genesisHash: 'h1', pinnedAt: 10, verifiedAt: null });
+    expect(pinCouncil(pinned, 'dinum', 'h1', false, 20)).toBe(pinned);
+
+    const verified = pinCouncil(pinned, 'dinum', 'h1', true, 30);
+    expect(councilPin(verified, 'dinum')).toEqual({ genesisHash: 'h1', pinnedAt: 10, verifiedAt: 30 });
+    expect(pinCouncil(verified, 'dinum', 'h1', true, 40)).toBe(verified);
+    expect(pinCouncil(verified, 'dinum', 'h1', false, 50)).toBe(verified);
+  });
+
+  // Two devices that each pinned a council before syncing: the server showed two councils under one id.
+  it('keeps the earliest version 1 in force when two devices pinned different ones', () => {
+    const laptop = pinCouncil(emptyVaultState(), 'dinum', 'real', false, 10);
+    const phone = pinCouncil(emptyVaultState(), 'dinum', 'forged', true, 20);
+
+    const merged = mergeVaultState(phone, laptop);
+    expect(councilPin(merged, 'dinum')).toMatchObject({ genesisHash: 'real', verifiedAt: null });
+    expect(Object.keys(merged.councils.dinum).sort()).toEqual(['forged', 'real']);
+    // Same instant: decided by the hash, so every device agrees.
+    expect(
+      councilPin(mergeVaultState(pinCouncil(emptyVaultState(), 'x', 'b', false, 5), pinCouncil(emptyVaultState(), 'x', 'a', false, 5)), 'x')
+    ).toMatchObject({ genesisHash: 'a' });
+  });
+
+  it('reads a state sealed before councils existed as one without pins', () => {
+    const { councils: _omitted, ...before } = emptyVaultState();
+
+    expect(vaultStateSchema.parse(before).councils).toEqual({});
+    expect(councilPin(vaultStateSchema.parse(before), 'dinum')).toBeNull();
   });
 });
 

@@ -4,7 +4,7 @@ import { type IDBPDatabase, openDB } from 'idb';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MIGRATIONS } from '@encryption/src/crypto/encryption-db';
-import { DB_NAME, STORE_DEVICE_ACTIVITY, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { DB_NAME, STORE_COUNCIL_REQUEST, STORE_DEVICE_ACTIVITY, STORE_USER_ALIAS, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 
 // Each test starts from an empty IndexedDB and a fresh module, so
 // getEncryptionDB's cached connection promise never leaks a handle (or a stale
@@ -50,6 +50,9 @@ describe('encryption IndexedDB schema', () => {
     expect(db.objectStoreNames.contains(STORE_VAULT_CACHE)).toBe(true);
     expect(db.objectStoreNames.contains(STORE_USER_ALIAS)).toBe(true);
     expect(db.objectStoreNames.contains(STORE_DEVICE_ACTIVITY)).toBe(true);
+    expect(db.objectStoreNames.contains(STORE_COUNCIL_REQUEST)).toBe(true);
+    // Dropped at v6: council pins live in the synchronized vault.
+    expect(db.objectStoreNames.contains('councilVerified')).toBe(false);
 
     db.close();
   });
@@ -89,7 +92,8 @@ describe('encryption IndexedDB schema', () => {
 
       expect(db.version).toBe(DB_VERSION);
       expect(storeNames(db)).toEqual(targetSchema);
-      for (const name of seededStores) {
+      // A store a later version drops goes with its data; every other one keeps it.
+      for (const name of seededStores.filter((store) => targetSchema.includes(store))) {
         expect(await db.get(name, 'probe')).toEqual({ seededAt: from, store: name });
       }
 

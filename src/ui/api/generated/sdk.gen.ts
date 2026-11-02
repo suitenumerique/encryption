@@ -2,12 +2,36 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
 import type {
+  DeleteApiCouncilsEscrowData,
+  DeleteApiCouncilsEscrowErrors,
+  DeleteApiCouncilsEscrowResponses,
   DeleteApiEmergencyAccessByIdData,
   DeleteApiEmergencyAccessByIdErrors,
   DeleteApiEmergencyAccessByIdResponses,
   DeleteApiPublicKeysData,
   DeleteApiPublicKeysErrors,
   DeleteApiPublicKeysResponses,
+  GetApiCouncilRecoveryRequestsByIdCustodianData,
+  GetApiCouncilRecoveryRequestsByIdCustodianErrors,
+  GetApiCouncilRecoveryRequestsByIdCustodianResponses,
+  GetApiCouncilRecoveryRequestsByIdSharesData,
+  GetApiCouncilRecoveryRequestsByIdSharesErrors,
+  GetApiCouncilRecoveryRequestsByIdSharesResponses,
+  GetApiCouncilRecoveryRequestsMineData,
+  GetApiCouncilRecoveryRequestsMineResponses,
+  GetApiCouncilsByCouncilIdRequestsData,
+  GetApiCouncilsByCouncilIdRequestsErrors,
+  GetApiCouncilsByCouncilIdRequestsResponses,
+  GetApiCouncilsByCouncilIdSharesToCheckData,
+  GetApiCouncilsByCouncilIdSharesToCheckErrors,
+  GetApiCouncilsByCouncilIdSharesToCheckResponses,
+  GetApiCouncilsForMeData,
+  GetApiCouncilsForMeResponses,
+  GetApiCouncilsMineData,
+  GetApiCouncilsMineResponses,
+  GetApiCouncilsReshareBySessionIdBatchData,
+  GetApiCouncilsReshareBySessionIdBatchErrors,
+  GetApiCouncilsReshareBySessionIdBatchResponses,
   GetApiEmergencyAccessGrantedData,
   GetApiEmergencyAccessGrantedResponses,
   GetApiEmergencyAccessPendingData,
@@ -48,6 +72,39 @@ import type {
   PostApiAuthTokenData,
   PostApiAuthTokenErrors,
   PostApiAuthTokenResponses,
+  PostApiCouncilRecoveryRequestsByIdAbortData,
+  PostApiCouncilRecoveryRequestsByIdAbortErrors,
+  PostApiCouncilRecoveryRequestsByIdAbortResponses,
+  PostApiCouncilRecoveryRequestsByIdContributeData,
+  PostApiCouncilRecoveryRequestsByIdContributeErrors,
+  PostApiCouncilRecoveryRequestsByIdContributeResponses,
+  PostApiCouncilRecoveryRequestsByIdRefuseData,
+  PostApiCouncilRecoveryRequestsByIdRefuseErrors,
+  PostApiCouncilRecoveryRequestsByIdRefuseResponses,
+  PostApiCouncilRecoveryRequestsData,
+  PostApiCouncilRecoveryRequestsErrors,
+  PostApiCouncilRecoveryRequestsResponses,
+  PostApiCouncilsByCouncilIdReshareData,
+  PostApiCouncilsByCouncilIdReshareErrors,
+  PostApiCouncilsByCouncilIdReshareResponses,
+  PostApiCouncilsByCouncilIdSharesCheckedData,
+  PostApiCouncilsByCouncilIdSharesCheckedErrors,
+  PostApiCouncilsByCouncilIdSharesCheckedResponses,
+  PostApiCouncilsByCouncilIdVersionsByVersionSignData,
+  PostApiCouncilsByCouncilIdVersionsByVersionSignErrors,
+  PostApiCouncilsByCouncilIdVersionsByVersionSignResponses,
+  PostApiCouncilsEscrowData,
+  PostApiCouncilsEscrowErrors,
+  PostApiCouncilsEscrowResponses,
+  PostApiCouncilsReshareBySessionIdCancelData,
+  PostApiCouncilsReshareBySessionIdCancelErrors,
+  PostApiCouncilsReshareBySessionIdCancelResponses,
+  PostApiCouncilsReshareBySessionIdKeysData,
+  PostApiCouncilsReshareBySessionIdKeysErrors,
+  PostApiCouncilsReshareBySessionIdKeysResponses,
+  PostApiCouncilsReshareBySessionIdSubSharesData,
+  PostApiCouncilsReshareBySessionIdSubSharesErrors,
+  PostApiCouncilsReshareBySessionIdSubSharesResponses,
   PostApiEmergencyAccessByIdAcceptData,
   PostApiEmergencyAccessByIdAcceptErrors,
   PostApiEmergencyAccessByIdAcceptResponses,
@@ -90,6 +147,9 @@ import type {
   PostApiVaultFetchResponses,
   PostApiVaultReactivateData,
   PostApiVaultReactivateErrors,
+  PostApiVaultReactivateKeyringData,
+  PostApiVaultReactivateKeyringErrors,
+  PostApiVaultReactivateKeyringResponses,
   PostApiVaultReactivateResponses,
   PostApiVaultResponses,
   PutApiEmergencyAccessByIdData,
@@ -293,6 +353,18 @@ export const putApiVaultKeyring = <ThrowOnError extends boolean = false>(
     },
   });
 
+export const postApiVaultReactivateKeyring = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiVaultReactivateKeyringData, ThrowOnError>
+): RequestResult<PostApiVaultReactivateKeyringResponses, PostApiVaultReactivateKeyringErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiVaultReactivateKeyringResponses, PostApiVaultReactivateKeyringErrors, ThrowOnError>({
+    url: '/api/vault/reactivate-keyring',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
 export const postApiVaultApprovalsRequest = <ThrowOnError extends boolean = false>(
   options: Options<PostApiVaultApprovalsRequestData, ThrowOnError>
 ): RequestResult<PostApiVaultApprovalsRequestResponses, PostApiVaultApprovalsRequestErrors, ThrowOnError> =>
@@ -435,4 +507,201 @@ export const postApiEmergencyAccessByIdRecover = <ThrowOnError extends boolean =
   (options.client ?? client).post<PostApiEmergencyAccessByIdRecoverResponses, PostApiEmergencyAccessByIdRecoverErrors, ThrowOnError>({
     url: '/api/emergency-access/{id}/recover',
     ...options,
+  });
+
+export const getApiCouncilsMine = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiCouncilsMineData, ThrowOnError>
+): RequestResult<GetApiCouncilsMineResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiCouncilsMineResponses, unknown, ThrowOnError>({ url: '/api/councils/mine', ...options });
+
+export const getApiCouncilsForMe = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiCouncilsForMeData, ThrowOnError>
+): RequestResult<GetApiCouncilsForMeResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiCouncilsForMeResponses, unknown, ThrowOnError>({ url: '/api/councils/for-me', ...options });
+
+export const postApiCouncilsByCouncilIdVersionsByVersionSign = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsByCouncilIdVersionsByVersionSignData, ThrowOnError>
+): RequestResult<PostApiCouncilsByCouncilIdVersionsByVersionSignResponses, PostApiCouncilsByCouncilIdVersionsByVersionSignErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    PostApiCouncilsByCouncilIdVersionsByVersionSignResponses,
+    PostApiCouncilsByCouncilIdVersionsByVersionSignErrors,
+    ThrowOnError
+  >({
+    url: '/api/councils/{councilId}/versions/{version}/sign',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const deleteApiCouncilsEscrow = <ThrowOnError extends boolean = false>(
+  options?: Options<DeleteApiCouncilsEscrowData, ThrowOnError>
+): RequestResult<DeleteApiCouncilsEscrowResponses, DeleteApiCouncilsEscrowErrors, ThrowOnError> =>
+  (options?.client ?? client).delete<DeleteApiCouncilsEscrowResponses, DeleteApiCouncilsEscrowErrors, ThrowOnError>({
+    url: '/api/councils/escrow',
+    ...options,
+  });
+
+export const postApiCouncilsEscrow = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsEscrowData, ThrowOnError>
+): RequestResult<PostApiCouncilsEscrowResponses, PostApiCouncilsEscrowErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilsEscrowResponses, PostApiCouncilsEscrowErrors, ThrowOnError>({
+    url: '/api/councils/escrow',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiCouncilRecoveryRequests = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilRecoveryRequestsData, ThrowOnError>
+): RequestResult<PostApiCouncilRecoveryRequestsResponses, PostApiCouncilRecoveryRequestsErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilRecoveryRequestsResponses, PostApiCouncilRecoveryRequestsErrors, ThrowOnError>({
+    url: '/api/council-recovery/requests',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const getApiCouncilRecoveryRequestsMine = <ThrowOnError extends boolean = false>(
+  options?: Options<GetApiCouncilRecoveryRequestsMineData, ThrowOnError>
+): RequestResult<GetApiCouncilRecoveryRequestsMineResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetApiCouncilRecoveryRequestsMineResponses, unknown, ThrowOnError>({
+    url: '/api/council-recovery/requests/mine',
+    ...options,
+  });
+
+export const postApiCouncilRecoveryRequestsByIdRefuse = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilRecoveryRequestsByIdRefuseData, ThrowOnError>
+): RequestResult<PostApiCouncilRecoveryRequestsByIdRefuseResponses, PostApiCouncilRecoveryRequestsByIdRefuseErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilRecoveryRequestsByIdRefuseResponses, PostApiCouncilRecoveryRequestsByIdRefuseErrors, ThrowOnError>({
+    url: '/api/council-recovery/requests/{id}/refuse',
+    ...options,
+  });
+
+export const getApiCouncilRecoveryRequestsByIdShares = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilRecoveryRequestsByIdSharesData, ThrowOnError>
+): RequestResult<GetApiCouncilRecoveryRequestsByIdSharesResponses, GetApiCouncilRecoveryRequestsByIdSharesErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilRecoveryRequestsByIdSharesResponses, GetApiCouncilRecoveryRequestsByIdSharesErrors, ThrowOnError>({
+    url: '/api/council-recovery/requests/{id}/shares',
+    ...options,
+  });
+
+export const getApiCouncilsByCouncilIdRequests = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilsByCouncilIdRequestsData, ThrowOnError>
+): RequestResult<GetApiCouncilsByCouncilIdRequestsResponses, GetApiCouncilsByCouncilIdRequestsErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilsByCouncilIdRequestsResponses, GetApiCouncilsByCouncilIdRequestsErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/requests',
+    ...options,
+  });
+
+export const getApiCouncilRecoveryRequestsByIdCustodian = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilRecoveryRequestsByIdCustodianData, ThrowOnError>
+): RequestResult<GetApiCouncilRecoveryRequestsByIdCustodianResponses, GetApiCouncilRecoveryRequestsByIdCustodianErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilRecoveryRequestsByIdCustodianResponses, GetApiCouncilRecoveryRequestsByIdCustodianErrors, ThrowOnError>(
+    { url: '/api/council-recovery/requests/{id}/custodian', ...options }
+  );
+
+export const postApiCouncilRecoveryRequestsByIdContribute = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilRecoveryRequestsByIdContributeData, ThrowOnError>
+): RequestResult<PostApiCouncilRecoveryRequestsByIdContributeResponses, PostApiCouncilRecoveryRequestsByIdContributeErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    PostApiCouncilRecoveryRequestsByIdContributeResponses,
+    PostApiCouncilRecoveryRequestsByIdContributeErrors,
+    ThrowOnError
+  >({
+    url: '/api/council-recovery/requests/{id}/contribute',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiCouncilRecoveryRequestsByIdAbort = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilRecoveryRequestsByIdAbortData, ThrowOnError>
+): RequestResult<PostApiCouncilRecoveryRequestsByIdAbortResponses, PostApiCouncilRecoveryRequestsByIdAbortErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilRecoveryRequestsByIdAbortResponses, PostApiCouncilRecoveryRequestsByIdAbortErrors, ThrowOnError>({
+    url: '/api/council-recovery/requests/{id}/abort',
+    ...options,
+  });
+
+export const postApiCouncilsByCouncilIdReshare = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsByCouncilIdReshareData, ThrowOnError>
+): RequestResult<PostApiCouncilsByCouncilIdReshareResponses, PostApiCouncilsByCouncilIdReshareErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilsByCouncilIdReshareResponses, PostApiCouncilsByCouncilIdReshareErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/reshare',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const getApiCouncilsReshareBySessionIdBatch = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilsReshareBySessionIdBatchData, ThrowOnError>
+): RequestResult<GetApiCouncilsReshareBySessionIdBatchResponses, GetApiCouncilsReshareBySessionIdBatchErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilsReshareBySessionIdBatchResponses, GetApiCouncilsReshareBySessionIdBatchErrors, ThrowOnError>({
+    url: '/api/councils/reshare/{sessionId}/batch',
+    ...options,
+  });
+
+export const postApiCouncilsReshareBySessionIdKeys = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsReshareBySessionIdKeysData, ThrowOnError>
+): RequestResult<PostApiCouncilsReshareBySessionIdKeysResponses, PostApiCouncilsReshareBySessionIdKeysErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilsReshareBySessionIdKeysResponses, PostApiCouncilsReshareBySessionIdKeysErrors, ThrowOnError>({
+    url: '/api/councils/reshare/{sessionId}/keys',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiCouncilsReshareBySessionIdSubShares = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsReshareBySessionIdSubSharesData, ThrowOnError>
+): RequestResult<PostApiCouncilsReshareBySessionIdSubSharesResponses, PostApiCouncilsReshareBySessionIdSubSharesErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    PostApiCouncilsReshareBySessionIdSubSharesResponses,
+    PostApiCouncilsReshareBySessionIdSubSharesErrors,
+    ThrowOnError
+  >({
+    url: '/api/councils/reshare/{sessionId}/sub-shares',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+export const postApiCouncilsReshareBySessionIdCancel = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsReshareBySessionIdCancelData, ThrowOnError>
+): RequestResult<PostApiCouncilsReshareBySessionIdCancelResponses, PostApiCouncilsReshareBySessionIdCancelErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilsReshareBySessionIdCancelResponses, PostApiCouncilsReshareBySessionIdCancelErrors, ThrowOnError>({
+    url: '/api/councils/reshare/{sessionId}/cancel',
+    ...options,
+  });
+
+export const getApiCouncilsByCouncilIdSharesToCheck = <ThrowOnError extends boolean = false>(
+  options: Options<GetApiCouncilsByCouncilIdSharesToCheckData, ThrowOnError>
+): RequestResult<GetApiCouncilsByCouncilIdSharesToCheckResponses, GetApiCouncilsByCouncilIdSharesToCheckErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetApiCouncilsByCouncilIdSharesToCheckResponses, GetApiCouncilsByCouncilIdSharesToCheckErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/shares-to-check',
+    ...options,
+  });
+
+export const postApiCouncilsByCouncilIdSharesChecked = <ThrowOnError extends boolean = false>(
+  options: Options<PostApiCouncilsByCouncilIdSharesCheckedData, ThrowOnError>
+): RequestResult<PostApiCouncilsByCouncilIdSharesCheckedResponses, PostApiCouncilsByCouncilIdSharesCheckedErrors, ThrowOnError> =>
+  (options.client ?? client).post<PostApiCouncilsByCouncilIdSharesCheckedResponses, PostApiCouncilsByCouncilIdSharesCheckedErrors, ThrowOnError>({
+    url: '/api/councils/{councilId}/shares-checked',
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
   });

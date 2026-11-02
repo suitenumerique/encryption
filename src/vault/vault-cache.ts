@@ -7,7 +7,7 @@
  */
 import { getEncryptionDB } from '@encryption/src/crypto/encryption-db';
 import type { SealedItem } from '@encryption/src/crypto/vault-manifest';
-import { STORE_DEVICE_ACTIVITY, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { STORE_COUNCIL_REQUEST, STORE_DEVICE_ACTIVITY, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 import { type DeviceActivity, expireIfInactive, forgetRecordedUse, isPastInactivityDelay, usedAt } from '@encryption/src/vault/device-activity';
 
 export interface VaultCacheEntry {
@@ -126,9 +126,11 @@ export async function uncommitStagedVault(userId: string): Promise<boolean> {
   return true;
 }
 
+/** The user's keys are destroyed: the vault, and the key a council recovery would give it back to. */
 export async function clearVaultCache(userId: string): Promise<void> {
   stagedVaults.delete(userId);
   await deletePersistedVaultCache(userId);
+  await (await getEncryptionDB()).delete(STORE_COUNCIL_REQUEST, userId);
 }
 
 /**

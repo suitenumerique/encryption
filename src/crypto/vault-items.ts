@@ -1,7 +1,7 @@
 /**
  * Mapping between the in-memory VaultState and the per-item records the server
  * stores. Each logical record (one identity generation, one encryption key
- * version, one TOFU entry, and the active pointer) becomes one opaque ciphertext
+ * version, one TOFU entry, one council's pins, and the active pointer) becomes one opaque ciphertext
  * row on the server. Splitting per item is what lets the server enforce
  * optimistic concurrency on a single `revisionDate` without ever reading the
  * content, and lets a mutation push only what changed.
@@ -11,6 +11,7 @@ import { z } from 'zod';
 import {
   type VaultState,
   activePointerSchema,
+  councilPinsSchema,
   emptyVaultState,
   encryptionKeyEntrySchema,
   identityEntrySchema,
@@ -38,6 +39,7 @@ export const plainItemSchema = z.discriminatedUnion('type', [
   z.object({ ...itemBase, type: z.literal('encryptionKey'), payload: encryptionKeyEntrySchema }),
   z.object({ ...itemBase, type: z.literal('tofu'), payload: tofuEntrySchema.extend({ userId: z.string() }) }),
   z.object({ ...itemBase, type: z.literal('active'), payload: activePointerSchema }),
+  z.object({ ...itemBase, type: z.literal('council'), payload: z.object({ councilId: z.string(), pins: councilPinsSchema }) }),
 ]);
 export type PlainItem = z.infer<typeof plainItemSchema>;
 
@@ -56,6 +58,12 @@ export function stateToItems(state: VaultState): PlainItem[] {
 
   for (const [userId, t] of Object.entries(state.tofu)) {
     items.push({ id: `tofu:${userId}`, type: 'tofu', revisionDate: t.revisionDate, payload: { userId, ...t } });
+  }
+
+  for (const [councilId, pins] of Object.entries(state.councils)) {
+    // Pins only ever gain a version 1 or a verification, each of which moves this date forward.
+    const revisionDate = Math.max(0, ...Object.values(pins).flatMap((p) => [p.pinnedAt, p.verifiedAt ?? 0]));
+    items.push({ id: `council:${councilId}`, type: 'council', revisionDate, payload: { councilId, pins } });
   }
 
   // The `active` pointer names WHICH generation + key version is current. The
@@ -88,6 +96,8 @@ export function itemsToState(items: PlainItem[]): VaultState {
       state.tofu[userId] = entry;
     } else if (item.type === 'active') {
       state.active = item.payload;
+    } else if (item.type === 'council') {
+      state.councils[item.payload.councilId] = item.payload.pins;
     }
   }
 

@@ -93,7 +93,8 @@
                   "email": { "type": "string", "pattern": "^[^'\"@\\s]+@[^'\"@\\s]+$" },
                   "firstName": { "type": "string", "pattern": "^[^'\"]+$" },
                   "lastName": { "type": "string", "pattern": "^[^'\"]+$" },
-                  "password": { "type": "string", "minLength": 1, "pattern": "^[^'\"]+$" }
+                  "password": { "type": "string", "minLength": 1, "pattern": "^[^'\"]+$" },
+                  "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" }
                 }
               }
             }

@@ -1,7 +1,10 @@
+import { startCouncilSync } from '@encryption/src/server/council-sync';
 import { startEmergencyJobs } from '@encryption/src/server/emergency-jobs';
 import { env } from '@encryption/src/server/env';
+import { watchTranslations } from '@encryption/src/server/i18n-dev-reload';
 import { maintenanceEscrowKeyFingerprint } from '@encryption/src/server/maintenance-escrow';
 import { captureServerError, flushMonitoring, initMonitoring, isMonitoringEnabled } from '@encryption/src/server/monitoring';
+import { councilWarnings } from '@encryption/src/server/recovery-councils';
 import { getBuildVersion } from '@encryption/src/server/routes/versions';
 import { createServer } from '@encryption/src/server/server';
 import { startVaultPurgeJobs } from '@encryption/src/server/vault-purge-jobs';
@@ -16,6 +19,7 @@ async function main() {
   });
 
   const app = await createServer();
+  if (process.env.NODE_ENV === 'development') watchTranslations();
 
   if (isMonitoringEnabled()) {
     app.log.info('Error reporting enabled');
@@ -30,6 +34,18 @@ async function main() {
 
     app.log.info(`Maintenance escrow for ${entry.domains.join(', ')}: key fingerprint ${formatDecimalFingerprint(fingerprint)}`);
   }
+
+  // The councils the configuration proposes. What is in force is what their
+  // custodians signed; each council's code is shown to its custodians and users.
+  for (const council of env.RECOVERY_COUNCILS ?? []) {
+    app.log.info(
+      `Recovery council "${council.id}" for ${council.domains.join(', ')}: ${council.threshold} of ${council.custodians.length} custodians proposed`
+    );
+  }
+  for (const warning of councilWarnings(env.RECOVERY_COUNCILS ?? [])) app.log.warn(warning);
+  // A change of the variable becomes a proposal for the custodians right away,
+  // with its emails, then the sync runs again periodically.
+  startCouncilSync(app.log);
 
   // A throw outside a request never reaches the Fastify error handler, and these
   // are the ones worth waking someone for. Logged and reported, then left to Node's

@@ -8,7 +8,7 @@
  * arrived for a recorded contact" verdict that needs a user decision.
  */
 import { computeKeyFingerprint } from '@encryption/src/crypto';
-import { type TofuStatus, type VaultState, activeIdentity, setTofu } from '@encryption/src/crypto/vault-state';
+import { type TofuStatus, type VaultState, activeIdentity, identityPublicKeyWire, setTofu } from '@encryption/src/crypto/vault-state';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { fetchContinuityChain, handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
 import { type ContinuityLink, resolveContinuity } from '@encryption/src/vault/operations/identity-continuity';
@@ -97,7 +97,7 @@ export async function handleCheckFingerprints(
   // is strictly the vault's authenticated session user (`userId`), and the pinned
   // value is the local identity's fingerprint, not the payload's.
   const localIdentity = activeIdentity(loaded.state);
-  const selfFingerprint = localIdentity ? await computeKeyFingerprint(localIdentity.signaturePublicKey) : null;
+  const selfFingerprint = localIdentity ? await computeKeyFingerprint(identityPublicKeyWire(localIdentity)) : null;
 
   const results: FingerprintCheckResult[] = [];
   // Entries written: self-trust (the user's own identity), a first-sight RECORD of

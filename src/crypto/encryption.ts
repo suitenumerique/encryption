@@ -175,12 +175,15 @@ export async function generateSymmetricKey(): Promise<Uint8Array> {
 }
 
 /**
- * A subkey of `key` for one purpose: BLAKE2b keyed by `key` over the label.
+ * A subkey of `key` for one purpose: BLAKE2b keyed by `key` over the label,
+ * and over the length-framed `context` when there is one.
  * libsodium has no HKDF; a keyed BLAKE2b is a PRF, so subkeys under distinct
  * labels are independent and `key` itself never has to key two primitives.
  */
-export function deriveSubkey(key: Uint8Array, domain: SubkeyDomain, length: number): Uint8Array {
-  return sodium.crypto_generichash(length, sodium.from_string(domain), key);
+export function deriveSubkey(key: Uint8Array, domain: SubkeyDomain, length: number, context: Uint8Array[] = []): Uint8Array {
+  const message = context.length === 0 ? sodium.from_string(domain) : concat([sodium.from_string(domain), ...context].flatMap(lengthPrefixed));
+
+  return sodium.crypto_generichash(length, message, key);
 }
 
 // The authenticated (never stored) data of a ciphertext: its version byte, its
@@ -281,19 +284,21 @@ function kemWrapKey(sharedSecret: Uint8Array): Uint8Array {
  * The inner key is a subkey of the X-Wing shared secret, never the secret itself.
  *
  * `domain` says what is wrapped (a document key, a device bootstrap, an
- * emergency capsule), so one can never be unwrapped as another.
+ * emergency capsule), so one can never be unwrapped as another; `context`, when
+ * given, what it belongs to (length-framed into the associated data).
  */
 export async function encryptSymmetricKeyForUsers(
   symmetricKey: Uint8Array,
   usersPublicKeys: Record<string, HybridPublicKey>,
-  domain: KemWrapDomain
+  domain: KemWrapDomain,
+  context: Uint8Array[] = []
 ): Promise<Record<string, Uint8Array>> {
   const entries = Object.entries(usersPublicKeys);
 
   const results = await Promise.all(
     entries.map(async ([userId, publicKey]) => {
       const { sharedSecret, ciphertext: kemCiphertext } = await hybridEncapsulate(publicKey);
-      const encrypted = await encryptContent(symmetricKey, kemWrapKey(sharedSecret), domain);
+      const encrypted = await encryptContent(symmetricKey, kemWrapKey(sharedSecret), domain, context);
 
       const kemLen = writeUint16LE(kemCiphertext.length);
       const combined = new Uint8Array(1 + 2 + kemCiphertext.length + encrypted.length);
@@ -312,7 +317,12 @@ export async function encryptSymmetricKeyForUsers(
 /**
  * Decrypt a symmetric key that was encrypted for the local user.
  */
-export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, encryptedKey: Uint8Array, domain: KemWrapDomain): Promise<Uint8Array> {
+export async function decryptSymmetricKeyForUser(
+  secretKey: HybridSecretKey,
+  encryptedKey: Uint8Array,
+  domain: KemWrapDomain,
+  context: Uint8Array[] = []
+): Promise<Uint8Array> {
   if (encryptedKey.length < 3) {
     throw new VaultError(VaultErrorCode.CIPHERTEXT_TOO_SHORT, 'Encrypted key is too short to be valid');
   }
@@ -345,5 +355,5 @@ export async function decryptSymmetricKeyForUser(secretKey: HybridSecretKey, enc
 
   const sharedSecret = await hybridDecapsulate(secretKey, kemCiphertext);
 
-  return decryptContent(encryptedSymKey, kemWrapKey(sharedSecret), domain);
+  return decryptContent(encryptedSymKey, kemWrapKey(sharedSecret), domain, context);
 }

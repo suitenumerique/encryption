@@ -3,6 +3,28 @@ import mjml2html from 'mjml';
 import { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 
+import { CouncilAbsenceReminderEmail, subject as councilAbsenceReminderSubject } from '@encryption/src/server/email/templates/CouncilAbsenceReminder';
+import { CouncilHealthAlertEmail, subject as councilHealthAlertSubject } from '@encryption/src/server/email/templates/CouncilHealthAlert';
+import { CouncilRecoveryAbortedEmail, subject as councilRecoveryAbortedSubject } from '@encryption/src/server/email/templates/CouncilRecoveryAborted';
+import {
+  CouncilRecoveryCompletedEmail,
+  subject as councilRecoveryCompletedSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryCompleted';
+import {
+  CouncilRecoveryCompletedCustodianEmail,
+  subject as councilRecoveryCompletedCustodianSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryCompletedCustodian';
+import { CouncilRecoveryMeetingEmail, subject as councilRecoveryMeetingSubject } from '@encryption/src/server/email/templates/CouncilRecoveryMeeting';
+import { CouncilRecoveryReadyEmail, subject as councilRecoveryReadySubject } from '@encryption/src/server/email/templates/CouncilRecoveryReady';
+import {
+  CouncilRecoveryRequestedEmail,
+  subject as councilRecoveryRequestedSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryRequested';
+import {
+  CouncilRecoveryToApproveEmail,
+  subject as councilRecoveryToApproveSubject,
+} from '@encryption/src/server/email/templates/CouncilRecoveryToApprove';
+import { CouncilRosterToSignEmail, subject as councilRosterToSignSubject } from '@encryption/src/server/email/templates/CouncilRosterToSign';
 import { EmergencyAcceptedEmail, subject as acceptedSubject } from '@encryption/src/server/email/templates/EmergencyAccepted';
 import { EmergencyDeclinedEmail, subject as declinedSubject } from '@encryption/src/server/email/templates/EmergencyDeclined';
 import { EmergencyDesignatedEmail, subject as designatedSubject } from '@encryption/src/server/email/templates/EmergencyDesignated';
@@ -46,6 +68,201 @@ interface Case {
 }
 
 const cases: Case[] = [
+  {
+    name: 'CouncilRecoveryRequested',
+    subject: councilRecoveryRequestedSubject,
+    make: (locale) => CouncilRecoveryRequestedEmail({ locale, council: 'Équipe sécurité DINUM', productUrl: 'http://localhost:7201' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', 'équipe de récupération'],
+      en: ['Équipe sécurité DINUM', 'recovery team'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryToApprove',
+    subject: (locale: string) => councilRecoveryToApproveSubject(locale, 'approve'),
+    make: (locale) =>
+      CouncilRecoveryToApproveEmail({
+        locale,
+        requester: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
+        council: 'Équipe sécurité DINUM',
+        step: 'approve',
+        productUrl: 'http://localhost:7201',
+      }),
+    expected: {
+      fr: ['Jean Dupont', 'Équipe sécurité DINUM', 'approuver à distance'],
+      en: ['Jean Dupont', 'Équipe sécurité DINUM', 'approve it remotely'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryToApprove (meet first)',
+    subject: (locale: string) => councilRecoveryToApproveSubject(locale, 'meet'),
+    make: (locale) =>
+      CouncilRecoveryToApproveEmail({
+        locale,
+        requester: 'Jean Dupont (jean.dupont@numerique.gouv.fr)',
+        council: 'Équipe sécurité DINUM',
+        step: 'meet',
+        productUrl: 'http://localhost:7201',
+      }),
+    expected: {
+      fr: ['Jean Dupont', 'Rien ne peut être approuvé à distance'],
+      en: ['Jean Dupont', 'Nothing can be approved remotely'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryMeeting',
+    subject: councilRecoveryMeetingSubject,
+    make: (locale) =>
+      CouncilRecoveryMeetingEmail({
+        locale,
+        council: 'Équipe sécurité DINUM',
+        custodians: 'Claire Petit, David Moreau',
+        productUrl: 'http://localhost:7201',
+      }),
+    expected: {
+      fr: ['Claire Petit, David Moreau'],
+      en: ['Claire Petit, David Moreau'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryCompleted',
+    subject: councilRecoveryCompletedSubject,
+    make: (locale) => CouncilRecoveryCompletedEmail({ locale, council: 'Équipe sécurité DINUM', contributors: 'Alice Martin, Claire Petit' }),
+    expected: {
+      fr: ['Alice Martin, Claire Petit'],
+      en: ['Alice Martin, Claire Petit'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryCompletedCustodian',
+    subject: councilRecoveryCompletedCustodianSubject,
+    make: (locale) => CouncilRecoveryCompletedCustodianEmail({ locale, requester: 'Jean Dupont', council: 'Équipe sécurité DINUM' }),
+    expected: {
+      fr: ['Jean Dupont'],
+      en: ['Jean Dupont'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryAborted',
+    subject: councilRecoveryAbortedSubject,
+    make: (locale) => CouncilRecoveryAbortedEmail({ locale, council: 'Équipe sécurité DINUM' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM'],
+      en: ['Équipe sécurité DINUM'],
+    },
+  },
+  {
+    name: 'CouncilRecoveryReady',
+    subject: councilRecoveryReadySubject,
+    make: (locale) => CouncilRecoveryReadyEmail({ locale, council: 'Équipe sécurité DINUM' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', 'navigateur'],
+      en: ['Équipe sécurité DINUM', 'browser'],
+    },
+  },
+  {
+    name: 'CouncilRosterToSign',
+    subject: councilRosterToSignSubject,
+    make: (locale) => CouncilRosterToSignEmail({ locale, council: 'Équipe sécurité DINUM', productUrl: 'http://localhost:7201' }),
+    expected: {
+      fr: ['Équipe sécurité DINUM'],
+      en: ['Équipe sécurité DINUM'],
+    },
+  },
+  {
+    name: 'CouncilHealthAlert (nobody can join)',
+    subject: (locale) => councilHealthAlertSubject(locale, 'blocked'),
+    make: (locale) =>
+      CouncilHealthAlertEmail({
+        locale,
+        council: 'Équipe sécurité DINUM',
+        status: 'blocked',
+        lost: 0,
+        absent: [],
+        inactive: ['Bob Dupont'],
+        absenceDays: 90,
+        teamReady: false,
+        productUrl,
+      }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', 'personne d’autre ne peut la rejoindre', 'Bob Dupont'],
+      en: ['Équipe sécurité DINUM', 'nobody new can join', 'Bob Dupont'],
+    },
+  },
+  {
+    name: 'CouncilHealthAlert (at risk)',
+    subject: (locale) => councilHealthAlertSubject(locale, 'at-risk'),
+    make: (locale) =>
+      CouncilHealthAlertEmail({
+        locale,
+        council: 'Équipe sécurité DINUM',
+        status: 'at-risk',
+        lost: 0,
+        absent: ['Bob Dupont'],
+        inactive: ['Charlie Leroy'],
+        absenceDays: 90,
+        teamReady: true,
+        productUrl,
+      }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', 'Bob Dupont', '90 jours', 'Charlie Leroy', 'le chiffrement activé', productUrl],
+      en: ['Équipe sécurité DINUM', 'Bob Dupont', '90 days', 'Charlie Leroy', 'encryption set up', productUrl],
+    },
+  },
+  {
+    name: 'CouncilHealthAlert (lost)',
+    subject: (locale) => councilHealthAlertSubject(locale, 'lost'),
+    make: (locale) =>
+      CouncilHealthAlertEmail({
+        locale,
+        council: 'Équipe sécurité DINUM',
+        status: 'lost',
+        lost: 3,
+        absent: [],
+        inactive: [],
+        absenceDays: 90,
+        teamReady: true,
+        productUrl,
+      }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', '3 personnes', 'prévenez-les'],
+      en: ['Équipe sécurité DINUM', '3 people', 'let them know'],
+    },
+  },
+  {
+    name: 'CouncilHealthAlert (lost, team to repair)',
+    subject: (locale) => councilHealthAlertSubject(locale, 'lost'),
+    make: (locale) =>
+      CouncilHealthAlertEmail({
+        locale,
+        council: 'Équipe sécurité DINUM',
+        status: 'lost',
+        lost: 3,
+        absent: [],
+        inactive: ['Bob Dupont', 'Charlie Leroy'],
+        absenceDays: 90,
+        teamReady: false,
+        productUrl,
+      }),
+    expected: {
+      fr: [
+        'Bob Dupont et Charlie Leroy',
+        'aucune nouvelle personne ne peut confier sa récupération',
+        'pour l’instant',
+        'Remettez d’abord l’équipe en état',
+      ],
+      en: ['Bob Dupont and Charlie Leroy', 'nobody new can entrust their recovery', 'for now', 'First get the team working again'],
+    },
+  },
+  {
+    name: 'CouncilAbsenceReminder',
+    subject: councilAbsenceReminderSubject,
+    make: (locale) => CouncilAbsenceReminderEmail({ locale, council: 'Équipe sécurité DINUM', absenceDays: 90, productUrl }),
+    expected: {
+      fr: ['Équipe sécurité DINUM', '90 jours', productUrl],
+      en: ['Équipe sécurité DINUM', '90 days', productUrl],
+    },
+  },
   {
     name: 'EmergencyDesignated',
     subject: designatedSubject,

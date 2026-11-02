@@ -10,7 +10,7 @@
  * never touched by any of this: the device keeps working on its last verified copy.
  */
 import { computeKeyFingerprint } from '@encryption/src/crypto';
-import { activeIdentity } from '@encryption/src/crypto/vault-state';
+import { activeIdentity, identityPublicKeyWire } from '@encryption/src/crypto/vault-state';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { reportVaultError } from '@encryption/src/vault/monitoring';
 import { handleFetchPublicKeys } from '@encryption/src/vault/operations/fetch-public-keys';
@@ -72,7 +72,7 @@ async function compareIdentityWithDirectory(userId: string): Promise<'same' | 'd
     // is a divergence the settings screen reconciles, not an integrity failure.
     if (!remote) return 'different';
 
-    return (await computeKeyFingerprint(local.signaturePublicKey)) === remote.identityFingerprint ? 'same' : 'different';
+    return (await computeKeyFingerprint(identityPublicKeyWire(local))) === remote.identityFingerprint ? 'same' : 'different';
   } catch {
     return 'unknown';
   }

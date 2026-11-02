@@ -67,6 +67,22 @@ allowed). Accounts itself always signs in at Keycloak.
 {{- if not $found }}
 {{- fail (printf "encryption.config.oidc.clientId %q has no entry in %s" $e.config.oidc.clientId $registry) }}
 {{- end }}
+{{- /* A member is named by a user id the service only knows before a first sign-in when the bootstrap wrote it. */}}
+{{- range $council := $e.config.recoveryCouncils }}
+{{- range $custodian := $council.custodians }}
+{{- if not $viaAccounts }}
+{{- fail (printf "encryption.config.recoveryCouncils[%s] needs Accounts (accounts.enabled): only its `sub` can be fixed before a first sign-in" $council.id) }}
+{{- end }}
+{{- $tester := dict }}
+{{- range $v.bootstrap.keycloak.users }}{{ if eq (toString .id) (toString $custodian.userId) }}{{ $tester = . }}{{ end }}{{ end }}
+{{- if not $tester }}
+{{- fail (printf "encryption.config.recoveryCouncils[%s] names user %s, which no bootstrap.keycloak.users entry carries as its id" $council.id $custodian.userId) }}
+{{- end }}
+{{- if ne (lower $tester.email) (lower $custodian.email) }}
+{{- fail (printf "encryption.config.recoveryCouncils[%s]: user %s is %q in bootstrap.keycloak.users (got %q)" $council.id $custodian.userId $tester.email $custodian.email) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- /* Accounts filters its claims by scope and ignores the `claims` parameter. */}}
 {{- if $viaAccounts }}
 {{- $scopes := splitList " " (toString $e.config.oidc.scopes) }}

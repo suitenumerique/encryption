@@ -1,0 +1,127 @@
+import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+
+import { prisma } from '@encryption/src/prisma/client';
+import { requireStepUp } from '@encryption/src/server/auth/step-up';
+import { councilLabel, serializable } from '@encryption/src/server/council-core';
+import { CouncilHeadChangedError, checkEscrowSubmission, enrollableCouncil, moveTargetOf, writeEscrow } from '@encryption/src/server/council-escrow';
+import { openRequestOf } from '@encryption/src/server/council-requests-core';
+import { sendCouncilLeft } from '@encryption/src/server/email/council';
+import { env } from '@encryption/src/server/env';
+import { errorResponses } from '@encryption/src/server/error-response';
+import { emergencyRecipient } from '@encryption/src/server/routes/emergency-core';
+import { logEmailFailure } from '@encryption/src/server/routes/recovery-council/replies';
+import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
+import { assertUserId } from '@encryption/src/server/routes/transport-auth';
+import {
+  API_ERROR_CONCURRENT_REGISTRATION,
+  API_ERROR_COUNCIL_NOT_COVERED,
+  API_ERROR_COUNCIL_REQUEST_EXISTS,
+  API_ERROR_COUNCIL_ROSTER_CHANGED,
+  API_ERROR_VAULT_NOT_FOUND,
+} from '@encryption/src/shared/error-codes';
+import { CouncilEscrowBodySchema } from '@encryption/src/shared/schemas/recovery-council';
+
+export function escrowRoutes(app: FastifyInstance): void {
+  // Enroll (or re-enroll) the caller's current vault with the head of their
+  // council. Explicit and identity-signed: the vault built it after the user
+  // accepted the council in the interface. A previous escrow of this vault is
+  // replaced; one with a recovery in progress is not.
+  app.withTypeProvider<ZodTypeProvider>().post(
+    '/api/councils/escrow',
+    {
+      schema: {
+        body: CouncilEscrowBodySchema,
+        response: { 200: z.object({ id: z.string().uuid() }), ...errorResponses(400, 403, 404, 409) },
+      },
+    },
+    async (request, reply) => {
+      assertUserId(request);
+      const userId = request.userId;
+      const body = request.body;
+
+      const keyring = await prisma.vaultKeyring.findFirst({ where: { userId, disabledAt: null } });
+      if (!keyring) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+
+      // Only the council covering the user, or the one their escrow already names:
+      // custodians never receive capsules, requests and emails for strangers. Joining
+      // the council their email maps to now is a move: the vault in use leaves the
+      // previous one, which keeps the escrows of older vaults, as only it can give them back.
+      const moving = body.council_id === (await moveTargetOf(userId));
+      if (!moving && body.council_id !== (await enrollableCouncil(userId))) return reply.status(403).send({ code: API_ERROR_COUNCIL_NOT_COVERED });
+
+      // Settles an expired request first, so it no longer counts below.
+      if (await openRequestOf(userId)) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
+
+      const checked = await checkEscrowSubmission(userId, body);
+      if (!checked.ok) return reply.status(checked.status).send({ code: checked.code });
+
+      try {
+        const created = await serializable(async (tx) => {
+          if ((await tx.councilRequest.count({ where: { userId, status: { in: ['open', 'released'] } } })) > 0) return null;
+
+          const previous = await tx.councilEscrow.findMany({
+            where: { userId, credential: { vaultId: keyring.id } },
+            select: { credentialId: true },
+          });
+          const id = await writeEscrow(tx, userId, keyring.id, body, checked);
+          await tx.vaultCredential.deleteMany({ where: { id: { in: previous.map((p) => p.credentialId) } } });
+
+          return id;
+        });
+        if (!created) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
+
+        return { id: created };
+      } catch (err) {
+        if (err instanceof CouncilHeadChangedError) return reply.status(409).send({ code: API_ERROR_COUNCIL_ROSTER_CHANGED });
+        if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
+        throw err;
+      }
+    }
+  );
+
+  // Leave the council: the caller's escrows go, credential and capsules with
+  // them, so the parts custodians hold open nothing any more. Identity-signed
+  // like joining, plus the step-up: it silently removes the user's way back,
+  // so neither a stolen login nor an unattended browser should be enough, and
+  // the email tells them if it was not them. Not while a recovery is in
+  // progress; joining again is the usual enrollment.
+  app.withTypeProvider<ZodTypeProvider>().delete(
+    '/api/councils/escrow',
+    {
+      schema: {
+        response: { 200: z.object({ left: z.number().int().nonnegative() }), ...errorResponses(401, 409) },
+      },
+    },
+    async (request, reply) => {
+      assertUserId(request);
+      if (!requireStepUp(request, reply)) return reply;
+      const userId = request.userId;
+
+      if (await openRequestOf(userId)) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
+
+      const left = await serializable(async (tx) => {
+        if ((await tx.councilRequest.count({ where: { userId, status: { in: ['open', 'released'] } } })) > 0) return null;
+
+        const escrows = await tx.councilEscrow.findMany({ where: { userId }, select: { credentialId: true, councilId: true } });
+        await tx.vaultCredential.deleteMany({ where: { id: { in: escrows.map((e) => e.credentialId) } } });
+
+        return escrows;
+      });
+      if (left === null) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });
+
+      const user = left.length > 0 ? await emergencyRecipient(userId) : null;
+      if (user)
+        for (const councilId of new Set(left.map((e) => e.councilId)))
+          sendCouncilLeft({
+            recipient: user.email,
+            locale: user.locale,
+            council: await councilLabel(councilId),
+            productUrl: env.EMAIL_PRODUCT_URL ?? '',
+          }).catch(logEmailFailure(app, 'left'));
+
+      return { left: left.length };
+    }
+  );
+}

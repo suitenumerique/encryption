@@ -5,7 +5,7 @@ import { envSchema } from '@encryption/src/server/env-schema';
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error('Invalid environment variables:', z.treeifyError(parsed.error));
+  console.error(`Invalid environment variables:\n${z.prettifyError(parsed.error)}`);
   process.exit(1);
 }
 

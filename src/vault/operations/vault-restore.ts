@@ -23,7 +23,7 @@ import { BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { clearSymmetricKeyCache } from '@encryption/src/vault/symmetric-key-cache';
-import { saveVaultCache, withVaultCacheLock } from '@encryption/src/vault/vault-cache';
+import { saveVaultCache, stageVaultCache, withVaultCacheLock } from '@encryption/src/vault/vault-cache';
 import { deriveStoredKeyPair } from '@encryption/src/vault/vault-keys';
 
 // Same origin as the API in production; the Vite proxy forwards /api in dev.
@@ -33,7 +33,7 @@ const API_BASE = '';
 interface VaultContentWire {
   vault_id: string;
   wrapped_vrk: string;
-  credential_type: 'primary' | 'emergency';
+  credential_type: 'primary' | 'emergency' | 'council';
   revision: number;
   manifest: string | null;
   manifest_sig: string | null;
@@ -43,6 +43,7 @@ interface VaultContentWire {
 interface VaultFetchWire extends VaultContentWire {
   is_active: boolean;
   created_at_millis: number;
+  council_request_closed: boolean;
 }
 
 // Prove possession of the recovery phrase to `endpoint` (/fetch or /reactivate)
@@ -57,7 +58,13 @@ interface VaultFetchWire extends VaultContentWire {
 // The phrase's LANGUAGE is irrelevant: deriveKek hashes the normalized phrase
 // STRING, so the user types their words (any wordlist) and the server self-selects
 // the keyring built from that same string. A wrong phrase matches no variant.
-async function unlockVault(userId: string, recoveryPhrase: string, idToken: string, endpoint: string): Promise<{ kek: Uint8Array; body: unknown }> {
+async function unlockVault(
+  userId: string,
+  recoveryPhrase: string,
+  idToken: string,
+  endpoint: string,
+  extra: Record<string, unknown> = {}
+): Promise<{ kek: Uint8Array; body: unknown }> {
   const auth = { Authorization: `Bearer ${idToken}` };
 
   const metaRes = await fetch(`${API_BASE}/api/vault/meta`, { headers: auth });
@@ -78,7 +85,7 @@ async function unlockVault(userId: string, recoveryPhrase: string, idToken: stri
     const res = await fetch(`${API_BASE}${endpoint}`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challenge_id: chal.challenge_id, proof }),
+      body: JSON.stringify({ ...extra, challenge_id: chal.challenge_id, proof }),
     });
 
     if (res.ok) return { kek, body: await res.json() };
@@ -96,10 +103,17 @@ async function unlockVault(userId: string, recoveryPhrase: string, idToken: stri
 // persisted to this device, so it runs only for the vault that is (or has just
 // become) the current one. Returns the vault's public keys. Throws on a bad KEK
 // or a failed integrity check, before anything is written.
+/**
+ * `staged`: opened through a phrase someone else handed over (a trusted contact's,
+ * the council's), the vault stays in memory until the forced phrase change commits
+ * it (MSG_VAULT_COMMIT_STAGED): leaving before then leaves nothing on this device,
+ * and the way back that was used still works.
+ */
 async function openAndCacheVault(
   userId: string,
   kek: Uint8Array,
-  vault: VaultContentWire
+  vault: VaultContentWire,
+  staged = false
 ): Promise<{ publicKey: string; signaturePublicKey: string }> {
   let vrk: Uint8Array;
   try {
@@ -134,22 +148,15 @@ async function openAndCacheVault(
 
   const deviceKey = await generateDeviceKey();
   const wrappedVrk = await wrapVrkForDevice(vrk, deviceKey);
-  await withVaultCacheLock(userId, () =>
-    saveVaultCache(userId, {
-      deviceKey,
-      wrappedVrk,
-      sealed,
-      manifest: vault.manifest,
-      manifestSig: vault.manifest_sig,
-      revision: vault.revision,
-    })
-  );
+  const entry = { deviceKey, wrappedVrk, sealed, manifest: vault.manifest, manifestSig: vault.manifest_sig, revision: vault.revision };
+  if (staged) stageVaultCache(userId, entry);
+  else await withVaultCacheLock(userId, () => saveVaultCache(userId, entry));
 
   // Switched to a (possibly different) vault: purge symmetric keys cached under
   // the previous keyring so they aren't reused against this one.
   clearSymmetricKeyCache();
 
-  getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
+  if (!staged) getVaultBroadcastChannel()?.postMessage({ type: BROADCAST_KEYS_CHANGED });
 
   const pair = deriveStoredKeyPair(state)!;
 
@@ -162,7 +169,15 @@ async function openAndCacheVault(
 export async function handleRestoreFromPhrase(
   userId: string,
   payload: { recoveryPhrase: string; idToken: string }
-): Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }> {
+): Promise<{
+  publicKey: string;
+  signaturePublicKey: string;
+  isActiveVault: boolean;
+  vaultCreatedAtMillis: number;
+  emergencyUnlock: boolean;
+  /** The server closed a council request for this vault: the user got back in without it. */
+  councilRequestClosed: boolean;
+}> {
   const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/fetch');
   const vault = body as VaultFetchWire;
 
@@ -178,10 +193,11 @@ export async function handleRestoreFromPhrase(
       isActiveVault: false,
       vaultCreatedAtMillis: vault.created_at_millis,
       emergencyUnlock: vault.credential_type === 'emergency',
+      councilRequestClosed: vault.council_request_closed === true,
     };
   }
 
-  const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, vault);
+  const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, vault, vault.credential_type !== 'primary');
 
   return {
     publicKey,
@@ -189,6 +205,7 @@ export async function handleRestoreFromPhrase(
     isActiveVault: true,
     vaultCreatedAtMillis: vault.created_at_millis,
     emergencyUnlock: vault.credential_type === 'emergency',
+    councilRequestClosed: vault.council_request_closed === true,
   };
 }
 
@@ -208,9 +225,31 @@ export async function handleRestoreFromPhrase(
  * open-ended user interaction. Re-deriving keeps the vault stateless between the
  * two ops; the second Argon2 is a one-off cost on a rare, user-confirmed action.
  */
+// A retired vault opened through a phrase someone else handed over waits, staged,
+// for the forced phrase change, which brings it back in the same server write
+// (handleReactivateWithKeyring): that phrase proves possession then.
+const handedOverPhrases = new Map<string, string>();
+
+export function rememberHandedOverPhrase(userId: string, phrase: string): void {
+  handedOverPhrases.set(userId, phrase);
+}
+
+export function forgetHandedOverPhrase(userId: string): boolean {
+  return handedOverPhrases.delete(userId);
+}
+
+export function handedOverPhrase(userId: string): string | undefined {
+  return handedOverPhrases.get(userId);
+}
+
+/**
+ * `handedOver`: the phrase is someone else's (a trusted contact's, the council's).
+ * Nothing changes on the server then: the vault is opened in memory only, and the
+ * forced phrase change brings it back (handleReactivateWithKeyring).
+ */
 export async function handleReactivateVault(
   userId: string,
-  payload: { recoveryPhrase: string; idToken: string }
+  payload: { recoveryPhrase: string; idToken: string; handedOver?: boolean }
 ): Promise<{
   reactivated: boolean;
   publicKey: string;
@@ -218,15 +257,34 @@ export async function handleReactivateVault(
   disabledVaultId: string | null;
   disabledVaultCreatedAtMillis: number | null;
   emergencyUnlock: boolean;
+  councilRequestClosed: boolean;
 }> {
+  if (payload.handedOver) {
+    const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/fetch');
+    const vault = body as VaultFetchWire;
+    const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, vault, true);
+    rememberHandedOverPhrase(userId, payload.recoveryPhrase);
+
+    return {
+      reactivated: false,
+      publicKey,
+      signaturePublicKey,
+      disabledVaultId: null,
+      disabledVaultCreatedAtMillis: null,
+      emergencyUnlock: vault.credential_type === 'emergency',
+      councilRequestClosed: vault.council_request_closed === true,
+    };
+  }
+
   const { kek, body } = await unlockVault(userId, payload.recoveryPhrase, payload.idToken, '/api/vault/reactivate');
   const data = body as VaultContentWire & {
     reactivated: boolean;
     disabled_vault_id: string | null;
     disabled_vault_created_at_millis: number | null;
+    council_request_closed?: boolean;
   };
 
-  const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, data);
+  const { publicKey, signaturePublicKey } = await openAndCacheVault(userId, kek, data, data.credential_type !== 'primary');
 
   return {
     reactivated: data.reactivated,
@@ -235,5 +293,24 @@ export async function handleReactivateVault(
     disabledVaultId: data.disabled_vault_id ?? null,
     disabledVaultCreatedAtMillis: data.disabled_vault_created_at_millis ?? null,
     emergencyUnlock: data.credential_type === 'emergency',
+    councilRequestClosed: data.council_request_closed === true,
   };
+}
+
+/**
+ * The forced phrase change of a retired vault opened through a handed-over phrase:
+ * bringing it back and the new keyring are one server write, proven by that phrase.
+ * `keyring` is the body `PUT /api/vault/keyring` would take.
+ */
+export async function handleReactivateWithKeyring(
+  userId: string,
+  payload: { idToken: string; keyring: Record<string, unknown> }
+): Promise<{ updated: boolean; rearmed: number }> {
+  const phrase = handedOverPhrases.get(userId);
+  if (!phrase) throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'No retired vault waits to be brought back.');
+
+  const { body } = await unlockVault(userId, phrase, payload.idToken, '/api/vault/reactivate-keyring', { keyring: payload.keyring });
+  handedOverPhrases.delete(userId);
+
+  return body as { updated: boolean; rearmed: number };
 }

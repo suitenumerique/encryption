@@ -10,6 +10,7 @@ import { verifyKeyRegistration } from '@encryption/src/crypto/key-registration';
 import { assertValidSignaturePublicKey } from '@encryption/src/crypto/signature';
 import { prisma } from '@encryption/src/prisma/client';
 import { requireStepUp } from '@encryption/src/server/auth/step-up';
+import { syncCouncilsAfterIdentityChange } from '@encryption/src/server/council-sync';
 import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import {
@@ -355,6 +356,8 @@ export async function publicKeysRoute(app: FastifyInstance): Promise<void> {
       if (updated.count === 0) {
         return reply.status(404).send({ code: API_ERROR_NO_ACTIVE_KEY });
       }
+
+      syncCouncilsAfterIdentityChange(userId, request.log);
 
       return { disabled: true };
     },

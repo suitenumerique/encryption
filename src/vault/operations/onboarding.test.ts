@@ -1,10 +1,10 @@
 import 'fake-indexeddb/auto';
 import sodium from 'libsodium-wrappers-sumo';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
+import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { verifyManifest } from '@encryption/src/crypto/vault-manifest';
-import { activeIdentity } from '@encryption/src/crypto/vault-state';
+import { activeIdentity, identityPublicKeyWire } from '@encryption/src/crypto/vault-state';
 import { DEFAULT_KDF_PARAMS, deriveKek, deriveVaultAuthKeyPair, unwrapVrk, verifyAuthPublicKeyBinding } from '@encryption/src/crypto/vault-unlock';
 import { BROADCAST_CHANNEL_NAME, BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
 import { closeVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
@@ -12,6 +12,8 @@ import { handleCommitStagedVault, handleUncommitStagedVault } from '@encryption/
 import { handleGenerateKeys } from '@encryption/src/vault/operations/generate-keys';
 import { handleHasKeys } from '@encryption/src/vault/operations/key-management';
 import { handleChangeRecoveryPhrase, handlePrepareOnboarding } from '@encryption/src/vault/operations/onboarding';
+import { handleRestoreFromPhrase } from '@encryption/src/vault/operations/vault-restore';
+import { clearVaultCache, getVaultCache } from '@encryption/src/vault/vault-cache';
 import { loadVault } from '@encryption/src/vault/vault-keys';
 
 beforeAll(async () => {
@@ -23,6 +25,16 @@ afterAll(() => {
 });
 
 describe('onboarding bundle builder', () => {
+  // The vault keeps its identity key raw; everything compared with the server
+  // (fingerprints, councils, escrow audits) must go through the wire form it registered.
+  it('stores the identity key it registers, in the form identityPublicKeyWire turns back into the registered one', async () => {
+    const registered = await handleGenerateKeys('u-wire');
+    const identity = activeIdentity((await loadVault('u-wire'))!.state)!;
+
+    expect(base64ToUint8(identity.signaturePublicKey)).toHaveLength(32);
+    expect(identityPublicKeyWire(identity)).toBe(registered.signaturePublicKey);
+  });
+
   it('produces a body that every downstream verifier will accept', async () => {
     const userId = 'u-onboard';
     await handleGenerateKeys(userId);
@@ -116,5 +128,61 @@ describe('other tabs', () => {
 
     // Nothing staged: nothing committed, nothing announced.
     expect(await listen(() => handleCommitStagedVault('u-nothing-staged'))).toEqual([]);
+  });
+});
+
+describe('restore through a handed-over phrase', () => {
+  // The server's answers for a vault minted here, as /api/vault/fetch returns it.
+  async function serving(userId: string, credentialType: 'primary' | 'council') {
+    await handleGenerateKeys(userId);
+    const { recoveryPhrase, keyring } = await handlePrepareOnboarding(userId, { lang: 'english' });
+    const entry = (await getVaultCache(userId))!;
+    await clearVaultCache(userId);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+        if (url.endsWith('/api/vault/meta')) return json({ kdf_variants: [{ kdf_ops: keyring.kdf_ops, kdf_mem: keyring.kdf_mem }] });
+        if (url.endsWith('/api/vault/challenge')) return json({ challenge_id: 'c', nonce: uint8ToBase64(new Uint8Array(32)) });
+
+        return json({
+          is_active: true,
+          credential_type: credentialType,
+          created_at_millis: 1,
+          wrapped_vrk: keyring.wrapped_vrk,
+          items: entry.sealed.map((i) => ({ item_id: i.id, type: i.type, revision_date_millis: i.revisionDate, ciphertext: i.ciphertext })),
+          manifest: entry.manifest,
+          manifest_sig: entry.manifestSig,
+          revision: entry.revision,
+        });
+      })
+    );
+
+    return recoveryPhrase;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the vault in memory until the phrase change commits it', async () => {
+    const userId = 'u-council-unlock';
+    const recoveryPhrase = await serving(userId, 'council');
+
+    await handleRestoreFromPhrase(userId, { recoveryPhrase, idToken: 't' });
+    expect(await handleHasKeys(userId)).toEqual({ hasKeys: false });
+    expect(await getVaultCache(userId)).not.toBeNull();
+
+    await handleCommitStagedVault(userId);
+    expect(await handleHasKeys(userId)).toEqual({ hasKeys: true });
+  });
+
+  it('keeps the vault on this device at once with the user’s own phrase', async () => {
+    const userId = 'u-own-phrase';
+    const recoveryPhrase = await serving(userId, 'primary');
+
+    await handleRestoreFromPhrase(userId, { recoveryPhrase, idToken: 't' });
+    expect(await handleHasKeys(userId)).toEqual({ hasKeys: true });
   });
 });

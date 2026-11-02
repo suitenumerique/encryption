@@ -15,15 +15,19 @@ import { LoginPage } from '@encryption/src/ui/auth/LoginPage';
 import { clearIdTokenSet, readIdTokenSet, storeIdTokenSet, subscribeToIdTokenSet } from '@encryption/src/ui/auth/id-token-storage';
 import { isIdTokenExpired } from '@encryption/src/ui/auth/login';
 import { checkBrowserVersion } from '@encryption/src/ui/browser-check';
+import { CouncilCustodian } from '@encryption/src/ui/components/CouncilCustodian';
 import { DeviceApproval } from '@encryption/src/ui/components/DeviceApproval';
 import { EmergencyAccess } from '@encryption/src/ui/components/EmergencyAccess';
 import { EmergencySignedOutPrompt } from '@encryption/src/ui/components/EmergencySignedOutPrompt';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import { RecipientProfile } from '@encryption/src/ui/components/RecipientProfile';
+import { RecoveryCouncil } from '@encryption/src/ui/components/RecoveryCouncil';
 import { VerifyRecipients } from '@encryption/src/ui/components/VerifyRecipients';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
+import { renewsOn } from '@encryption/src/ui/council-renewal';
 import { CloseRequestProvider } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useCouncilRenewal } from '@encryption/src/ui/hooks/useCouncilRenewal';
 import { ModalSizeProvider } from '@encryption/src/ui/hooks/useModalSize';
 import { useOidcAuth } from '@encryption/src/ui/hooks/useOidcAuth';
 import { type ParentContext, useParentMessages } from '@encryption/src/ui/hooks/useParentMessages';
@@ -186,6 +190,8 @@ function InterfaceScreens({
   // vault operates under and what binding signatures embed; components wait on
   // it (nullable userId props).
   const [internalUserId, setInternalUserId] = useState<string | null>(null);
+  // The settings' "verify my council" opens the council screen on its verification.
+  const [verifyCouncil, setVerifyCouncil] = useState(false);
 
   // Set auth info on the encryption context FIRST — the vault needs this before
   // we can make any requests (including token restoration). Re-sent when the
@@ -410,6 +416,8 @@ function InterfaceScreens({
     notifyParent(parentContext.parentOrigin, MSG_INTERFACE_CLOSED);
   }, [parentContext.parentOrigin]);
 
+  useCouncilRenewal(getValidIdToken, internalUserId, Boolean(oidcAuth.idToken) && renewsOn(activeRoute));
+
   // All hooks declared above — conditional returns are safe below this point.
   // Show a loader while trying to restore a token from the vault.
   // This prevents a flash of the "Authentication required" screen.
@@ -511,6 +519,46 @@ function InterfaceScreens({
     );
   }
 
+  // The council screens ask for a fresh second factor on custodian actions.
+  const councilAuth = {
+    onReconnect: oidcAuth.requestAuth,
+    onStepUp: oidcAuth.requestStepUp,
+    isAuthenticating: oidcAuth.isAuthenticating,
+    onCancelAuth: oidcAuth.cancelAuth,
+    currentIdToken: oidcAuth.idToken,
+    authError: oidcAuth.error,
+    wrongUser: oidcAuth.wrongUser,
+  };
+
+  function recoveryCouncil(direct: boolean) {
+    const leave = () => {
+      setVerifyCouncil(false);
+      setRouteOverride(null);
+    };
+
+    return (
+      <RecoveryCouncil
+        {...councilAuth}
+        getIdToken={getValidIdToken}
+        userId={internalUserId}
+        startVerifying={verifyCouncil}
+        onBack={overlaid && !direct ? leave : undefined}
+        onClose={overlaid && !direct ? leave : handleClose}
+      />
+    );
+  }
+
+  function councilCustodian(direct: boolean) {
+    return (
+      <CouncilCustodian
+        {...councilAuth}
+        getIdToken={getValidIdToken}
+        userId={internalUserId}
+        onBack={overlaid && !direct ? () => setRouteOverride(null) : undefined}
+      />
+    );
+  }
+
   function deviceApproval(direct: boolean) {
     return (
       <DeviceApproval
@@ -552,6 +600,7 @@ function InterfaceScreens({
           currentIdToken={oidcAuth.idToken}
           currentIdTokenSet={oidcAuth.idTokenSet}
           onStepUp={oidcAuth.requestStepUp}
+          stepUpWrongUser={oidcAuth.wrongUser}
         />
       );
 
@@ -573,6 +622,7 @@ function InterfaceScreens({
           currentIdToken={oidcAuth.idToken}
           currentIdTokenSet={oidcAuth.idTokenSet}
           onStepUp={oidcAuth.requestStepUp}
+          stepUpWrongUser={oidcAuth.wrongUser}
         />
       );
 
@@ -594,6 +644,7 @@ function InterfaceScreens({
           currentIdToken={oidcAuth.idToken}
           currentIdTokenSet={oidcAuth.idTokenSet}
           onStepUp={oidcAuth.requestStepUp}
+          stepUpWrongUser={oidcAuth.wrongUser}
         />
       );
 
@@ -602,6 +653,8 @@ function InterfaceScreens({
       // the device pairing are screens of their own, the rest belongs to settings.
       if (settingsSection === 'add-device') return deviceApproval(true);
       if (settingsSection === 'trusted-contacts') return emergencyAccess(true);
+      if (settingsSection === 'recovery-council') return recoveryCouncil(true);
+      if (settingsSection === 'custodian') return councilCustodian(true);
 
       return (
         <EncryptionSettings
@@ -614,6 +667,13 @@ function InterfaceScreens({
           onSetUp={() => navigate('onboarding')}
           onOpenDeviceApproval={() => setRouteOverride('device-approval')}
           onOpenEmergencyAccess={() => setRouteOverride('emergency-access')}
+          onOpenRecoveryCouncil={() => setRouteOverride('recovery-council')}
+          onVerifyRecoveryCouncil={() => {
+            setVerifyCouncil(true);
+            setRouteOverride('recovery-council');
+          }}
+          onOpenCustodian={() => setRouteOverride('council-custodian')}
+          onOpenCouncilRequest={() => setRouteOverride('council-request')}
           onReconnect={oidcAuth.requestAuth}
           isAuthenticating={oidcAuth.isAuthenticating}
           onCancelAuth={oidcAuth.cancelAuth}
@@ -624,6 +684,35 @@ function InterfaceScreens({
 
     case 'emergency-access':
       return emergencyAccess(false);
+
+    case 'recovery-council':
+      return recoveryCouncil(false);
+
+    case 'council-custodian':
+      return councilCustodian(false);
+
+    // A request to the council for an older vault, carried on from a browser that holds the one in use.
+    case 'council-request':
+      return (
+        <ModalEncryptionOnboarding
+          getIdToken={getValidIdToken}
+          userId={internalUserId}
+          parentOrigin={parentContext.parentOrigin}
+          hasExistingBackendKey={true}
+          userInfo={userInfo}
+          councilForOlderVault
+          onSuccess={handleOnboardingSuccess}
+          onClose={overlaid ? () => setRouteOverride(null) : handleClose}
+          onOpenEmergencyAccess={() => navigate('emergency-access')}
+          onReconnect={oidcAuth.requestAuth}
+          isAuthenticating={oidcAuth.isAuthenticating}
+          onCancelAuth={oidcAuth.cancelAuth}
+          currentIdToken={oidcAuth.idToken}
+          currentIdTokenSet={oidcAuth.idTokenSet}
+          onStepUp={oidcAuth.requestStepUp}
+          stepUpWrongUser={oidcAuth.wrongUser}
+        />
+      );
 
     case 'device-approval':
       return deviceApproval(false);

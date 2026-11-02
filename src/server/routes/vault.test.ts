@@ -64,7 +64,12 @@ const PHRASE = 'legal winner thank year wave sausage worth useful legal winner t
 const KDF = { ops: 3, mem: 64 * 1024 * 1024 }; // the server-pinned standard
 
 type SigKeyPair = Awaited<ReturnType<typeof generateSignatureKeyPair>>;
-type SeededItem = { itemId: string; type: 'tofu' | 'active' | 'identity' | 'encryptionKey'; ciphertext: string; revisionDateMillis: number };
+type SeededItem = {
+  itemId: string;
+  type: 'tofu' | 'active' | 'identity' | 'encryptionKey' | 'council';
+  ciphertext: string;
+  revisionDateMillis: number;
+};
 
 function wireKey(pair: SigKeyPair): Uint8Array {
   return base64ToUint8(exportPublicKeyAsBase64(pair.publicKey));
@@ -793,7 +798,10 @@ describe('GET /api/vault/items (warm-sync pull)', () => {
     await seedVault({
       identityId: identity.id,
       revision: 5,
-      items: [{ itemId: 'tofu:bob', type: 'tofu', ciphertext: 'CT', revisionDateMillis: 9000 }],
+      items: [
+        { itemId: 'tofu:bob', type: 'tofu', ciphertext: 'CT', revisionDateMillis: 9000 },
+        { itemId: 'council:dinum', type: 'council', ciphertext: 'PINS', revisionDateMillis: 9500 },
+      ],
     });
     // A dormant vault of the same user must never bleed into the active pull.
     await seedVault({
@@ -809,7 +817,13 @@ describe('GET /api/vault/items (warm-sync pull)', () => {
     const body = res.json();
     expect(body).toMatchObject({ revision: 5, manifest: 'M', manifest_sig: uint8ToBase64(Buffer.from('S')) });
     // Items are read scoped to the active vault's id.
-    expect(body.items).toEqual([{ item_id: 'tofu:bob', type: 'tofu', ciphertext: 'CT', revision_date_millis: 9000 }]);
+    expect(body.items).toEqual(
+      expect.arrayContaining([
+        { item_id: 'tofu:bob', type: 'tofu', ciphertext: 'CT', revision_date_millis: 9000 },
+        { item_id: 'council:dinum', type: 'council', ciphertext: 'PINS', revision_date_millis: 9500 },
+      ])
+    );
+    expect(body.items).toHaveLength(2);
     // The passphrase-brute-forceable artifact is never in this JWT-only response.
     expect(body.wrapped_vrk).toBeUndefined();
   });

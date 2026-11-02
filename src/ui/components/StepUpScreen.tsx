@@ -15,6 +15,8 @@ interface StepUpScreenProps {
   onCancel?: () => void;
   /** What happens to the interrupted action once confirmed, in the words of the flow that needed it. */
   note?: string;
+  /** The last confirmation came back with another account. */
+  wrongUser?: boolean;
 }
 
 /**
@@ -22,7 +24,7 @@ interface StepUpScreenProps {
  * want of a fresh second-factor authentication (RFC 9470 step-up): nothing else
  * can be done until the user confirms, so nothing else is offered.
  */
-export function StepUpScreen({ state, onStepUp, isAuthenticating = false, onCancel, note }: StepUpScreenProps) {
+export function StepUpScreen({ state, onStepUp, isAuthenticating = false, onCancel, note, wrongUser = false }: StepUpScreenProps) {
   const { t } = useTranslation('common');
 
   return (
@@ -34,7 +36,13 @@ export function StepUpScreen({ state, onStepUp, isAuthenticating = false, onCanc
           {note && <p>{note}</p>}
         </>
       }
-      banner={state === 'no_second_factor' && <Notice type={VariantType.ERROR}>{t('auth.step_up_no_second_factor')}</Notice>}
+      banner={
+        wrongUser ? (
+          <Notice type={VariantType.WARNING}>{t('auth.step_up_wrong_user')}</Notice>
+        ) : (
+          state === 'no_second_factor' && <Notice type={VariantType.ERROR}>{t('auth.step_up_no_second_factor')}</Notice>
+        )
+      }
       actions={
         <>
           <Button onClick={onStepUp} fullWidth>

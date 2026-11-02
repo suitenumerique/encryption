@@ -14,7 +14,7 @@
     "dev:client": "vite build --watch --config src/client/vite.config.ts",
     "dev:server": "dotenv-run-script .env.test -- dev:server:unsecure",
     "dev:server:product": "dotenv-run-script .env.test.product -- dev:server:unsecure",
-    "dev:server:unsecure": "NODE_ENV=development tsx watch src/server/main.ts",
+    "dev:server:unsecure": "NODE_ENV=development tsx watch --exclude \"src/i18n/**/*.json\" src/server/main.ts",
     "dev:demo:product-a": "DEMO_PORT=7201 vite --config src/demo/vite.config.ts",
     "dev:demo:product-b": "DEMO_PORT=7202 vite --config src/demo/vite.config.ts",
     "dev:storybook": "storybook dev -p 7204 --no-open",

@@ -4,7 +4,7 @@ import '@encryption/src/shared/zod-jitless';
 
 // Wire schemas for the synchronized vault. All ciphertext / key fields are
 // base64; the server never decodes them. `item_id` is a logical id such as
-// "enc:2", "tofu:<userId>" or "active"; `type` is routing metadata only.
+// "enc:2", "tofu:<userId>", "council:<councilId>" or "active"; `type` is routing metadata only.
 
 // Generous upper bounds on the opaque base64 / JSON blobs. Keys, signatures and
 // wrapped VRKs are small (tens to low-hundreds of bytes); sealed items and the
@@ -18,7 +18,7 @@ const MAX_ITEM_B64 = 128 * 1024; // sealed vault item ciphertext
 // The single source of truth for the item type across the client crypto layer
 // (src/crypto/vault-items.ts imports this), the server, and the Prisma
 // `VaultItemType` enum. The server rejects any other value.
-export const VaultItemTypeSchema = z.enum(['identity', 'encryptionKey', 'tofu', 'active']);
+export const VaultItemTypeSchema = z.enum(['identity', 'encryptionKey', 'tofu', 'active', 'council']);
 
 export const VaultItemSchema = z.object({
   item_id: z.string().min(1).max(256),

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +7,7 @@ import { parseAllDocuments } from 'yaml';
 
 import { assertHelmInstalled } from '@encryption/deploy/helm/helm-tooling';
 import { envSchema } from '@encryption/src/server/env-schema';
+import { recoveryCouncilsSchema } from '@encryption/src/server/recovery-councils';
 
 /**
  * Rendered by the real Helm binary (Go templates cannot be reproduced in JavaScript),
@@ -58,8 +59,16 @@ function isInstalled(command: string, versionArgs: string[]): boolean {
   }
 }
 
-function render(values: string, set: string[] = []): { text: string; docs: Manifest[] } {
-  const text = run('helm', ['template', 'enc', CHART, '--namespace', 'encryption', '--values', values, ...set.flatMap((entry) => ['--set', entry])]);
+function render(values: string | string[], set: string[] = []): { text: string; docs: Manifest[] } {
+  const text = run('helm', [
+    'template',
+    'enc',
+    CHART,
+    '--namespace',
+    'encryption',
+    ...[values].flat().flatMap((file) => ['--values', file]),
+    ...set.flatMap((entry) => ['--set', entry]),
+  ]);
   const docs = parseAllDocuments(text)
     .map((document) => document.toJS() as Manifest | null)
     .filter((document): document is Manifest => document !== null && typeof document === 'object');
@@ -233,6 +242,30 @@ describe('the chart', () => {
 
     expect(selects(podLabels('Deployment'))).toBe(true);
     expect(selects(podLabels('Job'))).toBe(false);
+  });
+
+  it('passes recovery councils with every option to RECOVERY_COUNCILS as the server parses them', () => {
+    const council = {
+      id: 'dinum',
+      label: 'Équipe sécurité',
+      domains: ['example.org'],
+      custodians: [
+        { userId: '0b7e5f0c-5c8e-4c1a-9d3b-1f2e3d4c5b6a', email: 'a@example.org' },
+        { userId: '6f2d4c1a-5c8e-4c1a-9d3b-1f2e3d4c5b6a', email: 'b@example.org' },
+        { userId: '9a8b7c6d-5c8e-4c1a-9d3b-1f2e3d4c5b6a', email: 'c@example.org' },
+      ],
+      threshold: 2,
+      requestTtlDays: 10,
+      cooldownMinutes: 60,
+      absenceDays: 120,
+    };
+    const values = resolve(mkdtempSync(resolve(tmpdir(), 'encryption-chart-')), 'councils.yaml');
+    writeFileSync(values, JSON.stringify({ config: { recoveryCouncils: [council] } }));
+
+    expect(serverEnv(render(EXISTING_SECRETS_VALUES).docs).has('RECOVERY_COUNCILS'), 'off by default').toBe(false);
+
+    const value = serverEnv(render([EXISTING_SECRETS_VALUES, values]).docs).get('RECOVERY_COUNCILS')?.value;
+    expect(recoveryCouncilsSchema.parse(JSON.parse(value!))).toEqual([council]);
   });
 
   it('renders nothing for what is off', () => {

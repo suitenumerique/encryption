@@ -1,5 +1,5 @@
 import { Meta, StoryFn } from '@storybook/react';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
@@ -7,12 +7,16 @@ import { playFindButton, playFindHeading } from '@encryption/.storybook/testing'
 import i18n from '@encryption/src/i18n';
 import {
   handleDeleteApiEmergencyAccessById,
+  handleGetApiCouncilRecoveryRequestsMine,
+  handleGetApiCouncilsForMe,
+  handleGetApiCouncilsMine,
   handleGetApiEmergencyAccessTrusted,
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { EncryptionSettings } from '@encryption/src/ui/components/EncryptionSettings';
-import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+import { custodianCouncil, forMe, vaultCheckingEscrow } from '@encryption/src/ui/testing/council-stories';
+import { sampleEmergencyEscrowRecord, samplePublicKey, sampleRosterVersion } from '@encryption/src/ui/testing/fixtures';
 
 type ComponentType = typeof EncryptionSettings;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
@@ -79,6 +83,191 @@ HomeStory.play = async ({ canvasElement }) => {
 
 HomeStory.parameters = { ...HomeStory.parameters, design: consoleFrame('4905-9065') };
 export const Home = prepareStory(HomeStory);
+
+// Covered by a recovery council, and custodian of one with a request waiting.
+const HomeWithCouncilStory = Template.bind({});
+HomeWithCouncilStory.args = {
+  ...baseArgs,
+  onOpenRecoveryCouncil: () => console.log('onOpenRecoveryCouncil'),
+  onOpenCustodian: () => console.log('onOpenCustodian'),
+};
+HomeWithCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      handleGetApiCouncilsMine({
+        body: {
+          mfa_enforced: true,
+          councils: [custodianCouncil({ requests_count: 1, requests_to_handle: 1 })],
+        },
+      }),
+    ],
+  },
+};
+HomeWithCouncilStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.row_title'));
+  await canvas.findByText(i18n.t('council.custodian_row_pending', { count: 1 }));
+  expect(canvas.getAllByRole('button', { name: i18n.t('council.row_open') })).toHaveLength(1);
+  // Joined without verifying: not called protected.
+  expect(canvas.queryByText(i18n.t('council.chip_protected'))).toBeNull();
+};
+export const HomeWithCouncil = prepareStory(HomeWithCouncilStory);
+
+// This browser holds the vault in use, created after the user asked the council
+// for an older one: the request goes on from here, and its answer is announced.
+const openCouncilRequest = fn();
+const HomeOlderVaultRequestStory = Template.bind({});
+HomeOlderVaultRequestStory.args = { ...baseArgs, onOpenCouncilRequest: openCouncilRequest };
+HomeOlderVaultRequestStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      handleGetApiCouncilRecoveryRequestsMine({
+        body: {
+          request: {
+            id: '5d6e7f80-0000-4000-8000-000000000001',
+            council_label: 'Équipe sécurité DINUM',
+            stage: 'released',
+            ephemeral_fingerprint: null,
+            created_at_millis: Date.UTC(2026, 9, 28, 9),
+            expires_at_millis: Date.UTC(2026, 10, 4, 9),
+            meet: [],
+            vault_active: false,
+            vault_created_at_millis: Date.UTC(2025, 2, 1),
+          },
+          ended: null,
+        },
+      }),
+    ],
+  },
+};
+HomeOlderVaultRequestStory.play = async ({ canvasElement }) => {
+  openCouncilRequest.mockClear();
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.request_banner_released', { date: new Date(Date.UTC(2025, 2, 1)) }));
+  await userEvent.click(canvas.getByRole('button', { name: i18n.t('council.request_banner_open') }));
+  await expect(openCouncilRequest).toHaveBeenCalledOnce();
+};
+export const HomeOlderVaultRequest = prepareStory(HomeOlderVaultRequestStory);
+
+// An unverified council: the row offers its verification rather than opening the council.
+const HomeCouncilUnverifiedStory = Template.bind({});
+HomeCouncilUnverifiedStory.args = {
+  ...HomeWithCouncilStory.args,
+  onVerifyRecoveryCouncil: fn(),
+};
+HomeCouncilUnverifiedStory.parameters = HomeWithCouncilStory.parameters;
+HomeCouncilUnverifiedStory.play = async ({ canvasElement, args }) => {
+  const canvas = within(canvasElement);
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.verify_open')));
+  canvas.getByText(i18n.t('council.chip_unverified'));
+  expect(canvas.queryByText(i18n.t('council.chip_protected'))).toBeNull();
+  expect(args.onVerifyRecoveryCouncil).toHaveBeenCalledOnce();
+  expect(canvas.queryByRole('button', { name: i18n.t('council.row_open') })).toBeNull();
+};
+export const HomeCouncilUnverified = prepareStory(HomeCouncilUnverifiedStory);
+
+const HomeCouncilVerifiedStory = Template.bind({});
+HomeCouncilVerifiedStory.args = HomeCouncilUnverifiedStory.args;
+HomeCouncilVerifiedStory.parameters = { ...HomeWithCouncilStory.parameters, encryption: { request: vaultCheckingEscrow('ok', true) } };
+HomeCouncilVerifiedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  // Called as the council's own screen calls it.
+  await canvas.findByText(i18n.t('council.chip_protected'));
+  expect(canvas.queryByRole('button', { name: i18n.t('council.verify_open') })).toBeNull();
+  canvas.getByRole('button', { name: i18n.t('council.row_open') });
+};
+export const HomeCouncilVerified = prepareStory(HomeCouncilVerifiedStory);
+
+// Covered but not joined (never, or dropped after a recovery): the row offers to join.
+const HomeCouncilNotJoinedStory = Template.bind({});
+HomeCouncilNotJoinedStory.args = HomeWithCouncilStory.args;
+HomeCouncilNotJoinedStory.parameters = {
+  msw: { handlers: [directoryInSync, handleGetApiCouncilsForMe({ body: forMe({ escrow: null }) })] },
+};
+HomeCouncilNotJoinedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await playFindButton(canvasElement, i18n.t('council.row_join'));
+  expect(canvas.queryByRole('button', { name: i18n.t('council.row_open') })).toBeNull();
+  expect(canvas.queryByText(i18n.t('council.chip_protected'))).toBeNull();
+};
+export const HomeCouncilNotJoined = prepareStory(HomeCouncilNotJoinedStory);
+
+// The team works, but too few members still hold this person's parts: the row sets it up again, as the screen it opens says.
+const HomeCouncilLostStory = Template.bind({});
+HomeCouncilLostStory.args = HomeWithCouncilStory.args;
+HomeCouncilLostStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: { health: { live: 1, threshold: 2, status: 'lost', outdated: false } } }) }),
+    ],
+  },
+};
+HomeCouncilLostStory.play = async ({ canvasElement }) => {
+  await playFindButton(canvasElement, i18n.t('council.again_button'));
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('council.row_join') })).toBeNull();
+};
+export const HomeCouncilLost = prepareStory(HomeCouncilLostStory);
+
+// Same loss while a member has no encryption: joining cannot work yet, so the row only opens the team.
+const HomeCouncilLostTeamToRepairStory = Template.bind({});
+HomeCouncilLostTeamToRepairStory.args = HomeWithCouncilStory.args;
+HomeCouncilLostTeamToRepairStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({
+        body: forMe({ escrow: { health: { live: 1, threshold: 2, status: 'lost', outdated: false } }, teamReady: false }),
+      }),
+    ],
+  },
+};
+HomeCouncilLostTeamToRepairStory.play = async ({ canvasElement }) => {
+  await playFindButton(canvasElement, i18n.t('council.row_open'));
+  expect(within(canvasElement).queryByRole('button', { name: i18n.t('council.row_join') })).toBeNull();
+};
+export const HomeCouncilLostTeamToRepair = prepareStory(HomeCouncilLostTeamToRepairStory);
+
+// The setup the server shows fails the vault's audit: flagged on the row, never "protected".
+const HomeCouncilTamperedStory = Template.bind({});
+HomeCouncilTamperedStory.args = HomeCouncilUnverifiedStory.args;
+HomeCouncilTamperedStory.parameters = { ...HomeWithCouncilStory.parameters, encryption: { request: vaultCheckingEscrow('tampered') } };
+HomeCouncilTamperedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.chip_problem'));
+  expect(canvas.queryByText(i18n.t('council.chip_protected'))).toBeNull();
+  expect(canvas.queryByRole('button', { name: i18n.t('council.verify_open') })).toBeNull();
+  canvas.getByRole('button', { name: i18n.t('council.row_open') });
+};
+export const HomeCouncilTampered = prepareStory(HomeCouncilTamperedStory);
+
+// The organization moved recoveries to a new team: the row says so, and opens the move.
+const HomeCouncilMoveOfferedStory = Template.bind({});
+HomeCouncilMoveOfferedStory.args = HomeCouncilUnverifiedStory.args;
+HomeCouncilMoveOfferedStory.parameters = {
+  msw: {
+    handlers: [
+      directoryInSync,
+      handleGetApiCouncilsForMe({
+        body: forMe({
+          escrow: {},
+          moveTo: { council_id: 'dinum-2027', label: 'Nouvelle équipe DINUM', configured: true, chain: [sampleRosterVersion()], team_ready: true },
+        }),
+      }),
+    ],
+  },
+  encryption: { request: vaultCheckingEscrow('ok', true) },
+};
+HomeCouncilMoveOfferedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.chip_move'));
+  canvas.getByRole('button', { name: i18n.t('council.row_open') });
+};
+export const HomeCouncilMoveOffered = prepareStory(HomeCouncilMoveOfferedStory);
 
 // From the home, a flow comes back to it; the story ends on the flow, opened again.
 const HomeToVerificationCodeStory = Template.bind({});

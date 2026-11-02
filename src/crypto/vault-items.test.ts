@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { vaultStateArb } from '@encryption/src/crypto/testing/arbitraries';
 import { itemsToState, stateToItems } from '@encryption/src/crypto/vault-items';
-import { addEncryptionKey, addIdentity, emptyVaultState, mergeVaultState, setTofu } from '@encryption/src/crypto/vault-state';
+import { addEncryptionKey, addIdentity, emptyVaultState, mergeVaultState, pinCouncil, setTofu } from '@encryption/src/crypto/vault-state';
 
 function sampleState() {
   let s = emptyVaultState();
@@ -32,6 +32,22 @@ describe('vault item mapping', () => {
     expect(ids).toContain('enc:2');
     expect(ids).toContain('tofu:bob');
     expect(items).toHaveLength(6); // 1 identity + 2 keys + 2 tofu + active
+  });
+
+  // One item per council, whose date moves whenever a pin is added or verified: the push carries the change.
+  it('emits a council item whose revision moves with each pin and verification', () => {
+    const council = (state: ReturnType<typeof sampleState>) => stateToItems(state).find((i) => i.id === 'council:dinum');
+    const pinned = pinCouncil(sampleState(), 'dinum', 'h1', false, 50);
+    const verified = pinCouncil(pinned, 'dinum', 'h1', true, 60);
+
+    expect(council(sampleState())).toBeUndefined();
+    expect(council(pinned)).toMatchObject({
+      type: 'council',
+      revisionDate: 50,
+      payload: { councilId: 'dinum', pins: { h1: { pinnedAt: 50, verifiedAt: null } } },
+    });
+    expect(council(verified)?.revisionDate).toBe(60);
+    expect(itemsToState(stateToItems(verified)).councils).toEqual(verified.councils);
   });
 
   it('is insensitive to item order on the way back', () => {

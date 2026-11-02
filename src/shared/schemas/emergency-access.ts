@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { CouncilEscrowBodySchema } from '@encryption/src/shared/schemas/recovery-council';
 import { VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
 import '@encryption/src/shared/zod-jitless';
 
@@ -71,9 +72,16 @@ export type EmergencyRearmEntry = z.infer<typeof EmergencyRearmEntrySchema>;
 
 // PUT /api/vault/keyring body: the flat primary credential (unchanged wire for
 // a plain phrase change) plus the burn + re-arm entries when required.
+//
+// After a recovery by the user's council, the same rewrite burns the council
+// credential that was released and either re-arms it with a fresh escrow over the
+// council's current roster (`council_rearm`) or, when that cannot be built,
+// leaves the council explicitly (`council_drop`).
 export const VaultKeyringUpdateBodySchema = z.object({
   ...VaultKeyringSchema.shape,
   emergency_rearms: z.array(EmergencyRearmEntrySchema).max(64).optional(),
+  council_rearm: CouncilEscrowBodySchema.optional(),
+  council_drop: z.boolean().optional(),
 });
 
 export type VaultKeyringUpdateBody = z.infer<typeof VaultKeyringUpdateBodySchema>;

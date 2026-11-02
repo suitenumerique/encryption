@@ -7,6 +7,19 @@ import {
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_COMMIT_STAGED,
   MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
+  MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_CHECK_SHARES,
+  MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
+  MSG_VAULT_COUNCIL_CONTRIBUTE,
+  MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_DISCARD_RECOVERY,
+  MSG_VAULT_COUNCIL_MARK_VERIFIED,
+  MSG_VAULT_COUNCIL_REACTIVATE,
+  MSG_VAULT_COUNCIL_REQUEST_KEY,
+  MSG_VAULT_COUNCIL_RESHARE_BATCH,
+  MSG_VAULT_COUNCIL_SIGN_ROSTER,
+  MSG_VAULT_COUNCIL_START_REQUEST,
+  MSG_VAULT_COUNCIL_VERIFY_ROSTER,
   MSG_VAULT_CREATE_EMERGENCY_ESCROW,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_DESTROY_KEYS,
@@ -20,6 +33,7 @@ import {
   MSG_VAULT_HAS_KEYS,
   MSG_VAULT_PREPARE_ONBOARDING,
   MSG_VAULT_REACTIVATE,
+  MSG_VAULT_REACTIVATE_WITH_KEYRING,
   MSG_VAULT_REFUSE_FINGERPRINT,
   MSG_VAULT_RESOLVE_USER,
   MSG_VAULT_RESPOND_TO_KEY_CHALLENGE,
@@ -66,12 +80,27 @@ import { handleGetPublicKey, handleHasKeys } from '@encryption/src/vault/operati
 import { resolveMaintenanceKey } from '@encryption/src/vault/operations/maintenance-escrow';
 import { handleChangeRecoveryPhrase, handlePrepareOnboarding } from '@encryption/src/vault/operations/onboarding';
 import { resolveTrustedRecipientKeys } from '@encryption/src/vault/operations/recipient-trust';
+import {
+  handleCheckCouncilEscrow,
+  handleCheckCouncilShares,
+  handleCompleteCouncilRecovery,
+  handleCouncilContribute,
+  handleCouncilRequestKey,
+  handleCouncilReshareBatch,
+  handleCreateCouncilEscrow,
+  handleDiscardCouncilRecovery,
+  handleMarkCouncilVerified,
+  handleReactivateCouncilVault,
+  handleSignCouncilRoster,
+  handleStartCouncilRequest,
+  handleVerifyCouncilRoster,
+} from '@encryption/src/vault/operations/recovery-council';
 import { handleRespondToKeyChallenge } from '@encryption/src/vault/operations/respond-to-key-challenge';
 import { handleRewrapNestedKey } from '@encryption/src/vault/operations/rewrap-nested-key';
 import { handleShareKeys } from '@encryption/src/vault/operations/share-keys';
 import { handleSignKeyRegistration } from '@encryption/src/vault/operations/sign-key-registration';
 import { handleSignRequest } from '@encryption/src/vault/operations/sign-request';
-import { handleReactivateVault, handleRestoreFromPhrase } from '@encryption/src/vault/operations/vault-restore';
+import { handleReactivateVault, handleReactivateWithKeyring, handleRestoreFromPhrase } from '@encryption/src/vault/operations/vault-restore';
 import { syncWithIntegrityRetry } from '@encryption/src/vault/operations/vault-sync-checked';
 import { handleWrapNestedKey } from '@encryption/src/vault/operations/wrap-nested-key';
 import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin-guard';
@@ -214,7 +243,9 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_RESTORE_FROM_PHRASE:
       return handleRestoreFromPhrase(userId, payload as { recoveryPhrase: string; idToken: string });
     case MSG_VAULT_REACTIVATE:
-      return handleReactivateVault(userId, payload as { recoveryPhrase: string; idToken: string });
+      return handleReactivateVault(userId, payload as { recoveryPhrase: string; idToken: string; handedOver?: boolean });
+    case MSG_VAULT_REACTIVATE_WITH_KEYRING:
+      return handleReactivateWithKeyring(userId, payload as { idToken: string; keyring: Record<string, unknown> });
     case MSG_VAULT_SYNC:
       return syncWithIntegrityRetry(userId, payload as { idToken?: string | null });
     case MSG_VAULT_SIGN_REQUEST:
@@ -239,6 +270,32 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       return handleVerifyEscrows(userId, payload as Parameters<typeof handleVerifyEscrows>[1]);
     case MSG_VAULT_REVEAL_EMERGENCY_PHRASE:
       return handleRevealEmergencyPhrase(userId, payload as Parameters<typeof handleRevealEmergencyPhrase>[1]);
+    case MSG_VAULT_COUNCIL_VERIFY_ROSTER:
+      return handleVerifyCouncilRoster(userId, payload as Parameters<typeof handleVerifyCouncilRoster>[1]);
+    case MSG_VAULT_COUNCIL_CREATE_ESCROW:
+      return handleCreateCouncilEscrow(userId, payload as Parameters<typeof handleCreateCouncilEscrow>[1]);
+    case MSG_VAULT_COUNCIL_CHECK_ESCROW:
+      return handleCheckCouncilEscrow(userId, payload as Parameters<typeof handleCheckCouncilEscrow>[1]);
+    case MSG_VAULT_COUNCIL_START_REQUEST:
+      return handleStartCouncilRequest(userId);
+    case MSG_VAULT_COUNCIL_REQUEST_KEY:
+      return handleCouncilRequestKey(userId, payload as { serverFingerprint?: string | null });
+    case MSG_VAULT_COUNCIL_COMPLETE_RECOVERY:
+      return handleCompleteCouncilRecovery(userId, payload as Parameters<typeof handleCompleteCouncilRecovery>[1]);
+    case MSG_VAULT_COUNCIL_REACTIVATE:
+      return handleReactivateCouncilVault(userId, payload as Parameters<typeof handleReactivateCouncilVault>[1]);
+    case MSG_VAULT_COUNCIL_DISCARD_RECOVERY:
+      return handleDiscardCouncilRecovery(userId);
+    case MSG_VAULT_COUNCIL_CONTRIBUTE:
+      return handleCouncilContribute(userId, payload as Parameters<typeof handleCouncilContribute>[1]);
+    case MSG_VAULT_COUNCIL_SIGN_ROSTER:
+      return handleSignCouncilRoster(userId, payload as Parameters<typeof handleSignCouncilRoster>[1]);
+    case MSG_VAULT_COUNCIL_RESHARE_BATCH:
+      return handleCouncilReshareBatch(userId, payload as Parameters<typeof handleCouncilReshareBatch>[1]);
+    case MSG_VAULT_COUNCIL_CHECK_SHARES:
+      return handleCheckCouncilShares(userId, payload as Parameters<typeof handleCheckCouncilShares>[1]);
+    case MSG_VAULT_COUNCIL_MARK_VERIFIED:
+      return handleMarkCouncilVerified(userId, payload as Parameters<typeof handleMarkCouncilVerified>[1]);
   }
 }
 

@@ -10,10 +10,12 @@
  *
  * Conflicts can only happen on a TOFU entry (two devices deciding differently
  * about the same contact). The tie-break is fail-safe: a refusal or a detected
- * mismatch never loses to an equally-recent trust.
+ * mismatch never loses to an equally-recent trust. Council pins never conflict:
+ * every version 1 seen is kept, and the earliest is the one in force.
  */
 import { z } from 'zod';
 
+import { base64ToUint8, exportPublicKeyAsBase64 } from '@encryption/src/crypto/encryption-backup';
 import '@encryption/src/shared/zod-jitless';
 
 export const VAULT_SCHEMA_VERSION = 1;
@@ -31,7 +33,7 @@ export type TofuStatus = z.infer<typeof tofuStatusSchema>;
 export const identityEntrySchema = z.object({
   generation: z.number(),
   algo: z.string(),
-  signaturePublicKey: z.string(), // base64 wire blob
+  signaturePublicKey: z.string(), // base64 raw key: `identityPublicKeyWire` for the form the server and councils use
   signatureSecretKey: z.string(), // base64
   createdAt: z.number(), // epoch ms
 });
@@ -58,17 +60,29 @@ export type TofuEntry = z.infer<typeof tofuEntrySchema>;
 
 export const activePointerSchema = z.object({ identityGen: z.number(), encKeyVersion: z.number() });
 
+/**
+ * A version 1 of a council this user joined or verified, keyed by its roster hash
+ * (base64) under the council id. Kept, never removed: a council presented later
+ * with another version 1 is another council. `verifiedAt`: when the user compared
+ * its code, null until then.
+ */
+export const councilPinSchema = z.object({ pinnedAt: z.number(), verifiedAt: z.number().nullable() });
+export type CouncilPin = z.infer<typeof councilPinSchema>;
+export const councilPinsSchema = z.record(z.string(), councilPinSchema);
+export type CouncilPins = z.infer<typeof councilPinsSchema>;
+
 export const vaultStateSchema = z.object({
   schema: z.number(),
   identities: z.array(identityEntrySchema), // keyed by generation, ascending
   encryptionKeys: z.array(encryptionKeyEntrySchema), // keyed by version, ascending
   active: activePointerSchema,
   tofu: z.record(z.string(), tofuEntrySchema),
+  councils: z.record(z.string(), councilPinsSchema).default({}),
 });
 export type VaultState = z.infer<typeof vaultStateSchema>;
 
 export function emptyVaultState(): VaultState {
-  return { schema: VAULT_SCHEMA_VERSION, identities: [], encryptionKeys: [], active: { identityGen: 0, encKeyVersion: 0 }, tofu: {} };
+  return { schema: VAULT_SCHEMA_VERSION, identities: [], encryptionKeys: [], active: { identityGen: 0, encKeyVersion: 0 }, tofu: {}, councils: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +99,33 @@ export function mergeVaultState(a: VaultState, b: VaultState): VaultState {
       encKeyVersion: Math.max(a.active.encKeyVersion, b.active.encKeyVersion),
     },
     tofu: mergeTofu(a.tofu, b.tofu),
+    councils: mergeCouncils(a.councils ?? {}, b.councils ?? {}),
   };
+}
+
+/** Every version 1 seen on either side; for the same one, the first pin and the first verification. */
+function mergeCouncils(a: Record<string, CouncilPins>, b: Record<string, CouncilPins>): Record<string, CouncilPins> {
+  const out: Record<string, CouncilPins> = {};
+
+  for (const councilId of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const pins: CouncilPins = {};
+    const x = a[councilId] ?? {};
+    const y = b[councilId] ?? {};
+
+    for (const hash of new Set([...Object.keys(x), ...Object.keys(y)])) {
+      const p = x[hash];
+      const q = y[hash];
+      pins[hash] =
+        p === undefined ? q : q === undefined ? p : { pinnedAt: Math.min(p.pinnedAt, q.pinnedAt), verifiedAt: earliest(p.verifiedAt, q.verifiedAt) };
+    }
+    out[councilId] = pins;
+  }
+
+  return out;
+}
+
+function earliest(x: number | null, y: number | null): number | null {
+  return x === null ? y : y === null ? x : Math.min(x, y);
 }
 
 /**
@@ -158,6 +198,35 @@ export function deleteTofu(state: VaultState, remoteUserId: string, now: number)
   return { ...state, tofu: { ...state.tofu, [remoteUserId]: { ...prev, deleted: true, revisionDate: now } } };
 }
 
+/**
+ * The version 1 in force for a council: the first pinned (ties by hash, so every
+ * device agrees). Another one can only come from a device that pinned before it
+ * synced, which means the server showed two councils under one id.
+ */
+export function councilPin(state: VaultState, councilId: string): ({ genesisHash: string } & CouncilPin) | null {
+  const entries = Object.entries(state.councils[councilId] ?? {});
+  if (entries.length === 0) return null;
+
+  const [genesisHash, pin] = entries.reduce((best, entry) =>
+    entry[1].pinnedAt < best[1].pinnedAt || (entry[1].pinnedAt === best[1].pinnedAt && entry[0] < best[0]) ? entry : best
+  );
+
+  return { genesisHash, ...pin };
+}
+
+/** Pin a council's version 1 (a no-op once pinned), and mark it verified when the user compared its code. */
+export function pinCouncil(state: VaultState, councilId: string, genesisHash: string, verified: boolean, now: number): VaultState {
+  const pins = state.councils[councilId] ?? {};
+  const previous = pins[genesisHash];
+  const pin: CouncilPin = {
+    pinnedAt: previous?.pinnedAt ?? now,
+    verifiedAt: previous?.verifiedAt ?? (verified ? now : null),
+  };
+  if (previous && previous.verifiedAt === pin.verifiedAt) return state;
+
+  return { ...state, councils: { ...state.councils, [councilId]: { ...pins, [genesisHash]: pin } } };
+}
+
 export function addIdentity(state: VaultState, entry: IdentityEntry): VaultState {
   const identities = unionByKey(state.identities, [entry], (e) => e.generation);
 
@@ -168,6 +237,11 @@ export function addEncryptionKey(state: VaultState, entry: EncryptionKeyEntry): 
   const encryptionKeys = unionByKey(state.encryptionKeys, [entry], (e) => e.version);
 
   return { ...state, encryptionKeys, active: { ...state.active, encKeyVersion: Math.max(state.active.encKeyVersion, entry.version) } };
+}
+
+/** The identity key in the wire form (version byte, then the key) that the directory, fingerprints and councils use. */
+export function identityPublicKeyWire(entry: IdentityEntry): string {
+  return exportPublicKeyAsBase64(base64ToUint8(entry.signaturePublicKey));
 }
 
 export function activeIdentity(state: VaultState): IdentityEntry | undefined {

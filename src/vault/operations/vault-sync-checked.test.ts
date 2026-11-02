@@ -12,7 +12,10 @@ vi.mock('@encryption/src/vault/operations/fetch-public-keys', () => ({ handleFet
 vi.mock('@encryption/src/vault/vault-keys', () => ({ loadVault: vi.fn() }));
 vi.mock('@encryption/src/vault/monitoring', () => ({ reportVaultError: vi.fn() }));
 vi.mock('@encryption/src/crypto', () => ({ computeKeyFingerprint: vi.fn(async (key: string) => `fp-${key}`) }));
-vi.mock('@encryption/src/crypto/vault-state', () => ({ activeIdentity: (state: { identity: unknown }) => state.identity }));
+vi.mock('@encryption/src/crypto/vault-state', () => ({
+  activeIdentity: (state: { identity: unknown }) => state.identity,
+  identityPublicKeyWire: (identity: { signaturePublicKey: string }) => identity.signaturePublicKey,
+}));
 
 const USER_ID = 'user-1';
 const delay = vi.fn(async () => undefined);

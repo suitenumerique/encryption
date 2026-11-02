@@ -89,11 +89,20 @@ interface UseEncryptionReturn {
   restoreFromPhrase: (
     recoveryPhrase: string,
     idToken: string
-  ) => Promise<{ publicKey: string; signaturePublicKey: string; isActiveVault: boolean; vaultCreatedAtMillis: number; emergencyUnlock: boolean }>;
+  ) => Promise<{
+    publicKey: string;
+    signaturePublicKey: string;
+    isActiveVault: boolean;
+    vaultCreatedAtMillis: number;
+    emergencyUnlock: boolean;
+    councilRequestClosed: boolean;
+  }>;
   /** Bring the dormant vault a phrase unlocks back as the current one (after user confirmation). */
   reactivateVault: (
     recoveryPhrase: string,
-    idToken: string
+    idToken: string,
+    /** Someone else's phrase: the vault opens in memory, brought back by the forced phrase change. */
+    handedOver?: boolean
   ) => Promise<{
     reactivated: boolean;
     publicKey: string;
@@ -101,6 +110,7 @@ interface UseEncryptionReturn {
     disabledVaultId: string | null;
     disabledVaultCreatedAtMillis: number | null;
     emergencyUnlock: boolean;
+    councilRequestClosed: boolean;
   }>;
   /** Grantor: build a full designation body (fresh emergency phrase, dormant credential, capsule, binding signature). Requires the contact TOFU-trusted. */
   createEmergencyEscrow: (granteeUserId: string, waitTimeDays: number, lang?: MnemonicLanguage) => Promise<EmergencyDesignateBody>;
@@ -339,19 +349,21 @@ export function useEncryption({ vaultUrl }: UseEncryptionOptions): UseEncryption
         isActiveVault: boolean;
         vaultCreatedAtMillis: number;
         emergencyUnlock: boolean;
+        councilRequestClosed: boolean;
       }>,
     [request]
   );
 
   const reactivateVault = useCallback(
-    (recoveryPhrase: string, idToken: string) =>
-      request(MSG_VAULT_REACTIVATE, { recoveryPhrase, idToken }) as Promise<{
+    (recoveryPhrase: string, idToken: string, handedOver?: boolean) =>
+      request(MSG_VAULT_REACTIVATE, { recoveryPhrase, idToken, handedOver }) as Promise<{
         reactivated: boolean;
         publicKey: string;
         signaturePublicKey: string;
         disabledVaultId: string | null;
         disabledVaultCreatedAtMillis: number | null;
         emergencyUnlock: boolean;
+        councilRequestClosed: boolean;
       }>,
     [request]
   );

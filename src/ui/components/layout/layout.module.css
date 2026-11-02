@@ -319,6 +319,88 @@
   min-height: 34px;
 }
 
+/* One part of a card holding several (a council: its code, its health, its
+   requests), ruled off from the part above so each reads apart. */
+.card__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--xs);
+  padding-top: var(--c--globals--spacings--xs);
+  border-top: 1px solid var(--c--contextuals--border--surface--primary);
+}
+
+.card__block-title {
+  margin: 0;
+  font-size: var(--c--globals--font--sizes--sm);
+  line-height: 18px;
+  font-weight: var(--c--globals--font--weights--bold);
+  color: var(--c--contextuals--content--semantic--neutral--primary);
+}
+
+/* A long list's filters: one toggle each, wrapping. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--c--globals--spacings--xxxs);
+}
+
+/* Previous, "page n of m", next, under a long list. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c--globals--spacings--xs);
+}
+
+/* A whole card that opens what it shows (a council in the custodian space). */
+.card-button {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-button:hover {
+  background: var(--c--contextuals--background--surface--secondary);
+}
+
+.card-button:focus-visible {
+  outline: 2px solid var(--c--contextuals--border--semantic--brand--primary);
+  outline-offset: 2px;
+}
+
+/* "Why?" after a sentence: its explanation in a tooltip. */
+.why-link {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+/* Something that waits on the user (a change to sign, setups to move): tinted
+   and bordered in the brand colour, so it reads as the thing to do. */
+.task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c--globals--spacings--xs);
+  padding: var(--c--globals--spacings--xs);
+  border: 1px solid var(--c--contextuals--border--semantic--brand--secondary);
+  border-radius: var(--c--globals--spacings--xxxs);
+  background: var(--c--contextuals--background--semantic--brand--tertiary);
+}
+
+.task :global(.c__button) {
+  flex-shrink: 0;
+}
+
+/* A search field with its filter button beside it. */
+.search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--c--globals--spacings--xs);
+}
+
 .card__aside {
   display: flex;
   align-items: center;
@@ -530,6 +612,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--c--globals--spacings--xs);
+}
+
+/* Alternatives read as one block: closer to each other than to the rest. */
+.alert-cases {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c--globals--spacings--4xs);
+  margin: 0;
+  padding-left: var(--c--globals--spacings--base);
 }
 
 /* The acknowledgement starts at the alert's edge, under the icon, as designed:
@@ -1016,6 +1107,9 @@
 }
 
 .settings-row__title {
+  display: flex;
+  align-items: center;
+  gap: var(--c--globals--spacings--xxs);
   margin: 0;
   font-size: var(--c--globals--font--sizes--sm);
   line-height: 18px;
@@ -1112,4 +1206,31 @@
 
 :global(.c__toast__container) {
   pointer-events: none;
+}
+
+/* Something under way: a fixed arc turning steadily, never growing or shrinking. */
+.pendingSpinner {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  /* The size of an icon's drawing, not of its box: icons keep a margin inside. */
+  width: 1rem;
+  height: 1rem;
+  margin: 0.125rem;
+  border: 2px solid var(--c--contextuals--border--semantic--brand--secondary);
+  border-top-color: var(--c--contextuals--border--semantic--brand--primary);
+  border-radius: 50%;
+  animation: pending-spin 1s linear infinite;
+}
+
+@keyframes pending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pendingSpinner {
+    animation-duration: 3s;
+  }
 }

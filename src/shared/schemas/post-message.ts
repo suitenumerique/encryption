@@ -8,6 +8,19 @@ import {
   MSG_VAULT_CHECK_FINGERPRINTS,
   MSG_VAULT_COMMIT_STAGED,
   MSG_VAULT_COMPLETE_DEVICE_APPROVAL,
+  MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_CHECK_SHARES,
+  MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
+  MSG_VAULT_COUNCIL_CONTRIBUTE,
+  MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_DISCARD_RECOVERY,
+  MSG_VAULT_COUNCIL_MARK_VERIFIED,
+  MSG_VAULT_COUNCIL_REACTIVATE,
+  MSG_VAULT_COUNCIL_REQUEST_KEY,
+  MSG_VAULT_COUNCIL_RESHARE_BATCH,
+  MSG_VAULT_COUNCIL_SIGN_ROSTER,
+  MSG_VAULT_COUNCIL_START_REQUEST,
+  MSG_VAULT_COUNCIL_VERIFY_ROSTER,
   MSG_VAULT_CREATE_EMERGENCY_ESCROW,
   MSG_VAULT_DECRYPT_WITH_KEY,
   MSG_VAULT_DESTROY_KEYS,
@@ -20,6 +33,7 @@ import {
   MSG_VAULT_HAS_KEYS,
   MSG_VAULT_PREPARE_ONBOARDING,
   MSG_VAULT_REACTIVATE,
+  MSG_VAULT_REACTIVATE_WITH_KEYRING,
   MSG_VAULT_READY,
   MSG_VAULT_REFUSE_FINGERPRINT,
   MSG_VAULT_RESOLVE_USER,
@@ -261,6 +275,16 @@ export const VaultReactivateRequest = z.object({
   payload: z.object({
     recoveryPhrase: z.string(),
     idToken: z.string(),
+    handedOver: z.boolean().optional(),
+  }),
+});
+
+export const VaultReactivateWithKeyringRequest = z.object({
+  type: z.literal(MSG_VAULT_REACTIVATE_WITH_KEYRING),
+  requestId: z.string(),
+  payload: z.object({
+    idToken: z.string(),
+    keyring: z.record(z.string(), z.unknown()),
   }),
 });
 
@@ -373,6 +397,7 @@ export const VaultPrivilegedRequestSchema = z.discriminatedUnion('type', [
   VaultChangeRecoveryPhraseRequest,
   VaultRestoreFromPhraseRequest,
   VaultReactivateRequest,
+  VaultReactivateWithKeyringRequest,
   VaultSyncRequest,
   VaultStartDeviceApprovalRequest,
   VaultCompleteDeviceApprovalRequest,
@@ -415,6 +440,7 @@ export const VaultRequestSchema = z.discriminatedUnion('type', [
   VaultChangeRecoveryPhraseRequest,
   VaultRestoreFromPhraseRequest,
   VaultReactivateRequest,
+  VaultReactivateWithKeyringRequest,
   VaultSyncRequest,
   VaultStartDeviceApprovalRequest,
   VaultCompleteDeviceApprovalRequest,
@@ -440,6 +466,7 @@ export const PRIVILEGED_OPERATIONS = new Set<string>([
   MSG_VAULT_CHANGE_RECOVERY_PHRASE,
   MSG_VAULT_RESTORE_FROM_PHRASE,
   MSG_VAULT_REACTIVATE,
+  MSG_VAULT_REACTIVATE_WITH_KEYRING,
   MSG_VAULT_SYNC,
   MSG_VAULT_SIGN_REQUEST,
   MSG_VAULT_START_DEVICE_APPROVAL,
@@ -451,6 +478,19 @@ export const PRIVILEGED_OPERATIONS = new Set<string>([
   MSG_VAULT_BUILD_EMERGENCY_REARMS,
   MSG_VAULT_VERIFY_ESCROWS,
   MSG_VAULT_REVEAL_EMERGENCY_PHRASE,
+  MSG_VAULT_COUNCIL_VERIFY_ROSTER,
+  MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_COUNCIL_CHECK_ESCROW,
+  MSG_VAULT_COUNCIL_START_REQUEST,
+  MSG_VAULT_COUNCIL_REQUEST_KEY,
+  MSG_VAULT_COUNCIL_COMPLETE_RECOVERY,
+  MSG_VAULT_COUNCIL_REACTIVATE,
+  MSG_VAULT_COUNCIL_DISCARD_RECOVERY,
+  MSG_VAULT_COUNCIL_CONTRIBUTE,
+  MSG_VAULT_COUNCIL_SIGN_ROSTER,
+  MSG_VAULT_COUNCIL_RESHARE_BATCH,
+  MSG_VAULT_COUNCIL_CHECK_SHARES,
+  MSG_VAULT_COUNCIL_MARK_VERIFIED,
 ]);
 
 // ============================================================================

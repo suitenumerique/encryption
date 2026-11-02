@@ -13,7 +13,7 @@
  * found with no recorded use starts its clock then.
  */
 import { getEncryptionDB } from '@encryption/src/crypto/encryption-db';
-import { BROADCAST_KEYS_DESTROYED, STORE_DEVICE_ACTIVITY, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
+import { BROADCAST_KEYS_DESTROYED, STORE_COUNCIL_REQUEST, STORE_DEVICE_ACTIVITY, STORE_VAULT_CACHE } from '@encryption/src/shared/constants';
 import type { DeEnrollment } from '@encryption/src/shared/has-keys';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
 import { runtimeConfig } from '@encryption/src/vault/runtime-config';
@@ -62,7 +62,7 @@ export function forgetRecordedUse(userId: string): void {
  */
 async function checkActivity(userId: string, record: 'use' | 'start-clock' | 'none', nowMs: number): Promise<boolean> {
   const db = await getEncryptionDB();
-  const tx = db.transaction([STORE_VAULT_CACHE, STORE_DEVICE_ACTIVITY], 'readwrite');
+  const tx = db.transaction([STORE_VAULT_CACHE, STORE_DEVICE_ACTIVITY, STORE_COUNCIL_REQUEST], 'readwrite');
   const cacheStore = tx.objectStore(STORE_VAULT_CACHE);
   const activityStore = tx.objectStore(STORE_DEVICE_ACTIVITY);
 
@@ -77,6 +77,7 @@ async function checkActivity(userId: string, record: 'use' | 'start-clock' | 'no
     if (isPastInactivityDelay(activity, nowMs)) {
       await Promise.all([
         cacheStore.delete(userId),
+        tx.objectStore(STORE_COUNCIL_REQUEST).delete(userId),
         activityStore.put({ deEnrolledAt: nowMs, inactivityDays: inactivityDays() } satisfies DeviceActivity, userId),
       ]);
       expired = true;

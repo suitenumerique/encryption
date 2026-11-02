@@ -12,6 +12,7 @@ import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-ac
 import { SELF_CHECK_REMOTE_ADDRESS, healthRoute } from '@encryption/src/server/routes/health';
 import { maintenanceEscrowRoute } from '@encryption/src/server/routes/maintenance-escrow';
 import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
+import { recoveryCouncilRoute } from '@encryption/src/server/routes/recovery-council';
 import { securityTxtRoute } from '@encryption/src/server/routes/security-txt';
 import { vaultRoute } from '@encryption/src/server/routes/vault';
 import { versionRoute } from '@encryption/src/server/routes/versions';
@@ -162,6 +163,7 @@ export async function createServer(options: CreateServerOptions = {}) {
   app.register(maintenanceEscrowRoute);
   app.register(vaultRoute);
   app.register(emergencyAccessRoute);
+  app.register(recoveryCouncilRoute);
 
   // `hide` keeps infrastructure endpoints out of the generated OpenAPI document:
   // they are not part of the API the interface consumes.

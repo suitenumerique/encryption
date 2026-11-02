@@ -96,6 +96,12 @@ export const VaultErrorCode = {
    */
   UNTRUSTED_RECIPIENT: 'UNTRUSTED_RECIPIENT',
   /**
+   * A remote council share was asked for a request no custodian has attested in
+   * person yet, or whose attestation does not verify under a custodian the
+   * verified roster names: the share is not released.
+   */
+  COUNCIL_MEETING_FIRST: 'COUNCIL_MEETING_FIRST',
+  /**
    * A write-through change (e.g. a TOFU decision) could not be pushed to the
    * server, so it was NOT kept locally either — the caller should surface a
    * "couldn't save, retry" and the local state is unchanged. Distinct from a
@@ -139,8 +145,14 @@ export class VaultError extends Error {
   }
 }
 
+const VAULT_ERROR_CODES = new Set<string>(Object.values(VaultErrorCode));
+
+// Duck-typed (an error rebuilt from a postMessage is not a VaultError instance), but on a
+// known code: an API error also carries a string `code`, and must keep its own message.
 export const isVaultError = (err: unknown): err is VaultError => {
-  return err instanceof Error && (err as { code?: unknown }).code !== undefined && typeof (err as { code?: unknown }).code === 'string';
+  const code = (err as { code?: unknown } | null)?.code;
+
+  return err instanceof Error && typeof code === 'string' && VAULT_ERROR_CODES.has(code);
 };
 
 /**

@@ -254,6 +254,10 @@ must or may set. Plain values are inline; secrets come from a Secret, never as `
 - name: MAINTENANCE_ESCROW_KEYS
   value: {{ $v.config.maintenanceEscrowKeys | toJson | quote }}
 {{- end }}
+{{- if $v.config.recoveryCouncils }}
+- name: RECOVERY_COUNCILS
+  value: {{ $v.config.recoveryCouncils | toJson | quote }}
+{{- end }}
 {{- if not (or $v.database.url $v.database.existingSecret.name) }}
 {{- fail "database.url or database.existingSecret.name is required" }}
 {{- end }}

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -13,11 +13,22 @@ import {
   sealedItemsMatchManifest,
   verifyManifest,
 } from '@encryption/src/crypto/vault-manifest';
-import { DEFAULT_KDF_PARAMS, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
+import { verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
 import { satisfiesStepUp, sendStepUpChallenge } from '@encryption/src/server/auth/step-up';
+import { type Tx, councilLabel } from '@encryption/src/server/council-core';
+import { CouncilHeadChangedError, checkEscrowSubmission, writeEscrow } from '@encryption/src/server/council-escrow';
+import { closeRequestsForVault, completeReleasedRequests } from '@encryption/src/server/council-requests-core';
+import { syncCouncilsAfterIdentityChange } from '@encryption/src/server/council-sync';
+import { sendCouncilRecoveryCompleted, sendCouncilRecoveryCompletedCustodian } from '@encryption/src/server/email/council';
 import { errorResponses } from '@encryption/src/server/error-response';
-import { emergencyApprovalHolds, notifyVaultRecovered, verifyEscrowSubmission } from '@encryption/src/server/routes/emergency-core';
+import {
+  emergencyApprovalHolds,
+  emergencyRecipient,
+  notifyVaultRecovered,
+  verifyEscrowSubmission,
+} from '@encryption/src/server/routes/emergency-core';
+import { kdfParamsAllowed } from '@encryption/src/server/routes/kdf-params';
 import {
   type CompleteTxResult,
   activateRegistration,
@@ -34,6 +45,8 @@ import { addVaultListener, notifyVaultChanged, removeVaultListener } from '@encr
 import { configureZodValidation } from '@encryption/src/server/zod-validation';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
+  API_ERROR_COUNCIL_REARM_REQUIRED,
+  API_ERROR_COUNCIL_ROSTER_CHANGED,
   API_ERROR_EMERGENCY_ESCROW_INVALID,
   API_ERROR_EMERGENCY_REARM_REQUIRED,
   API_ERROR_RATE_LIMIT_APPROVALS,
@@ -49,20 +62,8 @@ import {
   API_ERROR_VAULT_NOT_FOUND,
   API_ERROR_VAULT_PROOF_INVALID,
 } from '@encryption/src/shared/error-codes';
-import { VaultKeyringUpdateBodySchema } from '@encryption/src/shared/schemas/emergency-access';
+import { type VaultKeyringUpdateBody, VaultKeyringUpdateBodySchema } from '@encryption/src/shared/schemas/emergency-access';
 import { VaultItemSchema, VaultKeyringSchema } from '@encryption/src/shared/schemas/vault';
-
-// KDF params are BOUNDED (not hard-pinned) on every keyring write: they must be at
-// least the current standard (so no client can store a weak, cheap-to-brute-force
-// vault) and no more than a sane maximum (so a stolen token can't store an
-// absurd-cost vault that would DoS a later restore). Bounding rather than pinning
-// lets the standard be RAISED over time for new vaults while OLDER vaults keep the
-// (still-acceptable) params they were created with — restore uses each vault's OWN
-// stored params (see /api/vault/meta -> kdf_variants), never a single constant.
-const KDF_MAX_OPS = 10;
-const KDF_MAX_MEM = 1024 * 1024 * 1024; // 1 GiB
-const kdfParamsAllowed = (ops: number, mem: number) =>
-  ops >= DEFAULT_KDF_PARAMS.opsLimit && ops <= KDF_MAX_OPS && mem >= DEFAULT_KDF_PARAMS.memLimit && mem <= KDF_MAX_MEM;
 
 const CHALLENGE_TTL_SECONDS = 120;
 const APPROVAL_TTL_SECONDS = 600;
@@ -173,7 +174,7 @@ const VaultFetchBodySchema = z.object({
 const VaultContentSchema = z.object({
   vault_id: z.string(),
   wrapped_vrk: z.string(),
-  credential_type: z.enum(['primary', 'emergency']),
+  credential_type: z.enum(['primary', 'emergency', 'council']),
   revision: z.number().int().nonnegative(),
   manifest: z.string().nullable(),
   manifest_sig: z.string().nullable(),
@@ -194,12 +195,21 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
 
   // Every keyslot the caller may currently open: their own primary credential
   // always, plus an emergency credential only while its approval actually holds
-  // (accepted, requested, waited out, not revoked). An escrow whose approval
-  // lapsed is therefore unopenable without deleting anything.
+  // (accepted, requested, waited out, not revoked), and a council credential only
+  // while one of its recovery requests is released and not expired. An escrow
+  // whose approval lapsed is therefore unopenable without deleting anything.
   async function unlockableCredentials(userId: string, nowMs: number) {
-    const credentials = await prisma.vaultCredential.findMany({ where: { vault: { userId } }, include: { vault: true, emergencyAccess: true } });
+    const credentials = await prisma.vaultCredential.findMany({
+      where: { vault: { userId } },
+      include: { vault: true, emergencyAccess: true, councilEscrow: { include: { requests: { where: { status: 'released' } } } } },
+    });
 
-    return credentials.filter((c) => (c.type === 'primary' ? true : c.emergencyAccess !== null && emergencyApprovalHolds(c.emergencyAccess, nowMs)));
+    return credentials.filter((c) => {
+      if (c.type === 'primary') return true;
+      if (c.type === 'council') return c.councilEscrow?.requests.some((r) => r.expiresAt.getTime() > nowMs) ?? false;
+
+      return c.emergencyAccess !== null && emergencyApprovalHolds(c.emergencyAccess, nowMs);
+    });
   }
 
   type Credential = Awaited<ReturnType<typeof unlockableCredentials>>[number];
@@ -373,6 +383,11 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     | { ok: true; challenge: ProofChallenge; credential: Credential; keyring: Keyring }
     | { ok: false; status: 401 | 404 | 410; code: string };
 
+  // A phrase other than the council's own opened this vault: the user is back in without the council.
+  async function regainedWithoutCouncil(userId: string, credential: Credential): Promise<boolean> {
+    return credential.type === 'council' ? false : closeRequestsForVault(userId, credential.vault.id);
+  }
+
   async function selectVaultByProof(userId: string, body: { challenge_id: string; proof: string }): Promise<ProofResult> {
     const challenge = await prisma.vaultChallenge.findUnique({ where: { id: body.challenge_id } });
 
@@ -420,6 +435,18 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     };
   }
 
+  // Make a retired vault the one in use: the directory re-pointed to its identity and
+  // latest encryption key (the registration helper keeps exactly one active pair),
+  // every other keyring demoted. Serializable callers only, so it never interleaves
+  // with a bootstrap or a registration of the same user.
+  async function reactivateVault(tx: Tx, userId: string, target: { id: string; identityId: string }) {
+    const encKey = await tx.encryptionKey.findFirst({ where: { identityId: target.identityId }, orderBy: { version: 'desc' } });
+    if (encKey) await activateRegistration(tx, userId, encKey.id, target.identityId);
+
+    await tx.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: new Date() } });
+    await tx.vaultKeyring.update({ where: { id: target.id }, data: { disabledAt: null } });
+  }
+
   // PoP-gated fetch. Only here is the wrappedVrk released. The authPublicKey is
   // the server-side verifier and is never returned. `is_active` tells the client
   // whether the phrase resolved to the current vault or a dormant one, so it can
@@ -432,6 +459,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         200: VaultContentSchema.extend({
           is_active: z.boolean(),
           created_at_millis: z.number().int().nonnegative(),
+          // A recovery request to the council for this vault was closed: the user got back in without it.
+          council_request_closed: z.boolean(),
         }),
         ...errorResponses(400, 401, 404, 410),
       },
@@ -454,6 +483,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         ...(await loadVaultContent(selected.credential)),
         is_active: matched.disabledAt === null,
         created_at_millis: matched.createdAt.getTime(),
+        council_request_closed: await regainedWithoutCouncil(request.userId, selected.credential),
       };
     },
   });
@@ -474,6 +504,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           active_vault_id: z.string(),
           disabled_vault_id: z.string().nullable(),
           disabled_vault_created_at_millis: z.number().int().nonnegative().nullable(),
+          council_request_closed: z.boolean(),
         }),
         ...errorResponses(400, 401, 404, 409, 410),
       },
@@ -489,6 +520,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       const target = selected.keyring;
 
       await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
+      const councilRequestClosed = await regainedWithoutCouncil(userId, selected.credential);
 
       // Already the current vault: nothing to switch, but still release the content
       // so the caller can cache it in the one path it caches at all.
@@ -498,6 +530,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
           active_vault_id: target.id,
           disabled_vault_id: null,
           disabled_vault_created_at_millis: null,
+          council_request_closed: councilRequestClosed,
           ...(await loadVaultContent(selected.credential)),
         };
 
@@ -510,24 +543,13 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       // (READ COMMITTED could leave two active keyrings, or an active keyring pointing
       // at a demoted identity).
       try {
-        await prisma.$transaction(
-          async (tx) => {
-            // Re-point the directory to this vault's identity + its latest encryption
-            // key, disabling whatever pair was active (same helper the registration
-            // flow uses to keep exactly one active pair per user).
-            const encKey = await tx.encryptionKey.findFirst({ where: { identityId: target.identityId }, orderBy: { version: 'desc' } });
-            if (encKey) await activateRegistration(tx, userId, encKey.id, target.identityId);
-
-            // Flip the vaults: demote every currently active keyring, promote this one.
-            await tx.vaultKeyring.updateMany({ where: { userId, disabledAt: null }, data: { disabledAt: new Date() } });
-            await tx.vaultKeyring.update({ where: { id: target.id }, data: { disabledAt: null } });
-          },
-          { isolationLevel: 'Serializable' }
-        );
+        await prisma.$transaction((tx) => reactivateVault(tx, userId, target), { isolationLevel: 'Serializable' });
       } catch (err) {
         if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
         throw err;
       }
+
+      syncCouncilsAfterIdentityChange(userId, request.log);
 
       // Release the (now current) vault so the client caches it in the same step
       // that committed the switch: nothing is persisted locally before this point.
@@ -536,6 +558,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         active_vault_id: target.id,
         disabled_vault_id: previouslyActive?.id ?? null,
         disabled_vault_created_at_millis: previouslyActive?.createdAt.getTime() ?? null,
+        council_request_closed: councilRequestClosed,
         ...(await loadVaultContent(selected.credential)),
       };
     },
@@ -705,6 +728,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
         return reply.status(mapped.status).send(mapped.params ? { code: mapped.code, params: mapped.params } : { code: mapped.code });
       }
 
+      syncCouncilsAfterIdentityChange(userId, request.log);
+
       return { revision: 1 };
     },
   });
@@ -834,6 +859,194 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   // it, so the server refuses to let the rotation commit without a replacement
   // escrow per granted relationship (a partial rotation would leave a revealed
   // phrase alive, or strip the user of their recovery contacts).
+  // ----- Keyring rewrite -------------------------------------------------------
+  // One phrase change, shared by the signed rewrite of the vault in use and by the
+  // rewrite that brings a retired vault back: the same checks, then the same writes
+  // inside the caller's transaction, then the same notices.
+
+  type KeyringRewritePlan = Extract<Awaited<ReturnType<typeof planKeyringRewrite>>, { ok: true }>;
+
+  async function planKeyringRewrite(userId: string, vaultId: string, identity: { signaturePublicKey: Uint8Array }, body: VaultKeyringUpdateBody) {
+    if (!kdfParamsAllowed(body.kdf_ops, body.kdf_mem)) return { ok: false as const, status: 400 as const, code: API_ERROR_VAULT_KDF_PARAMS_INVALID };
+
+    // Same binding check as bootstrap: the new auth verifier must be signed by
+    // this vault's identity, so a token-thief can't swap in one they control.
+    if (!(await authBindingValid(body.auth_public_key, body.auth_pub_sig, identity.signaturePublicKey)))
+      return { ok: false as const, status: 400 as const, code: API_ERROR_VAULT_AUTH_BINDING_INVALID };
+
+    // Escrows are bound to a specific vault: only THIS vault's granted
+    // relationships gate this write (a start-over's dormant vault keeps its own
+    // escrows untouched, see architecture: they die only with the vault).
+    const nowMs = Date.now();
+    const escrowRows = await prisma.emergencyAccess.findMany({ where: { grantorUserId: userId }, include: { credential: true } });
+    const granted = escrowRows.filter((row) => row.credential.vaultId === vaultId && emergencyApprovalHolds(row, nowMs));
+
+    const rearms = body.emergency_rearms ?? [];
+    const rearmById = new Map(rearms.map((r) => [r.emergency_access_id, r]));
+
+    // Exact cover: one re-arm per granted relationship, nothing extraneous (an
+    // extraneous entry would let a caller swap escrows outside the granted set).
+    if (rearms.length !== granted.length || granted.some((row) => !rearmById.has(row.id)))
+      return { ok: false as const, status: 400 as const, code: API_ERROR_EMERGENCY_REARM_REQUIRED };
+
+    // Resolve each re-armed escrow's pinned contact identity to its registry row,
+    // so it can be stored as an FK. Scoped to THIS relationship's contact: the
+    // signature-key column is globally unique, so an unscoped lookup would
+    // happily resolve another user's identity row and store it as
+    // `granteeIdentityId`, after which GET /trusted would report that stranger's
+    // key as the pinned contact identity.
+    //
+    // Deliberately NOT as strict as the standalone
+    // /api/emergency-access/:id/rearm route, which additionally demands the
+    // contact's CURRENT active identity and key version. This path is the forced
+    // rotation right after an emergency unlock: it is the write that kills a
+    // phrase a contact has already read, so it must not be refusable because the
+    // contact happened to rotate something in the meantime. Staleness here is
+    // advisory (the escrow audit flags it, and the row is re-armed anyway).
+    const granteeIdentityIdByRow = new Map<string, string>();
+
+    for (const row of granted) {
+      const rearm = rearmById.get(row.id)!;
+
+      if (!kdfParamsAllowed(rearm.credential.kdf_ops, rearm.credential.kdf_mem))
+        return { ok: false as const, status: 400 as const, code: API_ERROR_VAULT_KDF_PARAMS_INVALID };
+
+      const valid = await verifyEscrowSubmission(
+        {
+          grantorUserId: userId,
+          granteeUserId: row.granteeUserId,
+          waitTimeDays: row.waitTimeDays,
+          credential: rearm.credential,
+          escrow: rearm,
+        },
+        identity.signaturePublicKey
+      );
+      if (!valid) return { ok: false as const, status: 400 as const, code: API_ERROR_EMERGENCY_ESCROW_INVALID };
+
+      const granteeIdentityRow = await prisma.identity.findFirst({
+        where: { userId: row.granteeUserId, signaturePublicKey: Buffer.from(base64ToUint8(rearm.grantee_identity_public_key)) },
+      });
+      if (!granteeIdentityRow) return { ok: false as const, status: 400 as const, code: API_ERROR_EMERGENCY_ESCROW_INVALID };
+
+      granteeIdentityIdByRow.set(row.id, granteeIdentityRow.id);
+    }
+
+    // A council recovery released this vault's council credential: the user's
+    // browser rebuilt its phrase, so this rewrite burns it, and re-arms the
+    // council with a fresh escrow unless the user explicitly leaves it.
+    const live = { status: 'released' as const, expiresAt: { gt: new Date() } };
+    const usedCouncilEscrows = await prisma.councilEscrow.findMany({
+      where: { userId, credential: { vaultId: vaultId }, requests: { some: live } },
+      include: {
+        requests: { where: live, include: { contributions: { include: { custodianIdentity: { include: { user: true } } } } } },
+      },
+    });
+
+    if (usedCouncilEscrows.length > 0 && !body.council_rearm && !body.council_drop)
+      return { ok: false as const, status: 400 as const, code: API_ERROR_COUNCIL_REARM_REQUIRED };
+    if (usedCouncilEscrows.length === 0 && (body.council_rearm || body.council_drop))
+      return { ok: false as const, status: 400 as const, code: API_ERROR_COUNCIL_REARM_REQUIRED };
+
+    const councilRearm = body.council_rearm
+      ? await checkEscrowSubmission(userId, body.council_rearm, new Uint8Array(identity.signaturePublicKey))
+      : null;
+    if (councilRearm && !councilRearm.ok)
+      return { ok: false as const, status: councilRearm.status === 409 ? (409 as const) : (400 as const), code: councilRearm.code };
+    if (body.council_rearm && usedCouncilEscrows.every((e) => e.councilId !== body.council_rearm!.council_id))
+      return { ok: false as const, status: 400 as const, code: API_ERROR_COUNCIL_REARM_REQUIRED };
+
+    return { ok: true as const, granted, rearmById, granteeIdentityIdByRow, usedCouncilEscrows, councilRearm };
+  }
+
+  async function writeKeyringRewrite(
+    tx: Tx,
+    userId: string,
+    vaultId: string,
+    body: VaultKeyringUpdateBody,
+    { granted, rearmById, granteeIdentityIdByRow, usedCouncilEscrows, councilRearm }: KeyringRewritePlan
+  ) {
+    const primary = await tx.vaultCredential.findFirstOrThrow({ where: { vaultId: vaultId, type: 'primary' } });
+
+    await tx.vaultCredential.update({
+      where: { id: primary.id },
+      data: {
+        wrappedVrk: body.wrapped_vrk,
+        authPublicKey: Buffer.from(base64ToUint8(body.auth_public_key)),
+        authPubSig: Buffer.from(base64ToUint8(body.auth_pub_sig)),
+        kdfOps: body.kdf_ops,
+        kdfMem: body.kdf_mem,
+        lang: body.lang,
+      },
+    });
+
+    for (const row of granted) {
+      const rearm = rearmById.get(row.id)!;
+
+      // Fresh dormant credential first, re-point the relationship at it
+      // (resetting it to a plain confirmed state), THEN burn the revealed
+      // one: the relationship row must never dangle without a credential
+      // (deleting its credential cascades the row away).
+      const fresh = await tx.vaultCredential.create({
+        data: {
+          vaultId: vaultId,
+          type: 'emergency',
+          wrappedVrk: rearm.credential.wrapped_vrk,
+          authPublicKey: Buffer.from(base64ToUint8(rearm.credential.auth_public_key)),
+          authPubSig: Buffer.from(base64ToUint8(rearm.credential.auth_pub_sig)),
+          kdfOps: rearm.credential.kdf_ops,
+          kdfMem: rearm.credential.kdf_mem,
+          lang: rearm.credential.lang,
+        },
+      });
+
+      await tx.emergencyAccess.update({
+        where: { id: row.id },
+        data: {
+          credentialId: fresh.id,
+          wrappedPhraseForGrantee: rearm.wrapped_phrase_for_grantee,
+          granteeIdentityId: granteeIdentityIdByRow.get(row.id)!,
+          granteeKeyVersion: rearm.grantee_key_version,
+          escrowSignature: Buffer.from(base64ToUint8(rearm.escrow_signature)),
+          escrowCreatedAt: new Date(rearm.escrow_created_at_millis),
+          status: 'confirmed',
+          recoveryRequestedAt: null,
+          lastNotifiedAt: null,
+        },
+      });
+
+      await tx.vaultCredential.delete({ where: { id: row.credentialId } });
+    }
+
+    if (body.council_rearm && councilRearm?.ok) await writeEscrow(tx, userId, vaultId, body.council_rearm, councilRearm);
+
+    // Deleting the released credential takes its escrow and capsules with it:
+    // the shares handed over now open nothing. Its requests stay, completed.
+    await completeReleasedRequests(
+      tx,
+      usedCouncilEscrows.map((e) => e.id)
+    );
+    await tx.vaultCredential.deleteMany({ where: { id: { in: usedCouncilEscrows.map((e) => e.credentialId) } } });
+  }
+
+  function notifyKeyringRewrite(userId: string, { granted, usedCouncilEscrows }: KeyringRewritePlan, log: FastifyBaseLogger) {
+    // Both sides learn the recovery completed (best-effort: the write above is
+    // already durable, a mail hiccup must not fail it).
+    if (granted.length > 0) {
+      notifyVaultRecovered(
+        userId,
+        granted.map((row) => row.granteeUserId)
+      ).catch((err) => log.error({ err }, 'emergency recovered emails failed'));
+    }
+
+    for (const escrow of usedCouncilEscrows) {
+      notifyCouncilRecovered(
+        userId,
+        escrow.councilId,
+        escrow.requests.flatMap((r) => r.contributions.map((c) => c.custodianIdentity.user))
+      ).catch((err) => log.error({ err }, 'council recovered emails failed'));
+    }
+  }
+
   app.withTypeProvider<ZodTypeProvider>().put('/api/vault/keyring', {
     schema: {
       body: VaultKeyringUpdateBodySchema,
@@ -847,145 +1060,73 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       const existing = await activeKeyring(userId);
       if (!existing) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-      if (!kdfParamsAllowed(body.kdf_ops, body.kdf_mem)) return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
-
-      // Same binding check as bootstrap: the new auth verifier must be signed by
-      // this vault's identity, so a token-thief can't swap in one they control.
       const identity = await prisma.identity.findUnique({ where: { id: existing.identityId } });
       if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
 
-      if (!(await authBindingValid(body.auth_public_key, body.auth_pub_sig, identity.signaturePublicKey)))
-        return reply.status(400).send({ code: API_ERROR_VAULT_AUTH_BINDING_INVALID });
-
-      // Escrows are bound to a specific vault: only THIS vault's granted
-      // relationships gate this write (a start-over's dormant vault keeps its own
-      // escrows untouched, see architecture: they die only with the vault).
-      const nowMs = Date.now();
-      const escrowRows = await prisma.emergencyAccess.findMany({ where: { grantorUserId: userId }, include: { credential: true } });
-      const granted = escrowRows.filter((row) => row.credential.vaultId === existing.id && emergencyApprovalHolds(row, nowMs));
-
-      const rearms = body.emergency_rearms ?? [];
-      const rearmById = new Map(rearms.map((r) => [r.emergency_access_id, r]));
-
-      // Exact cover: one re-arm per granted relationship, nothing extraneous (an
-      // extraneous entry would let a caller swap escrows outside the granted set).
-      if (rearms.length !== granted.length || granted.some((row) => !rearmById.has(row.id)))
-        return reply.status(400).send({ code: API_ERROR_EMERGENCY_REARM_REQUIRED });
-
-      // Resolve each re-armed escrow's pinned contact identity to its registry row,
-      // so it can be stored as an FK. Scoped to THIS relationship's contact: the
-      // signature-key column is globally unique, so an unscoped lookup would
-      // happily resolve another user's identity row and store it as
-      // `granteeIdentityId`, after which GET /trusted would report that stranger's
-      // key as the pinned contact identity.
-      //
-      // Deliberately NOT as strict as the standalone
-      // /api/emergency-access/:id/rearm route, which additionally demands the
-      // contact's CURRENT active identity and key version. This path is the forced
-      // rotation right after an emergency unlock: it is the write that kills a
-      // phrase a contact has already read, so it must not be refusable because the
-      // contact happened to rotate something in the meantime. Staleness here is
-      // advisory (the escrow audit flags it, and the row is re-armed anyway).
-      const granteeIdentityIdByRow = new Map<string, string>();
-
-      for (const row of granted) {
-        const rearm = rearmById.get(row.id)!;
-
-        if (!kdfParamsAllowed(rearm.credential.kdf_ops, rearm.credential.kdf_mem))
-          return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
-
-        const valid = await verifyEscrowSubmission(
-          {
-            grantorUserId: userId,
-            granteeUserId: row.granteeUserId,
-            waitTimeDays: row.waitTimeDays,
-            credential: rearm.credential,
-            escrow: rearm,
-          },
-          identity.signaturePublicKey
-        );
-        if (!valid) return reply.status(400).send({ code: API_ERROR_EMERGENCY_ESCROW_INVALID });
-
-        const granteeIdentityRow = await prisma.identity.findFirst({
-          where: { userId: row.granteeUserId, signaturePublicKey: Buffer.from(base64ToUint8(rearm.grantee_identity_public_key)) },
-        });
-        if (!granteeIdentityRow) return reply.status(400).send({ code: API_ERROR_EMERGENCY_ESCROW_INVALID });
-
-        granteeIdentityIdByRow.set(row.id, granteeIdentityRow.id);
-      }
+      const plan = await planKeyringRewrite(userId, existing.id, identity, body);
+      if (!plan.ok) return reply.status(plan.status).send({ code: plan.code });
 
       try {
-        await prisma.$transaction(
-          async (tx) => {
-            const primary = await tx.vaultCredential.findFirstOrThrow({ where: { vaultId: existing.id, type: 'primary' } });
-
-            await tx.vaultCredential.update({
-              where: { id: primary.id },
-              data: {
-                wrappedVrk: body.wrapped_vrk,
-                authPublicKey: Buffer.from(base64ToUint8(body.auth_public_key)),
-                authPubSig: Buffer.from(base64ToUint8(body.auth_pub_sig)),
-                kdfOps: body.kdf_ops,
-                kdfMem: body.kdf_mem,
-                lang: body.lang,
-              },
-            });
-
-            for (const row of granted) {
-              const rearm = rearmById.get(row.id)!;
-
-              // Fresh dormant credential first, re-point the relationship at it
-              // (resetting it to a plain confirmed state), THEN burn the revealed
-              // one: the relationship row must never dangle without a credential
-              // (deleting its credential cascades the row away).
-              const fresh = await tx.vaultCredential.create({
-                data: {
-                  vaultId: existing.id,
-                  type: 'emergency',
-                  wrappedVrk: rearm.credential.wrapped_vrk,
-                  authPublicKey: Buffer.from(base64ToUint8(rearm.credential.auth_public_key)),
-                  authPubSig: Buffer.from(base64ToUint8(rearm.credential.auth_pub_sig)),
-                  kdfOps: rearm.credential.kdf_ops,
-                  kdfMem: rearm.credential.kdf_mem,
-                  lang: rearm.credential.lang,
-                },
-              });
-
-              await tx.emergencyAccess.update({
-                where: { id: row.id },
-                data: {
-                  credentialId: fresh.id,
-                  wrappedPhraseForGrantee: rearm.wrapped_phrase_for_grantee,
-                  granteeIdentityId: granteeIdentityIdByRow.get(row.id)!,
-                  granteeKeyVersion: rearm.grantee_key_version,
-                  escrowSignature: Buffer.from(base64ToUint8(rearm.escrow_signature)),
-                  escrowCreatedAt: new Date(rearm.escrow_created_at_millis),
-                  status: 'confirmed',
-                  recoveryRequestedAt: null,
-                  lastNotifiedAt: null,
-                },
-              });
-
-              await tx.vaultCredential.delete({ where: { id: row.credentialId } });
-            }
-          },
-          { isolationLevel: 'Serializable' }
-        );
+        await prisma.$transaction((tx) => writeKeyringRewrite(tx, userId, existing.id, body, plan), { isolationLevel: 'Serializable' });
       } catch (err) {
+        if (err instanceof CouncilHeadChangedError) return reply.status(409).send({ code: API_ERROR_COUNCIL_ROSTER_CHANGED });
         if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
         throw err;
       }
 
-      // Both sides learn the recovery completed (best-effort: the write above is
-      // already durable, a mail hiccup must not fail it).
-      if (granted.length > 0) {
-        notifyVaultRecovered(
-          userId,
-          granted.map((row) => row.granteeUserId)
-        ).catch((err) => request.log.error({ err }, 'emergency recovered emails failed'));
+      notifyKeyringRewrite(userId, plan, request.log);
+
+      return { updated: true, rearmed: plan.granted.length };
+    },
+  });
+
+  // After a phrase someone else handed over (a trusted contact's, the council's)
+  // opened a RETIRED vault: bringing it back and the forced phrase change are one
+  // write, as an onboarding is, so leaving before the new phrase is saved changes
+  // nothing. Gated like /reactivate, by possession of that phrase: the vault's
+  // identity is not the active one yet, so it cannot sign the request.
+  app.withTypeProvider<ZodTypeProvider>().post('/api/vault/reactivate-keyring', {
+    ...SKIP_SIG,
+    schema: {
+      body: VaultFetchBodySchema.extend({ keyring: VaultKeyringUpdateBodySchema }),
+      response: { 200: z.object({ updated: z.boolean(), rearmed: z.number().int().nonnegative() }), ...errorResponses(400, 401, 404, 409, 410) },
+    },
+    handler: async (request, reply) => {
+      const body = request.body;
+      assertUserId(request);
+      const userId = request.userId;
+
+      const selected = await selectVaultByProof(userId, body);
+      if (!selected.ok) return reply.status(selected.status).send({ code: selected.code });
+      await prisma.vaultChallenge.deleteMany({ where: { id: selected.challenge.id } });
+
+      const target = selected.keyring;
+      const identity = await prisma.identity.findUnique({ where: { id: target.identityId } });
+      if (!identity) return reply.status(404).send({ code: API_ERROR_VAULT_NOT_FOUND });
+
+      const plan = await planKeyringRewrite(userId, target.id, identity, body.keyring);
+      if (!plan.ok) return reply.status(plan.status).send({ code: plan.code });
+
+      const reactivating = target.disabledAt !== null;
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            if (reactivating) await reactivateVault(tx, userId, target);
+            await writeKeyringRewrite(tx, userId, target.id, body.keyring, plan);
+          },
+          { isolationLevel: 'Serializable' }
+        );
+      } catch (err) {
+        if (err instanceof CouncilHeadChangedError) return reply.status(409).send({ code: API_ERROR_COUNCIL_ROSTER_CHANGED });
+        if (isRetryableRegistrationError(err)) return reply.status(409).send({ code: API_ERROR_CONCURRENT_REGISTRATION });
+        throw err;
       }
 
-      return { updated: true, rearmed: granted.length };
+      if (reactivating) syncCouncilsAfterIdentityChange(userId, request.log);
+      await regainedWithoutCouncil(userId, selected.credential);
+      notifyKeyringRewrite(userId, plan, request.log);
+
+      return { updated: true, rearmed: plan.granted.length };
     },
   });
 
@@ -1085,7 +1226,10 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     ...SKIP_SIG,
     schema: {
       params: RequestIdParamsSchema,
-      response: { 200: z.object({ wrapped_device_bootstrap: z.string(), device_public_key: z.string() }), ...errorResponses(404, 425) },
+      response: {
+        200: z.object({ wrapped_device_bootstrap: z.string(), device_public_key: z.string(), council_request_closed: z.boolean() }),
+        ...errorResponses(404, 425),
+      },
     },
     handler: async (request, reply) => {
       assertUserId(request);
@@ -1098,7 +1242,15 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       // One-shot: consume once collected.
       await prisma.vaultApproval.delete({ where: { requestId: approval.requestId } });
 
-      return { wrapped_device_bootstrap: approval.wrappedDeviceBootstrap, device_public_key: approval.devicePublicKey };
+      // Another device handed over the vault in use: a council request for it is moot.
+      const active = await activeKeyring(request.userId);
+      const councilRequestClosed = active ? await closeRequestsForVault(request.userId, active.id) : false;
+
+      return {
+        wrapped_device_bootstrap: approval.wrappedDeviceBootstrap,
+        device_public_key: approval.devicePublicKey,
+        council_request_closed: councilRequestClosed,
+      };
     },
   });
 
@@ -1124,4 +1276,26 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       return { approvals: pending.map((a) => ({ request_id: a.requestId, device_public_key: a.devicePublicKey })) };
     },
   });
+}
+
+// The user learns who took part; every custodian of the council learns the
+// request is closed (best-effort: the burn is already durable).
+async function notifyCouncilRecovered(
+  userId: string,
+  councilId: string,
+  contributors: Array<{ email: string; firstName: string | null; lastName: string | null }>
+): Promise<void> {
+  const council = await councilLabel(councilId);
+  const user = await emergencyRecipient(userId);
+  if (!user) return;
+
+  const names = contributors.map((c) => [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email).join(', ');
+  await sendCouncilRecoveryCompleted({ recipient: user.email, locale: user.locale, council, contributors: names });
+
+  const head = await prisma.councilRosterVersion.findFirst({ where: { councilId, status: 'active' }, include: { members: true } });
+  for (const member of head?.members ?? []) {
+    const custodian = await emergencyRecipient(member.userId);
+    if (custodian)
+      await sendCouncilRecoveryCompletedCustodian({ recipient: custodian.email, locale: custodian.locale, requester: user.label, council });
+  }
 }

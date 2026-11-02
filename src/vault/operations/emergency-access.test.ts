@@ -79,7 +79,8 @@ beforeEach(async () => {
           {
             generation: 1,
             algo: 'ed25519',
-            signaturePublicKey: wireB64(grantorIdentity),
+            // Raw, as every real vault keeps it; the directory carries the wire form.
+            signaturePublicKey: uint8ToBase64(grantorIdentity.publicKey),
             signatureSecretKey: uint8ToBase64(grantorIdentity.secretKey),
             createdAt: 1,
           },

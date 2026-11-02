@@ -29,6 +29,11 @@ void serverI18n.init({
 // Named date formatters, registered after init exactly as the interface does.
 registerDateFormatters(serverI18n);
 
+/** Replace one locale's translations in place (the development file watcher, `i18n-dev-reload.ts`). */
+export function reloadTranslations(locale: string, translations: Record<string, unknown>): void {
+  serverI18n.addResourceBundle(locale, defaultNamespace, translations, true, true);
+}
+
 /**
  * Translate a key for a recipient whose language is fixed (emails/documents), so
  * the locale is passed per call rather than being ambient. `t` is for text

@@ -10,6 +10,10 @@ AFTER the release's objects exist (post-install, post-upgrade), unlike the boots
 Accounts' migration Job is an ordinary object, so on an upgrade it only starts once the
 pre-upgrade hooks are done, and a wait for it there would never end. Idempotent, by
 client id: the secret and the URIs are written again at every run.
+
+The same Job writes the testers that carry an `id` (bootstrap.keycloak.users) with that
+`sub`, by email, before their first sign-in: Accounts then attaches their Keycloak
+sign-in to that user (`associate_by_email` in its pipeline) instead of drawing a `sub`.
 */}}
 ---
 apiVersion: v1
@@ -29,6 +33,11 @@ metadata:
 type: Opaque
 stringData:
   applications.json: {{ $b.accounts.applications | toJson | quote }}
+  {{- $fixed := list }}
+  {{- range $b.keycloak.users }}
+  {{- if .id }}{{ $fixed = append $fixed (dict "email" .email "sub" .id) }}{{ end }}
+  {{- end }}
+  users.json: {{ $fixed | toJson | quote }}
   # Run by `manage.py shell`, so with Accounts' settings and its database.
   applications.py: |
     import json
@@ -58,6 +67,23 @@ stringData:
         application.clean()
         application.save()
         print(("created" if created else "updated") + " application " + spec["clientId"])
+
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+
+    with open("/scripts/users.json", encoding="utf-8") as file:
+        users = json.load(file)
+
+    for spec in users:
+        user = User.objects.filter(email__iexact=spec["email"]).first()
+        if user is None:
+            User.objects.create_user(email=spec["email"], sub=spec["sub"])
+            print("created user " + spec["email"])
+        elif user.sub != spec["sub"]:
+            user.sub = spec["sub"]
+            user.save(update_fields=["sub"])
+            print("fixed the sub of user " + spec["email"])
 ---
 apiVersion: batch/v1
 kind: Job

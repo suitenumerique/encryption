@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 
@@ -7,6 +7,8 @@ interface DecimalCodeInputProps {
   groupSize?: number;
   /** The code was refused (no device waits with it): every box turns red. */
   invalid?: boolean;
+  /** Focus the first box when shown: the person just chose to type the code. */
+  autoFocus?: boolean;
   // Emits the concatenated digits plus whether every group is full, so the caller
   // can keep its submit button disabled until the whole code is entered.
   onChange: (digits: string, complete: boolean) => void;
@@ -19,9 +21,15 @@ interface DecimalCodeInputProps {
  * distributes it across the boxes. `inputMode="numeric"` asks phones/keyboards for
  * a number pad and non-digits are dropped, so the code is always well-formed.
  */
-export function DecimalCodeInput({ groupCount = 8, groupSize = 5, invalid = false, onChange }: DecimalCodeInputProps) {
+export function DecimalCodeInput({ groupCount = 8, groupSize = 5, invalid = false, autoFocus = false, onChange }: DecimalCodeInputProps) {
   const [groups, setGroups] = useState<string[]>(() => Array(groupCount).fill(''));
   const refs = useRef<Array<HTMLInputElement | null>>([]);
+
+  useEffect(() => {
+    if (autoFocus) refs.current[0]?.focus();
+    // On mount only: the boxes appear when the person switches to typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const emit = useCallback(
     (next: string[]) => {

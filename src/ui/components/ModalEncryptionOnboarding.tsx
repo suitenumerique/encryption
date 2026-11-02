@@ -1,5 +1,5 @@
 import { Button, Checkbox, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
-import { Key, PhoneDesktop } from '@gouvfr-lasuite/ui-components/icons';
+import { Key, PhoneDesktop, ShieldCheck } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -11,21 +11,28 @@ import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultError, VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
 import type { UserInfo } from '@encryption/src/ui/App';
 import { ApiError } from '@encryption/src/ui/api/client';
+import { fetchCouncilForMe, fetchMyCouncilRequest, refuseCouncilRequest } from '@encryption/src/ui/api/council-client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { deletePublicKeys, fetchNextKeyVersion, fetchPublicKeys, registerKeyInit } from '@encryption/src/ui/api/public-keys-client';
 import { createVault, hasRestorableVault } from '@encryption/src/ui/api/vault-client';
 import type { IdTokenSet } from '@encryption/src/ui/auth/login';
 import { SessionExpiredError, StepUpRequiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
+import { CouncilClosedDialog } from '@encryption/src/ui/components/CouncilClosedDialog';
+import { CouncilRecovery, type CouncilRecoveryResult } from '@encryption/src/ui/components/CouncilRecovery';
+import { RecoveryCouncil } from '@encryption/src/ui/components/RecoveryCouncil';
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { RecoveryPhraseInput } from '@encryption/src/ui/components/RecoveryPhraseInput';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { StepUpScreen } from '@encryption/src/ui/components/StepUpScreen';
 import { type BlockedContact, UntrustedRearmError, granteeName, personNameWithEmail } from '@encryption/src/ui/components/emergency-access-logic';
 import { Identity } from '@encryption/src/ui/components/layout/IdentityCard';
+import { OptionCard } from '@encryption/src/ui/components/layout/OptionCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
-import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
+import { councilVaultErrorKey } from '@encryption/src/ui/hooks/useCouncilErrors';
+import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
+import { type CouncilRenewal, useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
 import { useStepUp } from '@encryption/src/ui/hooks/useStepUp';
 import { useUnsavedPhraseGuard } from '@encryption/src/ui/hooks/useUnsavedPhraseGuard';
@@ -42,9 +49,20 @@ type OnboardingStep =
   | 'restore'
   | 'restored'
   | 'backup'
+  | 'council-join'
   | 'done'
+  | 'council-recovery'
+  | 'council-unfinished'
   | 'forced-rotation'
   | 'forced-rotation-done';
+
+/** A council recovery that gave back an older vault: when it was asked for, and when that vault was created. */
+interface CouncilVaultDates {
+  requestedAtMillis: number;
+  createdAtMillis: number;
+  /** The vault in use today, which restoring the older one puts aside; null when there is none. */
+  activeCreatedAtMillis: number | null;
+}
 
 /**
  * "Reset encryption" confirmation step, laid out like the design's turn-off
@@ -55,12 +73,15 @@ function LastResortStep({
   onConfirm,
   onBack,
   banner,
+  councilRequestOpen,
   t,
 }: {
   isPending: boolean;
   onConfirm: () => void;
   onBack: () => void;
   banner?: ReactNode;
+  /** A request to the council is running: it carries on for the vault this one replaces. */
+  councilRequestOpen: boolean;
   t: TFunction;
 }) {
   // The "I understand" tick is the only confirmation, as when turning encryption off.
@@ -78,6 +99,7 @@ function LastResortStep({
             <li>{t('onboarding.last_resort_consequence_2')}</li>
             <li>{t('onboarding.last_resort_consequence_3')}</li>
           </ul>
+          {councilRequestOpen && <p>{t('council.last_resort_request_open')}</p>}
         </>
       }
       banner={banner}
@@ -145,6 +167,14 @@ interface ModalEncryptionOnboardingProps {
    * a step-up (replacing an identity). Wire to `oidcAuth.requestStepUp`.
    */
   onStepUp: () => void;
+  /** The last step-up tab signed in someone else. */
+  stepUpWrongUser?: boolean;
+  /**
+   * Opened from the settings of a browser that already holds a vault, to carry
+   * on a request to the council for an older one: the council screen at once,
+   * and closing instead of the ways to restore when the user keeps theirs.
+   */
+  councilForOlderVault?: boolean;
 }
 
 /**
@@ -180,6 +210,8 @@ export function ModalEncryptionOnboarding({
   currentIdToken = null,
   currentIdTokenSet = null,
   onStepUp,
+  stepUpWrongUser = false,
+  councilForOlderVault = false,
 }: ModalEncryptionOnboardingProps) {
   const { t, i18n } = useTranslation('common');
   const {
@@ -220,7 +252,9 @@ export function ModalEncryptionOnboarding({
   // fresh "Enable" screen yet: first check (checking-history) whether the account
   // has a disabled/dormant identity, so we never flash "Enable encryption" (and
   // let the user mint a NEW identity) when they actually have history to restore.
-  const [step, setStep] = useState<OnboardingStep>(hasExistingBackendKey ? 'existing-key-choice' : 'checking-history');
+  const [step, setStep] = useState<OnboardingStep>(
+    councilForOlderVault ? 'council-recovery' : hasExistingBackendKey ? 'existing-key-choice' : 'checking-history'
+  );
   const [isPending, setIsPending] = useState(false);
   const [backupPassphrase, setBackupPassphrase] = useState<string | null>(null);
   // The phrase the user last confirmed as saved: if the backup screen comes back
@@ -231,20 +265,67 @@ export function ModalEncryptionOnboarding({
   // so abandoning the backup step leaves no server-side registration or vault.
   const [onboardingBundle, setOnboardingBundle] = useState<{ bundle: OnboardingBundle; version: number } | null>(null);
   const [isCommitting, setIsCommitting] = useState(false);
+  // The council the user joined right after enabling encryption, named on the last screen.
+  const [joinedCouncil, setJoinedCouncil] = useState<string | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [restoreInput, setRestoreInput] = useState('');
   // The way back chosen on the "Restore your encryption" screen.
-  const [restoreMethod, setRestoreMethod] = useState<'device' | 'phrase'>(onUseAnotherDevice ? 'device' : 'phrase');
+  const [restoreMethod, setRestoreMethod] = useState<'device' | 'phrase' | 'council'>(onUseAnotherDevice ? 'device' : 'phrase');
+  // The user's council can give the vault back (an escrow enough custodians can
+  // still open): one more way back, and the rotation after it re-arms the council.
+  const [councilAvailable, setCouncilAvailable] = useState(false);
+  const [councilUnlock, setCouncilUnlock] = useState(false);
+  const [councilDropped, setCouncilDropped] = useState(false);
+  // What a council recovery still needs once the vault is open: bringing back the
+  // superseded vault it unlocked, or the forced phrase change. Kept so a failure or
+  // a cancel lands on a screen that can resume it.
+  const [councilPending, setCouncilPending] = useState<
+    { kind: 'reactivate'; council: CouncilVaultDates } | { kind: 'rotate'; publicKey: string } | null
+  >(null);
+  // A request to the council is running, for the last-resort screen to mention.
+  const [councilRequestOpen, setCouncilRequestOpen] = useState(false);
+  const councilVault = useCouncilVault();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getIdToken()
+      .then(async (idToken) => {
+        if (!idToken) return;
+        const forMe = await fetchCouncilForMe(idToken);
+        if (cancelled) return;
+        if (forMe.escrow && forMe.escrow.health.status !== 'lost') setCouncilAvailable(true);
+      })
+      .catch(() => {
+        // Optional way back: without an answer it is simply not offered.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getIdToken]);
   // The entered phrase opened nothing: the boxes turn red until it is edited.
   const [phraseRejected, setPhraseRejected] = useState(false);
   // True only when every word box of the recovery phrase is filled; gates the restore button.
   const [restoreComplete, setRestoreComplete] = useState(false);
   // Set when the entered phrase unlocked a DORMANT vault: shows an in-app confirm
   // modal (not window.confirm) before reactivating, since that demotes the current one.
-  const [reactivatePrompt, setReactivatePrompt] = useState<{ date: string } | null>(null);
+  // `council` when the vault came back from a council recovery rather than a typed phrase.
+  const [reactivatePrompt, setReactivatePrompt] = useState<{ date?: string; emergency?: boolean; council?: CouncilVaultDates } | null>(null);
+  // A retired vault opened through someone else's phrase waits in memory: the forced
+  // phrase change brings it back on the server in the same write.
+  const [reactivationPending, setReactivationPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The "cancel the setup?" prompt raised by the product's close control on the backup step.
   const [cancelPrompt, setCancelPrompt] = useState(false);
+  // The council gave back an older vault and the user would rather keep the current one.
+  const [keepCurrentPrompt, setKeepCurrentPrompt] = useState(false);
+  // Starting over while the council can give back the vault in use: offered first,
+  // since a new vault leaves everything encrypted so far locked.
+  const [startOverPrompt, setStartOverPrompt] = useState<{ from: 'previous-identity' | 'existing-key-choice'; next: OnboardingStep } | null>(null);
+  const [keptCurrent, setKeptCurrent] = useState(false);
+  // The server closed a request to the council: the user got back in another way.
+  const [councilClosed, setCouncilClosed] = useState(false);
   const { sessionExpired, markSessionExpired, clearSessionExpired } = useSessionExpired(currentIdToken, isAuthenticating);
   // Replacing an existing identity needs a fresh second-factor sign-in (step-up).
   // Once confirmed, the interrupted commit runs again (see the ref below).
@@ -260,7 +341,7 @@ export function ModalEncryptionOnboarding({
   const [rotationBusy, setRotationBusy] = useState(false);
   const [rotationError, setRotationError] = useState<string | null>(null);
   const [rotationBlocked, setRotationBlocked] = useState<BlockedContact[] | null>(null);
-  const { commitKeyring, findBlockedContacts, revokeContacts } = useKeyringCommit(getIdToken);
+  const { commitKeyring, renewCouncil, findBlockedContacts, revokeContacts } = useKeyringCommit(getIdToken);
   // The key the rotation reports once done, kept while a blocked contact holds it back.
   const [rotationPublicKey, setRotationPublicKey] = useState<string | null>(null);
 
@@ -450,7 +531,13 @@ export function ModalEncryptionOnboarding({
       // immediate close.
       const { publicKey } = await getPublicKey();
       onSuccess?.(publicKey);
-      setStep('done');
+
+      // A council covers the user and holds nothing of this new vault yet: offer
+      // to join it now. Best effort, the settings offer it as well.
+      const joinable = await withFreshIdToken(getIdToken, fetchCouncilForMe)
+        .then(({ council, escrow }) => council !== null && !escrow?.vault_active)
+        .catch(() => false);
+      setStep(joinable ? 'council-join' : 'done');
     } catch (err) {
       // The server round-trip failed after we committed locally: roll the vault
       // back out of IndexedDB so has-keys is false again (the user is not
@@ -644,9 +731,11 @@ export function ModalEncryptionOnboarding({
       // Cold-unlock the server vault with the recovery phrase: the phrase both
       // proves possession (PoP gate) and unwraps the VRK. No re-registration —
       // the keys were registered at the original onboarding.
-      const { publicKey, isActiveVault, vaultCreatedAtMillis, emergencyUnlock } = await withFreshIdToken(getIdToken, (idToken) =>
-        restoreFromPhrase(phrase, idToken)
+      const { publicKey, isActiveVault, vaultCreatedAtMillis, emergencyUnlock, councilRequestClosed } = await withFreshIdToken(
+        getIdToken,
+        (idToken) => restoreFromPhrase(phrase, idToken)
       );
+      if (councilRequestClosed) setCouncilClosed(true);
 
       // If the phrase resolved to a DORMANT (superseded) vault, nothing has been
       // stored locally yet: bringing it back demotes the current vault, so we ask
@@ -654,7 +743,7 @@ export function ModalEncryptionOnboarding({
       // demoted vault stays recoverable with its own phrase. When the phrase was
       // an escrowed one, the forced rotation runs AFTER the confirmed reactivation.
       if (!isActiveVault) {
-        setReactivatePrompt({ date: new Intl.DateTimeFormat(i18n.language).format(new Date(vaultCreatedAtMillis)) });
+        setReactivatePrompt({ date: new Intl.DateTimeFormat(i18n.language).format(new Date(vaultCreatedAtMillis)), emergency: emergencyUnlock });
 
         return;
       }
@@ -690,13 +779,42 @@ export function ModalEncryptionOnboarding({
   ]);
 
   // Confirmed reactivation of the dormant vault the phrase unlocked.
+  // The vault the council gave back becomes the one in use, then its phrase is changed.
+  const reactivateCouncilVault = useCallback(async () => {
+    setIsPending(true);
+    setError(null);
+    try {
+      const reactivated = await withFreshIdToken(getIdToken, (idToken) => councilVault.reactivate(idToken));
+      setReactivationPending(true);
+      setCouncilPending({ kind: 'rotate', publicKey: reactivated.publicKey });
+      setReactivatePrompt(null);
+      await startForcedRotation(reactivated.publicKey);
+    } catch (err) {
+      // The prompt closes onto the screen that resumes the recovery, where the banner shows.
+      setReactivatePrompt(null);
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
+    } finally {
+      setIsPending(false);
+    }
+  }, [getIdToken, councilVault, startForcedRotation, markSessionExpired, t]);
+
   const handleConfirmReactivate = useCallback(async () => {
+    if (reactivatePrompt?.council) {
+      await reactivateCouncilVault();
+
+      return;
+    }
+
     setIsPending(true);
     setError(null);
 
     try {
-      const reactivated = await withFreshIdToken(getIdToken, (idToken) => reactivateVault(restoreInput.trim(), idToken));
+      const handedOver = reactivatePrompt?.emergency === true;
+      const reactivated = await withFreshIdToken(getIdToken, (idToken) => reactivateVault(restoreInput.trim(), idToken, handedOver));
+      if (handedOver) setReactivationPending(true);
       setReactivatePrompt(null);
+      if (reactivated.councilRequestClosed) setCouncilClosed(true);
 
       // Dormant-vault emergency unlock: reactivation first (just confirmed),
       // THEN the mandatory rotation of the now-active keyring.
@@ -714,7 +832,100 @@ export function ModalEncryptionOnboarding({
     } finally {
       setIsPending(false);
     }
-  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, markSessionExpired, t]);
+  }, [getIdToken, reactivateVault, restoreInput, startForcedRotation, onSuccess, markSessionExpired, t, reactivatePrompt, reactivateCouncilVault]);
+
+  // The council gave the vault back in this browser: the dormant phrase it
+  // released is burned by the forced change of the user's own phrase.
+  const handleCouncilRecovered = useCallback(
+    async (result: CouncilRecoveryResult) => {
+      setCouncilUnlock(true);
+      setError(null);
+      // Behind the prompt or after a failure, this screen resumes what is left.
+      setStep('council-unfinished');
+
+      if (!result.isActiveVault) {
+        const forMe = await withFreshIdToken(getIdToken, fetchCouncilForMe).catch(() => null);
+        const council = {
+          requestedAtMillis: result.requestedAtMillis,
+          createdAtMillis: result.vaultCreatedAtMillis,
+          activeCreatedAtMillis: forMe?.active_vault_created_at_millis ?? null,
+        };
+        setCouncilPending({ kind: 'reactivate', council });
+        // No vault in use: nothing to choose, the person asked for exactly this one.
+        if (council.activeCreatedAtMillis === null) await reactivateCouncilVault();
+        else setReactivatePrompt({ council });
+
+        return;
+      }
+
+      setCouncilPending({ kind: 'rotate', publicKey: result.publicKey });
+      try {
+        await startForcedRotation(result.publicKey);
+      } catch (err) {
+        if (err instanceof SessionExpiredError) markSessionExpired();
+        else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
+      }
+    },
+    [startForcedRotation, markSessionExpired, t, reactivateCouncilVault, getIdToken]
+  );
+
+  // Keeping the current vault ends the council's request (its shares are
+  // discarded) and drops the older vault from this browser; asking again is the
+  // whole process again.
+  const handleKeepCurrentVault = useCallback(async () => {
+    setIsPending(true);
+    setError(null);
+    try {
+      await withFreshIdToken(getIdToken, async (idToken) => {
+        const request = await fetchMyCouncilRequest(idToken);
+        if (request) await refuseCouncilRequest(idToken, request.id);
+      });
+      await councilVault.discardRecovery();
+      setKeepCurrentPrompt(false);
+      setReactivatePrompt(null);
+      setCouncilPending(null);
+      setCouncilUnlock(false);
+      // This browser holds the vault in use: nothing left to do here.
+      if (councilForOlderVault) {
+        onClose();
+
+        return;
+      }
+      setKeptCurrent(true);
+      setStep('existing-key-choice');
+    } catch (err) {
+      setKeepCurrentPrompt(false);
+      setReactivatePrompt(null);
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
+    } finally {
+      setIsPending(false);
+    }
+  }, [getIdToken, councilVault, markSessionExpired, t, councilForOlderVault, onClose]);
+
+  const handleCouncilContinue = useCallback(async () => {
+    if (!councilPending) return;
+
+    setError(null);
+    clearSessionExpired();
+
+    if (councilPending.kind === 'reactivate') {
+      if (councilPending.council.activeCreatedAtMillis === null) await reactivateCouncilVault();
+      else setReactivatePrompt({ council: councilPending.council });
+
+      return;
+    }
+
+    setIsPending(true);
+    try {
+      await startForcedRotation(councilPending.publicKey);
+    } catch (err) {
+      if (err instanceof SessionExpiredError) markSessionExpired();
+      else setError(isVaultError(err) ? t(councilVaultErrorKey(err.code)) : (err as Error).message);
+    } finally {
+      setIsPending(false);
+    }
+  }, [councilPending, startForcedRotation, markSessionExpired, clearSessionExpired, t, reactivateCouncilVault]);
 
   // Commit the rotated keyring: the moment the escrowed phrase (and the old
   // primary one) dies. The shared flow burns + re-arms every granted
@@ -728,7 +939,19 @@ export function ModalEncryptionOnboarding({
     clearSessionExpired();
 
     try {
-      await commitKeyring(forcedRotation.keyring, mnemonicLanguageForLocale(i18n.language));
+      const lang = mnemonicLanguageForLocale(i18n.language);
+      let council: CouncilRenewal | undefined;
+
+      // The council's setup is renewed with a fresh dormant phrase over its
+      // current members; if that cannot be built (its membership no longer
+      // verifies), the user leaves it and is told to set it up again.
+      if (councilUnlock) council = await renewCouncil(lang);
+
+      const { councilDropped: dropped } = await commitKeyring(forcedRotation.keyring, lang, council, reactivationPending);
+      setReactivationPending(false);
+      // Only now, with the handed-over phrase burned, is the vault kept on this device.
+      await commitStagedVault();
+      setCouncilDropped(dropped);
       onSuccess?.(forcedRotation.publicKey);
       setForcedRotation(null);
       setStep('forced-rotation-done');
@@ -739,7 +962,18 @@ export function ModalEncryptionOnboarding({
     } finally {
       setRotationBusy(false);
     }
-  }, [forcedRotation, commitKeyring, i18n.language, onSuccess, markSessionExpired, clearSessionExpired]);
+  }, [
+    forcedRotation,
+    commitKeyring,
+    commitStagedVault,
+    renewCouncil,
+    i18n.language,
+    onSuccess,
+    markSessionExpired,
+    clearSessionExpired,
+    councilUnlock,
+    reactivationPending,
+  ]);
 
   // A granted contact is no longer trusted, so their mandatory re-arm cannot be
   // built: revoke exactly those relationships (user-approved), then go on with
@@ -795,6 +1029,32 @@ export function ModalEncryptionOnboarding({
     </>
   );
 
+  // A request already on its way: the option resumes it and says so, read again on
+  // every screen offering it since one may have been opened or stopped meanwhile.
+  useEffect(() => {
+    if (step !== 'existing-key-choice' && step !== 'previous-identity' && step !== 'last-resort') return;
+
+    let current = true;
+    withFreshIdToken(getIdToken, fetchMyCouncilRequest)
+      .then((request) => {
+        if (current) setCouncilRequestOpen(request !== null);
+      })
+      .catch(() => {
+        // Only a note: without it the screen says what it always says.
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [step, getIdToken]);
+
+  const startOver = (from: 'previous-identity' | 'existing-key-choice', next: OnboardingStep) => {
+    if (councilAvailable) setStartOverPrompt({ from, next });
+    else setStep(next);
+  };
+
+  const keptCurrentNotice = keptCurrent && <Notice type={VariantType.SUCCESS}>{t('council.kept_current_notice')}</Notice>;
+
   const deEnrolledNotice = deEnrolledAfterDays !== null && (
     <Notice type={VariantType.INFO}>{t('onboarding.de_enrolled_notice', { count: deEnrolledAfterDays })}</Notice>
   );
@@ -829,23 +1089,115 @@ export function ModalEncryptionOnboarding({
         onClose={isPending ? () => undefined : () => setReactivatePrompt(null)}
         closeOnClickOutside={false}
         size={ModalSize.SMALL}
-        aria-label={t('onboarding.reactivate_title')}
+        aria-label={t(reactivatePrompt?.council ? 'council.reactivate_title' : 'onboarding.reactivate_title')}
       >
         <Screen
-          title={t('onboarding.reactivate_title')}
-          description={reactivatePrompt ? t('onboarding.reactivate_confirm', { date: reactivatePrompt.date }) : ''}
+          title={t(reactivatePrompt?.council ? 'council.reactivate_title' : 'onboarding.reactivate_title')}
+          description={
+            reactivatePrompt?.council ? (
+              <>
+                <p>{t('council.reactivate_requested', { date: new Date(reactivatePrompt.council.requestedAtMillis) })}</p>
+                <p>
+                  {t(councilForOlderVault ? 'council.reactivate_confirm_here' : 'council.reactivate_confirm', {
+                    date: new Date(reactivatePrompt.council.createdAtMillis),
+                    // Asked only with a vault in use: without one, the recovered vault is restored at once.
+                    active: new Date(reactivatePrompt.council.activeCreatedAtMillis ?? 0),
+                  })}
+                </p>
+              </>
+            ) : (
+              t('onboarding.reactivate_confirm', { date: reactivatePrompt?.date })
+            )
+          }
           actions={
             <>
               <Button onClick={handleConfirmReactivate} disabled={isPending}>
-                {isPending ? t('onboarding.btn_restoring') : t('onboarding.reactivate_confirm_button')}
+                {isPending
+                  ? t('onboarding.btn_restoring')
+                  : t(reactivatePrompt?.council ? 'council.reactivate_confirm_button' : 'onboarding.reactivate_confirm_button')}
               </Button>
-              <Button variant="bordered" color="neutral" onClick={() => setReactivatePrompt(null)} disabled={isPending}>
-                {t('onboarding.btn_cancel')}
+              {reactivatePrompt?.council ? (
+                <Button
+                  variant="bordered"
+                  color="neutral"
+                  onClick={() => {
+                    setReactivatePrompt(null);
+                    setKeepCurrentPrompt(true);
+                  }}
+                  disabled={isPending}
+                >
+                  {t('council.keep_current_button')}
+                </Button>
+              ) : (
+                <Button variant="bordered" color="neutral" onClick={() => setReactivatePrompt(null)} disabled={isPending}>
+                  {t('onboarding.btn_cancel')}
+                </Button>
+              )}
+            </>
+          }
+        />
+      </Modal>
+
+      <Modal
+        isOpen={keepCurrentPrompt}
+        onClose={isPending ? () => undefined : () => setKeepCurrentPrompt(false)}
+        closeOnClickOutside={false}
+        size={ModalSize.SMALL}
+        aria-label={t('council.keep_current_title')}
+      >
+        <Screen
+          title={t('council.keep_current_title')}
+          description={t(councilForOlderVault ? 'council.keep_current_body_here' : 'council.keep_current_body')}
+          actions={
+            <>
+              <Button color="error" onClick={handleKeepCurrentVault} disabled={isPending}>
+                {t('council.keep_current_confirm')}
+              </Button>
+              <Button variant="bordered" color="neutral" onClick={() => setKeepCurrentPrompt(false)} disabled={isPending}>
+                {t('onboarding.btn_back')}
               </Button>
             </>
           }
         />
       </Modal>
+
+      <Modal
+        isOpen={startOverPrompt !== null}
+        onClose={() => setStartOverPrompt(null)}
+        closeOnClickOutside={false}
+        size={ModalSize.SMALL}
+        aria-label={t('council.start_over_title')}
+      >
+        <Screen
+          title={t('council.start_over_title')}
+          description={t(councilRequestOpen ? 'council.start_over_body_pending' : 'council.start_over_body')}
+          actions={
+            <>
+              <Button
+                onClick={() => {
+                  setRestoreFrom(startOverPrompt!.from);
+                  setStartOverPrompt(null);
+                  setStep('council-recovery');
+                }}
+              >
+                {t('council.option_title')}
+              </Button>
+              <Button
+                variant="tertiary"
+                color="neutral"
+                onClick={() => {
+                  setStep(startOverPrompt!.next);
+                  setStartOverPrompt(null);
+                }}
+              >
+                {t('council.start_over_anyway')}
+              </Button>
+            </>
+          }
+        />
+      </Modal>
+
+      <CouncilClosedDialog isOpen={councilClosed} onClose={() => setCouncilClosed(false)} />
 
       {/* Asked by the product's close control while the phrase is unsaved. */}
       <Modal
@@ -907,13 +1259,17 @@ export function ModalEncryptionOnboarding({
             <>
               {banner}
               {deEnrolledNotice}
+              {keptCurrentNotice}
             </>
           }
           actions={
             <Button
               onClick={() => {
                 if (restoreMethod === 'device' && onUseAnotherDevice) onUseAnotherDevice();
-                else {
+                else if (restoreMethod === 'council') {
+                  setRestoreFrom('existing-key-choice');
+                  setStep('council-recovery');
+                } else {
                   setRestoreFrom('existing-key-choice');
                   setStep('restore');
                 }
@@ -925,7 +1281,8 @@ export function ModalEncryptionOnboarding({
         >
           <div className={styles.options} role="radiogroup" aria-label={t('onboarding.title_existing')}>
             {onUseAnotherDevice && (
-              <RestoreOption
+              <OptionCard
+                name="restore-method"
                 selected={restoreMethod === 'device'}
                 onSelect={() => setRestoreMethod('device')}
                 icon={<PhoneDesktop aria-hidden size={20} />}
@@ -933,13 +1290,24 @@ export function ModalEncryptionOnboarding({
                 description={t('onboarding.option_device_description')}
               />
             )}
-            <RestoreOption
+            <OptionCard
+              name="restore-method"
               selected={restoreMethod === 'phrase'}
               onSelect={() => setRestoreMethod('phrase')}
               icon={<Key aria-hidden size={20} />}
               title={t('onboarding.btn_restore_from_backup')}
               description={t('onboarding.option_phrase_description')}
             />
+            {councilAvailable && (
+              <OptionCard
+                name="restore-method"
+                selected={restoreMethod === 'council'}
+                onSelect={() => setRestoreMethod('council')}
+                icon={councilRequestOpen ? <span aria-hidden className={styles.pendingSpinner} /> : <ShieldCheck aria-hidden size={20} />}
+                title={t('council.option_title')}
+                description={councilRequestOpen ? t('council.option_pending') : t('council.option_description')}
+              />
+            )}
           </div>
         </Screen>
       )}
@@ -972,7 +1340,20 @@ export function ModalEncryptionOnboarding({
                 {t('onboarding.btn_restore_from_backup')}
               </Button>
               {anotherDeviceButton}
-              <Button variant="tertiary" color="neutral" onClick={() => setStep('explanation')}>
+              {councilAvailable && (
+                <Button
+                  variant="bordered"
+                  color="neutral"
+                  icon={councilRequestOpen ? <span aria-hidden className={styles.pendingSpinner} /> : <ShieldCheck aria-hidden />}
+                  onClick={() => {
+                    setRestoreFrom('previous-identity');
+                    setStep('council-recovery');
+                  }}
+                >
+                  {t('council.option_title')}
+                </Button>
+              )}
+              <Button variant="tertiary" color="neutral" onClick={() => startOver('previous-identity', 'explanation')}>
                 {t('onboarding.btn_start_new_identity')}
               </Button>
             </>
@@ -994,8 +1375,48 @@ export function ModalEncryptionOnboarding({
         </Screen>
       )}
 
+      {step === 'council-unfinished' && (
+        <Screen
+          illustration="shield-restore"
+          title={t('council.unfinished_title')}
+          description={t('council.unfinished_description')}
+          banner={banner}
+          actions={
+            <>
+              <Button onClick={handleCouncilContinue} disabled={isPending || councilPending === null}>
+                {t('onboarding.btn_continue')}
+              </Button>
+              {councilPending?.kind === 'reactivate' && (
+                <Button variant="bordered" color="neutral" onClick={() => setKeepCurrentPrompt(true)} disabled={isPending}>
+                  {t('council.keep_current_button')}
+                </Button>
+              )}
+            </>
+          }
+        />
+      )}
+
+      {step === 'council-recovery' && (
+        <CouncilRecovery
+          getIdToken={getIdToken}
+          onBack={councilForOlderVault ? onClose : () => setStep(restoreFrom)}
+          onRecovered={handleCouncilRecovered}
+          onReconnect={onReconnect}
+          isAuthenticating={isAuthenticating}
+          onCancelAuth={onCancelAuth}
+          currentIdToken={currentIdToken}
+        />
+      )}
+
       {step === 'last-resort' && (
-        <LastResortStep isPending={isPending} onConfirm={handleResetFromZero} onBack={() => setStep('restore')} banner={banner} t={t} />
+        <LastResortStep
+          isPending={isPending}
+          onConfirm={handleResetFromZero}
+          onBack={() => setStep('restore')}
+          banner={banner}
+          councilRequestOpen={councilRequestOpen}
+          t={t}
+        />
       )}
 
       {step === 'restore' && (
@@ -1014,7 +1435,7 @@ export function ModalEncryptionOnboarding({
                 {isPending ? t('onboarding.btn_restoring') : t('onboarding.btn_restore')}
               </Button>
               {restoreFrom === 'existing-key-choice' && (
-                <Button variant="bordered" color="neutral" onClick={() => setStep('last-resort')} disabled={isPending}>
+                <Button variant="bordered" color="neutral" onClick={() => startOver('existing-key-choice', 'last-resort')} disabled={isPending}>
                   {t('onboarding.btn_last_resort')}
                 </Button>
               )}
@@ -1055,6 +1476,7 @@ export function ModalEncryptionOnboarding({
           onCancel={onCancelAuth}
           isAuthenticating={isAuthenticating}
           note={t('onboarding.step_up_phrase_kept')}
+          wrongUser={stepUpWrongUser && !isAuthenticating}
         />
       )}
 
@@ -1077,20 +1499,41 @@ export function ModalEncryptionOnboarding({
 
       {/* Success screen after the kit backup is confirmed, with the one-time
           trusted-contact suggestion (our recommended fallback if the kit is lost). */}
+      {step === 'council-join' && (
+        <RecoveryCouncil
+          getIdToken={getIdToken}
+          userId={userId}
+          onClose={() => setStep('done')}
+          onboarding={{
+            onJoined: (council) => {
+              setJoinedCouncil(council);
+              setStep('done');
+            },
+          }}
+          onReconnect={onReconnect}
+          onStepUp={onStepUp}
+          isAuthenticating={isAuthenticating}
+          onCancelAuth={onCancelAuth}
+          currentIdToken={currentIdToken}
+        />
+      )}
+
       {step === 'done' && (
+        // A recovery team already covers a lost phrase: trusted contacts stay in the settings.
         <Screen
           illustration="shield-check"
           title={t('onboarding.title_enabled')}
           description={
             <>
               <p>{t('onboarding.enabled_description')}</p>
-              {onOpenEmergencyAccess && <p>{t('emergency.nudge_text')}</p>}
+              {joinedCouncil && <p>{t('council.onboarding_joined', { council: joinedCouncil })}</p>}
+              {onOpenEmergencyAccess && !joinedCouncil && <p>{t('emergency.nudge_text')}</p>}
             </>
           }
           actions={
             <>
               <Button onClick={onClose}>{t('settings.done')}</Button>
-              {onOpenEmergencyAccess && (
+              {onOpenEmergencyAccess && !joinedCouncil && (
                 <Button variant="bordered" color="neutral" onClick={onOpenEmergencyAccess}>
                   {t('emergency.nudge_button')}
                 </Button>
@@ -1120,10 +1563,17 @@ export function ModalEncryptionOnboarding({
         <RecoveryKitBackup
           title={t('emergency.rotation_title')}
           description={
-            <>
-              <p>{t('emergency.rotation_explanation')}</p>
-              <p>{t('emergency.rotation_rearm_note')}</p>
-            </>
+            councilUnlock ? (
+              <>
+                <p>{t('council.rotation_explanation')}</p>
+                <p>{t('council.rotation_rearm_note')}</p>
+              </>
+            ) : (
+              <>
+                <p>{t('emergency.rotation_explanation')}</p>
+                <p>{t('emergency.rotation_rearm_note')}</p>
+              </>
+            )
           }
           banner={
             <>
@@ -1145,38 +1595,12 @@ export function ModalEncryptionOnboarding({
         <Screen
           illustration="shield-check"
           title={t('emergency.rotation_title')}
-          description={t('emergency.rotation_done')}
+          description={councilUnlock ? t('council.rotation_done') : t('emergency.rotation_done')}
+          banner={councilDropped && <Notice type={VariantType.WARNING}>{t('council.rotation_dropped')}</Notice>}
           actions={<Button onClick={onClose}>{t('settings.done')}</Button>}
         />
       )}
     </>
-  );
-}
-
-function RestoreOption({
-  selected,
-  onSelect,
-  icon,
-  title,
-  description,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  icon: ReactNode;
-  title: string;
-  description: string;
-}) {
-  // A native radio inside its card: arrow keys move between the options and the
-  // group is a single tab stop, as screen reader users expect.
-  return (
-    <label className={selected ? `${styles.option} ${styles.optionSelected}` : styles.option}>
-      <input type="radio" name="restore-method" className={styles.optionInput} checked={selected} onChange={onSelect} />
-      <span className={styles.optionIcon}>{icon}</span>
-      <span className={styles.optionText}>
-        <span className={styles.optionTitle}>{title}</span>
-        <span className={styles.optionDescription}>{description}</span>
-      </span>
-    </label>
   );
 }
 

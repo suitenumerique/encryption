@@ -1,16 +1,28 @@
 import { useCallback } from 'react';
 
 import type { MnemonicLanguage } from '@encryption/src/crypto/mnemonic';
-import { MSG_VAULT_FETCH_PUBLIC_KEYS, MSG_VAULT_GET_KNOWN_FINGERPRINTS, MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
+import {
+  MSG_VAULT_FETCH_PUBLIC_KEYS,
+  MSG_VAULT_GET_KNOWN_FINGERPRINTS,
+  MSG_VAULT_REACTIVATE_WITH_KEYRING,
+  MSG_VAULT_SIGN_REQUEST,
+} from '@encryption/src/shared/constants';
+import { API_ERROR_COUNCIL_REARM_REQUIRED } from '@encryption/src/shared/error-codes';
 import type { EmergencyRearmEntry, VaultKeyringUpdateBody } from '@encryption/src/shared/schemas/emergency-access';
+import type { CouncilEscrowBody } from '@encryption/src/shared/schemas/recovery-council';
 import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import { VaultErrorCode, isVaultError } from '@encryption/src/shared/vault-error';
+import { ApiError } from '@encryption/src/ui/api/client';
+import { fetchCouncilForMe } from '@encryption/src/ui/api/council-client';
 import { deleteEmergencyAccess, fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import { updateVaultKeyring } from '@encryption/src/ui/api/vault-client';
 import { withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
 import { type BlockedContact, UntrustedRearmError, grantedRearmRows } from '@encryption/src/ui/components/emergency-access-logic';
 import type { VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
+import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionProvider';
+
+export type CouncilRenewal = { councilRearm?: CouncilEscrowBody; councilDrop?: boolean };
 
 /**
  * Commit a re-wrapped keyring (recovery-phrase change) to the server, with the
@@ -22,9 +34,41 @@ import { useEncryptionContext } from '@encryption/src/ui/providers/EncryptionPro
  */
 export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
   const { request, buildEmergencyRearms } = useEncryptionContext();
+  const councilVault = useCouncilVault();
+
+  /**
+   * After a council recovery the released credential is burned and the council's
+   * setup renewed over its current members. It is left (and the user told) only
+   * when the council is gone or its membership no longer verifies; any other
+   * failure (network, session) is the caller's to retry.
+   */
+  const renewCouncil = useCallback(
+    async (lang: MnemonicLanguage): Promise<CouncilRenewal> => {
+      const forMe = await withFreshIdToken(getIdToken, fetchCouncilForMe);
+      if (!forMe.council || !forMe.escrow) return { councilDrop: true };
+
+      try {
+        return {
+          councilRearm: await councilVault.createEscrow(forMe.council.council_id, forMe.council.chain, lang, forMe.escrow.record),
+        };
+      } catch (err) {
+        if (isVaultError(err) && (err.code === VaultErrorCode.VAULT_INTEGRITY_FAILED || err.code === VaultErrorCode.UNTRUSTED_RECIPIENT)) {
+          return { councilDrop: true };
+        }
+        throw err;
+      }
+    },
+    [getIdToken, councilVault]
+  );
 
   const commitKeyring = useCallback(
-    async (keyring: VaultKeyringWire, lang: MnemonicLanguage): Promise<void> => {
+    async (
+      keyring: VaultKeyringWire,
+      lang: MnemonicLanguage,
+      council?: CouncilRenewal,
+      /** A retired vault opened through a handed-over phrase: brought back by the same write. */
+      reactivate = false
+    ): Promise<{ councilDropped: boolean }> => {
       const { contacts } = await withFreshIdToken(getIdToken, (idToken) => fetchTrustedContacts(idToken));
       const rows = grantedRearmRows(contacts, Date.now());
 
@@ -52,18 +96,58 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
 
       if (untrusted.length > 0) throw new UntrustedRearmError(untrusted);
 
-      const body: VaultKeyringUpdateBody = rearms.length > 0 ? { ...keyring, emergency_rearms: rearms } : keyring;
+      // After a council recovery, the released council credential is burned on the
+      // same rewrite, renewed (or explicitly left).
+      const body: VaultKeyringUpdateBody = {
+        ...keyring,
+        ...(rearms.length > 0 ? { emergency_rearms: rearms } : {}),
+        ...(council?.councilRearm ? { council_rearm: council.councilRearm } : {}),
+        ...(council?.councilDrop ? { council_drop: true } : {}),
+      };
 
       // Covered route: sign the EXACT body we will send (same serialization the
       // request helper uses), so the proof's body digest matches, then attach it.
-      const json = JSON.stringify(body);
-      const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'PUT', path: '/api/vault/keyring', body: json })) as {
-        signature: string;
+      const put = async (sent: VaultKeyringUpdateBody) => {
+        if (reactivate) {
+          await withFreshIdToken(getIdToken, (idToken) => request(MSG_VAULT_REACTIVATE_WITH_KEYRING, { idToken, keyring: sent }));
+
+          return;
+        }
+
+        const json = JSON.stringify(sent);
+        const { signature } = (await request(MSG_VAULT_SIGN_REQUEST, { method: 'PUT', path: '/api/vault/keyring', body: json })) as {
+          signature: string;
+        };
+
+        await withFreshIdToken(getIdToken, (idToken) => updateVaultKeyring(idToken, sent, signature));
       };
 
-      await withFreshIdToken(getIdToken, (idToken) => updateVaultKeyring(idToken, body, signature));
+      // The council credential is burned: the key its shares were wrapped for opens nothing now.
+      const forgetRequestKey = () => councilVault.requestKey(null).catch(() => null);
+
+      try {
+        await put(body);
+        if (council) await forgetRequestKey();
+
+        return { councilDropped: council?.councilDrop === true };
+      } catch (err) {
+        // A council recovery released this vault's council credential and the user
+        // left the forced change before it ended: whichever flow changes the phrase
+        // next burns it, renewing the council's setup.
+        if (council || !(err instanceof ApiError) || err.code !== API_ERROR_COUNCIL_REARM_REQUIRED) throw err;
+
+        const renewal = await renewCouncil(lang);
+        await put({
+          ...body,
+          ...(renewal.councilRearm ? { council_rearm: renewal.councilRearm } : {}),
+          ...(renewal.councilDrop ? { council_drop: true } : {}),
+        });
+        await forgetRequestKey();
+
+        return { councilDropped: renewal.councilDrop === true };
+      }
     },
-    [getIdToken, request, buildEmergencyRearms]
+    [getIdToken, request, buildEmergencyRearms, renewCouncil, councilVault]
   );
 
   /**
@@ -108,5 +192,5 @@ export function useKeyringCommit(getIdToken: () => Promise<string | null>) {
     [getIdToken]
   );
 
-  return { commitKeyring, findBlockedContacts, revokeContacts };
+  return { commitKeyring, renewCouncil, findBlockedContacts, revokeContacts };
 }

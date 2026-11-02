@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { generateSignatureKeyPair } from '@encryption/src/crypto/signature';
 import type { SealedItem } from '@encryption/src/crypto/vault-manifest';
-import { addEncryptionKey, addIdentity, emptyVaultState, mergeVaultState, setTofu } from '@encryption/src/crypto/vault-state';
+import { addEncryptionKey, addIdentity, councilPin, emptyVaultState, mergeVaultState, pinCouncil, setTofu } from '@encryption/src/crypto/vault-state';
 import { type PulledVault, type PutItemInput, type PutOutcome, type SyncCrypto, sync, syncOnce } from '@encryption/src/vault/operations/vault-sync';
 
 // A minimal in-memory stand-in for the server: opaque items + the last manifest,
@@ -67,6 +67,41 @@ describe('sync engine', () => {
       expect(b.state).toEqual(a.state);
       expect(b.state.tofu.bob.status).toBe('trusted');
     }
+  });
+
+  // The council pins travel sealed like the rest: a verification made on one device reaches the others.
+  it('carries a council pin and its verification to every device', async () => {
+    const server = new FakeServer();
+    const laptop = await sync(pinCouncil(deviceState(), 'dinum', 'h1', false, 30), 0, server, crypto_);
+    if (laptop.status !== 'ok') throw new Error(laptop.status);
+
+    const phone = await sync(emptyVaultState(), 0, server, crypto_);
+    if (phone.status !== 'ok') throw new Error(phone.status);
+    expect(councilPin(phone.state, 'dinum')).toEqual({ genesisHash: 'h1', pinnedAt: 30, verifiedAt: null });
+
+    const verified = await sync(pinCouncil(phone.state, 'dinum', 'h1', true, 40), phone.revision, server, crypto_);
+    expect(verified.status).toBe('ok');
+
+    const back = await sync(laptop.state, laptop.revision, server, crypto_);
+    if (back.status !== 'ok') throw new Error(back.status);
+    expect(councilPin(back.state, 'dinum')).toEqual({ genesisHash: 'h1', pinnedAt: 30, verifiedAt: 40 });
+  });
+
+  // Two devices joined before syncing, each shown another council under one id: both end with the first in force.
+  it('converges two devices that pinned different councils on the earliest', async () => {
+    const server = new FakeServer();
+    await sync(deviceState(), 0, server, crypto_);
+    const base = await sync(emptyVaultState(), 0, server, crypto_);
+    if (base.status !== 'ok') throw new Error(base.status);
+
+    const laptop = await sync(pinCouncil(base.state, 'dinum', 'real', false, 30), base.revision, server, crypto_);
+    const phone = await sync(pinCouncil(base.state, 'dinum', 'forged', true, 50), base.revision, server, crypto_);
+    if (laptop.status !== 'ok' || phone.status !== 'ok') throw new Error('sync failed');
+
+    const after = await sync(laptop.state, laptop.revision, server, crypto_);
+    if (after.status !== 'ok') throw new Error(after.status);
+    for (const state of [after.state, phone.state]) expect(councilPin(state, 'dinum')).toMatchObject({ genesisHash: 'real', verifiedAt: null });
+    expect(Object.keys(phone.state.councils.dinum).sort()).toEqual(['forged', 'real']);
   });
 
   it('is a no-op on a second sync with no local change', async () => {

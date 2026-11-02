@@ -5,18 +5,27 @@ import { consoleFrame } from '@encryption/.storybook/figma';
 import { StoryHelperFactory } from '@encryption/.storybook/helpers';
 import { playFindButton, playFindHeading } from '@encryption/.storybook/testing';
 import i18n from '@encryption/src/i18n';
+import { MSG_VAULT_COUNCIL_COMPLETE_RECOVERY } from '@encryption/src/shared/constants';
 import { API_ERROR_VAULT_NOT_FOUND } from '@encryption/src/shared/error-codes';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import {
+  handleGetApiCouncilRecoveryRequestsByIdShares,
+  handleGetApiCouncilRecoveryRequestsMine,
+  handleGetApiCouncilsForMe,
   handleGetApiEmergencyAccessTrusted,
   handleGetApiPublicKeys,
   handleGetApiPublicKeysNext,
   handleGetApiVaultMeta,
+  handlePostApiCouncilRecoveryRequestsByIdRefuse,
+  handlePostApiCouncilsEscrow,
   handlePostApiPublicKeysRegisterInit,
+  handlePostApiVault,
 } from '@encryption/src/ui/api/generated/msw.gen';
 import { ModalEncryptionOnboarding } from '@encryption/src/ui/components/ModalEncryptionOnboarding';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
-import { sampleEmergencyEscrowRecord, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+import { COUNCIL_LABEL, forMe } from '@encryption/src/ui/testing/council-stories';
+import { sampleCouncilEscrowRecord, sampleEmergencyEscrowRecord, sampleFingerprint, samplePublicKey } from '@encryption/src/ui/testing/fixtures';
+import { defaultVaultRequest } from '@encryption/src/ui/testing/mock-encryption';
 
 type ComponentType = typeof ModalEncryptionOnboarding;
 const { generateMetaDefault, prepareStory } = StoryHelperFactory<ComponentType>();
@@ -102,6 +111,256 @@ ExistingUserStory.play = async ({ canvasElement }) => {
 ExistingUserStory.parameters = { ...ExistingUserStory.parameters, design: consoleFrame('4880-17085') };
 export const ExistingUser = prepareStory(ExistingUserStory);
 
+// Covered by a recovery council that can still help: a third way back, next to
+// another device and the recovery phrase (which a trusted contact hands back).
+const ExistingUserWithCouncilStory = Template.bind({});
+ExistingUserWithCouncilStory.args = { ...ExistingUserStory.args };
+const enrolledInCouncil = [
+  handleGetApiPublicKeys(({ request }) => {
+    const userIds = new URL(request.url).searchParams.getAll('user_ids');
+
+    return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
+  }),
+  handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+];
+ExistingUserWithCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      ...enrolledInCouncil,
+      // So that Continue opens the council's first screen.
+      handleGetApiCouncilRecoveryRequestsMine({ body: { request: null, ended: null } }),
+    ],
+  },
+};
+ExistingUserWithCouncilStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  const canvas = within(canvasElement);
+  await canvas.findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_use_another_device')) });
+  await canvas.findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) });
+  const council = await canvas.findByRole('radio', { name: new RegExp(i18n.t('council.option_title')) });
+  await userEvent.click(council);
+  await expect(council).toBeChecked();
+  expect(canvas.queryByText(i18n.t('council.option_pending'))).toBeNull();
+};
+export const ExistingUserWithCouncil = prepareStory(ExistingUserWithCouncilStory);
+
+// Back after asking: the option turns into the request on its way, which it resumes.
+const ExistingUserCouncilPendingStory = Template.bind({});
+ExistingUserCouncilPendingStory.args = { ...ExistingUserStory.args };
+ExistingUserCouncilPendingStory.parameters = {
+  msw: {
+    handlers: [
+      ...enrolledInCouncil,
+      handleGetApiCouncilRecoveryRequestsMine({
+        body: {
+          request: {
+            id: '5d6e7f80-0000-4000-8000-000000000001',
+            council_label: COUNCIL_LABEL,
+            stage: 'in_progress',
+            ephemeral_fingerprint: sampleFingerprint,
+            created_at_millis: Date.UTC(2026, 9, 28, 9),
+            expires_at_millis: Date.UTC(2026, 10, 4, 9),
+            meet: [],
+            vault_active: true,
+            vault_created_at_millis: Date.UTC(2026, 0, 12),
+          },
+          ended: null,
+        },
+      }),
+    ],
+  },
+};
+ExistingUserCouncilPendingStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  const canvas = within(canvasElement);
+  await canvas.findByText(i18n.t('council.option_pending'));
+  canvas.getByRole('radio', { name: new RegExp(i18n.t('council.option_title')) });
+};
+export const ExistingUserCouncilPending = prepareStory(ExistingUserCouncilPendingStory);
+
+// The council released the shares: the vault opens in this browser, then the
+// forced phrase change cannot be prepared. The user lands on a screen that
+// resumes it, never on a spinner.
+const COUNCIL_REQUEST_ID = '5d6e7f80-0000-4000-8000-000000000001';
+const councilReleasedHandlers = [
+  handleGetApiPublicKeys(({ request }) => {
+    const userIds = new URL(request.url).searchParams.getAll('user_ids');
+
+    return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
+  }),
+  handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+  handleGetApiCouncilRecoveryRequestsMine({
+    body: {
+      request: {
+        id: COUNCIL_REQUEST_ID,
+        council_label: COUNCIL_LABEL,
+        stage: 'released',
+        ephemeral_fingerprint: sampleFingerprint,
+        created_at_millis: Date.UTC(2026, 9, 28, 9),
+        expires_at_millis: Date.UTC(2026, 10, 4, 9),
+        meet: [],
+        vault_active: true,
+        vault_created_at_millis: Date.UTC(2026, 0, 12),
+      },
+      ended: null,
+    },
+  }),
+  handleGetApiCouncilRecoveryRequestsByIdShares({
+    body: {
+      request_id: COUNCIL_REQUEST_ID,
+      council_id: 'dinum',
+      user_id: '00000000-0000-0000-0000-000000000000',
+      owner_identity_public_key: samplePublicKey.signature_public_key,
+      generation: 1,
+      threshold: 2,
+      share_commitments: sampleCouncilEscrowRecord.share_commitments,
+      lang: 'french',
+      escrow: sampleCouncilEscrowRecord,
+      chain: [],
+      contributions: [],
+    },
+  }),
+];
+
+async function chooseCouncil(canvasElement: HTMLElement) {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('council.option_title')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+}
+
+// The usual case: the council gave back the vault the user still has, so the
+// next screen is the new recovery phrase, which burns the one the council released.
+const CouncilNewPhraseStory = Template.bind({});
+CouncilNewPhraseStory.args = { ...ExistingUserStory.args };
+CouncilNewPhraseStory.parameters = { msw: { handlers: councilReleasedHandlers } };
+CouncilNewPhraseStory.play = async ({ canvasElement }) => {
+  await chooseCouncil(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('emergency.rotation_title'));
+  await within(canvasElement).findByText(i18n.t('council.rotation_explanation'));
+};
+export const CouncilRecoveryNewPhrase = prepareStory(CouncilNewPhraseStory);
+
+const CouncilRotationFailedStory = Template.bind({});
+CouncilRotationFailedStory.args = { ...ExistingUserStory.args };
+CouncilRotationFailedStory.parameters = {
+  msw: { handlers: councilReleasedHandlers },
+  encryption: {
+    changeRecoveryPhrase: async () => {
+      throw new VaultError(VaultErrorCode.TIMEOUT, 'vault request timed out');
+    },
+  },
+};
+CouncilRotationFailedStory.play = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await chooseCouncil(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
+  await canvas.findByText(i18n.t('errors.vault.request_timeout'));
+  // Resuming tries again, and lands on the same screen while it keeps failing.
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await playFindHeading(canvasElement, i18n.t('council.unfinished_title'));
+  await canvas.findByText(i18n.t('errors.vault.request_timeout'));
+};
+export const CouncilRecoveryRotationFailed = prepareStory(CouncilRotationFailedStory);
+
+// Rare: after losing access the user created a new vault, then asked the council
+// for the older one. Bringing it back is confirmed; keeping the current vault
+// instead closes the request, which is confirmed too.
+const olderVaultRecovered = async (type: string, payload?: unknown) =>
+  type === MSG_VAULT_COUNCIL_COMPLETE_RECOVERY
+    ? {
+        publicKey: samplePublicKey.encryption_public_key,
+        signaturePublicKey: samplePublicKey.signature_public_key,
+        isActiveVault: false,
+        vaultCreatedAtMillis: Date.UTC(2025, 2, 1),
+        contributors: [],
+      }
+    : defaultVaultRequest(type, payload);
+
+const CouncilKeepCurrentVaultStory = Template.bind({});
+CouncilKeepCurrentVaultStory.args = { ...ExistingUserStory.args };
+CouncilKeepCurrentVaultStory.parameters = {
+  msw: { handlers: councilReleasedHandlers },
+  encryption: { request: olderVaultRecovered },
+};
+CouncilKeepCurrentVaultStory.play = async ({ canvasElement }) => {
+  await chooseCouncil(canvasElement);
+  const body = within(canvasElement.ownerDocument.body);
+  // The request's date first, so the person recognizes what they asked for.
+  await body.findByText(i18n.t('council.reactivate_requested', { date: new Date(Date.UTC(2026, 9, 28, 9)) }));
+  await body.findByRole('button', { name: i18n.t('council.reactivate_confirm_button') });
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_button') }));
+  await body.findByText(i18n.t('council.keep_current_body'));
+  await body.findByRole('button', { name: i18n.t('council.keep_current_confirm') });
+};
+export const CouncilRecoveryKeepCurrentVault = prepareStory(CouncilKeepCurrentVaultStory);
+
+// The user had turned encryption off: no vault in use, so the vault the council gave back is restored without a question.
+const CouncilNoVaultInUseStory = Template.bind({});
+CouncilNoVaultInUseStory.args = { ...ExistingUserStory.args };
+CouncilNoVaultInUseStory.parameters = {
+  msw: {
+    handlers: [
+      ...councilReleasedHandlers.filter((h) => h !== councilReleasedHandlers[1]),
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {}, activeVaultCreatedAtMillis: null }) }),
+    ],
+  },
+  encryption: { request: olderVaultRecovered },
+};
+CouncilNoVaultInUseStory.play = async ({ canvasElement }) => {
+  await chooseCouncil(canvasElement);
+  await playFindHeading(canvasElement, i18n.t('emergency.rotation_title'));
+  expect(within(canvasElement.ownerDocument.body).queryByRole('button', { name: i18n.t('council.keep_current_button') })).toBeNull();
+};
+export const CouncilRecoveryNoVaultInUse = prepareStory(CouncilNoVaultInUseStory);
+
+// Confirmed: the request is closed. This browser never held the current vault
+// (the council is only offered without one), so it is back to the ways to
+// restore it, and says so.
+const refused = fn();
+const CouncilKeptCurrentVaultStory = Template.bind({});
+CouncilKeptCurrentVaultStory.args = { ...ExistingUserStory.args };
+CouncilKeptCurrentVaultStory.parameters = {
+  msw: {
+    handlers: [
+      ...councilReleasedHandlers,
+      handlePostApiCouncilRecoveryRequestsByIdRefuse(({ params }) => {
+        refused(params.id);
+
+        return Response.json({ refused: true });
+      }),
+    ],
+  },
+  encryption: { request: olderVaultRecovered },
+};
+CouncilKeptCurrentVaultStory.play = async ({ canvasElement }) => {
+  refused.mockClear();
+  await chooseCouncil(canvasElement);
+  const body = within(canvasElement.ownerDocument.body);
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_button') }));
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_confirm') }));
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_existing'));
+  // This browser never held the current vault: it still has to be restored here.
+  await within(canvasElement).findByText(i18n.t('council.kept_current_notice'));
+  await waitFor(() => expect(refused).toHaveBeenCalledWith(COUNCIL_REQUEST_ID));
+};
+export const CouncilRecoveryKeptCurrentVault = prepareStory(CouncilKeptCurrentVaultStory);
+
+// This browser already holds the vault in use (created after the request): the
+// settings open the council's request, and the question says so.
+const CouncilOlderVaultHereStory = Template.bind({});
+CouncilOlderVaultHereStory.args = { ...ExistingUserStory.args, councilForOlderVault: true };
+CouncilOlderVaultHereStory.parameters = {
+  msw: { handlers: councilReleasedHandlers },
+  encryption: { request: olderVaultRecovered },
+};
+CouncilOlderVaultHereStory.play = async ({ canvasElement }) => {
+  const body = within(canvasElement.ownerDocument.body);
+  await body.findByText(i18n.t('council.reactivate_confirm_here', { date: new Date(Date.UTC(2025, 2, 1)), active: new Date(Date.UTC(2026, 0, 12)) }));
+  await userEvent.click(await body.findByRole('button', { name: i18n.t('council.keep_current_button') }));
+  await body.findByText(i18n.t('council.keep_current_body_here'));
+};
+export const CouncilRecoveryOlderVaultHere = prepareStory(CouncilOlderVaultHereStory);
+
 // This browser held the vault but forgot it after a year without use: the same
 // choice, explained.
 const ExistingUserDeEnrolledStory = Template.bind({});
@@ -138,6 +397,31 @@ PreviousIdentityStory.play = async ({ canvasElement }) => {
 };
 
 export const PreviousIdentity = prepareStory(PreviousIdentityStory);
+
+// Starting over while a recovery team can give the previous vault back: offered first.
+const PreviousIdentityStartOverStory = Template.bind({});
+PreviousIdentityStartOverStory.args = { ...PreviousIdentityStory.args };
+PreviousIdentityStartOverStory.parameters = {
+  msw: {
+    handlers: [
+      ...previousIdentityHandlers,
+      handleGetApiCouncilsForMe({ body: forMe({ escrow: {} }) }),
+      handleGetApiCouncilRecoveryRequestsMine({ body: { request: null, ended: null } }),
+    ],
+  },
+};
+PreviousIdentityStartOverStory.play = async ({ canvasElement }) => {
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_previous_identity'));
+  // The council option appears once the team answered.
+  await within(canvasElement).findByRole('button', { name: i18n.t('council.option_title') });
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_start_new_identity')));
+  const dialog = within(document.body);
+  await dialog.findByText(i18n.t('council.start_over_body'));
+  await userEvent.click(dialog.getByRole('button', { name: i18n.t('council.start_over_anyway') }));
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enable'));
+};
+
+export const PreviousIdentityStartOver = prepareStory(PreviousIdentityStartOverStory);
 
 // The same history, seen from a browser that also forgot its vault after a year
 // without use (the identity was reset from another device meanwhile): explained too.
@@ -280,6 +564,33 @@ RestoredStory.play = async ({ canvasElement }) => {
 RestoredStory.parameters = { ...RestoredStory.parameters, design: consoleFrame('4882-22604') };
 export const Restored = prepareStory(RestoredStory);
 
+// Back in with the phrase while the council worked on a request for this vault:
+// the server closed it, and the user is told here.
+const RestoredCouncilClosedStory = Template.bind({});
+RestoredCouncilClosedStory.args = { ...ExistingUserStory.args };
+RestoredCouncilClosedStory.parameters = {
+  ...ExistingUserStory.parameters,
+  encryption: {
+    restoreFromPhrase: async () => ({
+      publicKey: samplePublicKey.encryption_public_key,
+      signaturePublicKey: samplePublicKey.signature_public_key,
+      isActiveVault: true,
+      vaultCreatedAtMillis: samplePublicKey.created_at_millis,
+      emergencyUnlock: false,
+      councilRequestClosed: true,
+    }),
+  },
+};
+RestoredCouncilClosedStory.play = async ({ canvasElement }) => {
+  await playSubmitPhrase(canvasElement);
+  const body = within(canvasElement.ownerDocument.body);
+  await body.findByText(i18n.t('council.closed_body'));
+  await body.findByRole('button', { name: i18n.t('council.closed_ok') });
+  // Over the usual end of the restore, which stays.
+  await within(canvasElement).findByText(i18n.t('onboarding.restored_description'));
+};
+export const RestoredCouncilRequestClosed = prepareStory(RestoredCouncilClosedStory);
+
 const LastResortStory = Template.bind({});
 LastResortStory.args = { ...ExistingUserStory.args };
 // No frame of its own in the design: the existing user's mocks without their link.
@@ -300,6 +611,44 @@ LastResortStory.play = async ({ canvasElement }) => {
 
 export const LastResort = prepareStory(LastResortStory);
 
+// Starting over while a request to the council runs: it carries on for the vault replaced.
+const LastResortCouncilStory = Template.bind({});
+LastResortCouncilStory.args = { ...ExistingUserStory.args };
+LastResortCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      handleGetApiPublicKeys(({ request }) => {
+        const userIds = new URL(request.url).searchParams.getAll('user_ids');
+
+        return Response.json({ keys: userIds.map((user_id) => ({ ...samplePublicKey, user_id })) });
+      }),
+      handleGetApiCouncilRecoveryRequestsMine({
+        body: {
+          request: {
+            id: COUNCIL_REQUEST_ID,
+            council_label: COUNCIL_LABEL,
+            stage: 'meet',
+            ephemeral_fingerprint: sampleFingerprint,
+            created_at_millis: Date.UTC(2026, 9, 28, 9),
+            expires_at_millis: Date.UTC(2026, 10, 4, 9),
+            meet: [],
+            vault_active: true,
+            vault_created_at_millis: Date.UTC(2026, 0, 12),
+          },
+          ended: null,
+        },
+      }),
+    ],
+  },
+};
+LastResortCouncilStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await within(canvasElement).findByRole('radio', { name: new RegExp(i18n.t('onboarding.btn_restore_from_backup')) }));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_last_resort')));
+  await within(canvasElement).findByText(i18n.t('council.last_resort_request_open'));
+};
+export const LastResortWithCouncilRequest = prepareStory(LastResortCouncilStory);
+
 // The recovery phrase step: the keys are minted locally and the confirmation
 // stays locked until the phrase left the screen one way or another.
 const BackupStory = Template.bind({});
@@ -317,6 +666,59 @@ BackupStory.play = async ({ canvasElement }) => {
 
 BackupStory.parameters = { ...BackupStory.parameters, design: consoleFrame('4879-12693') };
 export const Backup = prepareStory(BackupStory);
+
+// Covered by a council: once the phrase is saved and the vault created, one
+// more step offers to join it, and the last screen names it.
+const NewUserJoinsCouncilStory = Template.bind({});
+NewUserJoinsCouncilStory.args = { ...NewUserStory.args };
+NewUserJoinsCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      ...newUserHandlers,
+      handlePostApiPublicKeysRegisterInit({ body: { challenge_id: '7f1c2b3a-0000-4000-8000-00000000000a', ciphertext: 'Y2lwaGVydGV4dA' } }),
+      handlePostApiVault({ body: { revision: 1 } }),
+      handleGetApiCouncilsForMe({ body: forMe() }),
+      handlePostApiCouncilsEscrow({ body: { id: '7f1c2b3a-0000-4000-8000-000000000001' } }),
+    ],
+  },
+};
+NewUserJoinsCouncilStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_reveal')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done')));
+
+  await playFindHeading(canvasElement, i18n.t('council.join_title'));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('council.join_button')));
+
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enabled'));
+  await within(canvasElement).findByText(i18n.t('council.onboarding_joined', { council: COUNCIL_LABEL }));
+  expect(within(canvasElement).queryByText(i18n.t('emergency.nudge_text'))).toBeNull();
+};
+export const NewUserJoinsCouncil = prepareStory(NewUserJoinsCouncilStory);
+
+// Nothing to join: straight to the last screen.
+const NewUserWithoutCouncilStory = Template.bind({});
+NewUserWithoutCouncilStory.args = { ...NewUserStory.args };
+NewUserWithoutCouncilStory.parameters = {
+  msw: {
+    handlers: [
+      ...newUserHandlers,
+      handlePostApiPublicKeysRegisterInit({ body: { challenge_id: '7f1c2b3a-0000-4000-8000-00000000000a', ciphertext: 'Y2lwaGVydGV4dA' } }),
+      handlePostApiVault({ body: { revision: 1 } }),
+      handleGetApiCouncilsForMe({ body: { council: null, escrow: null, move_to: null, active_vault_created_at_millis: null, vaults: [] } }),
+    ],
+  },
+};
+NewUserWithoutCouncilStory.play = async ({ canvasElement }) => {
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_continue')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_reveal')));
+  await userEvent.click(await playFindButton(canvasElement, i18n.t('onboarding.btn_backup_done')));
+
+  await playFindHeading(canvasElement, i18n.t('onboarding.title_enabled'));
+  expect(within(canvasElement).queryByText(i18n.t('council.onboarding_joined', { council: COUNCIL_LABEL }))).toBeNull();
+  await within(canvasElement).findByText(i18n.t('emergency.nudge_text'));
+};
+export const NewUserWithoutCouncil = prepareStory(NewUserWithoutCouncilStory);
 
 // The product's cross on the backup step does not close: the screen holds a
 // guard that asks first. The story ends with the prompt open, which is the

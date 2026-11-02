@@ -8,7 +8,9 @@ import { MSG_VAULT_SIGN_REQUEST } from '@encryption/src/shared/constants';
 import { ApiError, approveDevicePath } from '@encryption/src/ui/api/client';
 import { approveDeviceRequest, fetchDeviceApproval, fetchPendingDeviceApprovals, requestDeviceApproval } from '@encryption/src/ui/api/vault-client';
 import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/session-expired';
+import { CouncilClosedDialog } from '@encryption/src/ui/components/CouncilClosedDialog';
 import { DecimalCodeInput } from '@encryption/src/ui/components/DecimalCodeInput';
+import { QrScanner } from '@encryption/src/ui/components/QrScanner';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { FingerprintBoxes } from '@encryption/src/ui/components/layout/IdentityCard';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
@@ -32,72 +34,6 @@ const POLL_INTERVAL_MS = 3000;
 // The server's approval row is one-shot: once polled, the wrapped VRK exists only
 // in this tab. Completion is therefore retried across ticks before giving up.
 const COMPLETION_MAX_FAILURES = 5;
-
-// --- Camera QR scanner: streams the rear camera and decodes with jsQR ---
-function QrScanner({ onDecode, onUnavailable, t }: { onDecode: (text: string) => void; onUnavailable: () => void; t: TFunction }) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    let raf = 0;
-    let cancelled = false;
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    // The decoder is only needed while the camera runs: its own chunk.
-    let decode: ((data: Uint8ClampedArray, width: number, height: number) => { data: string } | null) | null = null;
-
-    const tick = () => {
-      if (cancelled) return;
-      const video = videoRef.current;
-
-      if (video && ctx && video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const found = decode?.(img.data, img.width, img.height);
-
-        if (found?.data) {
-          onDecode(found.data);
-
-          return; // stop the loop; the parent unmounts the scanner
-        }
-      }
-
-      raf = requestAnimationFrame(tick);
-    };
-
-    (async () => {
-      try {
-        decode = (await import('jsqr')).default;
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (cancelled) {
-          stream.getTracks().forEach((tr) => tr.stop());
-
-          return;
-        }
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        raf = requestAnimationFrame(tick);
-      } catch {
-        // No camera / permission denied — fall back to manual entry.
-        onUnavailable();
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((tr) => tr.stop());
-    };
-  }, [onDecode, onUnavailable]);
-
-  return <video ref={videoRef} muted playsInline className={styles.scanner} aria-label={t('device_approval.scan_hint')} />;
-}
 
 export function DeviceApproval({
   getIdToken,
@@ -214,6 +150,8 @@ function NewDeviceSide({
   const [revealCode, setRevealCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const [done, setDone] = useState(false);
+  // Getting the vault from another device closed a request to the council for it.
+  const [councilClosed, setCouncilClosed] = useState(false);
   const requestIdRef = useRef<string | null>(null);
   // Once poll returns the wrapped VRK, the server row is consumed; keep the only
   // copy here so completion can be retried (in refs so effect re-runs keep them).
@@ -287,6 +225,7 @@ function NewDeviceSide({
           // Store before the cancellation check: if the effect re-ran mid-poll,
           // the next interval picks the payload up instead of losing it.
           if (forwarded) wrappedVrkRef.current = forwarded.wrapped_device_bootstrap;
+          if (forwarded?.council_request_closed) setCouncilClosed(true);
           if (cancelled || !forwarded) return;
         }
 
@@ -338,7 +277,9 @@ function NewDeviceSide({
         title={t('device_approval.new_success_title')}
         description={t('device_approval.new_success')}
         actions={<Button onClick={onClose}>{t('device_approval.btn_done')}</Button>}
-      />
+      >
+        <CouncilClosedDialog isOpen={councilClosed} onClose={() => setCouncilClosed(false)} />
+      </Screen>
     );
   }
 
@@ -538,7 +479,7 @@ function EnrolledDeviceSide({
               setCameraAvailable(false);
               enterManualEntry();
             }}
-            t={t}
+            label={t('device_approval.scan_hint')}
           />
           <Button className={styles.textLink} size="nano" variant="tertiary" color="neutral" onClick={enterManualEntry}>
             {t('device_approval.enter_code_instead')}
@@ -551,6 +492,7 @@ function EnrolledDeviceSide({
       {mode === 'manual' && (
         <>
           <DecimalCodeInput
+            autoFocus
             invalid={noMatch}
             onChange={(digits, complete) => {
               setCodeInput(digits);

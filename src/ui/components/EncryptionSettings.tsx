@@ -8,6 +8,7 @@ import { mnemonicLanguageForLocale } from '@encryption/src/crypto/mnemonic';
 import { MSG_VAULT_DESTROY_KEYS } from '@encryption/src/shared/constants';
 import type { VaultKeyringWire } from '@encryption/src/shared/schemas/vault';
 import type { UserInfo } from '@encryption/src/ui/App';
+import { type MyCouncilRequest, fetchCouncilForMe, fetchMyCouncilRequest, fetchMyCouncils } from '@encryption/src/ui/api/council-client';
 import { fetchTrustedContacts } from '@encryption/src/ui/api/emergency-client';
 import {
   deletePublicKeys,
@@ -20,6 +21,7 @@ import { SessionExpiredError, withFreshIdToken } from '@encryption/src/ui/auth/s
 import { RecoveryKitBackup } from '@encryption/src/ui/components/RecoveryKitBackup';
 import { SessionExpiredAlert } from '@encryption/src/ui/components/SessionExpiredAlert';
 import { SyncIntegrityAlert } from '@encryption/src/ui/components/SyncIntegrityAlert';
+import { pendingActions } from '@encryption/src/ui/components/council-custodian-logic';
 import {
   type BlockedContact,
   UntrustedRearmError,
@@ -30,6 +32,7 @@ import { Chip, CopyFingerprintButton, FingerprintBoxes, IdentityCard } from '@en
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { useCloseGuard } from '@encryption/src/ui/hooks/useCloseRequest';
+import { useCouncilVault } from '@encryption/src/ui/hooks/useCouncilVault';
 import { useKeyringCommit } from '@encryption/src/ui/hooks/useKeyringCommit';
 import { useModalSize } from '@encryption/src/ui/hooks/useModalSize';
 import { useSessionExpired } from '@encryption/src/ui/hooks/useSessionExpired';
@@ -58,17 +61,26 @@ interface EncryptionSettingsProps {
   onSetUp?: () => void;
   onOpenDeviceApproval?: () => void;
   onOpenEmergencyAccess?: () => void;
+  onOpenRecoveryCouncil?: () => void;
+  /** Opens the verification of the user's council, offered while it is not verified. */
+  onVerifyRecoveryCouncil?: () => void;
+  onOpenCustodian?: () => void;
+  /** Carry on a request to the council for an older vault (this browser holds the one in use). */
+  onOpenCouncilRequest?: () => void;
   onReconnect?: () => void;
   isAuthenticating?: boolean;
   onCancelAuth?: () => void;
   currentIdToken?: string | null;
 }
 
-function SettingsRow({ title, description, action }: { title: string; description: string; action: ReactNode }) {
+function SettingsRow({ title, description, action, chip = null }: { title: string; description: string; action: ReactNode; chip?: ReactNode }) {
   return (
     <div className={styles.settingsRow}>
       <div className={styles.settingsRowText}>
-        <p className={styles.settingsRowTitle}>{title}</p>
+        <p className={styles.settingsRowTitle}>
+          {title}
+          {chip}
+        </p>
         <p className={styles.settingsRowDescription}>{description}</p>
       </div>
       {action}
@@ -98,6 +110,10 @@ export function EncryptionSettings({
   onSetUp,
   onOpenDeviceApproval,
   onOpenEmergencyAccess,
+  onOpenRecoveryCouncil,
+  onVerifyRecoveryCouncil,
+  onOpenCustodian,
+  onOpenCouncilRequest,
   onReconnect,
   isAuthenticating = false,
   onCancelAuth,
@@ -130,6 +146,8 @@ export function EncryptionSettings({
   const [newRecoveryPhrase, setNewRecoveryPhrase] = useState<string | null>(null);
   const [isChangingPhrase, setIsChangingPhrase] = useState(false);
   const [changeError, setChangeError] = useState<string | null>(null);
+  // The phrase change also burned a council recovery's credential, and the council's setup could not be renewed.
+  const [councilDropped, setCouncilDropped] = useState(false);
   // Session-expired banner state (mirrors the onboarding modal). The commit step
   // can run minutes after generating (the user is saving their phrase), so the
   // ID token may have lapsed by then; show the reconnect banner instead of a raw
@@ -193,7 +211,8 @@ export function EncryptionSettings({
     setRearmBlocked(null);
 
     try {
-      await commitKeyring(pendingKeyring, mnemonicLanguageForLocale(i18n.language));
+      const { councilDropped: dropped } = await commitKeyring(pendingKeyring, mnemonicLanguageForLocale(i18n.language));
+      setCouncilDropped(dropped);
       setPendingKeyring(null);
       setNewRecoveryPhrase(null);
       setChangePhraseStep('done');
@@ -354,6 +373,85 @@ export function EncryptionSettings({
       cancelled = true;
     };
   }, [keysExist, getIdToken, changePhraseStep]);
+
+  // The council rows appear only for someone a council covers, and for its
+  // custodians: the interface never learns more than "you are a custodian".
+  // `verified` (null when not enrolled) comes from this vault, never from the server;
+  // `protected` as the council's own screen says it: verified, and every part recoverable.
+  // `olderVaultRequest`: a request to the council for an older vault than the one this browser holds.
+  const [council, setCouncil] = useState<{
+    covered: boolean;
+    enrolled: boolean;
+    joinable: boolean;
+    custodian: boolean;
+    pending: number;
+    verified: boolean | null;
+    protected: boolean;
+    /** The setup the server shows did not pass the vault's audit. */
+    problem: boolean;
+    /** Too few custodians can still use their part: the screen opened sets it up again. */
+    lost: boolean;
+    moveOffered: boolean;
+    olderVaultRequest: MyCouncilRequest | null;
+  }>({
+    covered: false,
+    enrolled: false,
+    joinable: false,
+    custodian: false,
+    pending: 0,
+    verified: null,
+    protected: false,
+    problem: false,
+    lost: false,
+    moveOffered: false,
+    olderVaultRequest: null,
+  });
+  const councilVault = useCouncilVault();
+
+  useEffect(() => {
+    if (!keysExist) return;
+
+    let cancelled = false;
+
+    withFreshIdToken(getIdToken, async (idToken) => {
+      const [forMe, mine, request] = await Promise.all([
+        fetchCouncilForMe(idToken).catch(() => null),
+        fetchMyCouncils(idToken).catch(() => null),
+        fetchMyCouncilRequest(idToken).catch(() => null),
+      ]);
+      const councils = mine?.councils ?? [];
+      const escrow = forMe?.escrow;
+      const enrolled = !!escrow && escrow.vault_active && escrow.health.status !== 'lost';
+      const check = forMe?.council && enrolled ? await councilVault.checkEscrow(escrow.record, forMe.council.chain).catch(() => null) : null;
+      const problem = check !== null && check.status !== 'ok';
+      const verified = problem ? null : (check?.council?.verified ?? null);
+
+      return {
+        verified,
+        protected: verified === true && escrow?.health.status === 'ok',
+        problem,
+        lost: !!escrow && escrow.vault_active && escrow.health.status === 'lost',
+        moveOffered: !!forMe?.move_to,
+        covered: forMe?.council != null,
+        enrolled,
+        // Joining needs every custodian active: until then the row only opens the team's state.
+        joinable: forMe?.council?.team_ready ?? false,
+        custodian: councils.length > 0,
+        pending: councils.reduce((sum, c) => sum + pendingActions(c), 0),
+        olderVaultRequest: request && !request.vault_active ? request : null,
+      };
+    })
+      .then((state) => {
+        if (!cancelled) setCouncil(state);
+      })
+      .catch(() => {
+        // Optional rows: a failed fetch leaves them hidden.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [keysExist, getIdToken, councilVault]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -880,6 +978,7 @@ export function EncryptionSettings({
           illustration="shield-check"
           title={t('settings.change_phrase_done_title')}
           description={t('settings.change_phrase_committed')}
+          banner={councilDropped && <Notice type={VariantType.WARNING}>{t('council.rotation_dropped')}</Notice>}
           actions={<Button onClick={leaveView}>{t('settings.done')}</Button>}
         />
       );
@@ -975,6 +1074,23 @@ export function EncryptionSettings({
 
       {syncIntegrityFailed && <SyncIntegrityAlert onRetry={handleRecheckSync} isRetrying={isRecheckingSync} />}
 
+      {council.olderVaultRequest && onOpenCouncilRequest && (
+        <Notice type={council.olderVaultRequest.stage === 'released' ? VariantType.WARNING : VariantType.INFO}>
+          <div className={styles.alertStack}>
+            <span>
+              {t(council.olderVaultRequest.stage === 'released' ? 'council.request_banner_released' : 'council.request_banner_progress', {
+                date: new Date(council.olderVaultRequest.vault_created_at_millis),
+              })}
+            </span>
+            <div>
+              <Button size="nano" variant="bordered" color="neutral" onClick={onOpenCouncilRequest}>
+                {t('council.request_banner_open')}
+              </Button>
+            </div>
+          </div>
+        </Notice>
+      )}
+
       {liveEmergencyPhrases.length > 0 && (
         <Notice type={VariantType.WARNING}>
           {t('settings.emergency_phrase_live', { names: liveEmergencyPhrases.join(', '), count: liveEmergencyPhrases.length })}
@@ -1005,6 +1121,17 @@ export function EncryptionSettings({
                 </Button>
               }
             />
+            {onOpenCustodian && council.custodian && (
+              <SettingsRow
+                title={t('council.custodian_row_title')}
+                description={council.pending > 0 ? t('council.custodian_row_pending', { count: council.pending }) : t('council.custodian_row')}
+                action={
+                  <Button size="nano" variant="bordered" color={council.pending > 0 ? 'warning' : 'neutral'} onClick={onOpenCustodian}>
+                    {t('council.custodian_open')}
+                  </Button>
+                }
+              />
+            )}
           </div>
 
           <div className={styles.section}>
@@ -1026,6 +1153,42 @@ export function EncryptionSettings({
                   <Button size="nano" variant="bordered" color="neutral" onClick={onOpenEmergencyAccess}>
                     {t('settings.manage_trusted_contacts')}
                   </Button>
+                }
+              />
+            )}
+            {onOpenRecoveryCouncil && council.covered && (
+              <SettingsRow
+                title={t('council.row_title')}
+                description={t('council.row_description')}
+                chip={
+                  council.problem ? (
+                    <Chip tone="error">{t('council.chip_problem')}</Chip>
+                  ) : council.moveOffered ? (
+                    <Chip tone="info">{t('council.chip_move')}</Chip>
+                  ) : council.verified === false ? (
+                    <Chip tone="warning">{t('council.chip_unverified')}</Chip>
+                  ) : council.protected ? (
+                    <Chip tone="success" icon="trusted">
+                      {t('council.chip_protected')}
+                    </Chip>
+                  ) : null
+                }
+                action={
+                  council.verified === false && !council.moveOffered && onVerifyRecoveryCouncil ? (
+                    <Button size="nano" variant="bordered" color="warning" onClick={onVerifyRecoveryCouncil}>
+                      {t('council.verify_open')}
+                    </Button>
+                  ) : (
+                    <Button size="nano" variant="bordered" color={council.problem ? 'error' : 'neutral'} onClick={onOpenRecoveryCouncil}>
+                      {t(
+                        council.lost && council.joinable
+                          ? 'council.again_button'
+                          : council.enrolled || !council.joinable
+                            ? 'council.row_open'
+                            : 'council.row_join'
+                      )}
+                    </Button>
+                  )
                 }
               />
             )}

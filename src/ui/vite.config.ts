@@ -7,6 +7,7 @@ import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
 import { getMinBrowserVersions } from '../build/generate-min-browser-versions.ts';
 import { vendorMarianneFonts } from '../build/marianne-fonts.ts';
+import { devRestartPolling } from '../build/vite-restart-polling.ts';
 import { parseBrandFont } from '../shared/brand-font.ts';
 import { buildRuntimeConfigBlock } from '../shared/runtime-config.ts';
 
@@ -88,6 +89,7 @@ export function getUiViteConfig(): UserConfig {
       spaFallback(),
       injectRuntimeConfig(),
       vendorMarianneFonts(),
+      devRestartPolling(),
     ],
     define: {
       __MIN_BROWSER_VERSIONS__: JSON.stringify(minBrowserVersions),

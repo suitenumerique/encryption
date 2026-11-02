@@ -1,5 +1,5 @@
-import { Button, DropdownMenu, type DropdownMenuItem, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
-import { Key, More, Shield, UserAdd, XMark } from '@gouvfr-lasuite/ui-components/icons';
+import { Button, type DropdownMenuItem, Modal, ModalSize, VariantType } from '@gouvfr-lasuite/ui-components';
+import { Key, Shield, UserAdd, XMark } from '@gouvfr-lasuite/ui-components/icons';
 import type { TFunction } from 'i18next';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -45,7 +45,9 @@ import {
   personName,
   rearmBodyFromDesignation,
 } from '@encryption/src/ui/components/emergency-access-logic';
-import { Chip, Identity, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { Chip, IdentityCard } from '@encryption/src/ui/components/layout/IdentityCard';
+import { PersonRow } from '@encryption/src/ui/components/layout/PersonRow';
+import { RowMenu } from '@encryption/src/ui/components/layout/RowMenu';
 import { LoadingScreen, Notice, Screen } from '@encryption/src/ui/components/layout/Screen';
 import styles from '@encryption/src/ui/components/layout/layout.module.css';
 import { type VaultRegisteredUser } from '@encryption/src/ui/components/verify-recipients-logic';
@@ -86,63 +88,6 @@ function StatusChip({ phase, t }: { phase: 'invited' | 'confirmed' | 'requested'
     <Chip tone={CHIP_TONES[phase]} icon={CHIP_ICONS[phase]}>
       {t(`emergency.status_${phase}`)}
     </Chip>
-  );
-}
-
-/** The "⋯" of a contact row: the design system's dropdown menu. */
-function RowMenu({ label, options, disabled }: { label: string; options: DropdownMenuItem[]; disabled?: boolean }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <DropdownMenu options={options} isOpen={open} onOpenChange={setOpen}>
-      <Button
-        size="nano"
-        variant="tertiary"
-        color="neutral"
-        aria-label={label}
-        title={label}
-        disabled={disabled}
-        icon={<More aria-hidden size={16} />}
-        onClick={() => setOpen(true)}
-      />
-    </DropdownMenu>
-  );
-}
-
-/**
- * One person in the trusted contacts lists: who, their status, a menu, and,
- * under it, a tinted band for what this person's state asks of the user.
- */
-function ContactRow({
-  name,
-  email,
-  secondary,
-  status,
-  menu,
-  band,
-  bandTone = 'neutral',
-}: {
-  name: string;
-  email: string;
-  secondary?: string;
-  status?: ReactNode;
-  menu?: ReactNode;
-  band?: ReactNode;
-  bandTone?: 'neutral' | 'warning' | 'error';
-}) {
-  const bandClass = bandTone === 'error' ? styles.contactBandError : bandTone === 'warning' ? styles.contactBandWarning : '';
-
-  return (
-    <div className={styles.contact}>
-      <div className={styles.contactMain}>
-        <Identity name={name} email={email} secondary={secondary} />
-        <div className={styles.cardAside}>
-          {status}
-          {menu}
-        </div>
-      </div>
-      {band && <div className={`${styles.contactBand} ${bandClass}`}>{band}</div>}
-    </div>
   );
 }
 
@@ -1162,7 +1107,7 @@ export function EmergencyAccess({
                   }
 
                   return (
-                    <ContactRow
+                    <PersonRow
                       key={entry.id}
                       name={granteeName(entry)}
                       email={entry.grantee_email}
@@ -1276,7 +1221,7 @@ export function EmergencyAccess({
                   }
 
                   return (
-                    <ContactRow
+                    <PersonRow
                       key={entry.id}
                       name={grantorName(entry)}
                       email={entry.grantor_email}

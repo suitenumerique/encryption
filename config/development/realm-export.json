@@ -5,10 +5,14 @@
   "resetPasswordAllowed": true,
   "sslRequired": "external",
   "accessTokenLifespan": 300,
+  "attributes": {
+    "acr.loa.map": "{\"password\":1,\"mfa\":2}"
+  },
   "authenticationFlows": [
     {
-      "alias": "encryption-2fa-browser",
-      "description": "Browser flow with required OTP for the encryption client",
+      "id": "3a506cab-8744-4727-89a8-584d78734287",
+      "alias": "encryption step-up browser",
+      "description": "Username and password; a step-up (acr mfa, asked with prompt=login) only has the password typed again",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,
@@ -17,36 +21,96 @@
           "authenticator": "auth-cookie",
           "authenticatorFlow": false,
           "requirement": "ALTERNATIVE",
-          "priority": 10
+          "priority": 0
         },
         {
           "authenticatorFlow": true,
           "requirement": "ALTERNATIVE",
-          "priority": 20,
-          "flowAlias": "encryption-2fa-browser forms"
+          "priority": 1,
+          "flowAlias": "encryption step-up browser forms"
         }
       ]
     },
     {
-      "alias": "encryption-2fa-browser forms",
-      "description": "Username/password + OTP sub-flow",
+      "alias": "encryption step-up browser forms",
+      "description": "One sub-flow per level of authentication",
       "providerId": "basic-flow",
       "topLevel": false,
       "builtIn": false,
       "authenticationExecutions": [
         {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 0,
+          "flowAlias": "encryption step-up level 1"
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 1,
+          "flowAlias": "encryption step-up level 2"
+        }
+      ]
+    },
+    {
+      "alias": "encryption step-up level 1",
+      "description": "Level 1 (acr password): username and password",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorConfig": "encryption step-up level 1",
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0
+        },
+        {
           "authenticator": "auth-username-password-form",
           "authenticatorFlow": false,
           "requirement": "REQUIRED",
-          "priority": 10
-        },
-        {
-          "authenticator": "auth-otp-form",
-          "authenticatorFlow": false,
-          "requirement": "REQUIRED",
-          "priority": 20
+          "priority": 1
         }
       ]
+    },
+    {
+      "alias": "encryption step-up level 2",
+      "description": "Level 2 (acr mfa): granted after a fresh level 1, standing in for a second factor in local development",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorConfig": "encryption step-up level 2",
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0
+        },
+        {
+          "authenticator": "allow-access-authenticator",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 1
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "encryption step-up level 1",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "36000"
+      }
+    },
+    {
+      "alias": "encryption step-up level 2",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "0"
+      }
     }
   ],
   "clients": [
@@ -196,7 +260,9 @@
         }
       ],
       "defaultClientScopes": ["web-origins", "roles", "basic", "acr"],
-      "authenticationFlowBindingOverrides": {}
+      "authenticationFlowBindingOverrides": {
+        "browser": "3a506cab-8744-4727-89a8-584d78734287"
+      }
     }
   ],
   "users": [

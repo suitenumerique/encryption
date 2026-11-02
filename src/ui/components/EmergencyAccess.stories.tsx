@@ -386,7 +386,7 @@ AuditFailuresStory.parameters = {
   msw: lists([auditTampered, auditStale, auditOutdated], []),
 };
 AuditFailuresStory.play = async ({ canvasElement }) => {
-  await within(canvasElement).findByText(/does not match what you signed/i);
+  await within(canvasElement).findByText(/does not match what you set up/i);
   await within(canvasElement).findByText(/encryption identity has changed/i);
   await within(canvasElement).findByText(/encryption key has been updated/i);
   // A contact with no name known yet is named by their email.
@@ -404,7 +404,7 @@ AuditTamperedRecoveryRunningStory.parameters = {
   msw: lists([{ ...auditTampered, status: 'recoveryRequested', recovery_requested_at_millis: NOW, deadline_millis: NOW + 12 * DAY }], []),
 };
 AuditTamperedRecoveryRunningStory.play = async ({ canvasElement }) => {
-  await within(canvasElement).findByText(/does not match what you signed/i);
+  await within(canvasElement).findByText(/does not match what you set up/i);
   await playFindButton(canvasElement, i18n.t('emergency.btn_refuse_request'));
 };
 

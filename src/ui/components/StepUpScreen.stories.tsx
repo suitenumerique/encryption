@@ -49,6 +49,20 @@ NoSecondFactorStory.play = async ({ canvasElement }) => {
 
 export const NoSecondFactor = prepareStory(NoSecondFactorStory);
 
+// The confirmation came back with another account: said, and asked again.
+const WrongUserStory = Template.bind({});
+WrongUserStory.args = {
+  state: 'required',
+  isAuthenticating: false,
+  wrongUser: true,
+};
+WrongUserStory.play = async ({ canvasElement }) => {
+  await within(canvasElement).findByText(i18n.t('auth.step_up_wrong_user'));
+  await playFindButton(canvasElement, i18n.t('auth.step_up_confirm'));
+};
+
+export const WrongUser = prepareStory(WrongUserStory);
+
 // The step-up tab is out: the button opens it again, Cancel stops waiting, and the hint says where to look.
 const AuthenticatingStory = Template.bind({});
 AuthenticatingStory.args = {

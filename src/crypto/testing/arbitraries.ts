@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 
-import { type VaultState, addEncryptionKey, addIdentity, deleteTofu, emptyVaultState, setTofu } from '@encryption/src/crypto/vault-state';
+import { type VaultState, addEncryptionKey, addIdentity, deleteTofu, emptyVaultState, pinCouncil, setTofu } from '@encryption/src/crypto/vault-state';
 
 const epochMs = fc.integer({ min: 0, max: 2_000_000_000_000 });
 
@@ -16,11 +16,19 @@ const tofuOp = fc.record({
   thenDelete: fc.boolean(),
 });
 
+// Two councils, three possible versions 1: two devices pinning different ones is the case to exercise.
+const councilOp = fc.record({
+  councilId: fc.constantFrom('c0', 'c1'),
+  genesisHash: fc.constantFrom('h0', 'h1', 'h2'),
+  verified: fc.boolean(),
+  at: fc.integer({ min: 0, max: 1_000 }),
+});
+
 // A vault state built only through the public mutators, so every generated
 // value respects the invariants real code relies on (active pointer <= max key).
 export const vaultStateArb: fc.Arbitrary<VaultState> = fc
-  .tuple(keyedEntries, keyedEntries, fc.array(tofuOp, { maxLength: 6 }))
-  .map(([identities, keys, tofuOps]) => {
+  .tuple(keyedEntries, keyedEntries, fc.array(tofuOp, { maxLength: 6 }), fc.array(councilOp, { maxLength: 4 }))
+  .map(([identities, keys, tofuOps, councilOps]) => {
     let state = emptyVaultState();
 
     for (const [generation, createdAt] of identities) {
@@ -41,6 +49,8 @@ export const vaultStateArb: fc.Arbitrary<VaultState> = fc
       state = setTofu(state, op.userId, op.fingerprint, op.status, op.at);
       if (op.thenDelete) state = deleteTofu(state, op.userId, op.at + 50);
     }
+
+    for (const op of councilOps) state = pinCouncil(state, op.councilId, op.genesisHash, op.verified, op.at);
 
     return state;
   });

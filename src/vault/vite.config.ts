@@ -2,6 +2,7 @@ import { resolve } from 'path';
 import sbom from 'rollup-plugin-sbom';
 import { type Plugin, type UserConfig, defineConfig } from 'vite';
 
+import { devRestartPolling } from '../build/vite-restart-polling.ts';
 import { parseDeviceInactivityDays } from '../shared/device-inactivity.ts';
 import { buildRuntimeConfigBlock } from '../shared/runtime-config.ts';
 
@@ -75,6 +76,7 @@ export function getVaultViteConfig(): UserConfig {
     plugins: [
       injectRuntimeConfig(),
       assertOnlyExpectedChunks(),
+      devRestartPolling(),
       {
         ...sbom({
           outDir: '.',

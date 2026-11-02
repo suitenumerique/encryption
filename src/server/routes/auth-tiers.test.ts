@@ -53,6 +53,7 @@ const EXPECTED_AUTH_SURFACE = [
   'POST /api/vault/challenge SKIP_SIG idToken=no',
   'POST /api/vault/fetch SKIP_SIG idToken=no',
   'POST /api/vault/reactivate SKIP_SIG idToken=no',
+  'POST /api/vault/reactivate-keyring SKIP_SIG idToken=no',
   'PUT /api/vault/items/:itemId SIG_ONLY idToken=no',
   'PUT /api/vault/keyring DEFAULT idToken=no',
 ];

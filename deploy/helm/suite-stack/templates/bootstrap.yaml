@@ -7,6 +7,10 @@
 {{- $minioHost := include "suite-stack.minioHost" . }}
 {{- $keycloakHost := include "suite-stack.keycloakHost" . }}
 {{- $realm := $s.keycloak.realm.name }}
+{{- $fixedUsers := list }}
+{{- if and .Values.encryption.enabled .Values.accounts.enabled }}
+{{- range $b.keycloak.users }}{{ if .id }}{{ $fixedUsers = append $fixedUsers . }}{{ end }}{{ end }}
+{{- end }}
 {{/*
 What the shared chart cannot do on its own, in the order the products need it. The Job
 runs after the shared services exist (post-install) and, on an upgrade, before the
@@ -161,6 +165,17 @@ stringData:
     {{- range $b.keycloak.users }}
     ensure_user {{ .username | squote }} {{ .email | squote }} {{ .firstName | squote }} {{ .lastName | squote }} {{ .password | squote }}
     {{- end }}
+  {{- with $fixedUsers }}
+  # The testers with a fixed `id`, as the encryption service would mint them at their
+  # first sign-in through Accounts, so a value can name them before it. Left alone once
+  # there: a sign-in refreshes the email and the names.
+  encryption-users.sql: |
+    \set ON_ERROR_STOP on
+    {{- range . }}
+    INSERT INTO users (id, email, first_name, last_name) VALUES ({{ .id | squote }}, {{ .email | lower | squote }}, {{ .firstName | squote }}, {{ .lastName | squote }}) ON CONFLICT (id) DO NOTHING;
+    INSERT INTO oidc_accounts (id, user_id, issuer, subject) VALUES (gen_random_uuid(), {{ .id | squote }}, :'issuer', {{ .id | squote }}) ON CONFLICT (issuer, subject) DO NOTHING;
+    {{- end }}
+  {{- end }}
   {{- if .Values.encryption.enabled }}
   ENCRYPTION_MIGRATION_DATABASE_URL: {{ include "suite-stack.encryptionDatabaseUrl" (dict "role" "migrator" "password" $b.encryption.migratorPassword "host" $postgresHost "database" $b.encryption.database) | quote }}
   {{- end }}
@@ -263,7 +278,6 @@ spec:
               value: {{ $b.keycloak.notice.header | html | quote }}
           securityContext: *containerSecurityContext
           volumeMounts: *volumeMounts
-      containers:
         {{- if .Values.encryption.enabled }}
         # The service's migration, as its own chart runs it (templates/migration-job.yaml
         # there), with the migrator role the first init container created.
@@ -289,6 +303,30 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+        {{- end }}
+      containers:
+        {{- if $fixedUsers }}
+        - name: encryption-users
+          image: {{ $s.postgres.image | quote }}
+          command:
+            - psql
+            - -v
+            - {{ printf "issuer=%s" .Values.encryption.config.oidc.issuer | quote }}
+            - -f
+            - /scripts/encryption-users.sql
+          env:
+            - name: PGHOST
+              value: {{ $postgresHost | quote }}
+            - name: PGUSER
+              value: encryption_migrator
+            - name: PGPASSWORD
+              value: {{ $b.encryption.migratorPassword | quote }}
+            - name: PGDATABASE
+              value: {{ $b.encryption.database | quote }}
+            - name: PGOPTIONS
+              value: -c search_path=encryption
+          securityContext: *containerSecurityContext
+          volumeMounts: *volumeMounts
         {{- else }}
         - name: done
           image: {{ $s.postgres.image | quote }}

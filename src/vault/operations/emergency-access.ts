@@ -145,7 +145,7 @@ export async function handleVerifyEscrows(
 ): Promise<{ results: Array<{ id: string; status: EscrowAuditStatus }> }> {
   const { loaded } = await loadWithIdentity(userId);
   const identity = activeIdentity(loaded.state);
-  const identityRawKey = importPublicKeyFromBytes(base64ToUint8(identity!.signaturePublicKey));
+  const identityRawKey = base64ToUint8(identity!.signaturePublicKey);
 
   const granteeIds = [...new Set(payload.contacts.map((c) => c.grantee_user_id))];
   const { users } = granteeIds.length > 0 ? await handleFetchPublicKeys(userId, { userIds: granteeIds }) : { users: {} };
