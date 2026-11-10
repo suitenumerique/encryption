@@ -18,7 +18,8 @@ import { resolveKeyChain, resolveSymmetricKey } from '@encryption/src/vault/oper
  * The user's entry-point key (`encryptedSymmetricKey` — root key wrapped
  * under the user's pubkey) is shared between both chains: this operation
  * is for moves within a single encrypted root. Cross-root moves require
- * different access plumbing and are out of scope here.
+ * different access plumbing and are out of scope here. A chain from another
+ * root fails closed: its first link does not open under this root's key.
  *
  * `oldEncryptedKeyChain` / `newEncryptedKeyChain` are optional — empty /
  * undefined means "the parent IS the encryption root" (the file lives

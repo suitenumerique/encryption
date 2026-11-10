@@ -294,4 +294,54 @@ describe('handleRewrapNestedKey', () => {
       })
     ).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
   });
+
+  describe('rejects a chain from another encryption root', () => {
+    async function twoRoots() {
+      const publicKey = await setupKeyPair();
+      const newRoot = async () =>
+        (await handleEncryptWithoutKey(USER_ID, { data: new ArrayBuffer(0), userPublicKeys: { [USER_ID]: publicKey } })).encryptedKeys[USER_ID];
+      const entry = await newRoot();
+      const otherEntry = await newRoot();
+
+      const folder = await handleEncryptNestedWithoutKey(USER_ID, { data: new ArrayBuffer(0), encryptedSymmetricKey: entry, encryptedKeyChain: [] });
+      const foreignFolder = await handleEncryptNestedWithoutKey(USER_ID, {
+        data: new ArrayBuffer(0),
+        encryptedSymmetricKey: otherEntry,
+        encryptedKeyChain: [],
+      });
+      const file = await handleEncryptNestedWithoutKey(USER_ID, {
+        data: new ArrayBuffer(0),
+        encryptedSymmetricKey: entry,
+        encryptedKeyChain: [folder.wrappedKey],
+      });
+
+      return { entry, folder, foreignFolder, file };
+    }
+
+    it('as the new parent', async () => {
+      const { entry, folder, foreignFolder, file } = await twoRoots();
+
+      await expect(
+        handleRewrapNestedKey(USER_ID, {
+          encryptedSymmetricKey: entry,
+          oldEncryptedKey: file.wrappedKey,
+          oldEncryptedKeyChain: [folder.wrappedKey],
+          newEncryptedKeyChain: [foreignFolder.wrappedKey],
+        })
+      ).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
+    });
+
+    it('as the old parent', async () => {
+      const { entry, folder, foreignFolder, file } = await twoRoots();
+
+      await expect(
+        handleRewrapNestedKey(USER_ID, {
+          encryptedSymmetricKey: entry,
+          oldEncryptedKey: file.wrappedKey,
+          oldEncryptedKeyChain: [foreignFolder.wrappedKey],
+          newEncryptedKeyChain: [folder.wrappedKey],
+        })
+      ).rejects.toMatchObject({ code: VaultErrorCode.WRONG_SECRET_KEY });
+    });
+  });
 });
