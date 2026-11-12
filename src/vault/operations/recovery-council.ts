@@ -60,7 +60,6 @@ import {
 import { STORE_COUNCIL_REQUEST } from '@encryption/src/shared/constants';
 import { genesisPeer } from '@encryption/src/shared/council-quorum';
 import { normalizeDecimalFingerprint } from '@encryption/src/shared/decimal-fingerprint';
-import { mnemonicLanguageSchema } from '@encryption/src/shared/schemas/mnemonic-language';
 import {
   CouncilAttestationWireSchema,
   CouncilCapsuleWireSchema,
@@ -112,27 +111,6 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 }
 
 const ChainSchema = z.array(RosterVersionWireSchema).max(1000);
-
-// The interface's own fields of each message, checked before anything runs; what
-// came from the server inside them (chains, records, capsules) is parsed where
-// it is used, as VAULT_INTEGRITY_FAILED.
-const councilId = z.string().min(1).max(64);
-const idToken = z.string().min(1).max(16_384);
-const Inputs = {
-  roster: z.object({ councilId, chain: z.array(z.unknown()), escrow: z.unknown().optional() }),
-  escrow: z.object({ councilId, chain: z.array(z.unknown()), escrow: z.unknown().optional(), lang: mnemonicLanguageSchema.optional() }),
-  check: z.object({ record: z.unknown(), chain: z.array(z.unknown()) }),
-  requestKey: z.object({ serverFingerprint: z.string().max(64).nullable().optional() }),
-  complete: z.object({ released: z.unknown(), idToken }),
-  reactivate: z.object({ idToken }),
-  contribute: z.object({ detail: z.unknown(), inPerson: z.boolean(), meetingCode: z.string().max(128).optional() }),
-  sign: z.object({ councilId, chain: z.array(z.unknown()), proposal: z.unknown() }),
-  batch: z.object({ batch: z.unknown() }),
-};
-
-function checkInput(schema: z.ZodType, payload: unknown): void {
-  if (!schema.safeParse(payload).success) throw new VaultError(VaultErrorCode.INVALID_REQUEST, 'Malformed council request.');
-}
 
 async function verifiedChain(
   councilId: string,
@@ -293,7 +271,6 @@ export async function handleVerifyCouncilRoster(
   userId: string,
   payload: { councilId: string; chain: RosterVersionWire[]; escrow?: CouncilEscrowRecordWire }
 ): Promise<{ version: number } & CouncilIdentity> {
-  checkInput(Inputs.roster, payload);
   const { loaded } = await loadWithIdentity(userId);
   const { head, identity } = await verifiedCouncil(userId, loaded.state, payload);
 
@@ -305,7 +282,6 @@ export async function handleMarkCouncilVerified(
   userId: string,
   payload: { councilId: string; chain: RosterVersionWire[] }
 ): Promise<CouncilIdentity> {
-  checkInput(Inputs.roster, payload);
   const { loaded } = await loadWithIdentity(userId);
   const { versions } = await verifiedChain(payload.councilId, payload.chain);
   const genesis = versions[0];
@@ -338,7 +314,6 @@ export async function handleCreateCouncilEscrow(
   userId: string,
   payload: { councilId: string; chain: RosterVersionWire[]; escrow?: CouncilEscrowRecordWire; lang?: MnemonicLanguage }
 ): Promise<CouncilEscrowBody> {
-  checkInput(Inputs.escrow, payload);
   const { loaded, identitySecret } = await loadWithIdentity(userId);
   const { head, genesis } = await verifiedCouncil(userId, loaded.state, payload);
   const custodianKeys = await membersKeys(userId, head, loaded.state);
@@ -380,7 +355,6 @@ export async function handleCheckCouncilEscrow(
   userId: string,
   payload: { record: CouncilEscrowRecordWire; chain: RosterVersionWire[] }
 ): Promise<{ status: CouncilEscrowCheck; renewalDue: boolean; council: CouncilIdentity | null }> {
-  checkInput(Inputs.check, payload);
   const { loaded } = await loadWithIdentity(userId);
   const wire = parse(CouncilEscrowRecordWireSchema, payload.record);
 
@@ -453,7 +427,6 @@ export async function handleCouncilRequestKey(
   userId: string,
   payload: { serverFingerprint?: string | null } = {}
 ): Promise<{ ephemeralPublicKey: string; fingerprint: string } | null> {
-  checkInput(Inputs.requestKey, payload);
   const stored = await readRequestKey(userId);
   if (!stored) return null;
 
@@ -482,7 +455,6 @@ export async function handleCompleteCouncilRecovery(
   vaultCreatedAtMillis: number;
   contributors: Array<{ name: string | null; inPerson: boolean }>;
 }> {
-  checkInput(Inputs.complete, payload);
   const stored = await readRequestKey(userId);
   if (!stored) throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'This browser did not open the recovery request.');
 
@@ -530,7 +502,6 @@ export async function handleReactivateCouncilVault(
   userId: string,
   payload: { idToken: string }
 ): Promise<{ publicKey: string; signaturePublicKey: string }> {
-  checkInput(Inputs.reactivate, payload);
   const phrase = handedOverPhrase(userId);
   if (!phrase) throw new VaultError(VaultErrorCode.NOT_INITIALIZED, 'No recovered vault waits to be brought back.');
 
@@ -601,7 +572,6 @@ export async function handleCouncilContribute(
   userId: string,
   payload: { detail: CustodianRequestDetail; inPerson: boolean; meetingCode?: string }
 ): Promise<CouncilContributionBody> {
-  checkInput(Inputs.contribute, payload);
   const { loaded, identitySecret } = await loadWithIdentity(userId);
   const detail = parse(CustodianRequestDetailSchema, payload.detail);
   const ephemeral = base64ToUint8(detail.ephemeral_public_key);
@@ -665,7 +635,6 @@ export async function handleSignCouncilRoster(
   userId: string,
   payload: { councilId: string; chain: RosterVersionWire[]; proposal: RosterVersionWire }
 ): Promise<{ signature: string }> {
-  checkInput(Inputs.sign, payload);
   const { loaded, identitySecret } = await loadWithIdentity(userId);
   const myWire = ownIdentityWire(loaded.state);
   const proposal = rosterRecordFromWire(payload.councilId, parse(RosterVersionWireSchema, payload.proposal));
@@ -728,7 +697,6 @@ export async function handleCouncilReshareBatch(
   userId: string,
   payload: { batch: CouncilReshareBatch }
 ): Promise<{ keys: CouncilReshareKeysBody | null; subShares: CouncilReshareSubSharesBody | null }> {
-  checkInput(Inputs.batch, payload);
   const { loaded, identitySecret } = await loadWithIdentity(userId);
   const batch = parse(CouncilReshareBatchSchema, payload.batch);
   const { head: target, versions } = await verifiedChain(batch.council_id, batch.chain);
@@ -807,7 +775,6 @@ export async function handleCheckCouncilShares(
   userId: string,
   payload: { batch: CouncilCheckBatch }
 ): Promise<{ results: CouncilCheckResultsBody['results'] }> {
-  checkInput(Inputs.batch, payload);
   const batch = parse(CouncilCheckBatchSchema, payload.batch);
   if (batch.escrows.length === 0) return { results: [] };
 

@@ -152,7 +152,7 @@ type Listener<K extends keyof EncryptionClientEventMap> = (data: EncryptionClien
  *       encryption.on('onboarding:complete', ({ publicKey }) => { ... });
  *     }
  *
- *     const { encryptedContent, encryptedKeys } = await encryption.encryptWithoutKey(data, userPublicKeys);
+ *     const { encryptedContent, encryptedKeys } = await encryption.encryptWithoutKey(data, { [sub]: { email, name } });
  *   </script>
  */
 // The vault's emergency-pending push is a bare routing signal: which prompt the

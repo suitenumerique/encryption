@@ -406,15 +406,6 @@ describe('enrollment', () => {
     });
   });
 
-  it('refuses a request whose own fields are malformed before reading anything', async () => {
-    await expect(handleCreateCouncilEscrow(ME, { councilId: '', chain: [] } as never)).rejects.toMatchObject({
-      code: VaultErrorCode.INVALID_REQUEST,
-    });
-    await expect(handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: 'x', lang: 'klingon' } as never)).rejects.toMatchObject({
-      code: VaultErrorCode.INVALID_REQUEST,
-    });
-  });
-
   it('audits an escrow: signed by me, head reachable from the version it pins', async () => {
     const { wire } = await genesis([a, b, c], 2);
     const body = await handleCreateCouncilEscrow(ME, { councilId: COUNCIL, chain: [wire] });

@@ -1,87 +1,91 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  PRIVILEGED_OPERATIONS,
-  VaultPrivilegedRequestSchema,
-  VaultProductRequestSchema,
-  VaultRequestSchema,
-} from '@encryption/src/shared/schemas/post-message';
+  MSG_VAULT_ACCEPT_FINGERPRINT,
+  MSG_VAULT_CHECK_FINGERPRINTS,
+  MSG_VAULT_COUNCIL_CREATE_ESCROW,
+  MSG_VAULT_DECRYPT_WITH_KEY,
+  MSG_VAULT_ENCRYPT_WITHOUT_KEY,
+  MSG_VAULT_HAS_KEYS,
+  MSG_VAULT_SHARE_KEYS,
+} from '@encryption/src/shared/constants';
+import { PRIVILEGED_OPERATIONS, VAULT_REQUEST_PAYLOADS, parseVaultRequest } from '@encryption/src/shared/schemas/post-message';
 
-describe('post-message schemas', () => {
-  describe('VaultProductRequestSchema', () => {
-    it('should accept valid product operations', () => {
-      const valid = { type: 'vault:has-keys', requestId: '123' };
-      expect(() => VaultProductRequestSchema.parse(valid)).not.toThrow();
-    });
+const refusal = (type: string, payload: unknown) => {
+  const parsed = parseVaultRequest(type, payload);
 
-    it('should accept encrypt-without-key request with payload', () => {
-      const valid = {
-        type: 'vault:encrypt-without-key',
-        requestId: '123',
-        payload: { data: 'base64data', userPublicKeys: { user1: 'key1' } },
-      };
-      expect(() => VaultProductRequestSchema.parse(valid)).not.toThrow();
-    });
+  return 'error' in parsed ? parsed.error : null;
+};
 
-    it('should accept share-keys request with payload', () => {
-      const valid = {
-        type: 'vault:share-keys',
-        requestId: '123',
-        payload: { encryptedSymmetricKey: 'key', userPublicKeys: { user1: 'key1' } },
-      };
-      expect(() => VaultProductRequestSchema.parse(valid)).not.toThrow();
-    });
-
-    it('should reject privileged operations', () => {
-      const invalid = { type: 'vault:generate-keys', requestId: '123' };
-      expect(() => VaultProductRequestSchema.parse(invalid)).toThrow();
-    });
-
-    it('should reject unknown operations', () => {
-      const invalid = { type: 'vault:unknown', requestId: '123' };
-      expect(() => VaultProductRequestSchema.parse(invalid)).toThrow();
-    });
+describe('parseVaultRequest', () => {
+  it('accepts an operation without payload', () => {
+    expect(parseVaultRequest(MSG_VAULT_HAS_KEYS, undefined)).toEqual({ request: { type: MSG_VAULT_HAS_KEYS, payload: {} } });
   });
 
-  describe('VaultPrivilegedRequestSchema', () => {
-    it('should accept generate-keys', () => {
-      const valid = { type: 'vault:generate-keys', requestId: '123' };
-      expect(() => VaultPrivilegedRequestSchema.parse(valid)).not.toThrow();
-    });
-
-    it('should accept destroy-keys', () => {
-      const valid = { type: 'vault:destroy-keys', requestId: '123' };
-      expect(() => VaultPrivilegedRequestSchema.parse(valid)).not.toThrow();
-    });
-
-    it('should reject product operations', () => {
-      const invalid = { type: 'vault:encrypt-without-key', requestId: '123', payload: { data: 'test', userPublicKeys: {} } };
-      expect(() => VaultPrivilegedRequestSchema.parse(invalid)).toThrow();
-    });
+  it('refuses an unknown operation', () => {
+    expect(refusal('vault:unknown', {})).toBe('Unknown operation.');
+    expect(refusal('__proto__', {})).toBe('Unknown operation.');
   });
 
-  describe('PRIVILEGED_OPERATIONS set', () => {
-    it('should contain all sensitive operations', () => {
-      expect(PRIVILEGED_OPERATIONS.has('vault:generate-keys')).toBe(true);
-      expect(PRIVILEGED_OPERATIONS.has('vault:destroy-keys')).toBe(true);
-      expect(PRIVILEGED_OPERATIONS.has('vault:accept-fingerprint')).toBe(true);
-      expect(PRIVILEGED_OPERATIONS.has('vault:refuse-fingerprint')).toBe(true);
-    });
+  it('takes binary content as is, without copying it', () => {
+    const data = new ArrayBuffer(8);
+    const parsed = parseVaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data, recipientSubs: ['sub-1'] });
 
-    it('should NOT contain product operations', () => {
-      expect(PRIVILEGED_OPERATIONS.has('vault:has-keys')).toBe(false);
-      expect(PRIVILEGED_OPERATIONS.has('vault:encrypt-without-key')).toBe(false);
-      expect(PRIVILEGED_OPERATIONS.has('vault:decrypt-with-key')).toBe(false);
-      expect(PRIVILEGED_OPERATIONS.has('vault:get-public-key')).toBe(false);
-      expect(PRIVILEGED_OPERATIONS.has('vault:check-fingerprints')).toBe(false);
-      expect(PRIVILEGED_OPERATIONS.has('vault:get-known-fingerprints')).toBe(false);
-    });
+    expect('request' in parsed && parsed.request.payload).toEqual({ data, recipientSubs: ['sub-1'] });
+    expect('request' in parsed && (parsed.request.payload as { data: ArrayBuffer }).data).toBe(data);
   });
 
-  describe('VaultRequestSchema (combined)', () => {
-    it('should accept both product and privileged operations', () => {
-      expect(() => VaultRequestSchema.parse({ type: 'vault:has-keys', requestId: '1' })).not.toThrow();
-      expect(() => VaultRequestSchema.parse({ type: 'vault:generate-keys', requestId: '2' })).not.toThrow();
-    });
+  it('accepts a byte view for a binary field, as an ArrayBuffer of exactly its bytes', () => {
+    const view = new Uint8Array([0, 1, 2, 3]).subarray(1, 3);
+    const parsed = parseVaultRequest(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data: view, recipientSubs: [] });
+    const data = 'request' in parsed ? (parsed.request.payload as { data: ArrayBuffer }).data : null;
+
+    expect(data).toBeInstanceOf(ArrayBuffer);
+    expect([...new Uint8Array(data!)]).toEqual([1, 2]);
+  });
+
+  it('refuses a share or an encryption without its recipients, rather than sharing with nobody', () => {
+    expect(refusal(MSG_VAULT_ENCRYPT_WITHOUT_KEY, { data: new ArrayBuffer(1) })).toContain('recipientSubs');
+    expect(refusal(MSG_VAULT_SHARE_KEYS, { encryptedSymmetricKey: new ArrayBuffer(1), userPublicKeys: {} })).toContain('recipientSubs');
+  });
+
+  it('names the malformed fields, never their values', () => {
+    const error = refusal(MSG_VAULT_DECRYPT_WITH_KEY, { encryptedData: 'secret-content', encryptedSymmetricKey: new ArrayBuffer(1), keyVersion: 1 });
+
+    expect(error).toContain('encryptedData');
+    expect(error).not.toContain('secret-content');
+  });
+
+  it('refuses a trust decision that names no target', () => {
+    expect(refusal(MSG_VAULT_ACCEPT_FINGERPRINT, { fingerprint: '1234' })).not.toBeNull();
+    expect(refusal(MSG_VAULT_ACCEPT_FINGERPRINT, { sub: 'sub-1', fingerprint: '1234' })).toBeNull();
+  });
+
+  it("checks a council message's own fields, leaving what came from the server to its handler", () => {
+    expect(refusal(MSG_VAULT_COUNCIL_CREATE_ESCROW, { councilId: '', chain: [] })).toContain('councilId');
+    expect(refusal(MSG_VAULT_COUNCIL_CREATE_ESCROW, { councilId: 'c', chain: 'x', lang: 'klingon' })).toContain('chain');
+    expect(refusal(MSG_VAULT_COUNCIL_CREATE_ESCROW, { councilId: 'c', chain: [{ anything: true }] })).toBeNull();
+  });
+
+  it('refuses a record where a map of fingerprints is expected', () => {
+    expect(refusal(MSG_VAULT_CHECK_FINGERPRINTS, { userFingerprints: ['1234'] })).toContain('userFingerprints');
+  });
+});
+
+describe('PRIVILEGED_OPERATIONS', () => {
+  it('names only operations the vault knows', () => {
+    for (const type of PRIVILEGED_OPERATIONS) expect(Object.hasOwn(VAULT_REQUEST_PAYLOADS, type), type).toBe(true);
+  });
+
+  it('leaves the product operations open', () => {
+    for (const type of [
+      MSG_VAULT_HAS_KEYS,
+      MSG_VAULT_ENCRYPT_WITHOUT_KEY,
+      MSG_VAULT_DECRYPT_WITH_KEY,
+      MSG_VAULT_SHARE_KEYS,
+      MSG_VAULT_CHECK_FINGERPRINTS,
+    ]) {
+      expect(PRIVILEGED_OPERATIONS.has(type), type).toBe(false);
+    }
   });
 });

@@ -1,4 +1,3 @@
-import type { MnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import {
   MSG_VAULT_ACCEPT_FINGERPRINT,
   MSG_VAULT_APPROVE_DEVICE,
@@ -50,7 +49,7 @@ import {
   MSG_VAULT_VERIFY_ESCROWS,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
-import { PRIVILEGED_OPERATIONS, type VaultResponse } from '@encryption/src/shared/schemas/post-message';
+import { PRIVILEGED_OPERATIONS, type VaultRequest, type VaultResponse, parseVaultRequest } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode, classifyVaultError } from '@encryption/src/shared/vault-error';
 import { recordDeviceUse } from '@encryption/src/vault/device-activity';
 import { checkEmergencyPending } from '@encryption/src/vault/emergency-pending';
@@ -107,13 +106,8 @@ import { isInterfaceOrigin, isOriginAllowed } from '@encryption/src/vault/origin
 import { resolveBoundaryUser, resolveLocalUserId } from '@encryption/src/vault/user-resolution';
 import { ensureVaultSyncDriver, resumeVaultSyncDriver, vaultSyncDriverOutcome } from '@encryption/src/vault/vault-sync-driver';
 
-async function dispatch(data: unknown, userId: string): Promise<unknown> {
-  // Extract type and payload from the message. Payload may contain ArrayBuffer
-  // which Zod cannot validate, so we validate the message structure only.
-  const msg = data as { type: string; payload?: Record<string, unknown> };
-  const payload = msg.payload ?? {};
-
-  switch (msg.type) {
+async function dispatch(request: VaultRequest, userId: string): Promise<unknown> {
+  switch (request.type) {
     // Product operations (any allowed origin)
     case MSG_VAULT_HAS_KEYS:
       return handleHasKeys(userId);
@@ -124,54 +118,29 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       // id space it holds); the vault resolves them to encryption keys ONLY for
       // identities whose binding verifies and that are TOFU-trusted (trust is
       // keyed internally). A product can never inject raw keys.
-      const p = payload as { data: ArrayBuffer; recipientSubs: string[] };
-      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs ?? []);
+      const { data, recipientSubs } = request.payload;
+      const userPublicKeys = await resolveTrustedRecipientKeys(userId, recipientSubs);
 
       // The creator owns what they create: the copy is for the key covering them.
-      return handleEncryptWithoutKey(userId, { data: p.data, userPublicKeys, maintenanceEscrowKey: await resolveMaintenanceKey({ userId }) });
+      return handleEncryptWithoutKey(userId, { data, userPublicKeys, maintenanceEscrowKey: await resolveMaintenanceKey({ userId }) });
     }
     case MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY:
-      return handleEncryptNestedWithoutKey(
-        userId,
-        payload as {
-          data: ArrayBuffer;
-          encryptedSymmetricKey: ArrayBuffer;
-          encryptedKeyChain?: ArrayBuffer[];
-        }
-      );
+      return handleEncryptNestedWithoutKey(userId, request.payload);
     case MSG_VAULT_ENCRYPT_WITH_KEY:
-      return handleEncryptWithKey(userId, payload as { data: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[] });
+      return handleEncryptWithKey(userId, request.payload);
     case MSG_VAULT_DECRYPT_WITH_KEY:
-      return handleDecryptWithKey(
-        userId,
-        payload as { encryptedData: ArrayBuffer; encryptedSymmetricKey: ArrayBuffer; encryptedKeyChain?: ArrayBuffer[]; keyVersion: number }
-      );
+      return handleDecryptWithKey(userId, request.payload);
     case MSG_VAULT_REWRAP_NESTED_KEY:
-      return handleRewrapNestedKey(
-        userId,
-        payload as {
-          encryptedSymmetricKey: ArrayBuffer;
-          oldEncryptedKey: ArrayBuffer;
-          oldEncryptedKeyChain?: ArrayBuffer[];
-          newEncryptedKeyChain?: ArrayBuffer[];
-        }
-      );
+      return handleRewrapNestedKey(userId, request.payload);
     case MSG_VAULT_WRAP_NESTED_KEY:
-      return handleWrapNestedKey(
-        userId,
-        payload as {
-          userEncryptedKey: ArrayBuffer;
-          newEntryEncryptedSymmetricKey: ArrayBuffer;
-          newEncryptedKeyChain?: ArrayBuffer[];
-        }
-      );
+      return handleWrapNestedKey(userId, request.payload);
     case MSG_VAULT_SHARE_KEYS: {
       // Same trust gate as encrypt-without-key: resolve recipient subs to
       // verified, TOFU-trusted encryption keys before the wrap.
       // The copy is for the key covering the resource's OWNER, whom the product
       // names (its creator, say); without one, the sharer is taken as the owner.
-      const p = payload as { encryptedSymmetricKey: ArrayBuffer; recipientSubs: string[]; encryptedKeyChain?: ArrayBuffer[]; ownerSub?: string };
-      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs ?? []);
+      const p = request.payload;
+      const userPublicKeys = await resolveTrustedRecipientKeys(userId, p.recipientSubs);
 
       return handleShareKeys(userId, {
         encryptedSymmetricKey: p.encryptedSymmetricKey,
@@ -186,32 +155,24 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
       // vault-internal callers. Entries carry the internal id as a field
       // (public directory data, and the wrappers here need it for TOFU), but
       // products have no use for it.
-      return handleFetchPublicKeys(userId, payload as { userIds?: string[]; subs?: string[] });
+      return handleFetchPublicKeys(userId, request.payload);
     case MSG_VAULT_CHECK_FINGERPRINTS:
       // Callers hold subs; the wrapper resolves them to the internal ids the
       // TOFU store keys on and maps results back.
-      return handleCheckFingerprintsBySubs(userId, payload as { userFingerprints: Record<string, string> });
+      return handleCheckFingerprintsBySubs(userId, request.payload);
     // A trust decision names its target either by INTERNAL user id (`userId`,
     // used by the emergency-access flows whose directory lookups already yield
     // internal ids) or by sub (`sub`, the boundary form the verify/profile screens
-    // hold, resolved through the directory). Callers send exactly one; a payload
-    // carrying neither is a caller bug and fails loud rather than trusting nobody
-    // (or, worse, resolving `undefined` into the TOFU store).
+    // hold, resolved through the directory); the schema admits nothing else.
     case MSG_VAULT_ACCEPT_FINGERPRINT: {
-      const p = payload as { userId?: string; sub?: string; fingerprint: string };
+      const p = request.payload;
 
-      if (p.userId) return handleAcceptFingerprint(userId, { userId: p.userId, fingerprint: p.fingerprint });
-      if (p.sub) return handleAcceptFingerprintBySub(userId, { sub: p.sub, fingerprint: p.fingerprint });
-
-      throw new VaultError(VaultErrorCode.INVALID_REQUEST, 'A trust decision must name its target by userId or sub.');
+      return 'userId' in p ? handleAcceptFingerprint(userId, p) : handleAcceptFingerprintBySub(userId, p);
     }
     case MSG_VAULT_REFUSE_FINGERPRINT: {
-      const p = payload as { userId?: string; sub?: string; fingerprint: string };
+      const p = request.payload;
 
-      if (p.userId) return handleRefuseFingerprint(userId, { userId: p.userId, fingerprint: p.fingerprint });
-      if (p.sub) return handleRefuseFingerprintBySub(userId, { sub: p.sub, fingerprint: p.fingerprint });
-
-      throw new VaultError(VaultErrorCode.INVALID_REQUEST, 'A trust decision must name its target by userId or sub.');
+      return 'userId' in p ? handleRefuseFingerprint(userId, p) : handleRefuseFingerprintBySub(userId, p);
     }
     case MSG_VAULT_GET_KNOWN_FINGERPRINTS:
       return handleGetKnownFingerprints(userId);
@@ -231,71 +192,73 @@ async function dispatch(data: unknown, userId: string): Promise<unknown> {
     case MSG_VAULT_UNCOMMIT_STAGED:
       return handleUncommitStagedVault(userId);
     case MSG_VAULT_SIGN_KEY_REGISTRATION:
-      return handleSignKeyRegistration(userId, payload as { version: number; createdAtMillis: number });
+      return handleSignKeyRegistration(userId, request.payload);
     case MSG_VAULT_RESPOND_TO_KEY_CHALLENGE:
-      return handleRespondToKeyChallenge(userId, payload as { challengeId: string; ciphertext: string });
+      return handleRespondToKeyChallenge(userId, request.payload);
     case MSG_VAULT_DESTROY_KEYS:
       return handleDestroyKeys(userId);
     case MSG_VAULT_PREPARE_ONBOARDING:
-      return handlePrepareOnboarding(userId, payload as { lang?: MnemonicLanguage; version?: number; generation?: number; reusePhrase?: string });
+      return handlePrepareOnboarding(userId, request.payload);
     case MSG_VAULT_CHANGE_RECOVERY_PHRASE:
-      return handleChangeRecoveryPhrase(userId, payload as { lang?: MnemonicLanguage });
+      return handleChangeRecoveryPhrase(userId, request.payload);
     case MSG_VAULT_RESTORE_FROM_PHRASE:
-      return handleRestoreFromPhrase(userId, payload as { recoveryPhrase: string; idToken: string });
+      return handleRestoreFromPhrase(userId, request.payload);
     case MSG_VAULT_REACTIVATE:
-      return handleReactivateVault(userId, payload as { recoveryPhrase: string; idToken: string; handedOver?: boolean });
+      return handleReactivateVault(userId, request.payload);
     case MSG_VAULT_REACTIVATE_WITH_KEYRING:
-      return handleReactivateWithKeyring(userId, payload as { idToken: string; keyring: Record<string, unknown> });
+      return handleReactivateWithKeyring(userId, request.payload);
     case MSG_VAULT_SYNC:
-      return syncWithIntegrityRetry(userId, payload as { idToken?: string | null });
+      return syncWithIntegrityRetry(userId, request.payload);
     case MSG_VAULT_SIGN_REQUEST:
-      return handleSignRequest(userId, payload as { method: string; path: string; body?: string });
+      return handleSignRequest(userId, request.payload);
     case MSG_VAULT_START_DEVICE_APPROVAL:
       return handleStartDeviceApproval();
     case MSG_VAULT_COMPLETE_DEVICE_APPROVAL:
-      return handleCompleteDeviceApproval(userId, payload as { wrappedDeviceBootstrap: string; idToken?: string | null });
+      return handleCompleteDeviceApproval(userId, request.payload);
     case MSG_VAULT_APPROVE_DEVICE:
-      return handleApproveDevice(userId, payload as { devicePublicKey: string; expectedDecimal: string });
+      return handleApproveDevice(userId, request.payload);
     case MSG_VAULT_CREATE_EMERGENCY_ESCROW:
-      return handleCreateEmergencyEscrow(userId, payload as { granteeUserId: string; waitTimeDays: number; lang?: MnemonicLanguage });
+      return handleCreateEmergencyEscrow(userId, request.payload);
     case MSG_VAULT_BUILD_EMERGENCY_REARMS:
-      return handleBuildEmergencyRearms(
-        userId,
-        payload as {
-          rearms: Array<{ emergencyAccessId: string; granteeUserId: string; waitTimeDays: number }>;
-          lang?: MnemonicLanguage;
-        }
-      );
+      return handleBuildEmergencyRearms(userId, request.payload);
     case MSG_VAULT_VERIFY_ESCROWS:
-      return handleVerifyEscrows(userId, payload as Parameters<typeof handleVerifyEscrows>[1]);
+      return handleVerifyEscrows(userId, request.payload);
     case MSG_VAULT_REVEAL_EMERGENCY_PHRASE:
-      return handleRevealEmergencyPhrase(userId, payload as Parameters<typeof handleRevealEmergencyPhrase>[1]);
+      return handleRevealEmergencyPhrase(userId, request.payload);
+    // The council handlers parse what came from the server inside their payload
+    // themselves (chains, records, capsules, batches), as VAULT_INTEGRITY_FAILED.
     case MSG_VAULT_COUNCIL_VERIFY_ROSTER:
-      return handleVerifyCouncilRoster(userId, payload as Parameters<typeof handleVerifyCouncilRoster>[1]);
+      return handleVerifyCouncilRoster(userId, request.payload as Parameters<typeof handleVerifyCouncilRoster>[1]);
     case MSG_VAULT_COUNCIL_CREATE_ESCROW:
-      return handleCreateCouncilEscrow(userId, payload as Parameters<typeof handleCreateCouncilEscrow>[1]);
+      return handleCreateCouncilEscrow(userId, request.payload as Parameters<typeof handleCreateCouncilEscrow>[1]);
     case MSG_VAULT_COUNCIL_CHECK_ESCROW:
-      return handleCheckCouncilEscrow(userId, payload as Parameters<typeof handleCheckCouncilEscrow>[1]);
+      return handleCheckCouncilEscrow(userId, request.payload as Parameters<typeof handleCheckCouncilEscrow>[1]);
     case MSG_VAULT_COUNCIL_START_REQUEST:
       return handleStartCouncilRequest(userId);
     case MSG_VAULT_COUNCIL_REQUEST_KEY:
-      return handleCouncilRequestKey(userId, payload as { serverFingerprint?: string | null });
+      return handleCouncilRequestKey(userId, request.payload);
     case MSG_VAULT_COUNCIL_COMPLETE_RECOVERY:
-      return handleCompleteCouncilRecovery(userId, payload as Parameters<typeof handleCompleteCouncilRecovery>[1]);
+      return handleCompleteCouncilRecovery(userId, request.payload as Parameters<typeof handleCompleteCouncilRecovery>[1]);
     case MSG_VAULT_COUNCIL_REACTIVATE:
-      return handleReactivateCouncilVault(userId, payload as Parameters<typeof handleReactivateCouncilVault>[1]);
+      return handleReactivateCouncilVault(userId, request.payload);
     case MSG_VAULT_COUNCIL_DISCARD_RECOVERY:
       return handleDiscardCouncilRecovery(userId);
     case MSG_VAULT_COUNCIL_CONTRIBUTE:
-      return handleCouncilContribute(userId, payload as Parameters<typeof handleCouncilContribute>[1]);
+      return handleCouncilContribute(userId, request.payload as Parameters<typeof handleCouncilContribute>[1]);
     case MSG_VAULT_COUNCIL_SIGN_ROSTER:
-      return handleSignCouncilRoster(userId, payload as Parameters<typeof handleSignCouncilRoster>[1]);
+      return handleSignCouncilRoster(userId, request.payload as Parameters<typeof handleSignCouncilRoster>[1]);
     case MSG_VAULT_COUNCIL_RESHARE_BATCH:
-      return handleCouncilReshareBatch(userId, payload as Parameters<typeof handleCouncilReshareBatch>[1]);
+      return handleCouncilReshareBatch(userId, request.payload as Parameters<typeof handleCouncilReshareBatch>[1]);
     case MSG_VAULT_COUNCIL_CHECK_SHARES:
-      return handleCheckCouncilShares(userId, payload as Parameters<typeof handleCheckCouncilShares>[1]);
+      return handleCheckCouncilShares(userId, request.payload as Parameters<typeof handleCheckCouncilShares>[1]);
     case MSG_VAULT_COUNCIL_MARK_VERIFIED:
-      return handleMarkCouncilVerified(userId, payload as Parameters<typeof handleMarkCouncilVerified>[1]);
+      return handleMarkCouncilVerified(userId, request.payload as Parameters<typeof handleMarkCouncilVerified>[1]);
+    default: {
+      // Every operation of VAULT_REQUEST_PAYLOADS has a case: adding one without it fails to compile.
+      const unhandled: never = request;
+
+      throw new VaultError(VaultErrorCode.INVALID_REQUEST, `Unhandled operation ${(unhandled as { type: string }).type}.`);
+    }
   }
 }
 
@@ -338,6 +301,9 @@ export function setupMessageHandler(): void {
       // The sub stops HERE: everything past this boundary (cache keys, TOFU,
       // signed payloads, request proofs) speaks the internal id only. The
       // adopt-vs-resolve decision lives in resolveBoundaryUser.
+      const parsed = parseVaultRequest(operationType, (event.data as { payload?: unknown }).payload);
+      if ('error' in parsed) throw new VaultError(VaultErrorCode.INVALID_REQUEST, parsed.error);
+
       const declaredSub = event.data.suiteUserId as string | undefined;
       const declaredInternalId = event.data.internalUserId as string | undefined;
 
@@ -396,7 +362,7 @@ export function setupMessageHandler(): void {
         });
       }
 
-      const data = (await dispatch(event.data, userId)) as Record<string, unknown> | undefined;
+      const data = (await dispatch(parsed.request, userId)) as Record<string, unknown> | undefined;
 
       // A privileged operation is the interface changing what the server knows of
       // this identity (registration, restore, reactivation, reset): the one kind

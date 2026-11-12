@@ -27,6 +27,7 @@ import {
   MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITHOUT_KEY,
   MSG_VAULT_ENCRYPT_WITH_KEY,
+  MSG_VAULT_FETCH_PUBLIC_KEYS,
   MSG_VAULT_GENERATE_KEYS,
   MSG_VAULT_GET_KNOWN_FINGERPRINTS,
   MSG_VAULT_GET_PUBLIC_KEY,
@@ -51,407 +52,152 @@ import {
   MSG_VAULT_VERIFY_ESCROWS,
   MSG_VAULT_WRAP_NESTED_KEY,
 } from '@encryption/src/shared/constants';
+import { EmergencyEscrowRecordSchema } from '@encryption/src/shared/schemas/emergency-access';
 import { mnemonicLanguageSchema } from '@encryption/src/shared/schemas/mnemonic-language';
 import '@encryption/src/shared/zod-jitless';
 
 // ============================================================================
-// Operations available to ALL callers (suite products via data.encryption)
-// These are safe: they only read keys or encrypt/decrypt content.
+// Requests (parent -> vault): one payload schema per operation
 // ============================================================================
 
-export const VaultHasKeysRequest = z.object({
-  type: z.literal(MSG_VAULT_HAS_KEYS),
-  requestId: z.string(),
-});
+// Every message is parsed against its operation's schema before anything runs: an
+// allowed product can send anything, and a malformed call must fail as one, never
+// read as an empty list or reach libsodium. Binary fields are checked by type only
+// (no copy, no scan), so a large file costs nothing.
+const binary = z
+  .union([z.instanceof(ArrayBuffer), z.instanceof(Uint8Array)])
+  .transform((value): ArrayBuffer => (value instanceof ArrayBuffer ? value : (value.slice().buffer as ArrayBuffer)));
+const binaryChain = z.array(binary).max(64);
+const id = z.string().min(1).max(256);
+const ids = z.array(id).max(1000);
+const fingerprint = z.string().min(1).max(256);
+const idToken = z.string().min(1).max(16_384);
+const lang = mnemonicLanguageSchema.optional();
+const waitTimeDays = z.number().int().nonnegative();
+const empty = z.object({});
 
-export const VaultGetPublicKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_GET_PUBLIC_KEY),
-  requestId: z.string(),
-});
+// A trust decision names its target EITHER by internal user id (the flows whose
+// directory lookups already yield internal ids) OR by sub (the verify/profile
+// screens), never neither.
+const fingerprintTarget = z.union([z.object({ userId: id, fingerprint }), z.object({ sub: id, fingerprint })]);
 
-export const VaultEncryptWithoutKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_ENCRYPT_WITHOUT_KEY),
-  requestId: z.string(),
-  payload: z.object({
-    data: z.string(), // base64-encoded content
-    userPublicKeys: z.record(z.string(), z.string()), // userId → base64 public key (SPKI)
+// Council messages: the interface's own fields are checked here; what came from the
+// server inside them (chains, records, capsules, batches) is parsed where it is used,
+// so a malformed one fails as VAULT_INTEGRITY_FAILED rather than as a bad request.
+const councilId = z.string().min(1).max(64);
+const fromServer = z.unknown();
+const chain = z.array(fromServer).max(1000);
+
+export const VAULT_REQUEST_PAYLOADS = {
+  // Product operations (any allowed origin)
+  [MSG_VAULT_HAS_KEYS]: empty,
+  [MSG_VAULT_GET_PUBLIC_KEY]: empty,
+  [MSG_VAULT_ENCRYPT_WITHOUT_KEY]: z.object({ data: binary, recipientSubs: ids }),
+  [MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY]: z.object({ data: binary, encryptedSymmetricKey: binary, encryptedKeyChain: binaryChain.optional() }),
+  [MSG_VAULT_ENCRYPT_WITH_KEY]: z.object({ data: binary, encryptedSymmetricKey: binary, encryptedKeyChain: binaryChain.optional() }),
+  [MSG_VAULT_DECRYPT_WITH_KEY]: z.object({
+    encryptedData: binary,
+    encryptedSymmetricKey: binary,
+    encryptedKeyChain: binaryChain.optional(),
+    keyVersion: z.number().int().nonnegative(),
   }),
-});
-
-export const VaultEncryptNestedWithoutKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_ENCRYPT_NESTED_WITHOUT_KEY),
-  requestId: z.string(),
-  payload: z.object({
-    data: z.string(), // base64-encoded content
-    encryptedSymmetricKey: z.string(), // caller's entry key (asymmetric bootstrap)
-    encryptedKeyChain: z.array(z.string()).optional(), // symmetric wrappings from entry down to parent
+  [MSG_VAULT_REWRAP_NESTED_KEY]: z.object({
+    encryptedSymmetricKey: binary,
+    oldEncryptedKey: binary,
+    oldEncryptedKeyChain: binaryChain.optional(),
+    newEncryptedKeyChain: binaryChain.optional(),
   }),
-});
-
-export const VaultEncryptWithKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_ENCRYPT_WITH_KEY),
-  requestId: z.string(),
-  payload: z.object({
-    data: z.string(), // base64-encoded content to encrypt
-    encryptedSymmetricKey: z.string(), // base64-encoded symmetric key encrypted with user's public key
-    encryptedKeyChain: z.array(z.string()).optional(), // optional chain of wrapped keys (Drive key hierarchy)
+  [MSG_VAULT_WRAP_NESTED_KEY]: z.object({
+    userEncryptedKey: binary,
+    newEntryEncryptedSymmetricKey: binary,
+    newEncryptedKeyChain: binaryChain.optional(),
   }),
-});
-
-export const VaultDecryptWithKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_DECRYPT_WITH_KEY),
-  requestId: z.string(),
-  payload: z.object({
-    encryptedData: z.string(), // base64-encoded
-    encryptedSymmetricKey: z.string(), // base64-encoded symmetric key encrypted with user's public key
-    encryptedKeyChain: z.array(z.string()).optional(), // optional chain of wrapped keys (Drive key hierarchy)
+  [MSG_VAULT_SHARE_KEYS]: z.object({
+    encryptedSymmetricKey: binary,
+    recipientSubs: ids,
+    encryptedKeyChain: binaryChain.optional(),
+    ownerSub: id.optional(),
   }),
-});
+  [MSG_VAULT_FETCH_PUBLIC_KEYS]: z.object({ userIds: ids.optional(), subs: ids.optional() }),
+  [MSG_VAULT_CHECK_FINGERPRINTS]: z.object({ userFingerprints: z.record(id, fingerprint) }),
+  [MSG_VAULT_GET_KNOWN_FINGERPRINTS]: empty,
 
-export const VaultRewrapNestedKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_REWRAP_NESTED_KEY),
-  requestId: z.string(),
-  payload: z.object({
-    encryptedSymmetricKey: z.string(), // base64-encoded — user's entry-point key (root key wrapped under their pubkey)
-    oldEncryptedKey: z.string(), // base64-encoded — the resource's K_file wrapped under its OLD parent's key
-    oldEncryptedKeyChain: z.array(z.string()).optional(), // chain entry → OLD parent (omit when old parent is the root)
-    newEncryptedKeyChain: z.array(z.string()).optional(), // chain entry → NEW parent (omit when new parent is the root)
+  // Privileged operations (the interface only, see PRIVILEGED_OPERATIONS)
+  [MSG_VAULT_RESOLVE_USER]: empty,
+  [MSG_VAULT_ACCEPT_FINGERPRINT]: fingerprintTarget,
+  [MSG_VAULT_REFUSE_FINGERPRINT]: fingerprintTarget,
+  [MSG_VAULT_GENERATE_KEYS]: empty,
+  [MSG_VAULT_SIGN_KEY_REGISTRATION]: z.object({ version: z.number().int().positive(), createdAtMillis: z.number().int().nonnegative() }),
+  [MSG_VAULT_RESPOND_TO_KEY_CHALLENGE]: z.object({ challengeId: id, ciphertext: z.string().min(1).max(16_384) }),
+  [MSG_VAULT_DESTROY_KEYS]: empty,
+  [MSG_VAULT_COMMIT_STAGED]: empty,
+  [MSG_VAULT_UNCOMMIT_STAGED]: empty,
+  [MSG_VAULT_PREPARE_ONBOARDING]: z.object({
+    lang,
+    version: z.number().int().nonnegative().optional(),
+    generation: z.number().int().nonnegative().optional(),
+    reusePhrase: z.string().max(1024).optional(),
   }),
-});
-
-export const VaultWrapNestedKeyRequest = z.object({
-  type: z.literal(MSG_VAULT_WRAP_NESTED_KEY),
-  requestId: z.string(),
-  payload: z.object({
-    userEncryptedKey: z.string(), // base64-encoded — K_item wrapped under user's pubkey (per-user wrap from the access row)
-    newEntryEncryptedSymmetricKey: z.string(), // base64-encoded — user's entry key for the destination tree
-    newEncryptedKeyChain: z.array(z.string()).optional(), // chain entry → NEW parent (omit when new parent is the root)
+  [MSG_VAULT_CHANGE_RECOVERY_PHRASE]: z.object({ lang }),
+  [MSG_VAULT_RESTORE_FROM_PHRASE]: z.object({ recoveryPhrase: z.string().max(1024), idToken }),
+  [MSG_VAULT_REACTIVATE]: z.object({ recoveryPhrase: z.string().max(1024), idToken, handedOver: z.boolean().optional() }),
+  [MSG_VAULT_REACTIVATE_WITH_KEYRING]: z.object({ idToken, keyring: z.record(z.string(), z.unknown()) }),
+  [MSG_VAULT_SYNC]: z.object({ idToken: idToken.nullish() }),
+  [MSG_VAULT_SIGN_REQUEST]: z.object({ method: z.string().min(1).max(16), path: z.string().min(1).max(2048), body: z.string().optional() }),
+  [MSG_VAULT_START_DEVICE_APPROVAL]: empty,
+  [MSG_VAULT_COMPLETE_DEVICE_APPROVAL]: z.object({ wrappedDeviceBootstrap: z.string().min(1).max(65_536), idToken: idToken.nullish() }),
+  [MSG_VAULT_APPROVE_DEVICE]: z.object({ devicePublicKey: z.string().min(1).max(8192), expectedDecimal: z.string().min(1).max(64) }),
+  [MSG_VAULT_CREATE_EMERGENCY_ESCROW]: z.object({ granteeUserId: id, waitTimeDays, lang }),
+  [MSG_VAULT_BUILD_EMERGENCY_REARMS]: z.object({
+    rearms: z.array(z.object({ emergencyAccessId: id, granteeUserId: id, waitTimeDays })).max(1000),
+    lang,
   }),
-});
-
-export const VaultShareKeysRequest = z.object({
-  type: z.literal(MSG_VAULT_SHARE_KEYS),
-  requestId: z.string(),
-  payload: z.object({
-    encryptedSymmetricKey: z.string(), // base64-encoded
-    userPublicKeys: z.record(z.string(), z.string()), // userId → base64 public key
-    encryptedKeyChain: z.array(z.string()).optional(), // optional chain of wrapped keys (Drive key hierarchy)
+  [MSG_VAULT_VERIFY_ESCROWS]: z.object({
+    contacts: z.array(z.object({ id, grantee_user_id: id, wait_time_days: waitTimeDays, escrow: EmergencyEscrowRecordSchema })).max(1000),
   }),
-});
-
-export const VaultCheckFingerprintsRequest = z.object({
-  type: z.literal(MSG_VAULT_CHECK_FINGERPRINTS),
-  requestId: z.string(),
-  payload: z.object({
-    userFingerprints: z.record(z.string(), z.string()), // userId → fingerprint (from product's share-time snapshot)
-    currentUserId: z.string().optional(),
-    // On a mismatch the vault fetches the contact's continuity chain from the
-    // directory itself, so no continuity data crosses the postMessage boundary.
-  }),
-});
-
-// A trust decision names its target EITHER by internal user id (`userId`, held by
-// the flows whose directory lookups already yield internal ids) OR by OIDC sub
-// (`sub`, the boundary form the verify/profile screens hold, resolved through the
-// directory). Exactly one form, never neither: modelled as a union so the schema
-// keeps describing what the dispatcher actually accepts.
-const fingerprintTargetSchema = z.union([
-  z.object({ userId: z.string(), fingerprint: z.string() }),
-  z.object({ sub: z.string(), fingerprint: z.string() }),
-]);
-
-export const VaultAcceptFingerprintRequest = z.object({
-  type: z.literal(MSG_VAULT_ACCEPT_FINGERPRINT),
-  requestId: z.string(),
-  payload: fingerprintTargetSchema,
-});
-
-export const VaultRefuseFingerprintRequest = z.object({
-  type: z.literal(MSG_VAULT_REFUSE_FINGERPRINT),
-  requestId: z.string(),
-  payload: fingerprintTargetSchema,
-});
-
-export const VaultGetKnownFingerprintsRequest = z.object({
-  type: z.literal(MSG_VAULT_GET_KNOWN_FINGERPRINTS),
-  requestId: z.string(),
-});
-
-/** Operations any product can call */
-export const VaultProductRequestSchema = z.discriminatedUnion('type', [
-  VaultHasKeysRequest,
-  VaultGetPublicKeyRequest,
-  VaultEncryptWithoutKeyRequest,
-  VaultEncryptNestedWithoutKeyRequest,
-  VaultEncryptWithKeyRequest,
-  VaultDecryptWithKeyRequest,
-  VaultRewrapNestedKeyRequest,
-  VaultWrapNestedKeyRequest,
-  VaultShareKeysRequest,
-  VaultCheckFingerprintsRequest,
-  VaultGetKnownFingerprintsRequest,
-]);
-
-// ============================================================================
-// Privileged operations - ONLY from encryption
-// These are sensitive: they create, export, import, or destroy key material.
-// ============================================================================
-
-export const VaultGenerateKeysRequest = z.object({
-  type: z.literal(MSG_VAULT_GENERATE_KEYS),
-  requestId: z.string(),
-});
-
-export const VaultSignKeyRegistrationRequest = z.object({
-  type: z.literal(MSG_VAULT_SIGN_KEY_REGISTRATION),
-  requestId: z.string(),
-  payload: z.object({
-    version: z.number().int().positive(), // monotonic per-user key version (>= 1)
-    createdAtMillis: z.number().int().nonnegative(), // signed creation timestamp (ms since epoch)
-  }),
-});
-
-export const VaultRespondToKeyChallengeRequest = z.object({
-  type: z.literal(MSG_VAULT_RESPOND_TO_KEY_CHALLENGE),
-  requestId: z.string(),
-  payload: z.object({
-    challengeId: z.string().uuid(),
-    ciphertext: z.string(), // base64 X-Wing ciphertext from /api/keys/init
-  }),
-});
-
-export const VaultDestroyKeysRequest = z.object({
-  type: z.literal(MSG_VAULT_DESTROY_KEYS),
-  requestId: z.string(),
-});
-
-export const VaultCommitStagedRequest = z.object({
-  type: z.literal(MSG_VAULT_COMMIT_STAGED),
-  requestId: z.string(),
-});
-
-export const VaultUncommitStagedRequest = z.object({
-  type: z.literal(MSG_VAULT_UNCOMMIT_STAGED),
-  requestId: z.string(),
-});
-
-export const VaultPrepareOnboardingRequest = z.object({
-  type: z.literal(MSG_VAULT_PREPARE_ONBOARDING),
-  requestId: z.string(),
-  payload: z
-    .object({
-      lang: mnemonicLanguageSchema.optional(),
-      version: z.number().int().positive().optional(),
-      generation: z.number().int().positive().optional(),
-      // Reproduce the same keyring from an already-shown phrase, so a commit
-      // retry after a version conflict re-seals items without a new phrase.
-      reusePhrase: z.string().optional(),
-    })
-    .optional(),
-});
-
-export const VaultChangeRecoveryPhraseRequest = z.object({
-  type: z.literal(MSG_VAULT_CHANGE_RECOVERY_PHRASE),
-  requestId: z.string(),
-  payload: z
-    .object({
-      lang: mnemonicLanguageSchema.optional(),
-    })
-    .optional(),
-});
-
-export const VaultRestoreFromPhraseRequest = z.object({
-  type: z.literal(MSG_VAULT_RESTORE_FROM_PHRASE),
-  requestId: z.string(),
-  payload: z.object({
-    recoveryPhrase: z.string(),
-    idToken: z.string(),
-  }),
-});
-
-export const VaultReactivateRequest = z.object({
-  type: z.literal(MSG_VAULT_REACTIVATE),
-  requestId: z.string(),
-  payload: z.object({
-    recoveryPhrase: z.string(),
-    idToken: z.string(),
-    handedOver: z.boolean().optional(),
-  }),
-});
-
-export const VaultReactivateWithKeyringRequest = z.object({
-  type: z.literal(MSG_VAULT_REACTIVATE_WITH_KEYRING),
-  requestId: z.string(),
-  payload: z.object({
-    idToken: z.string(),
-    keyring: z.record(z.string(), z.unknown()),
-  }),
-});
-
-export const VaultSyncRequest = z.object({
-  type: z.literal(MSG_VAULT_SYNC),
-  requestId: z.string(),
-  payload: z
-    .object({
-      idToken: z.string().nullable().optional(), // the provider ID token, to authenticate the pull/push
-    })
-    .optional(),
-});
-
-export const VaultStartDeviceApprovalRequest = z.object({
-  type: z.literal(MSG_VAULT_START_DEVICE_APPROVAL),
-  requestId: z.string(),
-});
-
-export const VaultCompleteDeviceApprovalRequest = z.object({
-  type: z.literal(MSG_VAULT_COMPLETE_DEVICE_APPROVAL),
-  requestId: z.string(),
-  payload: z.object({
-    wrappedDeviceBootstrap: z.string(),
-    idToken: z.string().nullable().optional(),
-  }),
-});
-
-export const VaultApproveDeviceRequest = z.object({
-  type: z.literal(MSG_VAULT_APPROVE_DEVICE),
-  requestId: z.string(),
-  payload: z.object({
-    devicePublicKey: z.string(),
-    // The out-of-band decimal fingerprint (QR-scanned or typed) the enrolled
-    // device checks the server-returned key against before wrapping the VRK.
-    expectedDecimal: z.string(),
-  }),
-});
-
-// --- Emergency access (trusted contacts), all privileged ---
-
-export const VaultCreateEmergencyEscrowRequest = z.object({
-  type: z.literal(MSG_VAULT_CREATE_EMERGENCY_ESCROW),
-  requestId: z.string(),
-  payload: z.object({
-    granteeUserId: z.string().uuid(),
-    waitTimeDays: z.number().int().min(1).max(90),
-    lang: z.enum(['french', 'english']).optional(),
-  }),
-});
-
-export const VaultBuildEmergencyRearmsRequest = z.object({
-  type: z.literal(MSG_VAULT_BUILD_EMERGENCY_REARMS),
-  requestId: z.string(),
-  payload: z.object({
-    rearms: z.array(
-      z.object({
-        emergencyAccessId: z.string().uuid(),
-        granteeUserId: z.string().uuid(),
-        waitTimeDays: z.number().int().min(1).max(90),
-      })
-    ),
-    lang: z.enum(['french', 'english']).optional(),
-  }),
-});
-
-const EmergencyEscrowWirePayload = z.object({
-  grantee_identity_public_key: z.string(),
-  grantee_key_version: z.number().int().positive(),
-  wrapped_phrase_for_grantee: z.string(),
-  escrow_signature: z.string(),
-  escrow_created_at_millis: z.number().int().nonnegative(),
-  credential_auth_public_key_hash: z.string(),
-});
-
-export const VaultVerifyEscrowsRequest = z.object({
-  type: z.literal(MSG_VAULT_VERIFY_ESCROWS),
-  requestId: z.string(),
-  payload: z.object({
-    contacts: z.array(
-      z.object({
-        id: z.string().uuid(),
-        grantee_user_id: z.string().uuid(),
-        wait_time_days: z.number().int(),
-        escrow: EmergencyEscrowWirePayload,
-      })
-    ),
-  }),
-});
-
-export const VaultRevealEmergencyPhraseRequest = z.object({
-  type: z.literal(MSG_VAULT_REVEAL_EMERGENCY_PHRASE),
-  requestId: z.string(),
-  payload: z.object({
-    grantorUserId: z.string().uuid(),
+  [MSG_VAULT_REVEAL_EMERGENCY_PHRASE]: z.object({
+    grantorUserId: id,
     lang: mnemonicLanguageSchema,
-    waitTimeDays: z.number().int(),
-    escrow: EmergencyEscrowWirePayload,
+    waitTimeDays,
+    escrow: EmergencyEscrowRecordSchema,
   }),
-});
+  [MSG_VAULT_COUNCIL_VERIFY_ROSTER]: z.object({ councilId, chain, escrow: fromServer.optional() }),
+  [MSG_VAULT_COUNCIL_MARK_VERIFIED]: z.object({ councilId, chain }),
+  [MSG_VAULT_COUNCIL_CREATE_ESCROW]: z.object({ councilId, chain, escrow: fromServer.optional(), lang }),
+  [MSG_VAULT_COUNCIL_CHECK_ESCROW]: z.object({ record: fromServer, chain }),
+  [MSG_VAULT_COUNCIL_START_REQUEST]: empty,
+  [MSG_VAULT_COUNCIL_REQUEST_KEY]: z.object({ serverFingerprint: z.string().max(64).nullish() }),
+  [MSG_VAULT_COUNCIL_COMPLETE_RECOVERY]: z.object({ released: fromServer, idToken }),
+  [MSG_VAULT_COUNCIL_REACTIVATE]: z.object({ idToken }),
+  [MSG_VAULT_COUNCIL_DISCARD_RECOVERY]: empty,
+  [MSG_VAULT_COUNCIL_CONTRIBUTE]: z.object({ detail: fromServer, inPerson: z.boolean(), meetingCode: z.string().max(128).optional() }),
+  [MSG_VAULT_COUNCIL_SIGN_ROSTER]: z.object({ councilId, chain, proposal: fromServer }),
+  [MSG_VAULT_COUNCIL_RESHARE_BATCH]: z.object({ batch: fromServer }),
+  [MSG_VAULT_COUNCIL_CHECK_SHARES]: z.object({ batch: fromServer }),
+} satisfies Record<string, z.ZodType>;
 
-/** Privileged operations only encryption can call */
-export const VaultPrivilegedRequestSchema = z.discriminatedUnion('type', [
-  VaultGenerateKeysRequest,
-  VaultSignKeyRegistrationRequest,
-  VaultRespondToKeyChallengeRequest,
-  VaultDestroyKeysRequest,
-  VaultCommitStagedRequest,
-  VaultUncommitStagedRequest,
-  VaultPrepareOnboardingRequest,
-  VaultChangeRecoveryPhraseRequest,
-  VaultRestoreFromPhraseRequest,
-  VaultReactivateRequest,
-  VaultReactivateWithKeyringRequest,
-  VaultSyncRequest,
-  VaultStartDeviceApprovalRequest,
-  VaultCompleteDeviceApprovalRequest,
-  VaultApproveDeviceRequest,
-  VaultAcceptFingerprintRequest,
-  VaultRefuseFingerprintRequest,
-  VaultCreateEmergencyEscrowRequest,
-  VaultBuildEmergencyRearmsRequest,
-  VaultVerifyEscrowsRequest,
-  VaultRevealEmergencyPhraseRequest,
-]);
+type VaultRequestPayloads = { [K in keyof typeof VAULT_REQUEST_PAYLOADS]: z.output<(typeof VAULT_REQUEST_PAYLOADS)[K]> };
 
-// ============================================================================
-// Combined schema (all operations) and types
-// ============================================================================
+/** A request whose payload passed its operation's schema; `switch (request.type)` narrows the payload. */
+export type VaultRequest = { [K in keyof VaultRequestPayloads]: { type: K; payload: VaultRequestPayloads[K] } }[keyof VaultRequestPayloads];
 
-export const VaultRequestSchema = z.discriminatedUnion('type', [
-  // Product operations
-  VaultHasKeysRequest,
-  VaultGetPublicKeyRequest,
-  VaultEncryptWithoutKeyRequest,
-  VaultEncryptNestedWithoutKeyRequest,
-  VaultEncryptWithKeyRequest,
-  VaultDecryptWithKeyRequest,
-  VaultRewrapNestedKeyRequest,
-  VaultWrapNestedKeyRequest,
-  VaultShareKeysRequest,
-  VaultCheckFingerprintsRequest,
-  VaultGetKnownFingerprintsRequest,
-  // Privileged operations
-  VaultAcceptFingerprintRequest,
-  VaultRefuseFingerprintRequest,
-  VaultGenerateKeysRequest,
-  VaultSignKeyRegistrationRequest,
-  VaultRespondToKeyChallengeRequest,
-  VaultDestroyKeysRequest,
-  VaultCommitStagedRequest,
-  VaultUncommitStagedRequest,
-  VaultPrepareOnboardingRequest,
-  VaultChangeRecoveryPhraseRequest,
-  VaultRestoreFromPhraseRequest,
-  VaultReactivateRequest,
-  VaultReactivateWithKeyringRequest,
-  VaultSyncRequest,
-  VaultStartDeviceApprovalRequest,
-  VaultCompleteDeviceApprovalRequest,
-  VaultApproveDeviceRequest,
-  VaultCreateEmergencyEscrowRequest,
-  VaultBuildEmergencyRearmsRequest,
-  VaultVerifyEscrowsRequest,
-  VaultRevealEmergencyPhraseRequest,
-]);
+/**
+ * The request, or why it is refused: an unknown operation, or the paths of the
+ * fields that do not match (never their values, which may be secrets).
+ */
+export function parseVaultRequest(type: unknown, payload: unknown): { request: VaultRequest } | { error: string } {
+  if (typeof type !== 'string' || !Object.hasOwn(VAULT_REQUEST_PAYLOADS, type)) return { error: 'Unknown operation.' };
 
-export type VaultRequest = z.infer<typeof VaultRequestSchema>;
+  const result = VAULT_REQUEST_PAYLOADS[type as keyof typeof VAULT_REQUEST_PAYLOADS].safeParse(payload ?? {});
+
+  if (!result.success) {
+    const fields = [...new Set(result.error.issues.map((issue) => issue.path.join('.') || '(payload)'))];
+
+    return { error: `Malformed "${type}" request: ${fields.join(', ')}.` };
+  }
+
+  return { request: { type, payload: result.data } as VaultRequest };
+}
 
 /** Set of operation types that require encryption origin */
 export const PRIVILEGED_OPERATIONS = new Set<string>([

@@ -22,6 +22,7 @@ import {
   MSG_VAULT_REFUSE_FINGERPRINT,
   MSG_VAULT_SIGN_REQUEST,
 } from '@encryption/src/shared/constants';
+import { parseVaultRequest } from '@encryption/src/shared/schemas/post-message';
 import { EncryptionContext, type EncryptionContextType } from '@encryption/src/ui/providers/EncryptionProvider';
 import {
   sampleCouncilEscrowBody,
@@ -129,8 +130,41 @@ export const defaultVaultRequest = async (type: string, payload?: unknown): Prom
   }
 };
 
+// Every message a story sends goes through the vault's own parser: a payload the vault
+// would refuse is thrown at the component AND left uncaught, so the story test fails
+// even when the component catches the error and renders an alert. One wrapper per
+// request function, so `request` keeps its identity across renders like the real one.
+const validatingRequests = new WeakMap<EncryptionContextType['request'], EncryptionContextType['request']>();
+
+function validatingRequest(request: EncryptionContextType['request']): EncryptionContextType['request'] {
+  let validating = validatingRequests.get(request);
+
+  if (!validating) {
+    validating = validate(request);
+    validatingRequests.set(request, validating);
+  }
+
+  return validating;
+}
+
+function validate(request: EncryptionContextType['request']): EncryptionContextType['request'] {
+  return async (type, payload) => {
+    const parsed = parseVaultRequest(type, payload);
+
+    if ('error' in parsed) {
+      const error = new Error(`The vault would refuse this message: ${parsed.error}`);
+      setTimeout(() => {
+        throw error;
+      });
+      throw error;
+    }
+
+    return request(type, payload);
+  };
+}
+
 export function createMockEncryption(overrides: Partial<EncryptionContextType> = {}): EncryptionContextType {
-  return {
+  const mock = {
     isReady: true,
     setAuthInfo: (suiteUserId: string, internalUserId?: string | null) => {
       console.log('[vault] setAuthInfo', suiteUserId, internalUserId);
@@ -191,6 +225,8 @@ export function createMockEncryption(overrides: Partial<EncryptionContextType> =
     approveDevice: stub('approveDevice', { wrappedDeviceBootstrap: samplePublicKey.key_binding_signature }),
     ...overrides,
   } as EncryptionContextType;
+
+  return { ...mock, request: validatingRequest(mock.request) };
 }
 
 interface MockEncryptionProviderProps {

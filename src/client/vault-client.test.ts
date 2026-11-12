@@ -4,7 +4,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { VaultClient } from '@encryption/src/client/vault-client';
-import { MSG_VAULT_FETCH_PUBLIC_KEYS, MSG_VAULT_GET_PUBLIC_KEY, MSG_VAULT_HAS_KEYS } from '@encryption/src/shared/constants';
+import {
+  MSG_VAULT_FETCH_PUBLIC_KEYS,
+  MSG_VAULT_GET_KNOWN_FINGERPRINTS,
+  MSG_VAULT_GET_PUBLIC_KEY,
+  MSG_VAULT_HAS_KEYS,
+} from '@encryption/src/shared/constants';
+import { parseVaultRequest } from '@encryption/src/shared/schemas/post-message';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
 // The auto-verify flow is exercised at the public API boundary (shareKeys /
@@ -254,5 +260,57 @@ describe('VaultClient settings sections', () => {
     const { client } = makeClient();
 
     expect(() => client.openSettings('nope' as never)).toThrow(/Unknown settings section/);
+  });
+});
+
+// Every message the SDK sends goes through the vault's own parser instead of an
+// iframe: a payload the vault would refuse fails here, not in a product.
+describe('VaultClient messages', () => {
+  function validatingClient(responses: Record<string, unknown> = {}) {
+    const { client, internal } = makeClient();
+    const sent: string[] = [];
+
+    internal.vaultRequest = async (type: unknown, payload: unknown) => {
+      const parsed = parseVaultRequest(type, payload);
+
+      if ('error' in parsed) throw new Error(parsed.error);
+      sent.push(type as string);
+
+      return responses[type as string] ?? {};
+    };
+
+    return { client, sent };
+  }
+
+  const bytes = () => new ArrayBuffer(16);
+  const recipients = { 'sub-1': { email: 'one@example.test', name: 'One' }, 'sub-2': { email: 'two@example.test' } };
+
+  it('sends payloads the vault accepts, with and without the optional fields', async () => {
+    const { client, sent } = validatingClient({
+      [MSG_VAULT_FETCH_PUBLIC_KEYS]: { users: {} },
+      [MSG_VAULT_GET_KNOWN_FINGERPRINTS]: { fingerprints: {} },
+    });
+
+    await client.hasKeys();
+    await client.getPublicKey();
+    await client.encryptWithoutKey(bytes(), recipients);
+    await client.encryptWithoutKey(bytes(), {}, { optimizeMemory: true });
+    await client.encryptNestedWithoutKey(bytes(), bytes());
+    await client.encryptNestedWithoutKey(bytes(), bytes(), [bytes(), bytes()], { optimizeMemory: true });
+    await client.encryptWithKey(bytes(), bytes());
+    await client.encryptWithKey(bytes(), bytes(), [bytes()], { optimizeMemory: true });
+    await client.decryptWithKey(bytes(), bytes(), 1);
+    await client.decryptWithKey(bytes(), bytes(), 2, [bytes()], { optimizeMemory: true });
+    await client.rewrapNestedKey(bytes(), bytes());
+    await client.rewrapNestedKey(bytes(), bytes(), [bytes()], [bytes(), bytes()]);
+    await client.wrapNestedKey(bytes(), bytes());
+    await client.wrapNestedKey(bytes(), bytes(), [bytes()]);
+    await client.shareKeys(bytes(), recipients);
+    await client.shareKeys(bytes(), {}, [bytes()], 'owner-sub');
+    await client.fetchPublicKeys(['sub-1', 'sub-2']);
+    await client.checkFingerprints({ 'sub-1': '1'.repeat(40) });
+    await client.getKnownFingerprints();
+
+    expect(sent).toHaveLength(19);
   });
 });
