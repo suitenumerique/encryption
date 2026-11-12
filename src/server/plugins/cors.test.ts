@@ -5,8 +5,8 @@ import { corsPlugin } from '@encryption/src/server/plugins/cors';
 
 vi.mock('@encryption/src/server/env', () => ({
   env: {
-    VAULT_HOST: 'data.encryption.localhost:7200',
-    UI_HOST: 'encryption.localhost:7200',
+    VAULT_URL: 'https://data.encryption.localhost:7200',
+    UI_URL: 'https://encryption.localhost:7200',
   },
 }));
 
@@ -23,11 +23,32 @@ async function buildApp(): Promise<FastifyInstance> {
 }
 
 describe('corsPlugin', () => {
-  it('allows a same-origin /api request (Origin equals the request host)', async () => {
+  it('allows a same-origin /api request', async () => {
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: '/api/vault/items', headers: { host: HOST, origin: `https://${HOST}` } });
 
     expect(res.statusCode).toBe(200);
+  });
+
+  it('allows the interface calling the vault host API', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/api/vault/items', headers: { host: HOST, origin: 'https://encryption.localhost:7200' } });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('denies one of our hosts under another scheme', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/api/vault/items', headers: { host: HOST, origin: `http://${HOST}` } });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('denies a malformed Origin', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/api/vault/items', headers: { host: HOST, origin: 'not a url' } });
+
+    expect(res.statusCode).toBe(403);
   });
 
   it('allows an /api request with no Origin header (same-origin nav or server-to-server)', async () => {

@@ -26,6 +26,11 @@ import { API_ERROR_FORBIDDEN } from '@encryption/src/shared/error-codes';
  * inert without the iframes it is not allowed to embed.
  */
 export const corsPlugin = fp(async (app: FastifyInstance): Promise<void> => {
+  const isDev = process.env.NODE_ENV === 'development';
+  // Full origins, scheme included: an `http://` page on one of our hosts is not us. Taken
+  // from the configuration, not the request, whose scheme reads `http` behind a TLS proxy.
+  const allowedOrigins = new Set([new URL(env.VAULT_URL).origin, new URL(env.UI_URL).origin]);
+
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin;
 
@@ -36,18 +41,10 @@ export const corsPlugin = fp(async (app: FastifyInstance): Promise<void> => {
     // plugins; only the API surface is considered here.
     if (!request.url.startsWith('/api')) return;
 
-    let originHost: string;
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      return reply.status(403).send({ code: API_ERROR_FORBIDDEN });
-    }
+    if (allowedOrigins.has(origin)) return;
 
-    // Same host as the request (the iframe calling its own API host), or one of the
-    // configured encryption hosts, is allowed. Comparing hosts, not full origins,
-    // keeps this correct in dev (localhost:7200) and behind a TLS-terminating proxy
-    // where request.protocol may not reflect the public scheme.
-    if (originHost === request.host || originHost === env.VAULT_HOST || originHost === env.UI_HOST) return;
+    // Development only: the demo products proxy `/api` from their own port, keeping their Host.
+    if (isDev && URL.canParse(origin) && new URL(origin).host === request.host) return;
 
     // Any other origin is a cross-origin browser caller, of which there is no
     // legitimate one. Deny: a preflight gets a bare 204 with no CORS headers (the
