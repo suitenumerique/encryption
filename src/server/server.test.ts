@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
-import { errorHandler } from '@encryption/src/server/server';
+import { errorHandler, registerAccessLog } from '@encryption/src/server/server';
 import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/shared/error-codes';
 
 // env / prisma are mocked so importing server.ts (which pulls the routes) does
@@ -73,5 +73,21 @@ describe('errorHandler', () => {
 
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ code: 'forbidden' });
+  });
+});
+
+describe('access log', () => {
+  it('logs the path without its query string', async () => {
+    const lines: string[] = [];
+    const app = Fastify({ logger: { level: 'info', stream: { write: (line: string) => lines.push(line) } }, disableRequestLogging: true });
+
+    registerAccessLog(app);
+    app.get('/auth/callback', async () => 'ok');
+    await app.inject({ method: 'GET', url: '/auth/callback?code=SECRET_CODE&state=SECRET_STATE' });
+
+    const entry = lines.map((line) => JSON.parse(line) as Record<string, unknown>).find((line) => line.msg === 'request completed');
+
+    expect(entry).toMatchObject({ method: 'GET', path: '/auth/callback', statusCode: 200 });
+    expect(lines.join('')).not.toContain('SECRET');
   });
 });
