@@ -78,6 +78,12 @@ describe('production static serving', () => {
     expect((await get('another.example.org', '/client.js')).statusCode).toBe(404);
   });
 
+  it('makes every cache revalidate the vault files', async () => {
+    for (const url of ['/bridge.html', '/vault.js', '/client.js']) {
+      expect((await get('data.encryption.example.org', url)).headers['cache-control'], url).toBe('no-cache');
+    }
+  });
+
   it("leaves the server's own paths alone, on every host", async () => {
     for (const host of ['encryption.example.org', 'data.encryption.example.org', '10.0.0.1:7200']) {
       const response = await get(host, '/health');

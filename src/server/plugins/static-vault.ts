@@ -93,6 +93,9 @@ export const staticVaultPlugin = fp(async (app: FastifyInstance): Promise<void> 
         }
       }
 
+      // Fixed names, no hash in them: a cache must ask before reusing one, or a stale
+      // vault.js would fail the SRI of a fresh bridge.html.
+      reply.header('Cache-Control', 'no-cache');
       reply.type(file.type).send(file.content);
     }
   });
