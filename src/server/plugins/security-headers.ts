@@ -28,6 +28,8 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
   const isDev = process.env.NODE_ENV === 'development';
   const productFrameAncestors = parseOriginAllowlist(env.ALLOWED_FRAME_ANCESTORS).join(' '); // The products allowed to embed either iframe.
   const vaultFrameAncestors = `${productFrameAncestors} ${env.UI_URL}`; // The vault has one embedder the interface does not: the interface itself.
+  const vaultOrigin = new URL(env.VAULT_URL).origin;
+  const uiOrigin = new URL(env.UI_URL).origin;
 
   app.addHook('onRequest', async (request, reply) => {
     const path = request.url.split('?')[0];
@@ -82,7 +84,13 @@ export const securityHeadersPlugin = fp(async (app: FastifyInstance): Promise<vo
     const connectSrc = isDev ? "'self' ws:" : "'self'";
 
     // Without reporting, the browser blocks a violation silently and nobody ever learns it happened.
-    reply.raw.setHeader('Reporting-Endpoints', `default="${request.protocol}://${request.host}${BROWSER_REPORT_PATH}"`);
+    // Built from the configured origin, not the request: behind a TLS proxy the request reads
+    // `http`, and browsers ignore an endpoint that is not secure.
+    const reportingOrigin = host === env.VAULT_HOST ? vaultOrigin : host === env.UI_HOST ? uiOrigin : null;
+
+    if (reportingOrigin !== null) {
+      reply.raw.setHeader('Reporting-Endpoints', `default="${reportingOrigin}${BROWSER_REPORT_PATH}"`);
+    }
 
     const reporting = `report-to default; report-uri ${BROWSER_REPORT_PATH}`;
 

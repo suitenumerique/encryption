@@ -224,14 +224,21 @@ describe('securityHeadersPlugin', () => {
       expect(csp).toContain('frame-src https://data.encryption.localhost:7200');
     });
 
-    it('advertises a same-origin reporting endpoint on every host', async () => {
-      for (const host of [VAULT_HOST, UI_HOST, 'api.example.com']) {
+    it('advertises the reporting endpoint at the configured origin, whatever the request scheme', async () => {
+      for (const host of [VAULT_HOST, UI_HOST]) {
         const headers = await headersFor(host);
 
-        expect(headers['reporting-endpoints']).toBe(`default="http://${host}/api/browser-reports"`);
+        expect(headers['reporting-endpoints']).toBe(`default="https://${host}/api/browser-reports"`);
         expect(headers['content-security-policy']).toContain('report-to default');
         expect(headers['content-security-policy']).toContain('report-uri /api/browser-reports');
       }
+    });
+
+    it('keeps only the relative report-uri on a host it does not serve pages for', async () => {
+      const headers = await headersFor('api.example.com');
+
+      expect(headers['reporting-endpoints']).toBeUndefined();
+      expect(headers['content-security-policy']).toContain('report-uri /api/browser-reports');
     });
 
     it('keeps the API host locked to default-src none while still reporting', async () => {
