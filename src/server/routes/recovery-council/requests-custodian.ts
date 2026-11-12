@@ -6,7 +6,6 @@ import { type ContributionRecord, ephemeralKeyHash, verifyContribution, wrappedS
 import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import type { Prisma } from '@encryption/src/generated/prisma/client';
 import { prisma } from '@encryption/src/prisma/client';
-import { requireStepUp } from '@encryption/src/server/auth/step-up';
 import {
   councilChain,
   councilHead,
@@ -34,7 +33,7 @@ import { errorResponses } from '@encryption/src/server/error-response';
 import { emergencyRecipient } from '@encryption/src/server/routes/emergency-core';
 import { logEmailFailure, sendSignatureError } from '@encryption/src/server/routes/recovery-council/replies';
 import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
-import { SKIP_SIG, assertUserId } from '@encryption/src/server/routes/transport-auth';
+import { SKIP_SIG, STEP_UP, assertUserId } from '@encryption/src/server/routes/transport-auth';
 import { userFullName } from '@encryption/src/server/user-name';
 import { REQUEST_FILTERS, REQUEST_PAGE_SIZES, type RequestFilter } from '@encryption/src/shared/council-request-filters';
 import {
@@ -232,6 +231,7 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/council-recovery/requests/:id/contribute',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ id: z.string().uuid() }),
         body: CouncilContributionBodySchema,
@@ -240,7 +240,6 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const body = request.body;
       const row = await prisma.councilRequest.findUnique({ where: { id: request.params.id } });
@@ -343,6 +342,7 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/council-recovery/requests/:id/abort',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ id: z.string().uuid() }),
         response: { 200: z.object({ aborted: z.boolean() }), ...errorResponses(401, 403, 404) },
@@ -350,7 +350,6 @@ export function custodianRequestRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const row = await prisma.councilRequest.findUnique({ where: { id: request.params.id } });
       if (!row) return reply.status(404).send({ code: API_ERROR_COUNCIL_REQUEST_NOT_FOUND });

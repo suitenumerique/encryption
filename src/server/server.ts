@@ -7,16 +7,8 @@ import { apiCacheControlPlugin } from '@encryption/src/server/plugins/api-cache-
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
 import { idTokenAuthPlugin } from '@encryption/src/server/plugins/id-token-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
-import { authRoute } from '@encryption/src/server/routes/auth';
-import { browserReportsRoute } from '@encryption/src/server/routes/browser-reports';
-import { emergencyAccessRoute } from '@encryption/src/server/routes/emergency-access';
+import { API_ROUTE_PLUGINS } from '@encryption/src/server/routes/api-routes';
 import { SELF_CHECK_REMOTE_ADDRESS, healthRoute } from '@encryption/src/server/routes/health';
-import { maintenanceEscrowRoute } from '@encryption/src/server/routes/maintenance-escrow';
-import { publicKeysRoute } from '@encryption/src/server/routes/public-keys';
-import { recoveryCouncilRoute } from '@encryption/src/server/routes/recovery-council';
-import { securityTxtRoute } from '@encryption/src/server/routes/security-txt';
-import { vaultRoute } from '@encryption/src/server/routes/vault';
-import { versionRoute } from '@encryption/src/server/routes/versions';
 import { API_ERROR_INTERNAL, API_ERROR_INVALID_REQUEST } from '@encryption/src/shared/error-codes';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 
@@ -157,15 +149,9 @@ export async function createServer(options: CreateServerOptions = {}) {
   }
 
   // Register routes
-  app.register(browserReportsRoute);
-  app.register(securityTxtRoute);
-  app.register(versionRoute);
-  app.register(authRoute);
-  app.register(publicKeysRoute);
-  app.register(maintenanceEscrowRoute);
-  app.register(vaultRoute);
-  app.register(emergencyAccessRoute);
-  app.register(recoveryCouncilRoute);
+  for (const plugin of API_ROUTE_PLUGINS) {
+    app.register(plugin);
+  }
 
   // `hide` keeps infrastructure endpoints out of the generated OpenAPI document:
   // they are not part of the API the interface consumes.

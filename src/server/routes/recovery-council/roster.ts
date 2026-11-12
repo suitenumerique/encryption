@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { verifyRosterSignature } from '@encryption/src/crypto/council';
 import { base64ToUint8 } from '@encryption/src/crypto/encryption-backup';
 import { prisma } from '@encryption/src/prisma/client';
-import { requireStepUp } from '@encryption/src/server/auth/step-up';
 import {
   absentCustodiansOf,
   activeIdentityIdsOf,
@@ -34,7 +33,7 @@ import { env } from '@encryption/src/server/env';
 import { errorResponses } from '@encryption/src/server/error-response';
 import { configuredCouncil, councilForEmail } from '@encryption/src/server/recovery-councils';
 import { sendSignatureError } from '@encryption/src/server/routes/recovery-council/replies';
-import { SKIP_SIG, assertUserId } from '@encryption/src/server/routes/transport-auth';
+import { SKIP_SIG, STEP_UP, assertUserId } from '@encryption/src/server/routes/transport-auth';
 import { userFullName } from '@encryption/src/server/user-name';
 import {
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
@@ -425,6 +424,7 @@ export function rosterRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/councils/:councilId/versions/:version/sign',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ councilId: z.string().min(1).max(64), version: z.coerce.number().int().positive() }),
         body: z.object({ signature: z.string().min(1).max(1024) }),
@@ -433,7 +433,6 @@ export function rosterRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const userId = request.userId;
       const { councilId } = request.params;

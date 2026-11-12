@@ -7,7 +7,6 @@ import { ensureSodium } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { checkHelperCommitments, decodeCommitments } from '@encryption/src/crypto/shamir';
 import { prisma } from '@encryption/src/prisma/client';
-import { requireStepUp } from '@encryption/src/server/auth/step-up';
 import { councilChain, custodianOf, escrowRecordWire, rosterVersionWire, serializable, sha256 } from '@encryption/src/server/council-core';
 import {
   cancelReshareSession,
@@ -19,7 +18,7 @@ import {
 import { errorResponses } from '@encryption/src/server/error-response';
 import { sendSignatureError } from '@encryption/src/server/routes/recovery-council/replies';
 import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
-import { SKIP_SIG, assertUserId } from '@encryption/src/server/routes/transport-auth';
+import { SKIP_SIG, STEP_UP, assertUserId } from '@encryption/src/server/routes/transport-auth';
 import {
   API_ERROR_COUNCIL_NOT_CUSTODIAN,
   API_ERROR_COUNCIL_NOT_FOUND,
@@ -57,6 +56,7 @@ export function reshareRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/councils/:councilId/reshare',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ councilId: z.string().min(1).max(64) }),
         body: z.object({ source_version: z.number().int().positive(), helper_slots: z.array(z.number().int().min(1).max(255)).min(1).max(12) }),
@@ -65,7 +65,6 @@ export function reshareRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const { councilId } = request.params;
       const custodian = await custodianOf(councilId, request.userId);
@@ -181,6 +180,7 @@ export function reshareRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/councils/reshare/:sessionId/keys',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ sessionId: z.string().uuid() }),
         body: CouncilReshareKeysBodySchema,
@@ -189,7 +189,6 @@ export function reshareRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const helper = await helperOf(request.params.sessionId, request.userId);
       if (!helper) return reply.status(403).send({ code: API_ERROR_COUNCIL_NOT_CUSTODIAN });
@@ -246,6 +245,7 @@ export function reshareRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/councils/reshare/:sessionId/sub-shares',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ sessionId: z.string().uuid() }),
         body: CouncilReshareSubSharesBodySchema,
@@ -257,7 +257,6 @@ export function reshareRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const helper = await helperOf(request.params.sessionId, request.userId);
       if (!helper) return reply.status(403).send({ code: API_ERROR_COUNCIL_NOT_CUSTODIAN });
@@ -366,6 +365,7 @@ export function reshareRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().post(
     '/api/councils/reshare/:sessionId/cancel',
     {
+      ...STEP_UP,
       schema: {
         params: z.object({ sessionId: z.string().uuid() }),
         response: { 200: z.object({ cancelled: z.boolean() }), ...errorResponses(401, 403, 404) },
@@ -373,7 +373,6 @@ export function reshareRoutes(app: FastifyInstance): void {
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
 
       const session = await prisma.councilReshareSession.findUnique({ where: { id: request.params.sessionId } });
       if (!session || session.status !== 'open') return reply.status(404).send({ code: API_ERROR_COUNCIL_NOT_FOUND });

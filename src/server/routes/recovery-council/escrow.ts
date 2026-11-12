@@ -3,7 +3,6 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import { prisma } from '@encryption/src/prisma/client';
-import { requireStepUp } from '@encryption/src/server/auth/step-up';
 import { councilLabel, serializable } from '@encryption/src/server/council-core';
 import { CouncilHeadChangedError, checkEscrowSubmission, enrollableCouncil, moveTargetOf, writeEscrow } from '@encryption/src/server/council-escrow';
 import { openRequestOf } from '@encryption/src/server/council-requests-core';
@@ -13,7 +12,7 @@ import { errorResponses } from '@encryption/src/server/error-response';
 import { emergencyRecipient } from '@encryption/src/server/routes/emergency-core';
 import { logEmailFailure } from '@encryption/src/server/routes/recovery-council/replies';
 import { isRetryableRegistrationError } from '@encryption/src/server/routes/registration-core';
-import { assertUserId } from '@encryption/src/server/routes/transport-auth';
+import { STEP_UP, assertUserId } from '@encryption/src/server/routes/transport-auth';
 import {
   API_ERROR_CONCURRENT_REGISTRATION,
   API_ERROR_COUNCIL_NOT_COVERED,
@@ -90,13 +89,13 @@ export function escrowRoutes(app: FastifyInstance): void {
   app.withTypeProvider<ZodTypeProvider>().delete(
     '/api/councils/escrow',
     {
+      ...STEP_UP,
       schema: {
         response: { 200: z.object({ left: z.number().int().nonnegative() }), ...errorResponses(401, 409) },
       },
     },
     async (request, reply) => {
       assertUserId(request);
-      if (!requireStepUp(request, reply)) return reply;
       const userId = request.userId;
 
       if (await openRequestOf(userId)) return reply.status(409).send({ code: API_ERROR_COUNCIL_REQUEST_EXISTS });

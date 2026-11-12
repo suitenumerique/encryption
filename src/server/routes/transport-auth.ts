@@ -5,6 +5,7 @@ import { uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { verifyIdentityContinuity } from '@encryption/src/crypto/key-registration';
 import { REQUEST_SIG_HEADER, readProofSubject, verifyRequestProof } from '@encryption/src/crypto/request-proof';
 import { prisma } from '@encryption/src/prisma/client';
+import { requireStepUp } from '@encryption/src/server/auth/step-up';
 import { MAX_CONTINUITY_HOPS } from '@encryption/src/shared/constants';
 import { API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID } from '@encryption/src/shared/error-codes';
 
@@ -17,6 +18,9 @@ import { API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID } from '@encryption/src/share
 //   absent). `userId` comes from the signed `sub`.
 export const SKIP_SIG = { config: { skipRequestSignature: true } };
 export const SIG_ONLY = { config: { signatureOnly: true } };
+// - STEP_UP: the default tier plus a fresh second-factor authentication (RFC 9470),
+//   for the decisions a stolen login or an unattended browser must not take alone.
+export const STEP_UP = { config: { stepUp: true } };
 
 // The transport-auth preValidation hook sets `request.userId` and rejects with
 // 401 before the handler runs otherwise, so a missing userId inside a handler is
@@ -152,7 +156,7 @@ export function registerTransportAuth(app: FastifyInstance): void {
   // with a malformed body answers 400, leaking that the signature was never the
   // reason it failed.
   app.addHook('preValidation', async (request, reply) => {
-    const cfg = request.routeOptions.config as { skipRequestSignature?: boolean; signatureOnly?: boolean } | undefined;
+    const cfg = request.routeOptions.config as { skipRequestSignature?: boolean; signatureOnly?: boolean; stepUp?: boolean } | undefined;
     const token = request.headers[REQUEST_SIG_HEADER];
     const nowMs = Date.now();
     const reject = () => reply.status(401).send({ code: API_ERROR_VAULT_REQUEST_SIGNATURE_INVALID });
@@ -185,5 +189,7 @@ export function registerTransportAuth(app: FastifyInstance): void {
     if (typeof token !== 'string') return reject();
     if ((await readProofSubject(token)) !== request.userId) return reject();
     if (!(await verifyIdentityRequest(request, request.userId, token, nowMs))) return reject();
+
+    if (cfg?.stepUp && !requireStepUp(request, reply)) return reply;
   });
 }
