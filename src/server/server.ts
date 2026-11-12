@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 
 import { attachApiErrorMessages } from '@encryption/src/server/error-response';
 import { captureServerError } from '@encryption/src/server/monitoring';
+import { apiCacheControlPlugin } from '@encryption/src/server/plugins/api-cache-control';
 import { corsPlugin } from '@encryption/src/server/plugins/cors';
 import { idTokenAuthPlugin } from '@encryption/src/server/plugins/id-token-auth';
 import { securityHeadersPlugin } from '@encryption/src/server/plugins/security-headers';
@@ -130,6 +131,7 @@ export async function createServer(options: CreateServerOptions = {}) {
 
   // Register plugins
   app.register(securityHeadersPlugin);
+  app.register(apiCacheControlPlugin);
   app.register(corsPlugin);
   app.register(idTokenAuthPlugin);
 
