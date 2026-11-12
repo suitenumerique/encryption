@@ -73,6 +73,15 @@ describe('health routes', () => {
     expect(response.json().checks[check]).toBe('failing');
   });
 
+  it('names the failing check only to a connection from the pod itself', async () => {
+    app = await serverWith({ api: true });
+
+    const response = await app.inject({ method: 'GET', url: '/health/ready', remoteAddress: '10.0.0.5' });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: 'failing' });
+  });
+
   it('stays alive whatever is broken: liveness must never depend on the rest', async () => {
     findFirst.mockRejectedValue(new Error('User was denied access on the database'));
     app = await serverWith({ interfacePage: true, vaultFile: true, api: true });

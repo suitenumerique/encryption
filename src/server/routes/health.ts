@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { prisma } from '@encryption/src/prisma/client';
 import { env } from '@encryption/src/server/env';
@@ -18,7 +18,8 @@ import { env } from '@encryption/src/server/env';
  *   becomes ready and a rollout keeps the working pods. Not part of readiness on purpose:
  *   the vault decrypts locally, and must stay reachable while the database is down.
  *
- * The bodies say which check fails and nothing more: these endpoints are public.
+ * These endpoints are public. Probes read only the status code, so the body names the
+ * failing check only to a connection from the pod itself (`kubectl port-forward`).
  */
 
 // light-my-request puts this on the injected socket. Not an IP address, so no real
@@ -101,6 +102,16 @@ function cached(evaluate: () => Promise<Report>): () => Promise<Report> {
   };
 }
 
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+// The TCP peer, never a forwarded header a client could write: with no trustProxy, a
+// request through the ingress or a container port shows the proxy's or gateway's address.
+function reply(request: FastifyRequest, response: FastifyReply, result: Report): FastifyReply {
+  const local = LOOPBACK_ADDRESSES.has(request.socket.remoteAddress ?? '');
+
+  return response.code(result.status === 'ok' ? 200 : 503).send(local ? result : { status: result.status });
+}
+
 export async function healthRoute(app: FastifyInstance): Promise<void> {
   // `hide` keeps infrastructure endpoints out of the generated OpenAPI document.
   const hidden = { schema: { hide: true } };
@@ -114,15 +125,6 @@ export async function healthRoute(app: FastifyInstance): Promise<void> {
 
   app.get('/health', hidden, async () => ({ status: 'ok' }));
 
-  app.get('/health/ready', hidden, async (_, reply) => {
-    const result = await ready();
-
-    return reply.code(result.status === 'ok' ? 200 : 503).send(result);
-  });
-
-  app.get('/health/startup', hidden, async (_, reply) => {
-    const result = await startup();
-
-    return reply.code(result.status === 'ok' ? 200 : 503).send(result);
-  });
+  app.get('/health/ready', hidden, async (request, response) => reply(request, response, await ready()));
+  app.get('/health/startup', hidden, async (request, response) => reply(request, response, await startup()));
 }
