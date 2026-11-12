@@ -7,7 +7,7 @@ import { type CouncilEscrowRecord, capsuleHash, rosterHash, verifyEscrow } from 
 import { ensureSodium } from '@encryption/src/crypto/encryption';
 import { base64ToUint8, importPublicKeyFromBytes, uint8ToBase64 } from '@encryption/src/crypto/encryption-backup';
 import { decodeCommitments } from '@encryption/src/crypto/shamir';
-import { verifyAuthPublicKeyBinding } from '@encryption/src/crypto/vault-unlock';
+import { kdfParamsAllowed, verifyAuthPublicKeyBinding } from '@encryption/src/crypto/vault-unlock';
 import type { Prisma } from '@encryption/src/generated/prisma/client';
 import { prisma } from '@encryption/src/prisma/client';
 import {
@@ -19,7 +19,6 @@ import {
   sha256,
 } from '@encryption/src/server/council-core';
 import { councilForEmail } from '@encryption/src/server/recovery-councils';
-import { kdfParamsAllowed } from '@encryption/src/server/routes/kdf-params';
 import { activeIdentityWireKey } from '@encryption/src/server/routes/transport-auth';
 import {
   API_ERROR_COUNCIL_ESCROW_INVALID,
@@ -81,7 +80,7 @@ export async function checkEscrowSubmission(userId: string, body: CouncilEscrowB
   if (sentSlots.length !== headSlots.length || sentSlots.some((slot, i) => slot !== headSlots[i]))
     return { ok: false, status: 409, code: API_ERROR_COUNCIL_ROSTER_CHANGED };
 
-  if (!kdfParamsAllowed(body.credential.kdf_ops, body.credential.kdf_mem))
+  if (!kdfParamsAllowed({ opsLimit: body.credential.kdf_ops, memLimit: body.credential.kdf_mem }))
     return { ok: false, status: 400, code: API_ERROR_VAULT_KDF_PARAMS_INVALID };
 
   const identityKey = signer ?? (await activeIdentityWireKey(userId));

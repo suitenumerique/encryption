@@ -18,7 +18,7 @@ import { base64ToUint8, exportPublicKeyAsBase64, uint8ToBase64 } from '@encrypti
 import type { SealedItem } from '@encryption/src/crypto/vault-manifest';
 import { openState, verifyPulledVault } from '@encryption/src/crypto/vault-seal';
 import { activeIdentity } from '@encryption/src/crypto/vault-state';
-import { deriveKek, deriveVaultAuthKeyPair, signVaultChallenge, unwrapVrk } from '@encryption/src/crypto/vault-unlock';
+import { deriveKek, deriveVaultAuthKeyPair, kdfVariantsToTry, signVaultChallenge, unwrapVrk } from '@encryption/src/crypto/vault-unlock';
 import { BROADCAST_KEYS_CHANGED } from '@encryption/src/shared/constants';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 import { getVaultBroadcastChannel } from '@encryption/src/vault/broadcast';
@@ -77,8 +77,12 @@ async function unlockVault(
   const chal = (await chalRes.json()) as { challenge_id: string; nonce: string };
   const nonce = base64ToUint8(chal.nonce);
 
-  for (const variant of variants) {
-    const kek = await deriveKek(recoveryPhrase, userId, { opsLimit: variant.kdf_ops, memLimit: variant.kdf_mem });
+  const toTry = kdfVariantsToTry(variants.map((variant) => ({ opsLimit: variant.kdf_ops, memLimit: variant.kdf_mem })));
+  // Our server never stores params out of bounds: none left means its answer is not one of ours.
+  if (toTry.length === 0) throw new VaultError(VaultErrorCode.UNKNOWN, 'No usable KDF parameters for this vault.');
+
+  for (const params of toTry) {
+    const kek = await deriveKek(recoveryPhrase, userId, params);
     const authKeyPair = await deriveVaultAuthKeyPair(kek);
     const proof = uint8ToBase64(await signVaultChallenge(nonce, userId, authKeyPair.secretKey));
 

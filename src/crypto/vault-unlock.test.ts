@@ -5,11 +5,14 @@ import { encryptContent } from '@encryption/src/crypto/encryption';
 import { detectMnemonicLanguage } from '@encryption/src/crypto/mnemonic';
 import { generateSignatureKeyPair, signDetached } from '@encryption/src/crypto/signature';
 import {
+  DEFAULT_KDF_PARAMS,
   type KdfParams,
   deriveKek,
   deriveVaultAuthKeyPair,
   generateRecoveryPhrase,
   generateVrk,
+  kdfParamsAllowed,
+  kdfVariantsToTry,
   signAuthPublicKeyBinding,
   signVaultChallenge,
   unwrapVrk,
@@ -53,6 +56,37 @@ describe('KEK derivation', () => {
     const messy = `  ${PHRASE.toUpperCase().replace(/ /g, '   ')}\n`;
 
     expect(await deriveKek(messy, 'user-1', FAST)).toEqual(base);
+  });
+});
+
+describe('KDF bounds', () => {
+  const MIB = 1024 * 1024;
+  const params = (opsLimit: number, mib: number): KdfParams => ({ opsLimit, memLimit: mib * MIB });
+
+  it('allows the default and costlier params up to the work bound', () => {
+    expect(kdfParamsAllowed(DEFAULT_KDF_PARAMS)).toBe(true);
+    expect(kdfParamsAllowed(params(8, 256))).toBe(true);
+    expect(kdfParamsAllowed(params(10, 128))).toBe(true);
+  });
+
+  it.each([
+    ['fewer passes than the default', params(2, 64)],
+    ['less memory than the default', params(3, 32)],
+    ['more than 10 passes', params(11, 64)],
+    ['more than 256 MiB', params(3, 512)],
+    ['more work than 2 GiB passes', params(9, 256)],
+    ['a fractional value', { opsLimit: 3.5, memLimit: 64 * MIB }],
+  ])('refuses %s', (_, value) => {
+    expect(kdfParamsAllowed(value)).toBe(false);
+  });
+
+  it('tries the allowed variants cheapest first, whatever order the server sent', () => {
+    expect(kdfVariantsToTry([params(4, 256), params(10, 256), DEFAULT_KDF_PARAMS])).toEqual([DEFAULT_KDF_PARAMS, params(4, 256)]);
+  });
+
+  it('bounds how many variants and how much work a server can make the browser spend', () => {
+    expect(kdfVariantsToTry(Array.from({ length: 20 }, (_, i) => params(3 + (i % 8), 64)))).toHaveLength(8);
+    expect(kdfVariantsToTry([params(8, 256), params(8, 256), params(4, 256)])).toEqual([params(4, 256), params(8, 256)]);
   });
 });
 

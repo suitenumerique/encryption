@@ -40,6 +40,53 @@ export interface KdfParams {
 // params live in the keyring so they can be raised later without guesswork.
 export const DEFAULT_KDF_PARAMS: KdfParams = { opsLimit: 3, memLimit: 64 * 1024 * 1024 };
 
+const MIB = 1024 * 1024;
+
+// The bounds of any stored params, checked by the server on every write and by the vault
+// before it derives with what the server returned. The minimum is today's default. The
+// maximums leave about ten times its cost to raise it later (the phrase's entropy, not
+// the KDF, is what resists guessing), while one derivation stays an allocation an old
+// phone can make and a few seconds of work.
+export const KDF_MAX_OPS = 10;
+export const KDF_MAX_MEM = 256 * MIB;
+export const KDF_MAX_WORK_MIB_PASSES = 2048;
+// An account holds few variants: one per raise of the standard still in use by a keyring.
+export const KDF_MAX_VARIANTS = 8;
+export const KDF_MAX_TOTAL_WORK_MIB_PASSES = 4096;
+
+const kdfWork = (params: KdfParams) => (params.memLimit / MIB) * params.opsLimit;
+
+export function kdfParamsAllowed(params: KdfParams): boolean {
+  return (
+    Number.isInteger(params.opsLimit) &&
+    Number.isInteger(params.memLimit) &&
+    params.opsLimit >= DEFAULT_KDF_PARAMS.opsLimit &&
+    params.opsLimit <= KDF_MAX_OPS &&
+    params.memLimit >= DEFAULT_KDF_PARAMS.memLimit &&
+    params.memLimit <= KDF_MAX_MEM &&
+    kdfWork(params) <= KDF_MAX_WORK_MIB_PASSES
+  );
+}
+
+/**
+ * The variants a restore tries, cheapest first: only allowed ones, at most
+ * KDF_MAX_VARIANTS, within KDF_MAX_TOTAL_WORK_MIB_PASSES together. The server sends
+ * them, so a list it made up costs the browser a bounded wait, never a frozen tab.
+ */
+export function kdfVariantsToTry(variants: KdfParams[]): KdfParams[] {
+  const tried: KdfParams[] = [];
+  let totalWork = 0;
+
+  for (const variant of variants.filter(kdfParamsAllowed).sort((a, b) => kdfWork(a) - kdfWork(b))) {
+    if (tried.length === KDF_MAX_VARIANTS || totalWork + kdfWork(variant) > KDF_MAX_TOTAL_WORK_MIB_PASSES) break;
+
+    tried.push(variant);
+    totalWork += kdfWork(variant);
+  }
+
+  return tried;
+}
+
 function deriveKdfSalt(userId: string): Uint8Array {
   return sodium.crypto_generichash(sodium.crypto_pwhash_SALTBYTES, sodium.from_string(`${DOMAIN_VAULT_KDF_SALT}|${userId}`), null);
 }

@@ -13,7 +13,7 @@ import {
   sealedItemsMatchManifest,
   verifyManifest,
 } from '@encryption/src/crypto/vault-manifest';
-import { verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
+import { kdfParamsAllowed, verifyAuthPublicKeyBinding, verifyVaultChallenge } from '@encryption/src/crypto/vault-unlock';
 import { prisma } from '@encryption/src/prisma/client';
 import { satisfiesStepUp, sendStepUpChallenge } from '@encryption/src/server/auth/step-up';
 import { type Tx, councilLabel } from '@encryption/src/server/council-core';
@@ -28,7 +28,6 @@ import {
   notifyVaultRecovered,
   verifyEscrowSubmission,
 } from '@encryption/src/server/routes/emergency-core';
-import { kdfParamsAllowed } from '@encryption/src/server/routes/kdf-params';
 import {
   type CompleteTxResult,
   activateRegistration,
@@ -599,7 +598,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
       // Cheap input check before the proof: the keyring's KDF params must be the
       // pinned standard (uniform params keep restore correct for any vault; also
       // blocks a weak-params vault).
-      if (!kdfParamsAllowed(body.keyring.kdf_ops, body.keyring.kdf_mem)) return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
+      if (!kdfParamsAllowed({ opsLimit: body.keyring.kdf_ops, memLimit: body.keyring.kdf_mem }))
+        return reply.status(400).send({ code: API_ERROR_VAULT_KDF_PARAMS_INVALID });
 
       // Read-only proof of possession of both private keys, before any write.
       const check = await loadAndVerifyPossession(userId, body.registration);
@@ -867,7 +867,8 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
   type KeyringRewritePlan = Extract<Awaited<ReturnType<typeof planKeyringRewrite>>, { ok: true }>;
 
   async function planKeyringRewrite(userId: string, vaultId: string, identity: { signaturePublicKey: Uint8Array }, body: VaultKeyringUpdateBody) {
-    if (!kdfParamsAllowed(body.kdf_ops, body.kdf_mem)) return { ok: false as const, status: 400 as const, code: API_ERROR_VAULT_KDF_PARAMS_INVALID };
+    if (!kdfParamsAllowed({ opsLimit: body.kdf_ops, memLimit: body.kdf_mem }))
+      return { ok: false as const, status: 400 as const, code: API_ERROR_VAULT_KDF_PARAMS_INVALID };
 
     // Same binding check as bootstrap: the new auth verifier must be signed by
     // this vault's identity, so a token-thief can't swap in one they control.
@@ -908,7 +909,7 @@ export async function vaultRoute(app: FastifyInstance): Promise<void> {
     for (const row of granted) {
       const rearm = rearmById.get(row.id)!;
 
-      if (!kdfParamsAllowed(rearm.credential.kdf_ops, rearm.credential.kdf_mem))
+      if (!kdfParamsAllowed({ opsLimit: rearm.credential.kdf_ops, memLimit: rearm.credential.kdf_mem }))
         return { ok: false as const, status: 400 as const, code: API_ERROR_VAULT_KDF_PARAMS_INVALID };
 
       const valid = await verifyEscrowSubmission(
