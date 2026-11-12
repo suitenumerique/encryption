@@ -177,6 +177,9 @@ spec:
               value: '4100'
             - name: DRIVE_API_URL
               value: "https://drive.suite.example.org"
+            # Only Drive's own pages may open a socket with the tester's cookie.
+            - name: RELAY_ALLOWED_ORIGINS
+              value: "https://drive.suite.example.org"
           readinessProbe:
             httpGet:
               path: /health

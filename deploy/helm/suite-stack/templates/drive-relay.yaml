@@ -44,6 +44,9 @@ spec:
               value: '4100'
             - name: DRIVE_API_URL
               value: {{ $r.driveApiUrl | quote }}
+            # Only Drive's own pages may open a socket with the tester's cookie.
+            - name: RELAY_ALLOWED_ORIGINS
+              value: {{ printf "https://%s" $r.host | quote }}
           readinessProbe:
             httpGet:
               path: /health
