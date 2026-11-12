@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { DEV_MAINTENANCE_PUBLIC_KEYS } from '@encryption/src/maintenance/dev-maintenance-public-keys';
 import { jsonEnvironmentValue } from '@encryption/src/server/email-domain-groups';
 import { maintenanceEscrowKeysSchema } from '@encryption/src/server/maintenance-escrow';
 import { recoveryCouncilsSchema } from '@encryption/src/server/recovery-councils';
@@ -190,6 +191,19 @@ const envFields = z.object({
 });
 
 export const envSchema = envFields.superRefine((env, ctx) => {
+  // The development phrases are public in the repository: their keys would let anyone open the copies.
+  if (process.env.NODE_ENV === 'production') {
+    env.MAINTENANCE_ESCROW_KEYS?.forEach((entry, index) => {
+      if (DEV_MAINTENANCE_PUBLIC_KEYS.has(entry.publicKey)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MAINTENANCE_ESCROW_KEYS', index, 'publicKey'],
+          message: 'is a development key, whose phrase is public in the repository: generate your own with the maintenance tool',
+        });
+      }
+    });
+  }
+
   // A sign-in needs a last name, read from its own claim or derived from the full name.
   if (env.OIDC_CLAIMS_LAST_NAME.length === 0 && env.OIDC_CLAIMS_FULL_NAME.length === 0) {
     ctx.addIssue({

@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { exportPublicKeyAsBase64, generateUserKeyPair } from '@encryption/src/crypto';
+import { DEV_NEXT_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-public-keys';
 import { envSchema } from '@encryption/src/server/env-schema';
 
 describe('ALLOWED_FRAME_ANCESTORS', () => {
@@ -106,5 +107,35 @@ describe('MAINTENANCE_ESCROW_KEYS', () => {
     ]) {
       expect(parse(value).success, value).toBe(false);
     }
+  });
+});
+
+describe('development maintenance keys', () => {
+  const baseEnv = parseEnv(readFileSync('.env.test', 'utf8'));
+  const issuesFor = (overrides: Record<string, string> = {}) =>
+    envSchema.safeParse({ ...baseEnv, ...overrides }).error?.issues.map((issue) => issue.path.join('.')) ?? [];
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('accepts them outside production, where .env.test configures one', () => {
+    expect(issuesFor()).toEqual([]);
+  });
+
+  it('refuses them in production, the configured one as the other', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+
+    expect(issuesFor()).toEqual(['MAINTENANCE_ESCROW_KEYS.0.publicKey']);
+    expect(issuesFor({ MAINTENANCE_ESCROW_KEYS: JSON.stringify([{ domains: ['*'], publicKey: DEV_NEXT_MAINTENANCE_PUBLIC_KEY }]) })).toEqual([
+      'MAINTENANCE_ESCROW_KEYS.0.publicKey',
+    ]);
+  });
+
+  it('accepts an operator key in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const key = exportPublicKeyAsBase64((await generateUserKeyPair()).publicKey);
+
+    expect(issuesFor({ MAINTENANCE_ESCROW_KEYS: JSON.stringify([{ domains: ['*'], publicKey: key }]) })).toEqual([]);
   });
 });

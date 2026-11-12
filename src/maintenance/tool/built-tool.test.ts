@@ -23,12 +23,8 @@ import {
   maintenanceKeyPairFromPhrase,
   parseMaintenancePublicKey,
 } from '@encryption/src/crypto/maintenance-escrow';
-import {
-  DEV_MAINTENANCE_PHRASE,
-  DEV_MAINTENANCE_PUBLIC_KEY,
-  DEV_NEXT_MAINTENANCE_PHRASE,
-  DEV_NEXT_MAINTENANCE_PUBLIC_KEY,
-} from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PHRASE, DEV_NEXT_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PUBLIC_KEY, DEV_NEXT_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-public-keys';
 import { MANIFEST_FILE } from '@encryption/src/maintenance/export-format';
 import {
   SAMPLE_FILES,

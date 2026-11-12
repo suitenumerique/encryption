@@ -25,12 +25,8 @@ import {
   unwrapMaintenanceKey,
   wrapKeyForMaintenance,
 } from '@encryption/src/crypto/maintenance-escrow';
-import {
-  DEV_MAINTENANCE_PHRASE,
-  DEV_MAINTENANCE_PUBLIC_KEY,
-  DEV_NEXT_MAINTENANCE_PHRASE,
-  DEV_NEXT_MAINTENANCE_PUBLIC_KEY,
-} from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PHRASE, DEV_NEXT_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PUBLIC_KEY, DEV_NEXT_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-public-keys';
 import { DOMAIN_KEM_DOCUMENT_KEY } from '@encryption/src/shared/crypto-domains';
 import { VaultError, VaultErrorCode } from '@encryption/src/shared/vault-error';
 

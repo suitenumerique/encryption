@@ -10,12 +10,8 @@ import {
   parseMaintenancePublicKey,
 } from '@encryption/src/crypto/maintenance-escrow';
 import i18n from '@encryption/src/i18n';
-import {
-  DEV_MAINTENANCE_PHRASE,
-  DEV_MAINTENANCE_PUBLIC_KEY,
-  DEV_NEXT_MAINTENANCE_PHRASE,
-  DEV_NEXT_MAINTENANCE_PUBLIC_KEY,
-} from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PHRASE, DEV_NEXT_MAINTENANCE_PHRASE } from '@encryption/src/maintenance/dev-maintenance-key';
+import { DEV_MAINTENANCE_PUBLIC_KEY, DEV_NEXT_MAINTENANCE_PUBLIC_KEY } from '@encryption/src/maintenance/dev-maintenance-public-keys';
 import {
   SAMPLE_FILES,
   SAMPLE_IDS,

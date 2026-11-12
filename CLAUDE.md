@@ -225,7 +225,7 @@ Error reports from the dev server land in the GlitchTip started by `docker compo
 exercise). Open http://localhost:7209 and log in as `dev@example.com` /
 `devdevdev`: the project and the fixed DSN in `.env.test` are seeded on every boot.
 
-`.env.test` also sets `MAINTENANCE_ESCROW_KEYS` to one `*` entry with the public key of the committed DEV phrase (`DEV_MAINTENANCE_PHRASE` in `src/maintenance/dev-maintenance-key.ts`, a fixture, never for a real deployment), so demo documents carry a `maintenanceKey` that the maintenance tool opens (README, "Maintenance escrow", has the export command for the demo store).
+`.env.test` also sets `MAINTENANCE_ESCROW_KEYS` to one `*` entry with the public key of the committed DEV phrase (`DEV_MAINTENANCE_PHRASE` in `src/maintenance/dev-maintenance-key.ts`, a fixture, never for a real deployment: the server refuses its public key, kept apart in `dev-maintenance-public-keys.ts` so the server bundle never carries the phrase, when `NODE_ENV=production`), so demo documents carry a `maintenanceKey` that the maintenance tool opens (README, "Maintenance escrow", has the export command for the demo store).
 
 ## Common commands
 

@@ -39,7 +39,7 @@ Object.defineProperty(globalThis.crypto, 'getRandomValues', {
 });
 
 const { importMaintenancePublicKey } = await import('@encryption/src/crypto/maintenance-escrow');
-const { DEV_MAINTENANCE_PUBLIC_KEY } = await import('@encryption/src/maintenance/dev-maintenance-key');
+const { DEV_MAINTENANCE_PUBLIC_KEY } = await import('@encryption/src/maintenance/dev-maintenance-public-keys');
 const { buildSampleExport } = await import('@encryption/src/maintenance/testing');
 
 const root = resolve(import.meta.dirname, 'sample-export');
