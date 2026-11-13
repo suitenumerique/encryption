@@ -1,0 +1,41 @@
+{{ .Chart.Name }} {{ .Chart.Version }} as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+{{- if .Values.docs.enabled }}
+Docs        https://{{ .Values.docs.ingress.host }}
+{{- end }}
+{{- if .Values.drive.enabled }}
+Drive       https://{{ .Values.drive.ingress.host }}
+{{- end }}
+{{- if .Values.encryption.enabled }}
+Encryption  https://{{ .Values.encryption.hosts.interface }} (interface), https://{{ .Values.encryption.hosts.vault }} (vault)
+{{- end }}
+{{- if .Values.accounts.enabled }}
+Accounts    https://{{ .Values.accounts.ingress.host }} (the products' sign-in, issuer {{ include "suite-stack.accountsIssuer" . }})
+{{- end }}
+Keycloak    https://{{ .Values.shared.keycloak.hostname }} (admin console: {{ .Values.shared.keycloak.username }}), realm {{ .Values.shared.keycloak.realm.name }}{{ if .Values.accounts.enabled }}, behind Accounts{{ end }}
+{{- if .Values.shared.minio.consoleIngress.enabled }}
+MinIO       https://{{ .Values.shared.minio.consoleIngress.hostname }} (console: {{ .Values.shared.minio.username }})
+{{- end }}
+{{- if and .Values.mailpit.enabled .Values.mailpit.ingress.enabled }}
+Mailbox     https://{{ .Values.mailpit.host }} (every email sent by the stack)
+{{- end }}
+{{- if and .Values.onlyoffice.enabled .Values.onlyoffice.ingress.enabled }}
+Office      https://{{ .Values.onlyoffice.host }} (the editor Drive opens office files with)
+{{- end }}
+{{- if and .Values.driveOnlyofficeSandbox.enabled .Values.drive.enabled .Values.driveOnlyofficeSandbox.ingress.enabled }}
+Sandbox     https://{{ .Values.driveOnlyofficeSandbox.host }} (the editor Drive opens encrypted office files in)
+{{- end }}
+
+Tester accounts (bootstrap.keycloak.users){{ if .Values.accounts.enabled }}, typed at Keycloak when Accounts asks{{ end }}:
+{{- range .Values.bootstrap.keycloak.users }}
+  {{ .username }} / {{ .password }} ({{ .email }})
+{{- end }}
+
+The bootstrap Job creates the databases, buckets, clients and accounts after the shared
+services are up, then migrates the encryption service; the products' own migration Jobs
+wait for their database.
+{{- if .Values.accounts.enabled }} The accounts-applications Job then registers the
+products' OAuth2 applications in Accounts, once Accounts has migrated.
+{{- end }} Watch it settle with:
+
+  kubectl -n {{ .Release.Namespace }} get jobs,pods

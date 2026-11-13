@@ -1,0 +1,117 @@
+/* Every length is a multiple of --pt, one A4 point (A4 is 595.28 x 841.89 pt):
+   a real point on screen, a fraction of the page width when printing. */
+
+.sheet {
+  --pt: 1pt;
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: calc(595.28 * var(--pt));
+  height: calc(841.89 * var(--pt));
+  padding: calc(48 * var(--pt));
+  overflow: hidden;
+  background: #ffffff;
+  color: #161616;
+  font-family: var(--recovery-kit-font, Helvetica, Arial, sans-serif);
+  font-size: calc(11 * var(--pt));
+  line-height: 1.1;
+  text-align: left;
+  /* Browsers drop backgrounds when printing unless told otherwise. */
+  print-color-adjust: exact;
+}
+
+.sheet * {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+.title {
+  margin-bottom: calc(10 * var(--pt));
+  font-size: calc(18 * var(--pt));
+  font-weight: 700;
+}
+
+.warning {
+  margin-bottom: calc(16 * var(--pt));
+  padding: calc(10 * var(--pt));
+  border-left: calc(4 * var(--pt)) solid #b34000;
+  background: #ffe9e6;
+  color: #5a2200;
+  font-size: calc(10 * var(--pt));
+}
+
+.label {
+  margin-bottom: calc(12 * var(--pt));
+}
+
+.words {
+  display: flex;
+  flex-wrap: wrap;
+  padding: calc(12 * var(--pt));
+  border: calc(1 * var(--pt)) solid #cccccc;
+  border-radius: calc(4 * var(--pt));
+  background: #f9f9f9;
+  list-style: none;
+}
+
+.word {
+  display: flex;
+  width: 33.33%;
+  padding: calc(3 * var(--pt)) 0;
+  break-inside: avoid;
+}
+
+.num {
+  flex-shrink: 0;
+  width: calc(22 * var(--pt));
+  margin-right: calc(6 * var(--pt));
+  color: #888888;
+  text-align: right;
+}
+
+.footer {
+  margin-top: calc(12 * var(--pt));
+  color: #999999;
+  font-size: calc(8 * var(--pt));
+}
+
+/* Mounted only while the print dialog is open (RecoveryKitPrint), so the rules
+   below never apply to an ordinary print of the interface. */
+.printRoot {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  :global(body):has(> .printRoot) {
+    margin: 0;
+    background: #ffffff;
+  }
+
+  :global(body):has(> .printRoot) > :not(.printRoot) {
+    display: none !important;
+  }
+
+  /* The print root spans the laid-out page, and that width is what every browser
+     maps onto the paper: Chromium lays the print out at the paper width, while
+     Safari lays it out narrower (744px for A4) and scales it up. Absolute units
+     therefore come out about 7% too large in Safari, and `vw` there is still the
+     on-screen window, so the sheet is sized in container units of the print
+     root. Its height is only its content: the space left on the paper varies
+     with the browser's headers and footers, the paper size and the printer. */
+  .printRoot {
+    display: block;
+    container-type: inline-size;
+  }
+
+  .printRoot .sheet {
+    --pt: calc(100cqw / 595.28);
+
+    height: auto;
+  }
+}

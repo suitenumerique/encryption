@@ -1,0 +1,36 @@
+# A helmfile consuming the chart, the way the other Suite deployments are written: one
+# environment per cluster, the values of each in env/<name>/values.yaml.gotmpl, secrets
+# through helm-secrets (SOPS) in env/<name>/secrets.enc.yaml. Copy this directory into
+# the deployment repository and fill in the environments.
+#
+# Pinning: helmfile (1.1 at the time of writing) resolves an OCI chart by its semver
+# `version` only and rejects a `@sha256:` digest in `chart:`, so with the OCI artifact
+# the pin is the version tag. For a content pin, use the git form below with the full
+# commit id of the `chart/vX.Y.Z` tag as `ref`: a commit id hashes the whole tree.
+environments:
+  preprod:
+    values:
+      - chartVersion: 1.4.0
+        chartCommit: 0123456789abcdef0123456789abcdef01234567 # `git rev-parse chart/v1.4.0^{commit}`
+    secrets:
+      - env/{{ .Environment.Name }}/secrets.enc.yaml
+  prod:
+    values:
+      - chartVersion: 1.4.0
+        chartCommit: 0123456789abcdef0123456789abcdef01234567
+    secrets:
+      - env/{{ .Environment.Name }}/secrets.enc.yaml
+---
+
+releases:
+  - name: encryption
+    namespace: {{ .Namespace | default "encryption" }}
+    # The OCI artifact by version. The alternative, pinned to a commit id and needing no
+    # registry:
+    #   chart: git::https://github.com/suitenumerique/encryption.git@deploy/helm/encryption?ref={{ .Values.chartCommit }}
+    chart: oci://registry-1.docker.io/lasuite/encryption-chart
+    version: {{ .Values.chartVersion }}
+    values:
+      - env/{{ .Environment.Name }}/values.yaml.gotmpl
+    secrets:
+      - env/{{ .Environment.Name }}/secrets.enc.yaml

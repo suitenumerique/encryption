@@ -1,0 +1,40 @@
+# tools settings folders
+/**/.*/**/*
+!.github/**/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+
+# dependencies
+node_modules
+
+# build output
+/build/
+/dist/
+
+# prisma generated client
+/src/generated/
+
+# storybook
+!/.storybook/**/*
+/storybook-static/
+/build-storybook.log
+/chromatic.log
+/chromatic-diagnostics.json
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+
+# local env files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# stack chart dependencies (allow moving version of encryption chart)
+deploy/helm/suite-stack/charts/
+deploy/helm/suite-stack/Chart.lock

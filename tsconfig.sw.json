@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["esnext", "webworker"],
+    "isolatedModules": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/vault/sw.ts"]
+}

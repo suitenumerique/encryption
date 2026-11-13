@@ -1,0 +1,49 @@
+# The project the Application above belongs to. Its job is to make Argo CD refuse a
+# revision nobody trusted:
+#
+#   - `signatureKeys`: a sync only happens when the commit at `targetRevision` (for an
+#     annotated tag, the tag itself) is signed by one of these GPG keys. Import the keys
+#     under Settings > GPG keys first. List the release managers' keys, and GitHub's
+#     web-flow key (4AEE18F83AFDEB23) only if releases are cut from the web interface,
+#     which means trusting GitHub the way the image build already does.
+#   - `sourceRepos`: only these two repositories may feed the project.
+#
+# Pair it with a GitHub ruleset on the application repository: tags matching `v*` and
+# `chart/v*` cannot be moved or deleted, and must be signed.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: encryption
+  namespace: argocd
+spec:
+  description: The encryption service, chart from its release tags
+  sourceRepos:
+    - https://github.com/suitenumerique/encryption.git
+    - https://github.com/example-org/deployments.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: encryption
+  signatureKeys:
+    - keyID: 0123456789ABCDEF # a release manager
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: ''
+      kind: Pod
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: policy
+      kind: PodDisruptionBudget

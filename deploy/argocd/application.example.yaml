@@ -1,0 +1,46 @@
+# An Argo CD Application taking the chart straight from this repository at a release
+# tag, with the values kept in the deployment's own repository. Copy, rename, fill in.
+#
+# What pins what:
+#   - `targetRevision: chart/vX.Y.Z` pins the chart to the content of that tag. A commit
+#     id hashes the whole tree, so the content cannot change under the same id; what CAN
+#     change is where the tag points, hence the tag protection and the signature check
+#     in appproject.example.yaml. Put the commit id itself there for a pin no tag move
+#     can affect.
+#   - `image.digest` (in the values) pins the image to exact bytes, verified beforehand
+#     with `cosign verify-attestation` (see docker-compose.production.yaml). The tag
+#     alone would follow whatever the registry serves.
+#
+# The OCI artifact works too, version-pinned (Argo CD does not take a digest here):
+#   - repoURL: registry-1.docker.io/lasuite
+#     chart: encryption-chart
+#     targetRevision: 1.4.0
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: encryption
+  namespace: argocd
+spec:
+  project: encryption
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: encryption
+  sources:
+    # The chart, from the application repository, at the release tag.
+    - repoURL: https://github.com/suitenumerique/encryption.git
+      targetRevision: chart/v1.4.0
+      path: deploy/helm/encryption
+      helm:
+        valueFiles:
+          - $deployment/encryption/values.yaml
+    # The values, from the deployment repository (secrets as existingSecret names only).
+    - repoURL: https://github.com/example-org/deployments.git
+      targetRevision: main
+      ref: deployment
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

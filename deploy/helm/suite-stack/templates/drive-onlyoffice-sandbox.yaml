@@ -1,0 +1,61 @@
+{{- /* The page Drive opens encrypted office files in, served by Drive's own frontend pods
+on their sandbox port. The pinned Drive chart predates that port, hence this Service. */}}
+{{- if and .Values.driveOnlyofficeSandbox.enabled .Values.drive.enabled }}
+{{- $s := .Values.driveOnlyofficeSandbox }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive-onlyoffice-sandbox
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: drive-onlyoffice-sandbox
+spec:
+  type: ClusterIP
+  # Drive's frontend pods (the drive chart's selector labels).
+  selector:
+    app.kubernetes.io/name: drive
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8081
+{{- if $s.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: drive-onlyoffice-sandbox
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: drive-onlyoffice-sandbox
+  {{- with $s.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $s.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $s.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $s.host | quote }}
+      secretName: {{ $s.ingress.tls.secretName | default "drive-onlyoffice-sandbox-tls" | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $s.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: drive-onlyoffice-sandbox
+                port:
+                  name: http
+{{- end }}
+{{- end }}

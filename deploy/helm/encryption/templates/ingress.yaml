@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullName := include "encryption.fullname" . }}
+{{- $vaultHost := include "encryption.required" (list .Values.hosts.vault "hosts.vault") }}
+{{- $interfaceHost := include "encryption.required" (list .Values.hosts.interface "hosts.interface") }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "encryption.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" $fullName) | quote }}
+      hosts:
+        - {{ $vaultHost | quote }}
+        - {{ $interfaceHost | quote }}
+  {{- end }}
+  rules:
+    {{- range $host := list $vaultHost $interfaceHost }}
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

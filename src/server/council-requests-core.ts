@@ -1,0 +1,298 @@
+/**
+ * A recovery request's state (architecture.md F.3): what stage it is at, derived from
+ * its contributions, and the transitions (release, expiry, refusal, abort), each
+ * under a row lock on the request so a contribution and a transition never
+ * interleave.
+ */
+import { z } from 'zod';
+
+import type { CouncilRequest, Prisma } from '@encryption/src/generated/prisma/client';
+import { prisma } from '@encryption/src/prisma/client';
+import {
+  type EscrowHealth,
+  type Tx,
+  absentCustodiansOf,
+  activeIdentityIdsOf,
+  councilHead,
+  escrowHealth,
+  rawTable,
+} from '@encryption/src/server/council-core';
+import { afterRequestClosed } from '@encryption/src/server/council-reshare-core';
+
+// How a request looks from the outside. Between `open` and `released`, the
+// progress is derived from the contributions: first the meeting (one share
+// handed over in person, the attestation every remote vault requires), then the
+// remote approvals. The locked-out user only ever sees "go and see one of these
+// people", then "in progress", never a count.
+export const RequestStageSchema = z.enum(['collecting', 'awaiting_meeting', 'cooldown', 'released', 'completed', 'aborted', 'expired']);
+export type RequestStage = z.infer<typeof RequestStageSchema>;
+
+export const EscrowHealthSchema = z.object({
+  live: z.number().int().nonnegative(),
+  threshold: z.number().int().positive(),
+  status: z.enum(['ok', 'at-risk', 'lost']),
+  outdated: z.boolean(),
+});
+
+export function healthWire(health: EscrowHealth) {
+  return { live: health.live, threshold: health.threshold, status: health.status, outdated: health.outdated };
+}
+
+export type EscrowWithParts = Prisma.CouncilEscrowGetPayload<{
+  include: { capsules: true; credential: { include: { vault: true } }; signedRosterVersion: true };
+}>;
+
+/** Every escrow of this user (one per vault): the current vault's first, then the most recently retired. */
+export async function escrowsOf(userId: string): Promise<EscrowWithParts[]> {
+  const escrows = await prisma.councilEscrow.findMany({
+    where: { userId },
+    include: { capsules: true, credential: { include: { vault: true } }, signedRosterVersion: true },
+  });
+
+  const retiredAt = (e: EscrowWithParts) => e.credential.vault.disabledAt?.getTime() ?? Number.POSITIVE_INFINITY;
+
+  return escrows.sort((a, b) => retiredAt(b) - retiredAt(a));
+}
+
+export async function healthOf(escrow: EscrowWithParts | Prisma.CouncilEscrowGetPayload<{ include: { capsules: true } }>): Promise<EscrowHealth> {
+  const head = await councilHead(escrow.councilId);
+  const active = await activeIdentityIdsOf(escrow.capsules.map((c) => c.identityId));
+
+  return escrowHealth(escrow, head, active, head ? await absentCustodiansOf(head) : new Set());
+}
+
+/** Slots whose current share can still be handed over: in the head with the same, still active key. */
+export async function liveSlots(escrow: {
+  councilId: string;
+  generation: number;
+  capsules: Array<{ slot: number; identityId: string; generation: number; invalid: boolean }>;
+}) {
+  const head = await councilHead(escrow.councilId);
+  const active = await activeIdentityIdsOf(escrow.capsules.map((c) => c.identityId));
+
+  return escrow.capsules
+    .filter(
+      (c) =>
+        c.generation === escrow.generation &&
+        !c.invalid &&
+        active.has(c.identityId) &&
+        (head?.members.some((m) => m.slot === c.slot && m.identityId === c.identityId) ?? false)
+    )
+    .map((c) => ({ slot: c.slot, member: head!.members.find((m) => m.slot === c.slot)! }));
+}
+
+export interface RequestFacts {
+  request: CouncilRequest;
+  threshold: number;
+  /** Contributions that count: from a custodian still in the head with the key they signed with. */
+  contributions: Array<{ slot: number; inPerson: boolean }>;
+}
+
+export function requestStage({ request, threshold, contributions }: RequestFacts, nowMs: number): RequestStage {
+  if (request.status === 'completed') return 'completed';
+  if (request.status === 'refused' || request.status === 'aborted') return 'aborted';
+  if (request.status === 'expired' || request.expiresAt.getTime() <= nowMs) return 'expired';
+  if (request.status === 'released') return 'released';
+
+  const inPerson = contributions.some((c) => c.inPerson);
+
+  if (!inPerson) return 'awaiting_meeting';
+  if (contributions.length >= threshold) return request.releaseNotBefore.getTime() <= nowMs ? 'released' : 'cooldown';
+
+  return 'collecting';
+}
+
+/**
+ * Mark a released request as announced to its user, once: the email sending them
+ * back to the browser that asked, the only one able to combine the parts. Settled
+ * under the request's lock first, so a cooldown that just elapsed counts.
+ */
+export async function claimReadyNotice(requestId: string, nowMs = Date.now()): Promise<{ userId: string; councilId: string } | null> {
+  return prisma.$transaction(async (tx) => {
+    if (!(await lockRequest(tx, requestId))) return null;
+
+    const { stage, facts } = await settleLocked(tx, requestId, nowMs);
+    if (stage !== 'released') return null;
+
+    const claimed = await tx.councilRequest.updateMany({
+      where: { id: requestId, readyNotifiedAt: null },
+      data: { readyNotifiedAt: new Date(nowMs) },
+    });
+    if (claimed.count === 0) return null;
+
+    return { userId: facts.request.userId, councilId: facts.request.councilId };
+  });
+}
+
+/** Requests that may have become ready by themselves (their cooldown elapsed) and were not announced yet. */
+export async function readyNoticeCandidates(nowMs = Date.now()): Promise<string[]> {
+  const now = new Date(nowMs);
+  const rows = await prisma.councilRequest.findMany({
+    where: { status: { in: ['open', 'released'] }, readyNotifiedAt: null, releaseNotBefore: { lte: now }, expiresAt: { gt: now } },
+    select: { id: true },
+  });
+
+  return rows.map((r) => r.id);
+}
+
+/** Requests whose cooldown has not elapsed yet, to announce when it does. */
+export async function waitingReadyNotices(nowMs = Date.now()): Promise<Array<{ id: string; releaseNotBefore: Date }>> {
+  const now = new Date(nowMs);
+
+  return prisma.councilRequest.findMany({
+    where: { status: 'open', readyNotifiedAt: null, releaseNotBefore: { gt: now }, expiresAt: { gt: now } },
+    select: { id: true, releaseNotBefore: true },
+  });
+}
+
+/** Lock the request row until the transaction ends. False when there is no such request. */
+export async function lockRequest(tx: Tx, requestId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM ${rawTable('council_requests')} WHERE id = ${requestId}::uuid FOR UPDATE`;
+
+  return rows.length > 0;
+}
+
+/** How a live request ends without its credential being used. */
+export type RequestClosing = 'refused' | 'aborted' | 'expired';
+
+async function closeLocked(tx: Tx, requestId: string, nowMs: number, status: RequestClosing): Promise<boolean> {
+  await tx.councilContribution.deleteMany({ where: { requestId } });
+  const closed = await tx.councilRequest.updateMany({
+    where: { id: requestId, status: { in: ['open', 'released'] } },
+    data: { status, closedAt: new Date(nowMs) },
+  });
+
+  return closed.count > 0;
+}
+
+/**
+ * The phrase change burned the credential these released requests gave back:
+ * they are completed, their shares discarded, before the credential (and the
+ * escrow) is deleted, which leaves the closed rows without an escrow.
+ */
+export async function completeReleasedRequests(tx: Tx, escrowIds: string[], nowMs = Date.now()): Promise<void> {
+  if (escrowIds.length === 0) return;
+
+  const released = await tx.councilRequest.findMany({ where: { escrowId: { in: escrowIds }, status: 'released' }, select: { id: true } });
+  if (released.length === 0) return;
+
+  const ids = released.map((r) => r.id);
+  await tx.councilContribution.deleteMany({ where: { requestId: { in: ids } } });
+  await tx.councilRequest.updateMany({ where: { id: { in: ids } }, data: { status: 'completed', closedAt: new Date(nowMs) } });
+}
+
+/**
+ * Bring a locked request's stored status in line with its facts: the release
+ * (once the shares are in and the cooldown elapsed) and the expiry are both
+ * lazy, like the wait arithmetic of trusted contacts, so no job has to run for
+ * them to hold. The caller holds the lock (lockRequest).
+ */
+export async function settleLocked(tx: Tx, requestId: string, nowMs: number): Promise<{ facts: RequestFacts; stage: RequestStage; closed: boolean }> {
+  const request = await tx.councilRequest.findUniqueOrThrow({ where: { id: requestId }, include: { contributions: true, escrow: true } });
+  const head = await councilHead(request.councilId, tx);
+
+  const facts: RequestFacts = {
+    request,
+    // A closed request may have lost its escrow; its stage no longer depends on the count.
+    threshold: request.escrow?.threshold ?? 0,
+    contributions: request.contributions
+      .filter((c) => head?.members.some((m) => m.slot === c.slot && m.identityId === c.custodianIdentityId))
+      .map((c) => ({ slot: c.slot, inPerson: c.inPerson })),
+  };
+  const stage = requestStage(facts, nowMs);
+  let closed = false;
+
+  // Its escrow is gone (the vault purged or its credential revoked): nothing is left to give back.
+  if (!request.escrowId && (request.status === 'open' || request.status === 'released')) {
+    closed = await closeLocked(tx, requestId, nowMs, 'refused');
+    facts.request = await tx.councilRequest.findUniqueOrThrow({ where: { id: requestId } });
+
+    return { facts, stage: 'aborted', closed };
+  }
+
+  if (stage === 'expired' && (request.status === 'open' || request.status === 'released')) {
+    closed = await closeLocked(tx, requestId, nowMs, 'expired');
+  } else if (stage === 'released' && request.status === 'open') {
+    // Released near its expiry, the request still leaves the user time to take their vault back and change its phrase.
+    const expiresAt = new Date(Math.max(request.expiresAt.getTime(), nowMs + RELEASED_GRACE_MS));
+    facts.request = await tx.councilRequest.update({
+      where: { id: requestId },
+      data: { status: 'released', releasedAt: new Date(nowMs), expiresAt },
+    });
+  }
+
+  return { facts, stage, closed };
+}
+
+/** settleLocked in a transaction of its own. Null when there is no such request. */
+export async function settleRequest(requestId: string, nowMs: number): Promise<{ facts: RequestFacts; stage: RequestStage } | null> {
+  const settled = await prisma.$transaction(async (tx) => ((await lockRequest(tx, requestId)) ? settleLocked(tx, requestId, nowMs) : null));
+  if (settled?.closed && settled.facts.request.escrowId) await afterRequestClosed(settled.facts.request.escrowId);
+
+  return settled;
+}
+
+/** Stop a request (refused by its user, aborted by a custodian): its shares are discarded. True when it was live. */
+export async function closeRequest(requestId: string, status: Exclude<RequestClosing, 'expired'>): Promise<boolean> {
+  const closed = await prisma.$transaction(async (tx) => (await lockRequest(tx, requestId)) && closeLocked(tx, requestId, Date.now(), status));
+
+  if (closed) {
+    const row = await prisma.councilRequest.findUnique({ where: { id: requestId }, select: { escrowId: true } });
+    if (row?.escrowId) await afterRequestClosed(row.escrowId);
+  }
+
+  return closed;
+}
+
+/**
+ * The user got back into this vault without the council (their phrase, a
+ * trusted contact's, another device): a request for it no longer has a
+ * purpose, so it is closed like a refusal. True when one was.
+ */
+export async function closeRequestsForVault(userId: string, vaultId: string): Promise<boolean> {
+  const open = await prisma.councilRequest.findMany({
+    where: { userId, status: { in: ['open', 'released'] }, escrow: { credential: { vaultId } } },
+    select: { id: true },
+  });
+
+  let closed = false;
+  for (const { id } of open) closed = (await closeRequest(id, 'refused')) || closed;
+
+  return closed;
+}
+
+export async function openRequestOf(userId: string): Promise<CouncilRequest | null> {
+  const now = Date.now();
+  const candidates = await prisma.councilRequest.findMany({
+    where: { userId, status: { in: ['open', 'released'] } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  for (const candidate of candidates) {
+    const settled = await settleRequest(candidate.id, now);
+    if (settled && settled.stage !== 'expired') return settled.facts.request;
+  }
+
+  return null;
+}
+
+// A custodian is told of new requests at most this often: one email says
+// requests wait, the custodian space lists them all.
+export const NEW_REQUEST_NOTICE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** The least time a released request stays open: getting the vault back and changing its phrase happen right after. */
+export const RELEASED_GRACE_MS = 48 * 60 * 60 * 1000;
+
+/** Whether this custodian may be emailed about a new request of the council now; claimed in the same statement, so at most one per interval. */
+export async function claimNewRequestNotice(councilId: string, userId: string, nowMs = Date.now()): Promise<boolean> {
+  const now = new Date(nowMs).toISOString();
+  const cutoff = new Date(nowMs - NEW_REQUEST_NOTICE_INTERVAL_MS).toISOString();
+  const claimed = await prisma.$queryRaw<Array<{ user_id: string }>>`
+    INSERT INTO ${rawTable('council_request_notices')} (council_id, user_id, notified_at)
+    VALUES (${councilId}, ${userId}::uuid, ${now}::timestamp(3))
+    ON CONFLICT (council_id, user_id) DO UPDATE SET notified_at = EXCLUDED.notified_at
+    WHERE ${rawTable('council_request_notices')}.notified_at <= ${cutoff}::timestamp(3)
+    RETURNING user_id`;
+
+  return claimed.length > 0;
+}
