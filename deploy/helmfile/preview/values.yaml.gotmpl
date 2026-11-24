@@ -19,6 +19,7 @@ Unset, each image keeps its own tag from the helmfile, `main` unless overridden.
 {{- $docsTag := .Values | get "docsImageTag" "" | toString -}}
 {{- $driveTag := .Values | get "driveImageTag" "" | toString -}}
 {{- $accountsTag := .Values | get "accountsImageTag" "" | toString -}}
+{{- $feedbackFormUrl := .Values | get "feedbackFormUrl" "" | toString -}}
 # Rendered by helmfile on top of the chart's values.yaml: only what carries a hostname, the
 # namespace or an image is here, every other value stays the chart's default. Lists are
 # replaced whole, not merged, so the ones that carry a hostname are given in full.
@@ -145,6 +146,9 @@ docs:
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
       ACCOUNT_SETTINGS_URL: https://{{ $accounts }}/
+      {{- with $feedbackFormUrl }}
+      FRONTEND_FEEDBACK_FORM_URL: {{ . | quote }}
+      {{- end }}
   frontend:
     image:
       repository: {{ $i.docsFrontend.repository }}
@@ -205,6 +209,9 @@ drive:
       ENCRYPTION_ONLYOFFICE_SANDBOX_URL: https://{{ $driveSandbox }}/onlyoffice-sandbox/index.html
       ACCOUNT_SETTINGS_URL: https://{{ $accounts }}/
       WOPI_SRC_BASE_URL: https://{{ $drive }}
+      {{- with $feedbackFormUrl }}
+      FRONTEND_FEEDBACK_FORM_URL: {{ . | quote }}
+      {{- end }}
   frontend:
     image:
       repository: {{ $i.driveFrontend.repository }}
@@ -252,6 +259,9 @@ accounts:
       SOCIAL_AUTH_PRO_CONNECT_OIDC_ENDPOINT: {{ $keycloakIssuer }}
       ENCRYPTION_VAULT_URL: https://{{ $vault }}
       ENCRYPTION_INTERFACE_URL: https://{{ $interface }}
+      {{- with $feedbackFormUrl }}
+      FRONTEND_FEEDBACK_FORM_URL: {{ . | quote }}
+      {{- end }}
   frontend:
     image:
       repository: {{ $i.accountsFrontend.repository }}

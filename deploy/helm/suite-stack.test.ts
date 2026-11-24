@@ -970,6 +970,21 @@ describe('the stack chart', () => {
 
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
+    // The feedback form, given to the three products' backends only when set
+    const feedbackFormUrl = (text: string) => {
+      const manifests = parseAllDocuments(text).map((document) => document.toJS() as Manifest | null);
+      const docs = manifests.filter((document): document is Manifest => document !== null && typeof document === 'object' && 'metadata' in document);
+
+      return ['docs-backend', 'drive-backend', 'accounts-backend'].map(
+        (name) => containerEnv(mainContainer(find(docs, 'Deployment', name))).get('FRONTEND_FEEDBACK_FORM_URL')?.value
+      );
+    };
+
+    expect(feedbackFormUrl(fromEnvironment)).toEqual([undefined, undefined, undefined]);
+    expect(feedbackFormUrl(run('helmfile', args, undefined, { ARGOCD_ENV_FEEDBACK_FORM_URL: 'https://forms.example.net/f/1' }))).toEqual(
+      Array(3).fill('https://forms.example.net/f/1')
+    );
+
     const overridden = run('helmfile', [...args.slice(0, -1), '--state-values-set', 'feature=9', 'template'], undefined, {
       FEATURE: '7',
       DOMAIN: 'ppr.example.net',

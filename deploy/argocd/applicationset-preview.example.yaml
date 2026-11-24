@@ -78,6 +78,9 @@ spec:
             # few minutes and start on their own once it is there.
             - name: ENCRYPTION_IMAGE
               value: 'lasuite/encryption:sha-{{ .head_short_sha }}'
+            # Optional. The feedback form the products link to.
+            - name: FEEDBACK_FORM_URL
+              value: https://forms.example.org/feedback
             # The Docs, Drive and Accounts images under test, from labels of the pull
             # request: `docs:pr-2694` runs the images the Docs CI pushed for its labelled
             # pull request 2694, `drive:encryption` the ones pushed by hand for that branch
