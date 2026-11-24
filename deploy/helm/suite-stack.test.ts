@@ -970,7 +970,8 @@ describe('the stack chart', () => {
 
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
-    // The feedback form, given to the three products' backends only when set
+    // The feedback form: the helmfile's default, another one from the environment, none
+    // with an empty state value
     const feedbackFormUrl = (text: string) => {
       const manifests = parseAllDocuments(text).map((document) => document.toJS() as Manifest | null);
       const docs = manifests.filter((document): document is Manifest => document !== null && typeof document === 'object' && 'metadata' in document);
@@ -980,10 +981,15 @@ describe('the stack chart', () => {
       );
     };
 
-    expect(feedbackFormUrl(fromEnvironment)).toEqual([undefined, undefined, undefined]);
+    expect(feedbackFormUrl(fromEnvironment)).toEqual(Array(3).fill('https://grist.numerique.gouv.fr/o/docs/forms/gv34hFLWghAnej2P7C1wWG/4'));
     expect(feedbackFormUrl(run('helmfile', args, undefined, { ARGOCD_ENV_FEEDBACK_FORM_URL: 'https://forms.example.net/f/1' }))).toEqual(
       Array(3).fill('https://forms.example.net/f/1')
     );
+    expect(feedbackFormUrl(run('helmfile', [...args.slice(0, -1), '--state-values-set', 'feedbackFormUrl=', 'template']))).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
 
     const overridden = run('helmfile', [...args.slice(0, -1), '--state-values-set', 'feature=9', 'template'], undefined, {
       FEATURE: '7',

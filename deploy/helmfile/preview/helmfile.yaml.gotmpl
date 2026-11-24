@@ -33,8 +33,9 @@
 # product branch without a commit to undo before merging. By hand, the same keys:
 # `--state-values-set docsImageTag=pr-2694,driveImageTag=encryption,accountsImageTag=encryption`.
 #
-# FEEDBACK_FORM_URL (or the state value feedbackFormUrl, which wins) is the feedback form
-# the products link to, none when unset.
+# The products link the testers to a feedback form, the one below unless FEEDBACK_FORM_URL
+# or the state value feedbackFormUrl (which wins) names another; an empty feedbackFormUrl
+# removes the link.
 #
 # Hostnames come out as <feature>-docs.<domain>, <feature>-drive.<domain>,
 # <feature>-encryption.<domain> and data.<feature>-encryption.<domain> (the vault must
@@ -51,7 +52,7 @@
 {{- $imageParts := splitList ":" $image }}
 {{- if lt (len $imageParts) 2 }}{{ fail (printf "ENCRYPTION_IMAGE must be repository:tag, got %q" $image) }}{{ end }}
 {{- $imageTag := last $imageParts }}
-{{- $feedbackFormUrl := coalesce (env "ARGOCD_ENV_FEEDBACK_FORM_URL") (env "FEEDBACK_FORM_URL") "" }}
+{{- $feedbackFormUrl := coalesce (env "ARGOCD_ENV_FEEDBACK_FORM_URL") (env "FEEDBACK_FORM_URL") "https://grist.numerique.gouv.fr/o/docs/forms/gv34hFLWghAnej2P7C1wWG/4" }}
 {{- $imageRepository := join ":" (initial $imageParts) }}
 environments:
   preview:
