@@ -77,3 +77,24 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if $image.digest }}{{ $reference = printf "%s@%s" $reference $image.digest }}{{ end }}
 {{- $reference }}
 {{- end }}
+
+{{/* Grist's environment, the same for its init container and its server. */}}
+{{- define "suite-stack.gristEnv" -}}
+# Deno (the pyodide sandbox's runtime) and Node write their caches under HOME.
+- name: HOME
+  value: /tmp
+{{- range $name, $value := .Values.grist.envVars }}
+{{- if not (kindIs "invalid" $value) }}
+- name: {{ $name | quote }}
+  value: {{ toString $value | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* The security context of Grist's containers. */}}
+{{- define "suite-stack.gristSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop: [ALL]
+{{- end }}

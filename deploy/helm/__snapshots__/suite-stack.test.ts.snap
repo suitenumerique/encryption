@@ -74,6 +74,31 @@ spec:
 
 ---
 
+# Source: suite-stack/templates/grist.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: grist
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: grist
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/component: grist
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+
 # Source: suite-stack/templates/mailpit.yaml
 apiVersion: v1
 kind: Service
@@ -202,6 +227,287 @@ spec:
             limits:
               # A relayed message can reach 75 MB (an image pasted in a document).
               memory: 1Gi
+
+---
+
+# Source: suite-stack/templates/grist.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grist
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: grist
+spec:
+  # One server: Grist assigns each open document to one worker through Redis, which a
+  # second replica would take part in only with a load balancer that knows it.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: suite-stack
+      app.kubernetes.io/instance: stack
+      app.kubernetes.io/component: grist
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: suite-stack
+        app.kubernetes.io/instance: stack
+        app.kubernetes.io/component: grist
+    spec:
+      automountServiceAccountToken: false
+      # The image's entrypoint starts as root to chown /persist and drop to its \`grist\`
+      # user (1001); started as that user, it skips the step and only checks it can write.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      # Grist exits at startup when its identity provider's discovery document or its home
+      # database are not there yet (Accounts migrating, the bootstrap creating the
+      # database), and the restarts back off up to five minutes. This waits for both
+      # instead, with the image's own Node and PostgreSQL driver and the same settings. It
+      # does not lift the dependency on the provider at startup, which is Grist's own
+      # (gristlabs/grist-core#1912): see the README, "Grist".
+      initContainers:
+        - name: wait
+          image: "gristlabs/grist-oss:latest"
+          imagePullPolicy: Always
+          command:
+            - node
+            - -e
+            - |
+              const { Client } = require("pg");
+              const env = process.env;
+              async function missing() {
+                if (env.GRIST_OIDC_IDP_ISSUER) {
+                  const url = env.GRIST_OIDC_IDP_ISSUER.replace(/\\/$/, "") + "/.well-known/openid-configuration";
+                  try {
+                    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+                    if (!response.ok) { return \`\${url}: \${response.status}\`; }
+                  } catch (error) { return \`\${url}: \${error.cause?.message || error.message}\`; }
+                }
+                if (env.TYPEORM_TYPE === "postgres") {
+                  const client = new Client({ host: env.TYPEORM_HOST, port: Number(env.TYPEORM_PORT || 5432),
+                    user: env.TYPEORM_USERNAME, password: env.TYPEORM_PASSWORD, database: env.TYPEORM_DATABASE,
+                    connectionTimeoutMillis: 5000 });
+                  try { await client.connect(); } catch (error) { return \`database \${env.TYPEORM_DATABASE}: \${error.message}\`; }
+                  finally { await client.end().catch(() => {}); }
+                }
+                return null;
+              }
+              (async () => {
+                for (let reason = await missing(); reason; reason = await missing()) {
+                  console.log("waiting for " + reason);
+                  await new Promise((resolve) => setTimeout(resolve, 3000));
+                }
+              })().catch((error) => {
+                console.error(error);
+                process.exit(1);
+              });
+          env:
+            # Deno (the pyodide sandbox's runtime) and Node write their caches under HOME.
+            - name: HOME
+              value: /tmp
+            - name: "APP_HOME_URL"
+              value: "https://grist.suite.example.org"
+            - name: "GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING"
+              value: "false"
+            - name: "GRIST_DOCS_S3_ACCESS_KEY"
+              value: "dinum"
+            - name: "GRIST_DOCS_S3_BUCKET"
+              value: "grist-docs"
+            - name: "GRIST_DOCS_S3_ENDPOINT"
+              value: "minio"
+            - name: "GRIST_DOCS_S3_PORT"
+              value: "9000"
+            - name: "GRIST_DOCS_S3_SECRET_KEY"
+              value: "password"
+            - name: "GRIST_DOCS_S3_USE_SSL"
+              value: "false"
+            - name: "GRIST_ENCRYPTION_FEATURE_ENABLED"
+              value: "true"
+            - name: "GRIST_ENCRYPTION_LASUITE_INTERFACE_URL"
+              value: "https://encryption.suite.example.org"
+            - name: "GRIST_ENCRYPTION_LASUITE_VAULT_URL"
+              value: "https://data.encryption.suite.example.org"
+            - name: "GRIST_ENCRYPTION_PROVIDER"
+              value: "lasuite"
+            - name: "GRIST_FORCE_LOGIN"
+              value: "true"
+            - name: "GRIST_IN_SERVICE"
+              value: "true"
+            - name: "GRIST_OIDC_IDP_CLIENT_ID"
+              value: "grist"
+            - name: "GRIST_OIDC_IDP_CLIENT_SECRET"
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            - name: "GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA"
+              value: "{\\"userinfo_signed_response_alg\\":\\"RS256\\"}"
+            - name: "GRIST_OIDC_IDP_ISSUER"
+              value: "https://accounts.suite.example.org/api/v1.0/o"
+            - name: "GRIST_OIDC_IDP_SCOPES"
+              value: "openid email profile"
+            - name: "GRIST_OIDC_SP_HOST"
+              value: "https://grist.suite.example.org"
+            - name: "GRIST_OIDC_SP_IGNORE_EMAIL_VERIFIED"
+              value: "true"
+            - name: "GRIST_OIDC_SP_PROFILE_NAME_ATTR"
+              value: "name"
+            - name: "GRIST_SANDBOX_FLAVOR"
+              value: "pyodide"
+            - name: "GRIST_SESSION_SECRET"
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            - name: "GRIST_TELEMETRY_LEVEL"
+              value: "off"
+            - name: "REDIS_URL"
+              value: "redis://user:pass@redis:6379/4"
+            - name: "TYPEORM_DATABASE"
+              value: "grist"
+            - name: "TYPEORM_HOST"
+              value: "postgres"
+            - name: "TYPEORM_PASSWORD"
+              value: "pass"
+            - name: "TYPEORM_PORT"
+              value: "5432"
+            - name: "TYPEORM_TYPE"
+              value: "postgres"
+            - name: "TYPEORM_USERNAME"
+              value: "dinum"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      containers:
+        - name: grist
+          image: "gristlabs/grist-oss:latest"
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8484
+          env:
+            # Deno (the pyodide sandbox's runtime) and Node write their caches under HOME.
+            - name: HOME
+              value: /tmp
+            - name: "APP_HOME_URL"
+              value: "https://grist.suite.example.org"
+            - name: "GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING"
+              value: "false"
+            - name: "GRIST_DOCS_S3_ACCESS_KEY"
+              value: "dinum"
+            - name: "GRIST_DOCS_S3_BUCKET"
+              value: "grist-docs"
+            - name: "GRIST_DOCS_S3_ENDPOINT"
+              value: "minio"
+            - name: "GRIST_DOCS_S3_PORT"
+              value: "9000"
+            - name: "GRIST_DOCS_S3_SECRET_KEY"
+              value: "password"
+            - name: "GRIST_DOCS_S3_USE_SSL"
+              value: "false"
+            - name: "GRIST_ENCRYPTION_FEATURE_ENABLED"
+              value: "true"
+            - name: "GRIST_ENCRYPTION_LASUITE_INTERFACE_URL"
+              value: "https://encryption.suite.example.org"
+            - name: "GRIST_ENCRYPTION_LASUITE_VAULT_URL"
+              value: "https://data.encryption.suite.example.org"
+            - name: "GRIST_ENCRYPTION_PROVIDER"
+              value: "lasuite"
+            - name: "GRIST_FORCE_LOGIN"
+              value: "true"
+            - name: "GRIST_IN_SERVICE"
+              value: "true"
+            - name: "GRIST_OIDC_IDP_CLIENT_ID"
+              value: "grist"
+            - name: "GRIST_OIDC_IDP_CLIENT_SECRET"
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            - name: "GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA"
+              value: "{\\"userinfo_signed_response_alg\\":\\"RS256\\"}"
+            - name: "GRIST_OIDC_IDP_ISSUER"
+              value: "https://accounts.suite.example.org/api/v1.0/o"
+            - name: "GRIST_OIDC_IDP_SCOPES"
+              value: "openid email profile"
+            - name: "GRIST_OIDC_SP_HOST"
+              value: "https://grist.suite.example.org"
+            - name: "GRIST_OIDC_SP_IGNORE_EMAIL_VERIFIED"
+              value: "true"
+            - name: "GRIST_OIDC_SP_PROFILE_NAME_ATTR"
+              value: "name"
+            - name: "GRIST_SANDBOX_FLAVOR"
+              value: "pyodide"
+            - name: "GRIST_SESSION_SECRET"
+              value: "ThisIsAnExampleKeyForDevPurposeOnly"
+            - name: "GRIST_TELEMETRY_LEVEL"
+              value: "off"
+            - name: "REDIS_URL"
+              value: "redis://user:pass@redis:6379/4"
+            - name: "TYPEORM_DATABASE"
+              value: "grist"
+            - name: "TYPEORM_HOST"
+              value: "postgres"
+            - name: "TYPEORM_PASSWORD"
+              value: "pass"
+            - name: "TYPEORM_PORT"
+              value: "5432"
+            - name: "TYPEORM_TYPE"
+              value: "postgres"
+            - name: "TYPEORM_USERNAME"
+              value: "dinum"
+          # The first start creates the home database's tables.
+          startupProbe:
+            httpGet:
+              path: /status
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: persist
+              mountPath: /persist
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 384Mi
+            limits:
+              # The data engine of each open document runs in its own process.
+              memory: 2Gi
+      volumes:
+        - name: persist
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
 
 ---
 
@@ -441,6 +747,43 @@ spec:
 
 ---
 
+# Source: suite-stack/templates/grist.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grist
+  namespace: "suite"
+  labels:
+    helm.sh/chart: suite-stack-0.0.0-dev
+    app.kubernetes.io/name: suite-stack
+    app.kubernetes.io/instance: stack
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: grist
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: "nginx"
+  tls:
+    - hosts:
+        - "grist.suite.example.org"
+      secretName: "grist-tls"
+  rules:
+    - host: "grist.suite.example.org"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grist
+                port:
+                  name: http
+
+---
+
 # Source: suite-stack/templates/mailpit.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -532,7 +875,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 type: Opaque
 stringData:
-  applications.json: "[{\\"clientId\\":\\"docs\\",\\"postLogoutRedirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"drive\\",\\"postLogoutRedirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"encryption\\",\\"postLogoutRedirectUris\\":[],\\"redirectUris\\":[\\"https://encryption.suite.example.org/auth/callback\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"}]"
+  applications.json: "[{\\"clientId\\":\\"docs\\",\\"postLogoutRedirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://docs.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"drive\\",\\"postLogoutRedirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/logout-callback/\\"],\\"redirectUris\\":[\\"https://drive.suite.example.org/api/v1.0/callback/\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"grist\\",\\"postLogoutRedirectUris\\":[\\"https://grist.suite.example.org/signed-out\\"],\\"redirectUris\\":[\\"https://grist.suite.example.org/oauth2/callback\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"},{\\"clientId\\":\\"encryption\\",\\"postLogoutRedirectUris\\":[],\\"redirectUris\\":[\\"https://encryption.suite.example.org/auth/callback\\"],\\"secret\\":\\"ThisIsAnExampleKeyForDevPurposeOnly\\"}]"
   users.json: "[{\\"email\\":\\"recovery.member.1@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000001\\"},{\\"email\\":\\"recovery.member.2@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000002\\"},{\\"email\\":\\"recovery.member.3@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000003\\"},{\\"email\\":\\"recovery.member.4@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000004\\"},{\\"email\\":\\"recovery.member.5@example.org\\",\\"sub\\":\\"00000000-0000-4000-8000-000000000005\\"}]"
   # Run by \`manage.py shell\`, so with Accounts' settings and its database.
   applications.py: |
@@ -672,6 +1015,10 @@ stringData:
       psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "accounts"'
       echo "created database accounts"
     fi
+    if ! exists "SELECT 1 FROM pg_database WHERE datname = 'grist'"; then
+      psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "grist"'
+      echo "created database grist"
+    fi
     # The encryption service's two roles, in its database, from deploy/postgres/.
     if ! exists "SELECT 1 FROM pg_roles WHERE rolname = 'encryption_migrator'"; then
       psql -d "encryption" -v ON_ERROR_STOP=1 -v password="'\${ENCRYPTION_MIGRATOR_PASSWORD}'" -f /scripts/create-migrator-role.sql
@@ -692,6 +1039,8 @@ stringData:
     mc version enable "local/drive-media-storage"
     mc mb --ignore-existing "local/accounts-media-storage"
     mc version enable "local/accounts-media-storage"
+    mc mb --ignore-existing "local/grist-docs"
+    mc version enable "local/grist-docs"
   # The terms text as a file: kcadm posts JSON, and the text carries apostrophes the shell
   # quoting of the script below could not (the header travels as a variable instead).
   notice.json: "{\\"termsText\\":\\"Cet environnement sert à essayer LaSuite. Tout le monde peut y créer un compte, la console d'administration et la boîte mail sont publiques : un compte peut être lu ou repris par n'importe qui. N'y mettez aucune donnée réelle, ni document, ni mot de passe utilisé ailleurs. Tout peut être effacé à tout moment.\\",\\"termsTitle\\":\\"Environnement de test\\"}"

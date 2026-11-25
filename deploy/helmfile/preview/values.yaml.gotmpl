@@ -7,6 +7,7 @@
 {{- $interface := printf "%s-encryption.%s" $f $d -}}
 {{- $vault := printf "data.%s-encryption.%s" $f $d -}}
 {{- $accounts := printf "%s-accounts.%s" $f $d -}}
+{{- $grist := printf "%s-grist.%s" $f $d -}}
 {{- $auth := printf "%s-auth.%s" $f $d -}}
 {{- $s3 := printf "%s-s3.%s" $f $d -}}
 {{- $keycloakIssuer := printf "https://%s/realms/suite" $auth -}}
@@ -66,6 +67,12 @@ bootstrap:
           - https://{{ $drive }}/api/v1.0/callback/
         postLogoutRedirectUris:
           - https://{{ $drive }}/api/v1.0/logout-callback/
+      - clientId: grist
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://{{ $grist }}/oauth2/callback
+        postLogoutRedirectUris:
+          - https://{{ $grist }}/signed-out
       - clientId: encryption
         secret: ThisIsAnExampleKeyForDevPurposeOnly
         redirectUris:
@@ -113,6 +120,7 @@ encryption:
     allowedFrameAncestors:
       - https://{{ $docs }}
       - https://{{ $drive }}
+      - https://{{ $grist }}
       - https://{{ $accounts }}
     oidc:
       issuer: {{ $issuer }}
@@ -278,3 +286,19 @@ accounts:
     host: {{ $accounts }}
   serviceMedia:
     host: {{ $minio }}
+
+grist:
+  image:
+    repository: {{ $i.grist.repository }}
+    tag: {{ $i.grist.tag | quote }}
+  host: {{ $grist }}
+  envVars:
+    APP_HOME_URL: https://{{ $grist }}
+    GRIST_OIDC_SP_HOST: https://{{ $grist }}
+    GRIST_OIDC_IDP_ISSUER: {{ $issuer }}
+    GRIST_ENCRYPTION_LASUITE_VAULT_URL: https://{{ $vault }}
+    GRIST_ENCRYPTION_LASUITE_INTERFACE_URL: https://{{ $interface }}
+  ingress:
+    className: {{ .Values.ingressClassName }}
+    annotations:
+      cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}

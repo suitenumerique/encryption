@@ -1,5 +1,5 @@
-# One complete environment, ready to render: the encryption service, Docs and Drive,
-# LaSuite Accounts, and the services they share. Every hostname below sits under ONE
+# One complete environment, ready to render: the encryption service, Docs, Drive and
+# Grist, LaSuite Accounts, and the services they share. Every hostname below sits under ONE
 # domain, `suite.example.org`, and the chart is meant to be installed in the namespace
 # `suite`. To point it somewhere else, replace both strings everywhere in this file (or in
 # your override): the five subcharts each read their own block, so a hostname cannot be
@@ -7,8 +7,8 @@
 #
 # Who signs in where: the testers' accounts live in Keycloak, and only Accounts talks to
 # it (as its upstream identity provider, the slot ProConnect fills in production). Docs,
-# Drive and the encryption service are clients of Accounts, so every one of them sees the
-# same `sub` for a user: the one Accounts mints, never Keycloak's.
+# Drive, Grist and the encryption service are clients of Accounts, so every one of them
+# sees the same `sub` for a user: the one Accounts mints, never Keycloak's.
 # The chart refuses to render when the blocks disagree with each other (see the
 # "bootstrap" section and templates/_checks.tpl), so a missed replacement fails early.
 #
@@ -137,11 +137,13 @@ bootstrap:
       - drive
       - encryption
       - accounts
+      - grist
   minio:
     buckets:
       - docs-media-storage
       - drive-media-storage
       - accounts-media-storage
+      - grist-docs
     versioning: true
   keycloak:
     # Created or updated in the realm above, by clientId. Every client here is confidential
@@ -266,6 +268,12 @@ bootstrap:
           - https://drive.suite.example.org/api/v1.0/callback/
         postLogoutRedirectUris:
           - https://drive.suite.example.org/api/v1.0/logout-callback/
+      - clientId: grist
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://grist.suite.example.org/oauth2/callback
+        postLogoutRedirectUris:
+          - https://grist.suite.example.org/signed-out
       # The encryption server exchanges its interface's sign-in codes with this secret
       # and a PKCE verifier (Accounts checks a challenge whenever one is sent).
       - clientId: encryption
@@ -389,6 +397,7 @@ encryption:
     allowedFrameAncestors:
       - https://docs.suite.example.org
       - https://drive.suite.example.org
+      - https://grist.suite.example.org
       - https://accounts.suite.example.org
     oidc:
       # Accounts' issuer (accounts.backend.envVars.OAUTH2_PROVIDER_OIDC_ISS_ENDPOINT).
@@ -840,6 +849,86 @@ drive:
       enabled: false
     ingressAssets:
       enabled: false
+
+# ---------------------------------------------------------------------------------------
+# Grist (https://github.com/gristlabs/grist-core, templates/grist.yaml: one container, no
+# chart of its own). Its encrypted documents are on a branch of a fork, so the image of
+# that branch is set as for the products (see the README, "Images"); the upstream image
+# below runs, but ignores the GRIST_ENCRYPTION_* variables. It reuses the shared services
+# and keeps nothing in its pod: its home database in PostgreSQL, its documents in MinIO,
+# its sessions in Redis, and it signs in at Accounts like the products.
+# ---------------------------------------------------------------------------------------
+grist:
+  enabled: true
+  image:
+    repository: gristlabs/grist-oss
+    tag: latest
+    pullPolicy: Always
+  host: grist.suite.example.org
+  # Passed to the container as they are (a null drops one the image sets).
+  envVars:
+    APP_HOME_URL: https://grist.suite.example.org
+    GRIST_SESSION_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
+    # A fresh home database is "not in service" until an admin sets it up at /boot: this
+    # skips it. Nobody is the install admin.
+    GRIST_IN_SERVICE: 'true'
+    # Only signed-in testers: no anonymous pages.
+    GRIST_FORCE_LOGIN: 'true'
+    GRIST_TELEMETRY_LEVEL: 'off'
+    GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING: 'false'
+    # Anyone with the URL can register here, and a formula is Python run on the server
+    # (except in encrypted documents, run in the browser): the data engine runs in
+    # Pyodide, which needs no privilege, rather than unsandboxed (checked).
+    GRIST_SANDBOX_FLAVOR: pyodide
+    # The home database (users, sites, documents' metadata).
+    TYPEORM_TYPE: postgres
+    TYPEORM_HOST: postgres
+    TYPEORM_PORT: 5432
+    TYPEORM_DATABASE: grist
+    TYPEORM_USERNAME: dinum
+    TYPEORM_PASSWORD: pass
+    # One Redis, one database index per product.
+    REDIS_URL: redis://user:pass@redis:6379/4
+    # The documents, from inside the cluster (browsers never reach the bucket).
+    GRIST_DOCS_S3_BUCKET: grist-docs
+    GRIST_DOCS_S3_ENDPOINT: minio
+    GRIST_DOCS_S3_PORT: 9000
+    GRIST_DOCS_S3_USE_SSL: 'false'
+    GRIST_DOCS_S3_ACCESS_KEY: dinum
+    GRIST_DOCS_S3_SECRET_KEY: password
+    # Accounts, as for the products: its discovery document under the issuer.
+    GRIST_OIDC_SP_HOST: https://grist.suite.example.org
+    GRIST_OIDC_IDP_ISSUER: https://accounts.suite.example.org/api/v1.0/o
+    GRIST_OIDC_IDP_CLIENT_ID: grist
+    GRIST_OIDC_IDP_CLIENT_SECRET: ThisIsAnExampleKeyForDevPurposeOnly
+    GRIST_OIDC_IDP_SCOPES: openid email profile
+    # The full name: Accounts' `profile` scope carries `given_name` and `name`, with no
+    # `family_name`, which Grist would otherwise join to the first name.
+    GRIST_OIDC_SP_PROFILE_NAME_ATTR: name
+    # Accounts always answers userinfo with a signed JWT (oidc_provider/validators.py,
+    # get_userinfo_claims), which Grist's OIDC client reads only when told to expect one
+    # (checked); it then checks the signature against Accounts' keys.
+    GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA: '{"userinfo_signed_response_alg":"RS256"}'
+    # Accounts reports `email_verified` as its upstream did, which a tester added by hand
+    # in the Keycloak console rarely has (as encryption.config.oidc.acceptUnverifiedEmail).
+    GRIST_OIDC_SP_IGNORE_EMAIL_VERIFIED: 'true'
+    GRIST_ENCRYPTION_FEATURE_ENABLED: 'true'
+    GRIST_ENCRYPTION_PROVIDER: lasuite
+    GRIST_ENCRYPTION_LASUITE_VAULT_URL: https://data.encryption.suite.example.org
+    GRIST_ENCRYPTION_LASUITE_INTERFACE_URL: https://encryption.suite.example.org
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+      # Imports and attachments.
+      nginx.ingress.kubernetes.io/proxy-body-size: 100m
+      # Every open document holds a WebSocket.
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+      nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    tls:
+      enabled: true
+      secretName: ''
 
 # ---------------------------------------------------------------------------------------
 # LaSuite Accounts (the `accounts` chart, src/helm/accounts in

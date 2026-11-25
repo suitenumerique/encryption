@@ -6,6 +6,9 @@ Docs        https://{{ .Values.docs.ingress.host }}
 {{- if .Values.drive.enabled }}
 Drive       https://{{ .Values.drive.ingress.host }}
 {{- end }}
+{{- if .Values.grist.enabled }}
+Grist       https://{{ .Values.grist.host }} ({{ .Values.grist.image.repository }}:{{ .Values.grist.image.tag }})
+{{- end }}
 {{- if .Values.encryption.enabled }}
 Encryption  https://{{ .Values.encryption.hosts.interface }} (interface), https://{{ .Values.encryption.hosts.vault }} (vault)
 {{- end }}

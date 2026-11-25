@@ -1,4 +1,4 @@
-# The stack without Accounts: Docs, Drive and the encryption service sign in at the
+# The stack without Accounts: Docs, Drive, Grist and the encryption service sign in at the
 # shared Keycloak's realm directly, as they did before Accounts joined. Every block that
 # names the provider changes with it (the coherence checks follow `accounts.enabled`).
 # Rendered by the chart test; a starting point for whoever needs the stack this way.
@@ -20,6 +20,11 @@ bootstrap:
           - https://drive.suite.example.org/*
         webOrigins:
           - https://drive.suite.example.org
+      - clientId: grist
+        secret: ThisIsAnExampleKeyForDevPurposeOnly
+        redirectUris:
+          - https://grist.suite.example.org/*
+        webOrigins: []
       # The interface's session lasts as long as the ID token, which Keycloak gives the
       # access token's lifespan (5 minutes in the realm).
       - clientId: encryption
@@ -35,6 +40,7 @@ encryption:
     allowedFrameAncestors:
       - https://docs.suite.example.org
       - https://drive.suite.example.org
+      - https://grist.suite.example.org
     oidc:
       issuer: https://auth.suite.example.org/realms/suite
       # Keycloak honours the `claims` parameter: the names stay out of the ID token.
@@ -73,3 +79,8 @@ drive:
       OIDC_OP_LOGOUT_ENDPOINT: https://auth.suite.example.org/realms/suite/protocol/openid-connect/logout
       OIDC_USERINFO_SHORTNAME_FIELD: first_name
       OIDC_USERINFO_FULLNAME_FIELDS: first_name,last_name
+
+grist:
+  envVars:
+    GRIST_OIDC_IDP_ISSUER: https://auth.suite.example.org/realms/suite
+    GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA: null

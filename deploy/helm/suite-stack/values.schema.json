@@ -206,6 +206,47 @@
         }
       }
     },
+    "grist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "host", "envVars"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "host": { "type": "string" },
+        "envVars": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
+          "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "secretName": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "driveOnlyofficeSandbox": {
       "type": "object",
       "additionalProperties": false,

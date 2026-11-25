@@ -102,12 +102,15 @@ allowed). Accounts itself always signs in at Keycloak.
 {{- end }}
 {{- end }}
 
-{{- /* One Redis: two products on the same database index would share Celery queues. */}}
+{{- /* One Redis: two products on the same database index would share Celery queues (or Grist's keys). */}}
 {{- $redisUrls := dict }}
-{{- range $product := list "docs" "drive" "accounts" }}
+{{- range $product := list "docs" "drive" "accounts" "grist" }}
 {{- $p := index $v $product }}
 {{- if $p.enabled }}
-{{- $url := toString $p.backend.envVars.REDIS_URL }}
+{{- /* Grist is no Django product: its variables are not under `backend`. */}}
+{{- $env := $p.envVars }}
+{{- if ne $product "grist" }}{{ $env = $p.backend.envVars }}{{ end }}
+{{- $url := toString $env.REDIS_URL }}
 {{- if hasKey $redisUrls $url }}
 {{- fail (printf "%s and %s share the Redis URL %q: give each product its own database index" (index $redisUrls $url) $product $url) }}
 {{- end }}
@@ -203,6 +206,134 @@ allowed). Accounts itself always signs in at Keycloak.
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* Grist (templates/grist.yaml) against the shared services, the provider and the encryption service.
+Its variables are its own (no Django), so it has its own block. */}}
+{{- if $v.grist.enabled }}
+{{- $g := $v.grist }}
+{{- $env := $g.envVars }}
+{{- $origin := printf "https://%s" $g.host }}
+{{- range $name := list "APP_HOME_URL" "GRIST_OIDC_SP_HOST" }}
+{{- if ne (toString (get $env $name)) $origin }}
+{{- fail (printf "grist.envVars.%s must be %q, grist.host's origin (got %q)" $name $origin (toString (get $env $name))) }}
+{{- end }}
+{{- end }}
+{{- if ne (toString $env.TYPEORM_TYPE) "postgres" }}
+{{- fail (printf "grist.envVars.TYPEORM_TYPE must be \"postgres\": its home database is in the shared PostgreSQL, the pod keeps nothing (got %q)" (toString $env.TYPEORM_TYPE)) }}
+{{- end }}
+{{- if ne (toString $env.TYPEORM_HOST) (include "suite-stack.postgresHost" $) }}
+{{- fail (printf "grist.envVars.TYPEORM_HOST must be the shared PostgreSQL, %q (got %q)" (include "suite-stack.postgresHost" $) (toString $env.TYPEORM_HOST)) }}
+{{- end }}
+{{- if not (has (toString $env.TYPEORM_DATABASE) $v.bootstrap.postgres.databases) }}
+{{- fail (printf "grist.envVars.TYPEORM_DATABASE %q must be listed in bootstrap.postgres.databases" (toString $env.TYPEORM_DATABASE)) }}
+{{- end }}
+{{- if ne (toString $env.GRIST_DOCS_S3_ENDPOINT) (include "suite-stack.minioHost" $) }}
+{{- fail (printf "grist.envVars.GRIST_DOCS_S3_ENDPOINT must be the shared MinIO, %q: without it, documents live in the pod and a restart loses them (got %q)" (include "suite-stack.minioHost" $) (toString $env.GRIST_DOCS_S3_ENDPOINT)) }}
+{{- end }}
+{{- if not (has (toString $env.GRIST_DOCS_S3_BUCKET) $v.bootstrap.minio.buckets) }}
+{{- fail (printf "grist.envVars.GRIST_DOCS_S3_BUCKET %q must be listed in bootstrap.minio.buckets" (toString $env.GRIST_DOCS_S3_BUCKET)) }}
+{{- end }}
+{{- if not $v.bootstrap.minio.versioning }}
+{{- fail "bootstrap.minio.versioning must be true: Grist keeps a document's snapshots as versions of its object" }}
+{{- end }}
+{{- /* Registration is open to anyone with the URL: a formula must not run as the pod. */}}
+{{- if not (has (toString $env.GRIST_SANDBOX_FLAVOR) (list "pyodide" "gvisor")) }}
+{{- fail (printf "grist.envVars.GRIST_SANDBOX_FLAVOR must be \"pyodide\" (or \"gvisor\", which needs privileges): anyone can register on this stack, and an unsandboxed formula runs any code in the pod (got %q)" (toString $env.GRIST_SANDBOX_FLAVOR)) }}
+{{- end }}
+{{- /* Grist reads a flag as on when it is "1", "on", "true" or "yes", in any case (isAffirmative): "false" is off. */}}
+{{- $affirmative := list "1" "on" "true" "yes" }}
+{{- range $name := list "GRIST_TEST_LOGIN" "GRIST_ENCRYPTION_MOCK_VAULT" }}
+{{- if has (lower (toString (get $env $name))) $affirmative }}
+{{- fail (printf "grist.envVars.%s must not be on: it replaces the sign-in (or the encryption service) by a stand-in that protects nothing (got %q)" $name (toString (get $env $name))) }}
+{{- end }}
+{{- end }}
+{{- /* The mock stand-in is refused whether the encryption service is deployed or not: the
+mock vault above (which makes "mock" the provider when GRIST_ENCRYPTION_PROVIDER is unset)
+and the provider named here. With the service deployed, the provider must moreover be
+"lasuite" (below), which also refuses "mock": the two checks overlap there on purpose, this
+one naming the stand-in for what it is. */}}
+{{- if eq (toString $env.GRIST_ENCRYPTION_PROVIDER) "mock" }}
+{{- fail "grist.envVars.GRIST_ENCRYPTION_PROVIDER must not be \"mock\": it replaces the encryption service by a stand-in that protects nothing" }}
+{{- end }}
+{{- if ne (toString $env.GRIST_OIDC_IDP_ISSUER) $issuer }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_ISSUER must be the issuer of %s, %q (got %q)" $provider $issuer (toString $env.GRIST_OIDC_IDP_ISSUER)) }}
+{{- end }}
+{{- /* Accounts compares redirect URIs exactly; Keycloak takes a wildcard. */}}
+{{- $callback := ternary (printf "%s/oauth2/callback" $origin) (printf "%s/*" $origin) $viaAccounts }}
+{{- $found := false }}
+{{- range $productClients }}
+{{- if eq .clientId (toString $env.GRIST_OIDC_IDP_CLIENT_ID) }}
+{{- $found = true }}
+{{- if .public }}
+{{- fail (printf "%s[%s] must be confidential: Grist signs in with a secret" $registry .clientId) }}
+{{- end }}
+{{- if ne (toString .secret) (toString $env.GRIST_OIDC_IDP_CLIENT_SECRET) }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_CLIENT_SECRET differs from %s[%s].secret" $registry .clientId) }}
+{{- end }}
+{{- if not (has $callback .redirectUris) }}
+{{- fail (printf "%s[%s].redirectUris must contain %q" $registry .clientId $callback) }}
+{{- end }}
+{{- if $viaAccounts }}
+{{- $logout := printf "%s/signed-out" $origin }}
+{{- if not (has $logout (.postLogoutRedirectUris | default list)) }}
+{{- fail (printf "%s[%s].postLogoutRedirectUris must contain %q, where Grist leaves to, or Accounts refuses its logout" $registry .clientId $logout) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $found }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_CLIENT_ID %q has no entry in %s" (toString $env.GRIST_OIDC_IDP_CLIENT_ID) $registry) }}
+{{- end }}
+{{- /* Accounts answers userinfo with a signed JWT only; Grist's client parses JSON unless told otherwise, and then insists on a JWT. */}}
+{{- $metadata := fromJson (toString ($env.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA | default "{}")) }}
+{{- if hasKey $metadata "Error" }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA must be a JSON object (got %q)" (toString $env.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA)) }}
+{{- end }}
+{{- $signedUserinfo := toString (get $metadata "userinfo_signed_response_alg") }}
+{{- if and $viaAccounts (ne $signedUserinfo "RS256") }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA must set userinfo_signed_response_alg to RS256: Accounts answers userinfo with a signed JWT, which Grist otherwise fails to parse (got %q)" (toString $env.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA)) }}
+{{- end }}
+{{- if and (not $viaAccounts) $signedUserinfo }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA must not set userinfo_signed_response_alg without Accounts: the realm answers userinfo in JSON, which Grist then refuses (got %q)" (toString $env.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA)) }}
+{{- end }}
+{{- /* Accounts filters its claims by scope: without them, Grist gets no email to know the user by. */}}
+{{- $scopes := splitList " " (toString $env.GRIST_OIDC_IDP_SCOPES) }}
+{{- range $scope := list "openid" "email" "profile" }}
+{{- if not (has $scope $scopes) }}
+{{- fail (printf "grist.envVars.GRIST_OIDC_IDP_SCOPES must contain %q (got %q)" $scope (toString $env.GRIST_OIDC_IDP_SCOPES)) }}
+{{- end }}
+{{- end }}
+{{- if $v.encryption.enabled }}
+{{- $e := $v.encryption }}
+{{- if not (has (toString ($env.GRIST_ENCRYPTION_PROVIDER | default "lasuite")) (list "lasuite")) }}
+{{- fail (printf "grist.envVars.GRIST_ENCRYPTION_PROVIDER must be \"lasuite\", the encryption service deployed with the stack (got %q)" (toString $env.GRIST_ENCRYPTION_PROVIDER)) }}
+{{- end }}
+{{- if ne (toString $env.GRIST_ENCRYPTION_FEATURE_ENABLED) "true" }}
+{{- fail (printf "grist.envVars.GRIST_ENCRYPTION_FEATURE_ENABLED must be \"true\" when the encryption service is deployed (got %q)" (toString $env.GRIST_ENCRYPTION_FEATURE_ENABLED)) }}
+{{- end }}
+{{- /* The "lasuite" provider knows users by their OIDC subject: Grist refuses to start with another login system, or a mock key. */}}
+{{- if not (has (toString ($env.GRIST_LOGIN_SYSTEM_TYPE | default "oidc")) (list "oidc")) }}
+{{- fail (printf "grist.envVars.GRIST_LOGIN_SYSTEM_TYPE must be unset or \"oidc\" when the encryption service is deployed: Grist refuses to start its provider with another login system (got %q)" (toString $env.GRIST_LOGIN_SYSTEM_TYPE)) }}
+{{- end }}
+{{- if $env.GRIST_ENCRYPTION_MOCK_KEY }}
+{{- fail "grist.envVars.GRIST_ENCRYPTION_MOCK_KEY must not be set: it is the mock stand-in's key, and the stack runs the encryption service" }}
+{{- end }}
+{{- $vault := printf "https://%s" $e.hosts.vault }}
+{{- if ne (toString $env.GRIST_ENCRYPTION_LASUITE_VAULT_URL) $vault }}
+{{- fail (printf "grist.envVars.GRIST_ENCRYPTION_LASUITE_VAULT_URL must be %q (got %q)" $vault (toString $env.GRIST_ENCRYPTION_LASUITE_VAULT_URL)) }}
+{{- end }}
+{{- $interface := printf "https://%s" $e.hosts.interface }}
+{{- if ne (toString $env.GRIST_ENCRYPTION_LASUITE_INTERFACE_URL) $interface }}
+{{- fail (printf "grist.envVars.GRIST_ENCRYPTION_LASUITE_INTERFACE_URL must be %q (got %q)" $interface (toString $env.GRIST_ENCRYPTION_LASUITE_INTERFACE_URL)) }}
+{{- end }}
+{{- if not (has $origin $e.config.allowedFrameAncestors) }}
+{{- fail (printf "encryption.config.allowedFrameAncestors must contain %q, or the vault refuses to be embedded by grist" $origin) }}
+{{- end }}
+{{- /* Without the service, Grist would offer encrypted documents whose vault never loads. */}}
+{{- else if has (lower (toString $env.GRIST_ENCRYPTION_FEATURE_ENABLED)) $affirmative }}
+{{- fail (printf "grist.envVars.GRIST_ENCRYPTION_FEATURE_ENABLED must not be on when the encryption service is not deployed (encryption.enabled): Grist would offer encrypted documents whose vault never loads (got %q)" (toString $env.GRIST_ENCRYPTION_FEATURE_ENABLED)) }}
 {{- end }}
 {{- end }}
 

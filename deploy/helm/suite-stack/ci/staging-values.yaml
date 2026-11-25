@@ -43,3 +43,8 @@ accounts:
     image:
       repository: myaccount/accounts-frontend
       tag: encryption
+
+grist:
+  image:
+    repository: myaccount/grist
+    tag: encryption

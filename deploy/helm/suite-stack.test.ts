@@ -246,6 +246,9 @@ describe('the stack chart', () => {
         'Ingress/drive-collaboration-relay',
         'Service/drive-onlyoffice-sandbox',
         'Ingress/drive-onlyoffice-sandbox',
+        'Deployment/grist',
+        'Service/grist',
+        'Ingress/grist',
       ].sort()
     );
     expect(
@@ -263,7 +266,7 @@ describe('the stack chart', () => {
   });
 
   it('gives every product the same shared services, by fixed names', () => {
-    for (const name of ['postgres', 'redis', 'minio', 'shared-keycloak', 'mailpit', 'onlyoffice']) {
+    for (const name of ['postgres', 'redis', 'minio', 'shared-keycloak', 'mailpit', 'onlyoffice', 'grist']) {
       find(full.docs, 'Service', name);
     }
 
@@ -277,6 +280,7 @@ describe('the stack chart', () => {
     const drive = containerEnv(mainContainer(find(full.docs, 'Deployment', 'drive-backend')));
     const accounts = containerEnv(mainContainer(find(full.docs, 'Deployment', 'accounts-backend')));
     const encryption = containerEnv(mainContainer(find(full.docs, 'Deployment', 'stack-encryption')));
+    const grist = containerEnv(mainContainer(find(full.own, 'Deployment', 'grist')));
 
     for (const env of [docs, drive, accounts]) {
       expect(env.get('DB_HOST')?.value).toBe('postgres');
@@ -288,7 +292,17 @@ describe('the stack chart', () => {
       expect(env.get('OIDC_OP_JWKS_ENDPOINT')?.value).toBe('https://accounts.suite.example.org/api/v1.0/o/.well-known/jwks.json');
     }
 
-    expect(new Set([docs, drive, accounts].map((env) => env.get('REDIS_URL')?.value)).size).toBe(3);
+    expect(new Set([docs, drive, accounts, grist].map((env) => env.get('REDIS_URL')?.value)).size).toBe(4);
+
+    // Grist keeps nothing in its pod: its home database, its documents and its sessions
+    // are in the shared services.
+    expect(grist.get('TYPEORM_TYPE')?.value).toBe('postgres');
+    expect(grist.get('TYPEORM_HOST')?.value).toBe('postgres');
+    expect(grist.get('TYPEORM_DATABASE')?.value).toBe('grist');
+    expect(grist.get('REDIS_URL')?.value).toMatch(/^redis:\/\/[^@]+@redis:6379\//);
+    expect(grist.get('GRIST_DOCS_S3_ENDPOINT')?.value).toBe('minio');
+    expect(grist.get('GRIST_DOCS_S3_PORT')?.value).toBe('9000');
+    expect(grist.get('GRIST_DOCS_S3_BUCKET')?.value).toBe('grist-docs');
 
     expect(docs.get('AWS_S3_ENDPOINT_URL')?.value).toBe('http://minio:9000');
     expect(drive.get('WOPI_ONLYOFFICE_DISCOVERY_URL')?.value).toBe('http://onlyoffice/hosting/discovery');
@@ -325,13 +339,15 @@ describe('the stack chart', () => {
 
     const scripts = secret.stringData ?? {};
 
-    for (const database of ['docs', 'drive', 'encryption', 'accounts']) {
+    for (const database of ['docs', 'drive', 'encryption', 'accounts', 'grist']) {
       expect(scripts['postgres.sh']).toContain(`CREATE DATABASE "${database}"`);
     }
 
     expect(scripts['postgres.sh']).toContain('create-migrator-role.sql');
     expect(scripts['minio.sh']).toContain('mc mb --ignore-existing "local/drive-media-storage"');
     expect(scripts['minio.sh']).toContain('mc mb --ignore-existing "local/accounts-media-storage"');
+    // Grist's snapshots are the versions of a document's object.
+    expect(scripts['minio.sh']).toContain('mc mb --ignore-existing "local/grist-docs"\nmc version enable "local/grist-docs"');
 
     // With Accounts in front, the realm's one client is Accounts': the products are clients of Accounts.
     expect([...scripts['keycloak.sh'].matchAll(/^\s*ensure_client '([^']+)' /gm)].map((match) => match[1])).toEqual(['accounts']);
@@ -451,6 +467,7 @@ describe('the stack chart', () => {
     expect(mainContainer(find(staging.docs, 'Deployment', 'accounts-backend')).image).toBe('myaccount/accounts-backend:encryption');
     expect(mainContainer(find(staging.docs, 'Deployment', 'accounts-frontend')).image).toBe('myaccount/accounts-frontend:encryption');
     expect(mainContainer(find(staging.own, 'Job', 'stack-suite-stack-accounts-applications-1')).image).toBe('myaccount/accounts-backend:encryption');
+    expect(mainContainer(find(staging.own, 'Deployment', 'grist')).image).toBe('myaccount/grist:encryption');
   });
 
   // Docs, Drive and the encryption service sign in at Accounts, which signs the testers in
@@ -492,6 +509,73 @@ describe('the stack chart', () => {
     expect(encryption.get('OIDC_STEP_UP_ENABLED')?.value).toBe('false');
     expect(encryption.get('OIDC_STEP_UP_MAX_AGE_SECONDS')?.value).toBe('43200');
     expect(encryption.get('ALLOWED_FRAME_ANCESTORS')?.value).toContain('https://accounts.suite.example.org');
+
+    // Grist too, with the scopes that carry the email and the names.
+    const grist = containerEnv(mainContainer(find(full.own, 'Deployment', 'grist')));
+
+    expect(grist.get('GRIST_OIDC_IDP_ISSUER')?.value).toBe(issuer);
+    expect(grist.get('GRIST_OIDC_IDP_SCOPES')?.value).toBe('openid email profile');
+    // Accounts sends the full name as `name`, with no `family_name` to join to the first name.
+    expect(grist.get('GRIST_OIDC_SP_PROFILE_NAME_ATTR')?.value).toBe('name');
+    // Accounts answers userinfo with a signed JWT, which Grist's client parses only when told to.
+    expect(JSON.parse(grist.get('GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA')?.value ?? '{}')).toEqual({ userinfo_signed_response_alg: 'RS256' });
+    expect(grist.get('GRIST_OIDC_SP_HOST')?.value).toBe('https://grist.suite.example.org');
+    expect(grist.get('GRIST_ENCRYPTION_FEATURE_ENABLED')?.value).toBe('true');
+    expect(grist.get('GRIST_ENCRYPTION_PROVIDER')?.value).toBe('lasuite');
+    expect(grist.get('GRIST_ENCRYPTION_LASUITE_VAULT_URL')?.value).toBe('https://data.encryption.suite.example.org');
+    expect(grist.get('GRIST_ENCRYPTION_LASUITE_INTERFACE_URL')?.value).toBe('https://encryption.suite.example.org');
+    expect(encryption.get('ALLOWED_FRAME_ANCESTORS')?.value).toContain('https://grist.suite.example.org');
+  });
+
+  // Anyone with the URL can register on the stack, and a Grist formula is Python run on
+  // the server: the data engine runs in Pyodide, with no privilege, in a pod that keeps
+  // nothing and writes only to its two scratch volumes.
+  it('runs Grist without privilege, its formulas sandboxed, its pod keeping nothing', () => {
+    const deployment = find(full.own, 'Deployment', 'grist');
+    const pod = deployment.spec?.template?.spec as unknown as {
+      securityContext: Record<string, unknown>;
+      containers: Array<Container & { securityContext: Record<string, unknown>; volumeMounts: Array<{ mountPath: string }> }>;
+      volumes: Array<{ name: string; emptyDir?: unknown; persistentVolumeClaim?: unknown }>;
+    };
+    const container = pod.containers[0];
+    const env = containerEnv(container);
+
+    expect(pod.securityContext).toMatchObject({ runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001 });
+    expect(container.securityContext).toMatchObject({
+      allowPrivilegeEscalation: false,
+      readOnlyRootFilesystem: true,
+      capabilities: { drop: ['ALL'] },
+    });
+    expect(container.volumeMounts.map((mount) => mount.mountPath).sort()).toEqual(['/persist', '/tmp']);
+    expect(pod.volumes.every((volume) => volume.emptyDir && !volume.persistentVolumeClaim)).toBe(true);
+    expect(env.get('HOME')?.value).toBe('/tmp');
+
+    // It waits for its identity provider and its database rather than exiting until they
+    // are there: with its own image, its very settings and the same constraints.
+    const wait = (deployment.spec?.template?.spec as unknown as { initContainers: Array<Container & { securityContext: unknown }> }).initContainers;
+
+    expect(wait.map((init) => init.name)).toEqual(['wait']);
+    expect(wait[0].image).toBe(container.image);
+    expect(wait[0].env).toEqual(container.env);
+    expect(wait[0].securityContext).toEqual(container.securityContext);
+    expect(wait[0].command?.join(' ')).toMatch(
+      /GRIST_OIDC_IDP_ISSUER[\s\S]+\.well-known\/openid-configuration[\s\S]+require\("pg"\)|require\("pg"\)[\s\S]+\.well-known\/openid-configuration/
+    );
+    // Each attempt gives up after a while rather than hanging, and a crash fails the pod.
+    expect(wait[0].command?.join(' ')).toContain('signal: AbortSignal.timeout(5000)');
+    expect(wait[0].command?.join(' ')).toContain('connectionTimeoutMillis: 5000');
+    expect(wait[0].command?.join(' ')).toMatch(/\}\)\(\)\.catch\([\s\S]+process\.exit\(1\)/);
+    // One environment, written out in both containers rather than as a YAML alias.
+    expect(full.ours).not.toMatch(/[&*]grist(?:Env|SecurityContext)/);
+    expect(env.get('GRIST_SANDBOX_FLAVOR')?.value).toBe('pyodide');
+    expect(env.get('GRIST_FORCE_LOGIN')?.value).toBe('true');
+    expect(env.has('GRIST_TEST_LOGIN')).toBe(false);
+    expect(env.has('GRIST_ENCRYPTION_MOCK_VAULT')).toBe(false);
+
+    // A null drops a variable, as it does in the products' envVars.
+    const dropped = containerEnv(mainContainer(find(render([], ['grist.envVars.GRIST_TELEMETRY_LEVEL=null']).own, 'Deployment', 'grist')));
+
+    expect(dropped.has('GRIST_TELEMETRY_LEVEL')).toBe(false);
   });
 
   it('registers the products in Accounts with its own image and settings, once it has migrated', () => {
@@ -520,7 +604,7 @@ describe('the stack chart', () => {
     const applications = JSON.parse(scripts['applications.json']) as AccountsApplication[];
 
     expect(applications).toEqual(defaults.bootstrap.accounts.applications);
-    expect(applications.map((application) => application.clientId)).toEqual(['docs', 'drive', 'encryption']);
+    expect(applications.map((application) => application.clientId)).toEqual(['docs', 'drive', 'grist', 'encryption']);
     expect(scripts['applications.py']).toContain('Application.CLIENT_CONFIDENTIAL');
     expect(scripts['applications.py']).toContain('Application.RS256_ALGORITHM');
     expect(scripts['applications.py']).toContain('application.skip_authorization = True');
@@ -617,7 +701,12 @@ describe('the stack chart', () => {
 
     const scripts = find(keycloakOnly.own, 'Secret', 'stack-suite-stack-bootstrap-1').stringData ?? {};
 
-    expect([...scripts['keycloak.sh'].matchAll(/^\s*ensure_client '([^']+)' /gm)].map((match) => match[1])).toEqual(['docs', 'drive', 'encryption']);
+    expect([...scripts['keycloak.sh'].matchAll(/^\s*ensure_client '([^']+)' /gm)].map((match) => match[1])).toEqual([
+      'docs',
+      'drive',
+      'grist',
+      'encryption',
+    ]);
 
     // The encryption interface's client is confidential, PKCE-bound, and has no web origin:
     // its server signs users in, the browser never calls Keycloak.
@@ -636,6 +725,18 @@ describe('the stack chart', () => {
     expect(containerEnv(mainContainer(find(keycloakOnly.docs, 'Deployment', 'docs-backend'))).get('OIDC_OP_JWKS_ENDPOINT')?.value).toBe(
       `${issuer}/protocol/openid-connect/certs`
     );
+    const keycloakGrist = containerEnv(mainContainer(find(keycloakOnly.own, 'Deployment', 'grist')));
+
+    expect(keycloakGrist.get('GRIST_OIDC_IDP_ISSUER')?.value).toBe(issuer);
+    // The realm answers userinfo in JSON, which Grist refuses once told to expect a JWT.
+    expect(keycloakGrist.has('GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA')).toBe(false);
+    expect(
+      renderError(
+        [],
+        ['grist.envVars.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA="{\\"userinfo_signed_response_alg\\":\\"RS256\\"}"'],
+        [WITHOUT_ACCOUNTS_VALUES]
+      )
+    ).toMatch(/must not set userinfo_signed_response_alg without Accounts/);
 
     // Turning Accounts off alone leaves every product pointed at it.
     expect(renderError(['accounts.enabled=false'])).toMatch(
@@ -735,11 +836,81 @@ describe('the stack chart', () => {
       ['shared.postgres.serviceNameOverride=', /shared\.postgres\.serviceNameOverride is required/],
       ['shared.fullnameOverride=', /shared\.fullnameOverride is required/],
       ['shared.redis.enabled=false', /shared\.redis\.enabled must be true/],
+      ['grist.envVars.REDIS_URL=redis://user:pass@redis:6379/3', /accounts and grist share the Redis URL/],
+      [
+        'grist.envVars.APP_HOME_URL=https://other',
+        /grist\.envVars\.APP_HOME_URL must be "https:\/\/grist\.suite\.example\.org", grist\.host's origin/,
+      ],
+      ['grist.host=other.example.org', /grist\.envVars\.APP_HOME_URL must be "https:\/\/other\.example\.org"/],
+      ['grist.envVars.GRIST_OIDC_SP_HOST=https://other', /grist\.envVars\.GRIST_OIDC_SP_HOST must be "https:\/\/grist\.suite\.example\.org"/],
+      ['grist.envVars.TYPEORM_TYPE=sqlite', /grist\.envVars\.TYPEORM_TYPE must be "postgres"/],
+      ['grist.envVars.TYPEORM_HOST=db', /grist\.envVars\.TYPEORM_HOST must be the shared PostgreSQL, "postgres"/],
+      ['grist.envVars.TYPEORM_DATABASE=other', /grist\.envVars\.TYPEORM_DATABASE "other" must be listed in bootstrap\.postgres\.databases/],
+      ['grist.envVars.GRIST_DOCS_S3_ENDPOINT=s3.example.org', /grist\.envVars\.GRIST_DOCS_S3_ENDPOINT must be the shared MinIO, "minio"/],
+      ['grist.envVars.GRIST_DOCS_S3_BUCKET=other', /grist\.envVars\.GRIST_DOCS_S3_BUCKET "other" must be listed in bootstrap\.minio\.buckets/],
+      ['bootstrap.minio.versioning=false', /bootstrap\.minio\.versioning must be true: Grist keeps a document's snapshots/],
+      ['grist.envVars.GRIST_SANDBOX_FLAVOR=unsandboxed', /grist\.envVars\.GRIST_SANDBOX_FLAVOR must be "pyodide".*\(got "unsandboxed"\)/],
+      ['grist.envVars.GRIST_SANDBOX_FLAVOR=null', /grist\.envVars\.GRIST_SANDBOX_FLAVOR must be "pyodide"/],
+      ['grist.envVars.GRIST_TEST_LOGIN=1', /grist\.envVars\.GRIST_TEST_LOGIN must not be on/],
+      ['grist.envVars.GRIST_TEST_LOGIN=Yes', /grist\.envVars\.GRIST_TEST_LOGIN must not be on.*\(got "Yes"\)/],
+      ['grist.envVars.GRIST_ENCRYPTION_MOCK_VAULT=true', /grist\.envVars\.GRIST_ENCRYPTION_MOCK_VAULT must not be on/],
+      ['grist.envVars.GRIST_ENCRYPTION_MOCK_VAULT=ON', /grist\.envVars\.GRIST_ENCRYPTION_MOCK_VAULT must not be on/],
+      ['grist.envVars.GRIST_LOGIN_SYSTEM_TYPE=saml', /grist\.envVars\.GRIST_LOGIN_SYSTEM_TYPE must be unset or "oidc".*\(got "saml"\)/],
+      [`grist.envVars.GRIST_ENCRYPTION_MOCK_KEY=${'0'.repeat(64)}`, /grist\.envVars\.GRIST_ENCRYPTION_MOCK_KEY must not be set/],
+      // Without the service, Grist must not offer encrypted documents.
+      [
+        'encryption.enabled=false,docs.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False,drive.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False,accounts.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False',
+        /grist\.envVars\.GRIST_ENCRYPTION_FEATURE_ENABLED must not be on when the encryption service is not deployed.*\(got "true"\)/,
+      ],
+      ['grist.envVars.GRIST_ENCRYPTION_PROVIDER=mock', /grist\.envVars\.GRIST_ENCRYPTION_PROVIDER must not be "mock"/],
+      [
+        'grist.envVars.GRIST_ENCRYPTION_PROVIDER=other',
+        /grist\.envVars\.GRIST_ENCRYPTION_PROVIDER must be "lasuite", the encryption service deployed with the stack \(got "other"\)/,
+      ],
+      [
+        'grist.envVars.GRIST_OIDC_IDP_ISSUER=https://auth.suite.example.org/realms/suite',
+        /grist\.envVars\.GRIST_OIDC_IDP_ISSUER must be the issuer of Accounts/,
+      ],
+      [
+        'grist.envVars.GRIST_OIDC_IDP_CLIENT_ID=other',
+        /grist\.envVars\.GRIST_OIDC_IDP_CLIENT_ID "other" has no entry in bootstrap\.accounts\.applications/,
+      ],
+      [
+        'grist.envVars.GRIST_OIDC_IDP_CLIENT_SECRET=other',
+        /GRIST_OIDC_IDP_CLIENT_SECRET differs from bootstrap\.accounts\.applications\[grist\]\.secret/,
+      ],
+      ['grist.envVars.GRIST_OIDC_IDP_SCOPES=openid email', /grist\.envVars\.GRIST_OIDC_IDP_SCOPES must contain "profile"/],
+      [
+        'grist.envVars.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA=null',
+        /GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA must set userinfo_signed_response_alg to RS256: Accounts answers userinfo with a signed JWT/,
+      ],
+      ['grist.envVars.GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA=nope', /GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA must be a JSON object \(got "nope"\)/],
+      ['grist.envVars.GRIST_ENCRYPTION_FEATURE_ENABLED=false', /grist\.envVars\.GRIST_ENCRYPTION_FEATURE_ENABLED must be "true"/],
+      [
+        'grist.envVars.GRIST_ENCRYPTION_LASUITE_VAULT_URL=https://other',
+        /grist\.envVars\.GRIST_ENCRYPTION_LASUITE_VAULT_URL must be "https:\/\/data\.encryption\.suite\.example\.org"/,
+      ],
+      [
+        'grist.envVars.GRIST_ENCRYPTION_LASUITE_INTERFACE_URL=https://other',
+        /grist\.envVars\.GRIST_ENCRYPTION_LASUITE_INTERFACE_URL must be "https:\/\/encryption\.suite\.example\.org"/,
+      ],
+      [
+        'encryption.config.allowedFrameAncestors={https://docs.suite.example.org,https://drive.suite.example.org,https://accounts.suite.example.org}',
+        /allowedFrameAncestors must contain "https:\/\/grist\.suite\.example\.org", or the vault refuses to be embedded by grist/,
+      ],
     ];
 
     for (const [set, message] of cases) {
       expect(renderError([set]), set).toMatch(message);
     }
+
+    // A flag Grist reads as off is no stand-in, whatever its spelling.
+    expect(() =>
+      render(
+        [],
+        ['grist.envVars.GRIST_TEST_LOGIN=false', 'grist.envVars.GRIST_ENCRYPTION_MOCK_VAULT=0', 'grist.envVars.GRIST_LOGIN_SYSTEM_TYPE=oidc']
+      )
+    ).not.toThrow();
   });
 
   it('leaves the encryption secret to the operator when it comes from an existing Secret', () => {
@@ -784,6 +955,12 @@ describe('the stack chart', () => {
     expect(
       renderError([], [applications('encryption', (application) => (application.redirectUris = ['https://other.example.org/auth/callback']))])
     ).toMatch(/applications\[encryption\]\.redirectUris must contain "https:\/\/encryption\.suite\.example\.org\/auth\/callback"/);
+    expect(
+      renderError([], [applications('grist', (application) => (application.redirectUris = ['https://grist.suite.example.org/callback']))])
+    ).toMatch(/applications\[grist\]\.redirectUris must contain "https:\/\/grist\.suite\.example\.org\/oauth2\/callback"/);
+    expect(renderError([], [applications('grist', (application) => (application.postLogoutRedirectUris = []))])).toMatch(
+      /applications\[grist\]\.postLogoutRedirectUris must contain "https:\/\/grist\.suite\.example\.org\/signed-out"/
+    );
 
     // Without Accounts, the products' clients at Keycloak.
     const direct = (clientId: string, edit: (client: KeycloakClient) => void) => [
@@ -821,6 +998,20 @@ describe('the stack chart', () => {
         [WITHOUT_ACCOUNTS_VALUES]
       )
     ).toMatch(/clients\[drive\]\.redirectUris must contain "https:\/\/drive\.suite\.example\.org\/\*"/);
+    expect(
+      renderError(
+        [],
+        direct('grist', (client) => (client.public = true)),
+        [WITHOUT_ACCOUNTS_VALUES]
+      )
+    ).toMatch(/clients\[grist\] must be confidential: Grist signs in with a secret/);
+    expect(
+      renderError(
+        [],
+        direct('grist', (client) => (client.redirectUris = ['https://other/*'])),
+        [WITHOUT_ACCOUNTS_VALUES]
+      )
+    ).toMatch(/clients\[grist\]\.redirectUris must contain "https:\/\/grist\.suite\.example\.org\/\*"/);
     expect(
       renderError(
         [],
@@ -871,6 +1062,7 @@ describe('the stack chart', () => {
       '42-mail.ppr.example.net',
       '42-office.ppr.example.net',
       '42-drive-sandbox.ppr.example.net',
+      '42-grist.ppr.example.net',
     ]) {
       expect(text, host).toContain(host);
     }
@@ -892,6 +1084,13 @@ describe('the stack chart', () => {
     expect(text).toContain('value: "https://42-accounts.ppr.example.net/api/v1.0/o/token/"');
     expect(text).toContain('value: "https://42-auth.ppr.example.net/realms/suite"');
     expect(text).toContain('https://42-docs.ppr.example.net/api/v1.0/callback/');
+    // Grist signs in at the preview's Accounts, and the preview's vault lets it embed it
+    expect(text).toContain('https://42-grist.ppr.example.net/oauth2/callback');
+    expect(text).toContain(
+      'value: "https://42-docs.ppr.example.net,https://42-drive.ppr.example.net,https://42-grist.ppr.example.net,https://42-accounts.ppr.example.net"'
+    );
+    // No CI builds Grist's branch: the upstream image unless one is named
+    expect(text).toContain('image: "gristlabs/grist-oss:latest"');
   });
 
   // Argo CD hands the inputs to its plugin as environment variables of the Application,
@@ -970,6 +1169,22 @@ describe('the stack chart', () => {
 
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
+    // Grist's image, pushed by hand from its fork: named by a variable (prefixed under
+    // Argo CD), a registry with a port included, or by state values, which win
+    expect(run('helmfile', args, undefined, { ARGOCD_ENV_GRIST_IMAGE: 'myaccount/grist:encryption' })).toContain(
+      'image: "myaccount/grist:encryption"'
+    );
+    expect(run('helmfile', args, undefined, { GRIST_IMAGE: 'registry.example.net:5000/grist:sha-0123abcd' })).toContain(
+      'image: "registry.example.net:5000/grist:sha-0123abcd"'
+    );
+    expect(
+      run('helmfile', [...args.slice(0, -1), '--state-values-set', 'images.grist.tag=other', 'template'], undefined, {
+        GRIST_IMAGE: 'myaccount/grist:encryption',
+      })
+    ).toContain('image: "myaccount/grist:other"');
+    expect(() => run('helmfile', args, undefined, { GRIST_IMAGE: 'no-tag' })).toThrow(/GRIST_IMAGE must be repository:tag/);
+    expect(() => run('helmfile', args, undefined, { GRIST_IMAGE: 'registry.example.net:5000/grist' })).toThrow(/GRIST_IMAGE must be repository:tag/);
+
     // The feedback form: the helmfile's default, another one from the environment, none
     // with an empty state value
     const feedbackFormUrl = (text: string) => {
@@ -1018,6 +1233,7 @@ describe('the stack chart', () => {
         'docs.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False',
         'drive.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False',
         'accounts.backend.envVars.ENCRYPTION_FEATURE_ENABLED=False',
+        'grist.envVars.GRIST_ENCRYPTION_FEATURE_ENABLED=false',
       ]
     );
 
@@ -1032,12 +1248,15 @@ describe('the stack chart', () => {
         'drive.enabled=false',
         'mailpit.enabled=false',
         'onlyoffice.enabled=false',
+        'grist.enabled=false',
         'encryption.config.mailer.smtpHost=smtp.example.org',
       ]
     );
     const names = shared.docs.map((document) => document.metadata.name);
 
-    expect(names.some((name) => name.startsWith('docs-') || name.startsWith('drive-') || name === 'mailpit' || name === 'onlyoffice')).toBe(false);
+    expect(
+      names.some((name) => name.startsWith('docs-') || name.startsWith('drive-') || name === 'mailpit' || name === 'onlyoffice' || name === 'grist')
+    ).toBe(false);
     find(shared.docs, 'Deployment', 'stack-encryption');
   });
 });

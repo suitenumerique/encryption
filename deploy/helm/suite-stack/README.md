@@ -1,6 +1,6 @@
 # suite-stack
 
-One Helm release that deploys everything a beta tester needs to try the encryption feature inside the products: the encryption service, Docs and Drive built from the branches under test, LaSuite Accounts as the identity provider they all sign in with, and the services they share (one PostgreSQL, one Redis, one MinIO, one Keycloak behind Accounts, one mail catcher).
+One Helm release that deploys everything a beta tester needs to try the encryption feature inside the products: the encryption service, Docs, Drive and Grist built from the branches under test, LaSuite Accounts as the identity provider they all sign in with, and the services they share (one PostgreSQL, one Redis, one MinIO, one Keycloak behind Accounts, one mail catcher).
 
 It exists because the products' own pipelines only ship images of `main`, and the feature cannot be merged there behind a flag. So the developer builds the product images from the integration branches, pushes them to a registry of their own, and this chart deploys them next to the service, on infrastructure it creates itself. Nothing in it is a production pattern: passwords are plaintext values, the shared services are the products' own development chart, and a `helm uninstall` throws the lot away.
 
@@ -18,8 +18,26 @@ It exists because the products' own pipelines only ship images of `main`, and th
 | Mailpit       | `templates/mailpit.yaml`                                                              | SMTP for every product, a web mailbox for the testers.                          |
 | OnlyOffice    | `templates/onlyoffice.yaml`                                                           | The document server Drive edits office files with (WOPI), collaborative.        |
 | Sandbox       | `templates/drive-onlyoffice-sandbox.yaml`                                             | Drive's editor of encrypted office files, on a host of its own.                 |
+| Grist         | `templates/grist.yaml`                                                                | One container on the shared services, no state of its own (see below).          |
 
 Every product reaches the shared services by fixed names (`postgres`, `redis`, `minio`, `mailpit`, `onlyoffice`, and the public hostnames of Accounts and Keycloak), whatever the release is called, so the values of one product can be copied for the next.
+
+## Grist
+
+Grist has no Helm chart to depend on, and is a single container, so `templates/grist.yaml` deploys it directly, configured by `grist.envVars` (passed as they are, as the products' `envVars`). It reuses every shared service instead of bringing its own, and keeps nothing in its pod (`/persist` and `/tmp` are scratch volumes, the root file system is read-only, it runs as its image's user without any privilege):
+
+- its home database (users, sites, documents' metadata) is the `grist` database of the shared PostgreSQL;
+- its documents are objects of the `grist-docs` bucket of the shared MinIO, reached from inside the cluster; Grist keeps a document's snapshots as versions of its object, hence the bucket versioning (checked);
+- its sessions and the assignment of documents to its worker are in the shared Redis, on a database index of its own (checked like the products');
+- it signs in at Accounts like the products (application `grist`, back to `/oauth2/callback`, out through `/signed-out`). Accounts always answers userinfo with a signed JWT, which Grist's OIDC client parses only when told to expect one: `GRIST_OIDC_IDP_EXTRA_CLIENT_METADATA` sets `userinfo_signed_response_alg` to `RS256` (checked; without Accounts, Keycloak answers JSON and the variable is dropped).
+
+Anyone with the URL can register on the stack, and outside encrypted documents a Grist formula is Python run on the server: `GRIST_SANDBOX_FLAVOR` is `pyodide` (the data engine in WebAssembly under Deno, no privilege needed), and the checks refuse `unsandboxed`, `GRIST_TEST_LOGIN` and the mock vault. In encrypted documents, the engine runs in the testers' browsers anyway. `GRIST_IN_SERVICE` skips the `/boot` page a fresh installation shows, so the stack has no install admin.
+
+Grist needs its identity provider when it starts: it reads the provider's discovery document then, and exits when it cannot, as it does when its database is missing. This is Grist's own limit, not the stack's ([gristlabs/grist-core#1912](https://github.com/gristlabs/grist-core/issues/1912): Docs and Drive name the provider's endpoints in their settings and only reach it at a sign-in). Once started, Grist does not need the provider for testers already signed in (their session is in Redis, no token is refreshed): only signing in and out do. The init container does not lift that dependency; it spares the installation a crash loop while Accounts migrates and the bootstrap creates the database (the restarts would back off up to five minutes), by waiting for both with the image's own Node and PostgreSQL driver and the same settings. Accounts' `profile` scope carries the full name as `name` and no `family_name`, so `GRIST_OIDC_SP_PROFILE_NAME_ATTR` is `name` (Grist would otherwise keep the first name alone).
+
+This was run in a local k3d cluster (ingress-nginx, cert-manager with a CA of its own as `letsencrypt`, the shared chart's Keycloak, PostgreSQL, Redis and MinIO, Accounts, Mailpit and Grist; Docs, Drive, OnlyOffice and the encryption service off), rendered through `deploy/helmfile/preview` with `GRIST_IMAGE=gristlabs/grist-oss:1.7.21`: testers signed in to Grist through Accounts and Keycloak (terms accepted on the way), with their email and full name, made a document whose formula Pyodide computed, found it again after restarts of the pod (its scratch volumes emptied), and signed out through Accounts back to `/signed-out`; on an upgrade, and with Accounts stopped, Grist waited for it without a restart.
+
+**Its image.** Grist's encrypted documents are on a branch of a fork, which no CI of the suite builds. The chart defaults to the upstream `gristlabs/grist-oss:latest`, which runs without encryption (it ignores the `GRIST_ENCRYPTION_*` variables); the branch's image is pushed by hand (see "Images") and named in `grist.image`, or for the helmfile with the variable `GRIST_IMAGE` (`repository:tag`).
 
 ## Accounts in front of Keycloak
 
@@ -59,7 +77,7 @@ The hooks run again at every sync, which is what makes editing the testers' list
 
 ## Coherence checks
 
-The four subcharts each read their own block, so a hostname or a client id is written in several places. `templates/_checks.tpl` makes the render fail, naming both values, when they disagree: a product's `DB_NAME` absent from the databases the bootstrap creates, an `OIDC_RP_CLIENT_ID` without a client, a client secret that differs (a product's `OIDC_RP_CLIENT_SECRET` or the encryption service's `config.oidc.clientSecret`), a redirect URI that does not cover the product's origin, `ENCRYPTION_VAULT_URL` that is not the vault's host, a product origin missing from `allowedFrameAncestors`, two products on the same Redis database index, the encryption database URL not being the runtime role the bootstrap creates, Drive's editor relay not being on Drive's host, and for Accounts: a product (or the encryption service) not naming Accounts' issuer, a redirect or logout URI missing from its application, Accounts' issuer not under its host, its upstream not being the shared realm, its Keycloak client lacking the signed userinfo or one of ProConnect's scopes, an optional scope absent from the realm, the encryption service asking Accounts for scopes without the email and names, or a step-up max age shorter than Accounts' session (see "Known limits"). `helm template` on your values is therefore the first test to run.
+The four subcharts and Grist's template each read their own block, so a hostname or a client id is written in several places. `templates/_checks.tpl` makes the render fail, naming both values, when they disagree: a product's `DB_NAME` absent from the databases the bootstrap creates, an `OIDC_RP_CLIENT_ID` without a client, a client secret that differs (a product's `OIDC_RP_CLIENT_SECRET` or the encryption service's `config.oidc.clientSecret`), a redirect URI that does not cover the product's origin, `ENCRYPTION_VAULT_URL` that is not the vault's host, a product origin missing from `allowedFrameAncestors`, two products on the same Redis database index, the encryption database URL not being the runtime role the bootstrap creates, Drive's editor relay not being on Drive's host, Grist off the shared services (its home database, bucket or Redis index), unsandboxed or with a stand-in sign-in or vault, or not expecting Accounts' signed userinfo, and for Accounts: a product (or the encryption service) not naming Accounts' issuer, a redirect or logout URI missing from its application, Accounts' issuer not under its host, its upstream not being the shared realm, its Keycloak client lacking the signed userinfo or one of ProConnect's scopes, an optional scope absent from the realm, the encryption service asking Accounts for scopes without the email and names, or a step-up max age shorter than Accounts' session (see "Known limits"). `helm template` on your values is therefore the first test to run.
 
 ## Images
 
@@ -82,6 +100,11 @@ Whichever way the product images are produced, the stack only ever sees a refere
    docker build --target frontend-production -t myaccount/accounts-frontend:encryption -f src/frontend/Dockerfile .
    # The encryption service (this repository): the preview workflow publishes it, see below
    docker build -t myaccount/encryption:e2ee .
+   # Grist (its fork, on the encryption branch): the open-source edition, the Dockerfile's
+   # default (no ext/ build context). From the committed tree, not the working copy: a
+   # file an editor saved owner-only (0600) would be copied as is, and Grist, which runs as
+   # its image's user, could not read it (EACCES at startup)
+   git archive HEAD | docker build -t myaccount/grist:encryption -
    docker push ...
    ```
 
@@ -102,7 +125,7 @@ helmfile -e preview -f deploy/helmfile/preview/helmfile.yaml.gotmpl \
 kubectl -n preview-beta get jobs,pods -w
 ```
 
-Hosts come out as `beta-docs.suite.example.org`, `beta-drive`, `beta-encryption` and `data.beta-encryption`, `beta-accounts`, `beta-auth`, `beta-s3`, `beta-s3-console`, `beta-mail`, in the namespace `preview-beta`. Everything else (testers, passwords, replicas) is the chart's defaults; to change those too, add a values file to the release in the helmfile.
+Hosts come out as `beta-docs.suite.example.org`, `beta-drive`, `beta-grist`, `beta-encryption` and `data.beta-encryption`, `beta-accounts`, `beta-auth`, `beta-s3`, `beta-s3-console`, `beta-mail`, in the namespace `preview-beta`. Grist's image is `GRIST_IMAGE` (`repository:tag`), or the state values `images.grist.repository` and `images.grist.tag`, the upstream one otherwise. Everything else (testers, passwords, replicas) is the chart's defaults; to change those too, add a values file to the release in the helmfile.
 
 **With plain Helm.** The chart alone cannot derive one hostname from another: each subchart reads its own block, and Helm gives a parent no way to compute a subchart's values. So without the helmfile the domain is written out in full: copy `values.yaml`, replace `suite.example.org` by your domain and `suite` (in the two `minio.suite.svc.cluster.local` names) by your namespace, put the image references in a second file shaped like `ci/staging-values.yaml`, then:
 
@@ -130,6 +153,8 @@ The stack is the unit to copy for the next integration, not the encryption chart
 3. Its database in `bootstrap.postgres.databases`, its bucket in `bootstrap.minio.buckets`, its application in `bootstrap.accounts.applications` (in `bootstrap.keycloak.clients` without Accounts), its origin in `encryption.config.allowedFrameAncestors`.
 4. Its lines in `templates/_checks.tpl` and the test file, so a mismatch fails the render.
 
+A product without a chart, a container or two, gets a template of its own instead, as Grist has (`templates/grist.yaml`, with its `envVars` in the values and its own block in the checks).
+
 ## Known limits
 
 - The shared chart's MinIO StatefulSet has no `serviceName`, which the 1.30 API schemas reject; the chart test validates only the objects this repository renders. Clusters from 1.32 accept it.
@@ -141,4 +166,6 @@ The stack is the unit to copy for the next integration, not the encryption chart
 - Accounts' signed userinfo answer has no `iss` nor `aud`, which the encryption service requires of a signed answer: it ignores that answer and reads the email and names from the ID token, where the `email` and `profile` scopes put them.
 - Accounts' ID tokens last 10 hours (django-oauth-toolkit's default, not configurable through Accounts' environment), which is the encryption interface's session.
 - The published Accounts images are built from `main`; the integration (its `ENCRYPTION_*` settings and the SDK in its frontend) is on the `encryption` branch, so it needs images built from that branch (see "Images") until it is merged.
+- A Grist pod (re)started while Accounts is down waits for it, and Grist is unavailable to everyone meanwhile, testers already signed in included ([gristlabs/grist-core#1912](https://github.com/gristlabs/grist-core/issues/1912)); a Grist already running keeps serving them.
+- Grist runs one replica: its documents are assigned to a worker through Redis, which a second replica would only share behind a load balancer that knows about it. Its image is built by hand from its fork (see "Grist").
 - The document server keeps nothing: a restart of its pod ends the editing sessions that were open (the files themselves are in MinIO). Drive learns its capabilities once, through the `configure-wopi` Job, and again every night at 3:00; a change of `onlyoffice.host` needs that Job to run again (a sync does it under Argo CD, `helm upgrade` does it too).
