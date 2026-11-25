@@ -85,7 +85,13 @@ spec:
             # `docs:<tag>` / `drive:<tag>` / `accounts:<tag>` label into the state value
             # `docsImageTag=<tag>` / `driveImageTag=<tag>` / `accountsImageTag=<tag>` (a
             # valid image tag only, the labels being anyone's to set), and the helmfile
-            # runs `main` without one:
+            # runs `main` without one. A product's images may also be pushed elsewhere than
+            # its default repositories (a fork's namespace on Docker Hub, another registry):
+            # `<product>:<namespace>/*:<tag>` takes all of them from that namespace, the `*`
+            # standing for each image's usual name (state values <product>ImageNamespace
+            # and <product>ImageTag); Grist, with one image, also takes a whole repository,
+            # `grist:<repository>:<tag>` (gristImageRepository). The last `:` separates the
+            # tag.
             # pr-labels-to-state-values.example.sh, next to this file, is the block to paste
             # in the plugin script that does exactly that. The
             # helmfile's committed defaults never carry a test version this way, so there is

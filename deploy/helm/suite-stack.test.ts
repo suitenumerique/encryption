@@ -1167,6 +1167,65 @@ describe('the stack chart', () => {
     expect(fromLabels).toContain('image: "lasuite/drive-collaboration-relay:encryption"');
     expect(existsSync(marker)).toBe(false);
 
+    // A product's images may be pushed elsewhere than the default repositories (a fork's
+    // namespace, another registry): `<product>:<namespace>/*:<tag>` takes every image of
+    // the product from that namespace, the `*` standing for each image's usual name; Grist,
+    // with one image, also takes a whole repository. A label that would reach the eval, or
+    // whose repository or tag is not one, is dropped, and so is a whole repository for a
+    // product with several images.
+    const imagesFromLabels = (labels: string) =>
+      run('sh', ['-c', '. "$EXAMPLE"; eval "helmfile -e preview -f $HELMFILE template $PR_LABEL_OPTIONS"'], undefined, {
+        EXAMPLE: PR_LABELS_EXAMPLE,
+        HELMFILE: PREVIEW_HELMFILE,
+        FEATURE: '7',
+        DOMAIN: 'ppr.example.net',
+        ARGOCD_ENV_PR_LABELS: labels,
+      });
+    // Grist's image, once (its init container runs the same)
+    const gristFromLabels = (labels: string) => [...new Set(imagesFromLabels(labels).match(/image: "[^"]*grist[^"]*"/g))];
+
+    expect(gristFromLabels('preview,grist:1.5.0')).toEqual(['image: "gristlabs/grist-oss:1.5.0"']);
+    expect(gristFromLabels('grist:myaccount/*:encryption')).toEqual(['image: "myaccount/grist-oss:encryption"']);
+    expect(gristFromLabels('grist:myaccount/grist:encryption')).toEqual(['image: "myaccount/grist:encryption"']);
+    expect(gristFromLabels('grist:localhost:5000/team/grist:dev')).toEqual(['image: "localhost:5000/team/grist:dev"']);
+
+    const elsewhere = imagesFromLabels('preview,docs:registry.example.net/team/*:e2ee,drive:myaccount/*:e2ee,accounts:myaccount/accounts:e2ee');
+
+    for (const image of ['impress-backend', 'impress-frontend', 'impress-y-provider']) {
+      expect(elsewhere).toContain(`image: "registry.example.net/team/${image}:e2ee"`);
+    }
+    for (const image of ['drive-backend', 'drive-frontend', 'drive-collaboration-relay']) {
+      expect(elsewhere).toContain(`image: "myaccount/${image}:e2ee"`);
+    }
+    // Several images cannot share one repository: refused, the defaults stay
+    expect(elsewhere).toContain('image: "lasuite/accounts-backend:main"');
+    // A `:` past the registry's port: refused, the defaults stay
+    expect(imagesFromLabels('docs:ghcr.io:x/*:t')).toContain('image: "lasuite/impress-backend:main"');
+
+    for (const ignored of [
+      'grist:registry:5000/team',
+      // A `:` is only a registry's port, and a registry goes on with a path
+      'grist:foo:bar:1.0',
+      'grist:localhost:5000:t',
+      'grist:ghcr.io:t',
+      'grist:team/sub:5000/grist:t',
+      'grist:registry:50x0/grist:t',
+      'grist:registry-:5000/grist:t',
+      'grist:registry:/grist:t',
+      // Tags only: no digest
+      'grist:team/grist@sha256:t',
+      'grist:*:x',
+      'grist:a*/*:x',
+      'grist:Team/*:x',
+      'grist:team//sub/*:x',
+      'grist:/*:x',
+      'grist:team/*:',
+      `grist:team/*:x$(touch ${marker})`,
+    ]) {
+      expect(gristFromLabels(ignored), ignored).toEqual(['image: "gristlabs/grist-oss:latest"']);
+    }
+    expect(existsSync(marker)).toBe(false);
+
     expect(() => run('helmfile', args, undefined, { ENCRYPTION_IMAGE: 'no-tag' })).toThrow(/ENCRYPTION_IMAGE must be repository:tag/);
 
     // Grist's image, pushed by hand from its fork: named by a variable (prefixed under
@@ -1184,6 +1243,24 @@ describe('the stack chart', () => {
     ).toContain('image: "myaccount/grist:other"');
     expect(() => run('helmfile', args, undefined, { GRIST_IMAGE: 'no-tag' })).toThrow(/GRIST_IMAGE must be repository:tag/);
     expect(() => run('helmfile', args, undefined, { GRIST_IMAGE: 'registry.example.net:5000/grist' })).toThrow(/GRIST_IMAGE must be repository:tag/);
+
+    // The state values the plugin sets from a label: a namespace puts every image of the
+    // product under it, a whole repository (Grist's) wins over it, a tag replaces the tag
+    // in force
+    const gristImage = (values: string, env: NodeJS.ProcessEnv = {}) => [
+      ...new Set(
+        run('helmfile', [...args.slice(0, -1), '--state-values-set', values, 'template'], undefined, env).match(/image: "[^"]*grist[^"]*"/g)
+      ),
+    ];
+
+    expect(gristImage('gristImageTag=1.5.0')).toEqual(['image: "gristlabs/grist-oss:1.5.0"']);
+    expect(gristImage('gristImageTag=pr-3', { GRIST_IMAGE: 'myaccount/grist:encryption' })).toEqual(['image: "myaccount/grist:pr-3"']);
+    expect(gristImage('gristImageNamespace=registry.example.net:5000/team/,gristImageTag=dev', { GRIST_IMAGE: 'myaccount/grist:c' })).toEqual([
+      'image: "registry.example.net:5000/team/grist:dev"',
+    ]);
+    expect(gristImage('gristImageRepository=registry.example.net/team/grist-encrypted,gristImageNamespace=other,gristImageTag=dev')).toEqual([
+      'image: "registry.example.net/team/grist-encrypted:dev"',
+    ]);
 
     // The feedback form: the helmfile's default, another one from the environment, none
     // with an empty state value
