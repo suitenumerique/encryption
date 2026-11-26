@@ -1,0 +1,53 @@
+name: Image scan
+
+# The published image keeps the base image (and so the Debian packages) it was built with: a
+# vulnerability fixed in the base since is only seen by scanning it again. The CI scans each image
+# as it builds it; this scans the published one, as it ages, with the same rules.
+on:
+  workflow_dispatch:
+  # Off until the service runs in production, to be notified only when it matters
+  # schedule:
+  #   - cron: '45 4 * * 1' # weekly, the base image's fixes landing without any commit here
+
+permissions: # Default permissions
+  contents: read
+
+env:
+  CONTAINER_IMAGE: lasuite/encryption
+  TAG: main
+
+jobs:
+  scan:
+    name: Scan the published image
+    if: ${{ !github.event.act }} # the trivy action does an `actions/checkout`, which needs a token act has none of
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Check the image's age
+        id: age
+        # Scheduled: an image pushed within the day was scanned by the CI that built it. By hand, always.
+        run: |
+          pushed="$(curl -fsS "https://hub.docker.com/v2/repositories/${CONTAINER_IMAGE}/tags/${TAG}" | jq -r '.tag_last_pushed // .last_updated')"
+          age=$(( $(date -u +%s) - $(date -u -d "${pushed}" +%s) ))
+          echo "${CONTAINER_IMAGE}:${TAG} pushed at ${pushed} ($(( age / 3600 )) hours ago)"
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && ${age} -lt 86400 ]]; then
+            echo "Scanned by the CI that built it: skipped"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan the image
+        if: ${{ steps.age.outputs.skip != 'true' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_VEX: security/vex.openvex.json # allow bypass some if documented (opt-in file for external scanners, so fine if manipulated)
+        with:
+          image-ref: ${{ env.CONTAINER_IMAGE }}:${{ env.TAG }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
