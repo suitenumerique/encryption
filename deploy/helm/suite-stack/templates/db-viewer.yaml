@@ -1,0 +1,251 @@
+{{- /*
+A database viewer (CloudBeaver Community), for looking into an environment's databases
+from a browser: what to do when the cluster is reachable through Argo CD alone, without
+kubectl's port-forward or exec. Nothing runs until someone starts it: a suspended
+CronJob, which Argo CD's "Create Job" action runs once; the Job stops by itself after
+dbViewer.runForSeconds. Meanwhile its Service and Ingress answer 503.
+
+The database passwords are the stack's own, public in the values: the viewer is guarded
+by an administrator password of its own instead, drawn at each start and written to the
+pod's log (only for those who can read it, who can see the whole environment anyway).
+Anonymous access, on by default in CloudBeaver, is off: nothing is shown before signing
+in.
+*/}}
+{{- if .Values.dbViewer.enabled }}
+{{- $v := .Values.dbViewer }}
+{{- $pg := .Values.shared.postgres }}
+{{- $kc := .Values.shared.keycloak.db }}
+{{- /* Every database of the shared PostgreSQL (the products' and Grist's), and Keycloak's own. */}}
+{{- $connections := dict
+  "stack-postgres" (dict "name" "Products (every database)" "host" (include "suite-stack.postgresHost" .) "database" $pg.database "user" $pg.username "password" $pg.password)
+  "keycloak-postgres" (dict "name" "Keycloak" "host" (printf "%s-pg" (include "suite-stack.keycloakHost" .)) "database" $kc.database "user" $kc.username "password" $kc.password)
+}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-viewer
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-viewer
+data:
+  start.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    # A password of its own at each start, meeting CloudBeaver's policy (mixed case, a digit).
+    password="$(head -c 96 /dev/urandom | tr -dc 'A-Za-z0-9' | cut -c1-24)Aa1"
+    echo "================================================================"
+    echo "Database viewer: sign in as ${CB_ADMIN_NAME} with password ${password}"
+    echo "Stops by itself after {{ $v.runForSeconds }} seconds."
+    echo "================================================================"
+    export CB_ADMIN_PASSWORD="$password"
+    # The connections, in the workspace (an emptyDir: CloudBeaver encrypts their
+    # credentials there at first use).
+    mkdir -p workspace/GlobalConfiguration/.dbeaver
+    cp /config/data-sources.json workspace/GlobalConfiguration/.dbeaver/data-sources.json
+    exec ./launch-product.sh
+  # CloudBeaver's own logs, quieter than its default (DEBUG, every query of its internal
+  # database): the password above stays at hand in the pod's log. Every request a signed-out
+  # page makes is refused (anonymous access is off), which CloudBeaver logs as an error
+  # with its stack: not logged.
+  logback.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <configuration>
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <layout class="ch.qos.logback.classic.PatternLayout">
+                <Pattern>%d{dd-MM-yyyy HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</Pattern>
+            </layout>
+        </appender>
+        <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+        <logger name="org.jkiss" level="WARN"/>
+        <logger name="io.cloudbeaver" level="WARN"/>
+        <logger name="io.cloudbeaver.service.WebServiceBindingBase" level="OFF"/>
+        <logger name="io.cloudbeaver.server.graphql.GraphQLEndpoint" level="OFF"/>
+        <root level="WARN">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </configuration>
+  data-sources.json: |
+    {
+      "folders": {},
+      "connections": {
+        {{- $last := sub (len $connections) 1 }}
+        {{- range $i, $id := keys $connections | sortAlpha }}
+        {{- $c := get $connections $id }}
+        {{ $id | toJson }}: {
+          "provider": "postgresql",
+          "driver": "postgres-jdbc",
+          "name": {{ $c.name | toJson }},
+          "save-password": true,
+          "configuration": {
+            "host": {{ $c.host | toJson }},
+            "port": "5432",
+            "database": {{ $c.database | toJson }},
+            "url": {{ printf "jdbc:postgresql://%s:5432/%s" $c.host $c.database | toJson }},
+            "configurationType": "MANUAL",
+            "type": "dev",
+            "provider-properties": { "@dbeaver-show-non-default-db@": "true" },
+            "auth-model": "native",
+            "auth-properties": { "userName": {{ $c.user | toJson }}, "userPassword": {{ $c.password | toJson }} }
+          }
+        }{{ if lt $i $last }},{{ end }}
+        {{- end }}
+      }
+    }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-viewer
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-viewer
+spec:
+  # Started by hand only (Argo CD: Actions, Create Job): February 31st never comes, and the
+  # schedule is suspended anyway.
+  schedule: "0 0 31 2 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $v.runForSeconds }}
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "suite-stack.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: db-viewer
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          # The image's `dbeaver` user.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 8978
+            runAsGroup: 8978
+            fsGroup: 8978
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cloudbeaver
+              image: {{ printf "%s:%s" $v.image.repository $v.image.tag | quote }}
+              imagePullPolicy: {{ $v.image.pullPolicy }}
+              command: [/bin/bash, /config/start.sh]
+              ports:
+                - name: http
+                  containerPort: 8978
+              env:
+                - name: HOME
+                  value: /home/dbeaver
+                - name: CB_SERVER_NAME
+                  value: {{ printf "Databases of %s" .Release.Namespace | quote }}
+                - name: CB_SERVER_URL
+                  value: {{ printf "https://%s" $v.host | quote }}
+                # Not `admin`: CloudBeaver's administrators' team already has that name.
+                - name: CB_ADMIN_NAME
+                  value: administrator
+                - name: CLOUDBEAVER_APP_ANONYMOUS_ACCESS_ENABLED
+                  value: "false"
+              readinessProbe:
+                httpGet:
+                  path: /
+                  port: http
+                periodSeconds: 10
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                - name: config
+                  mountPath: /opt/cloudbeaver/conf/logback.xml
+                  subPath: logback.xml
+                  readOnly: true
+                - name: workspace
+                  mountPath: /opt/cloudbeaver/workspace
+                - name: home
+                  mountPath: /home/dbeaver
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 768Mi
+                limits:
+                  memory: 1536Mi
+          volumes:
+            - name: config
+              configMap:
+                name: db-viewer
+            - name: workspace
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: home
+              emptyDir:
+                sizeLimit: 256Mi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-viewer
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-viewer
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "suite-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: db-viewer
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if $v.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: db-viewer
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "suite-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-viewer
+  {{- with $v.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $v.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $v.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $v.host | quote }}
+      secretName: {{ $v.ingress.tls.secretName | default "db-viewer-tls" | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $v.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: db-viewer
+                port:
+                  name: http
+{{- end }}
+{{- end }}

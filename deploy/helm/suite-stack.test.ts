@@ -578,6 +578,83 @@ describe('the stack chart', () => {
     expect(dropped.has('GRIST_TELEMETRY_LEVEL')).toBe(false);
   });
 
+  it('keeps a database viewer that runs only when started by hand, behind a password of its own', () => {
+    // Off by default.
+    expect(full.own.some((document) => document.metadata.name === 'db-viewer')).toBe(false);
+
+    const own = render([], ['dbViewer.enabled=true', 'dbViewer.host=db.example.org']).own;
+    const cronJob = find(own, 'CronJob', 'db-viewer') as unknown as {
+      spec: {
+        schedule: string;
+        suspend: boolean;
+        jobTemplate: {
+          spec: {
+            backoffLimit: number;
+            activeDeadlineSeconds: number;
+            template: {
+              metadata: { labels: Record<string, string> };
+              spec: {
+                securityContext: Record<string, unknown>;
+                automountServiceAccountToken: boolean;
+                containers: Array<Container & { securityContext: Record<string, unknown> }>;
+              };
+            };
+          };
+        };
+      };
+    };
+    const job = cronJob.spec.jobTemplate.spec;
+    const container = job.template.spec.containers[0];
+    const env = containerEnv(container);
+
+    // Never on a schedule: suspended, and set for a date that never comes.
+    expect(cronJob.spec).toMatchObject({ schedule: '0 0 31 2 *', suspend: true });
+    expect(job).toMatchObject({ backoffLimit: 0, activeDeadlineSeconds: 43200 });
+    expect(job.template.spec.automountServiceAccountToken).toBe(false);
+    expect(job.template.spec.securityContext).toMatchObject({ runAsNonRoot: true, runAsUser: 8978 });
+    expect(container.securityContext).toMatchObject({
+      allowPrivilegeEscalation: false,
+      readOnlyRootFilesystem: true,
+      capabilities: { drop: ['ALL'] },
+    });
+    // Nothing shown before signing in, as an administrator whose password is drawn at each
+    // start and written to the log, never to the values.
+    expect(env.get('CLOUDBEAVER_APP_ANONYMOUS_ACCESS_ENABLED')?.value).toBe('false');
+    expect(env.get('CB_ADMIN_NAME')?.value).toBe('administrator');
+    expect(env.has('CB_ADMIN_PASSWORD')).toBe(false);
+    expect(env.get('CB_SERVER_URL')?.value).toBe('https://db.example.org');
+
+    const config = find(own, 'ConfigMap', 'db-viewer').data ?? {};
+
+    expect(container.command).toEqual(['/bin/bash', '/config/start.sh']);
+    expect(config['start.sh']).toMatch(
+      /password="\$\(head -c \d+ \/dev\/urandom[^\n]+\n[\s\S]*echo "[^"]*\$\{password\}[\s\S]*export CB_ADMIN_PASSWORD="\$password"[\s\S]*exec \.\/launch-product\.sh/
+    );
+
+    // Quiet logs, so that the password stays at hand at the top of the pod's log.
+    expect(config['logback.xml']).toContain('<logger name="io.cloudbeaver" level="WARN"/>');
+    expect(config['logback.xml']).not.toMatch(/level="(?:DEBUG|INFO)"/);
+
+    // Every database of the shared PostgreSQL, and Keycloak's, connected as their owner.
+    const connections = (JSON.parse(config['data-sources.json']) as { connections: Record<string, { configuration: Record<string, unknown> }> })
+      .connections;
+
+    expect(Object.keys(connections).sort()).toEqual(['keycloak-postgres', 'stack-postgres']);
+    expect(connections['stack-postgres'].configuration).toMatchObject({
+      host: 'postgres',
+      database: 'postgres',
+      'provider-properties': { '@dbeaver-show-non-default-db@': 'true' },
+      'auth-properties': { userName: 'dinum', userPassword: 'pass' },
+    });
+    expect(connections['keycloak-postgres'].configuration).toMatchObject({ host: 'shared-keycloak-pg', database: 'keycloak' });
+
+    // Its address reaches the Job's pod, whenever one runs.
+    const service = find(own, 'Service', 'db-viewer') as unknown as { spec: { selector: Record<string, string> } };
+
+    expect(job.template.metadata.labels).toMatchObject(service.spec.selector);
+    expect(find(own, 'Ingress', 'db-viewer').spec).toMatchObject({ rules: [{ host: 'db.example.org' }] });
+  });
+
   it('registers the products in Accounts with its own image and settings, once it has migrated', () => {
     const job = find(full.own, 'Job', 'stack-suite-stack-accounts-applications-1');
     const secret = find(full.own, 'Secret', 'stack-suite-stack-accounts-applications-1');
@@ -1063,6 +1140,7 @@ describe('the stack chart', () => {
       '42-office.ppr.example.net',
       '42-drive-sandbox.ppr.example.net',
       '42-grist.ppr.example.net',
+      '42-db.ppr.example.net',
     ]) {
       expect(text, host).toContain(host);
     }

@@ -931,6 +931,35 @@ grist:
       secretName: ''
 
 # ---------------------------------------------------------------------------------------
+# A database viewer (CloudBeaver Community, https://github.com/dbeaver/cloudbeaver,
+# templates/db-viewer.yaml), for looking into the databases from a browser when the
+# cluster is reachable through Argo CD alone. Rendered, nothing runs: a suspended CronJob
+# that Argo CD's "Create Job" action starts, for runForSeconds. It shows every database of
+# the shared PostgreSQL and Keycloak's, behind an administrator password drawn at each
+# start and written to its pod's log (see the README, "Looking into the databases").
+# ---------------------------------------------------------------------------------------
+dbViewer:
+  enabled: false
+  image:
+    repository: dbeaver/cloudbeaver
+    tag: 26.2.5
+    pullPolicy: IfNotPresent
+  host: db.suite.example.org
+  # Twelve hours, then the Job stops (and its Service answers 503 until started again).
+  runForSeconds: 43200
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+      # Its API holds a WebSocket, and a long query a request.
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+      nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    tls:
+      enabled: true
+      secretName: ''
+
+# ---------------------------------------------------------------------------------------
 # LaSuite Accounts (the `accounts` chart, src/helm/accounts in
 # https://github.com/suitenumerique/accounts): the identity provider of the stack. It signs
 # the testers in at Keycloak through its "ProConnect" backend (Python Social Auth), keeps

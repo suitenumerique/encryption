@@ -102,6 +102,16 @@ mailpit:
     annotations:
       cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
 
+# Started by hand from Argo CD when someone needs to look into the databases (see the
+# chart's README, "Looking into the databases").
+dbViewer:
+  enabled: true
+  host: {{ $f }}-db.{{ $d }}
+  ingress:
+    className: {{ .Values.ingressClassName }}
+    annotations:
+      cert-manager.io/cluster-issuer: {{ .Values.clusterIssuer }}
+
 onlyoffice:
   host: {{ $f }}-office.{{ $d }}
   ingress:

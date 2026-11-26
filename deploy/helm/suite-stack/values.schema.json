@@ -247,6 +247,43 @@
         }
       }
     },
+    "dbViewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "host", "runForSeconds"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "host": { "type": "string", "minLength": 1 },
+        "runForSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "className": { "type": "string" },
+            "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tls": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "secretName": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "driveOnlyofficeSandbox": {
       "type": "object",
       "additionalProperties": false,

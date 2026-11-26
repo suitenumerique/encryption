@@ -75,6 +75,16 @@ Sync waves were tried and do not work here: a wave waits for every object before
 
 The hooks run again at every sync, which is what makes editing the testers' list or rotating a password a plain commit.
 
+## Looking into the databases
+
+Where the cluster is reachable through Argo CD alone (no `kubectl port-forward` or `exec`), `dbViewer.enabled` (on in the preview environments) adds a database viewer, CloudBeaver Community, at `dbViewer.host` (`<feature>-db.<domain>` in a preview). Nothing runs until someone needs it: it is a suspended CronJob, `db-viewer`. To use it:
+
+1. In Argo CD, open the application, select the CronJob `db-viewer`, and run its action **Create Job**. One at a time: two Jobs would be two viewers with two passwords behind one address.
+2. Open the Job's pod, tab **Logs**: its first lines give the password, drawn at this start, of the user `administrator`.
+3. Sign in at `https://<dbViewer.host>`. Two connections are there: the shared PostgreSQL, with every database of the products and Grist, and Keycloak's own.
+
+The Job stops by itself after `dbViewer.runForSeconds` (twelve hours), its pod and settings with it; the address answers 503 until the next start. The databases' own passwords are the stack's, public in these values: the viewer's password, a new one at each start and seen only in the pod's log, is what guards them, and anonymous access (on by default in CloudBeaver) is off. Starting over with a product means dropping its database here: the bootstrap Job creates it again at the next sync.
+
 ## Coherence checks
 
 The four subcharts and Grist's template each read their own block, so a hostname or a client id is written in several places. `templates/_checks.tpl` makes the render fail, naming both values, when they disagree: a product's `DB_NAME` absent from the databases the bootstrap creates, an `OIDC_RP_CLIENT_ID` without a client, a client secret that differs (a product's `OIDC_RP_CLIENT_SECRET` or the encryption service's `config.oidc.clientSecret`), a redirect URI that does not cover the product's origin, `ENCRYPTION_VAULT_URL` that is not the vault's host, a product origin missing from `allowedFrameAncestors`, two products on the same Redis database index, the encryption database URL not being the runtime role the bootstrap creates, Drive's editor relay not being on Drive's host, Grist off the shared services (its home database, bucket or Redis index), unsandboxed or with a stand-in sign-in or vault, or not expecting Accounts' signed userinfo, and for Accounts: a product (or the encryption service) not naming Accounts' issuer, a redirect or logout URI missing from its application, Accounts' issuer not under its host, its upstream not being the shared realm, its Keycloak client lacking the signed userinfo or one of ProConnect's scopes, an optional scope absent from the realm, the encryption service asking Accounts for scopes without the email and names, or a step-up max age shorter than Accounts' session (see "Known limits"). `helm template` on your values is therefore the first test to run.
@@ -157,6 +167,7 @@ A product without a chart, a container or two, gets a template of its own instea
 
 ## Known limits
 
+- An environment of this chart is open by design: its administration interfaces (the products' Django admins, Keycloak's console, MinIO's, Mailpit) answer on public addresses, with the credentials written in these values, and anyone with an environment's addresses can sign in to them. It must never hold real data. The database viewer alone has a private password (drawn at each start, seen only in its pod's log, never in the values): with it, anyone could change any database as its owner, drop a product's tables or rewrite their migration history, and break the migrations and the bootstrap of the whole environment.
 - The shared chart's MinIO StatefulSet has no `serviceName`, which the 1.30 API schemas reject; the chart test validates only the objects this repository renders. Clusters from 1.32 accept it.
 - The realm is imported once, at first boot. Changing `shared.keycloak.realm` afterwards does nothing; the bootstrap's clients and users are the way to change the realm.
 - On an upgrade that changes the encryption image, the migration runs before the new pods (the hook is `pre-upgrade`); a change of the shared chart's passwords in the same upgrade is not seen by that run.

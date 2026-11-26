@@ -22,6 +22,9 @@ MinIO       https://{{ .Values.shared.minio.consoleIngress.hostname }} (console:
 {{- if and .Values.mailpit.enabled .Values.mailpit.ingress.enabled }}
 Mailbox     https://{{ .Values.mailpit.host }} (every email sent by the stack)
 {{- end }}
+{{- if and .Values.dbViewer.enabled .Values.dbViewer.ingress.enabled }}
+Databases   https://{{ .Values.dbViewer.host }} (once started: Argo CD, CronJob db-viewer, Create Job; password in its pod's log)
+{{- end }}
 {{- if and .Values.onlyoffice.enabled .Values.onlyoffice.ingress.enabled }}
 Office      https://{{ .Values.onlyoffice.host }} (the editor Drive opens office files with)
 {{- end }}
