@@ -1,0 +1,9 @@
+{
+  "$schema": "https://www.chromatic.com/config-file.schema.json",
+  "buildScriptName": "build:storybook",
+  "onlyChanged": true,
+  "externals": [".storybook/public/**", "src/server/public-assets/**"],
+  "exitZeroOnChanges": true,
+  "exitOnceUploaded": true,
+  "zip": true
+}
